@@ -216,7 +216,7 @@ test("composer 态：粘贴图片 → 图片卡片（文件名起的元信息行
   await openPanel(page);
   await pasteImage(page);
 
-  const card = page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard");
+  const card = page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-imgcard");
   await expect(card).toHaveCount(1);
   // 复用 .lumir-hp-qcard 整族；不画引号竖条（显式视觉决定，design §8）。
   await expect(card).toHaveClass(/lumir-hp-qcard/);
@@ -263,7 +263,7 @@ test("错误态：能力闸拒绝 → 卡片 is-error、composer 内容保留、
   // 会话不推进：transcript 里没有用户消息沉淀（渲染面撤下）。
   await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(0);
   // composer 内容原样保留（图片卡 + 问题段落）。
-  const card = page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard");
+  const card = page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-imgcard");
   await expect(card).toHaveCount(1);
   await expect(card).toHaveClass(/is-error/);
   await expect(page.locator(".lumir-hp-composer")).toContainText("这图哪里不对？");
@@ -271,7 +271,7 @@ test("错误态：能力闸拒绝 → 卡片 is-error、composer 内容保留、
 
   // 移除错误态卡片后同一消息可正常再发（composer 只剩文本）——spec「不支持时挡住并标出」。
   await card.locator(".lumir-hp-qc-x").click();
-  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-imgcard")).toHaveCount(0);
 });
 
 test("加载失败态：读回失败 → 可见占位（.is-broken，无零高度空白）", async ({ page }) => {
@@ -310,7 +310,7 @@ test("加载失败态：读回失败 → 可见占位（.is-broken，无零高�
   await expect(page.locator(".lumir-harness")).toBeVisible();
 
   await pasteImage(page);
-  const card = page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard");
+  const card = page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-imgcard");
   await expect(card).toHaveCount(1);
   const thumb = card.locator(".lumir-hp-qc-thumb");
   await expect(thumb).toHaveClass(/is-broken/);
@@ -320,9 +320,9 @@ test("加载失败态：读回失败 → 可见占位（.is-broken，无零高�
 
 });
 
-test("投递投影：图片 part 在前，完整问题 text 在后", async ({ page }) => {
+test("投递投影：图片按 caret 锚点落在前后两段文字之间", async ({ page }) => {
   await openPanel(page, { empty: true });
-  // 键入 → 贴图 → 继续键入：附件不拆文本，完整问题保持连续。
+  // 键入 → 贴图 → 继续键入：文末插卡补真实换行，后续文字在卡片下方。
   await page.locator(".lumir-hp-composer").click();
   await page.keyboard.type("先看这张图");
   await pasteImage(page);
@@ -334,10 +334,11 @@ test("投递投影：图片 part 在前，完整问题 text 在后", async ({ pa
   );
   expect(sent).toHaveLength(1);
   const parts = JSON.parse(sent[0].parts_json) as Array<{ kind: string; text?: string; name?: string }>;
-  expect(parts.map((p) => p.kind)).toEqual(["image", "text"]);
-  expect(parts[0].name).toBe(WRITTEN.name);
-  expect(parts[0].text).toBeUndefined();
-  expect(parts[1].text).toBe("先看这张图这里哪里不对？");
+  expect(parts.map((p) => p.kind)).toEqual(["text", "image", "text"]);
+  expect(parts[0].text).toBe("先看这张图");
+  expect(parts[1].name).toBe(WRITTEN.name);
+  expect(parts[1].text).toBeUndefined();
+  expect(parts[2].text).toBe("这里哪里不对？");
 });
 
 // ---------------------------------------------------------------------------
@@ -359,7 +360,7 @@ test("旧代回包：换会话后才写盘成功——不插卡；同代写入�
 
   await settlePendingWrite(page, "resolve", WRITTEN);
   await flushSettledWrite(page);
-  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-imgcard")).toHaveCount(0);
   // toast 的「没有」用一次性 count（`toHaveCount(0)` 会重试到 5s，toast 3.5s 自动消失会喂出假绿）。
   expect(await page.locator(".lumir-toast").count()).toBe(0);
 
@@ -367,7 +368,7 @@ test("旧代回包：换会话后才写盘成功——不插卡；同代写入�
   await pasteImage(page);
   await expect.poll(() => pendingWrites(page)).toBe(1);
   await settlePendingWrite(page, "resolve", WRITTEN);
-  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-imgcard")).toHaveCount(1);
 });
 
 test("旧代回包：换会话后才写盘失败——不弹旧代 toast；同代失败照常 toast", async ({ page }) => {
@@ -387,7 +388,7 @@ test("旧代回包：换会话后才写盘失败——不弹旧代 toast；同�
   await flushSettledWrite(page);
   // 同 helper 注释：旧代 toast 必须「一次也没出现」，用一次性 count，不用会重试的 toHaveCount。
   expect(await page.locator(".lumir-toast").count()).toBe(0);
-  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-imgcard")).toHaveCount(0);
 
   // 正向对照：同代失败照常弹 toast（旧代被丢不是因为 toast 链路坏了）。
   await pasteImage(page);

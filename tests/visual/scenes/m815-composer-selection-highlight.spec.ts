@@ -33,7 +33,7 @@ async function openFixture(page: Page, text: string, cards: ComposerAttachment[]
       if (cmd === "harness_read_image") return "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFElEQVR4nGP8z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg==";
       return invoke(cmd, args);
     };
-  }, { version: 2, text, caret: text.length, cards });
+  }, { version: 3, text, caret: text.length, cards: cards.map((card) => ({ card, at: 0 })) });
   await page.goto("/");
   await page.locator('.ft-row[title="selection-fixture.md"]').click();
   await page.locator(".lumir-hp-toggle").click();
@@ -41,7 +41,7 @@ async function openFixture(page: Page, text: string, cards: ComposerAttachment[]
     (el as unknown as { cmTile: { root: { view: { state: { doc: { toString(): string } } } } } })
       .cmTile.root.view.state.doc.toString());
   await expect.poll(readDoc).toBe(text);
-  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard")).toHaveCount(cards.length);
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard")).toHaveCount(cards.length);
 }
 
 for (const fixture of [
@@ -51,17 +51,19 @@ for (const fixture of [
   test(`CM 原生选区：${fixture.name}，全选删除只改文本`, async ({ page }) => {
     await openFixture(page, fixture.text, fixture.cards);
     const content = page.locator(".lumir-hp-composer .cm-content");
-    await content.click();
+    await content.locator(".cm-line").first().click();
     await page.keyboard.press("Meta+a");
     await expect.poll(() => page.evaluate(() => window.getSelection()?.toString())).toBe(fixture.text);
     await expect(page.locator(".is-composer-selection-band")).toHaveCount(0);
     await page.keyboard.press("Backspace");
-    await expect(content).toHaveText("");
-    await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard")).toHaveCount(fixture.cards.length);
+    await expect.poll(() => content.evaluate((el) =>
+      (el as unknown as { cmTile: { root: { view: { state: { doc: { toString(): string } } } } } })
+        .cmTile.root.view.state.doc.toString())).toBe("");
+    await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard")).toHaveCount(fixture.cards.length);
     await page.keyboard.press("Meta+z");
     await expect.poll(() => content.evaluate((el) =>
       (el as unknown as { cmTile: { root: { view: { state: { doc: { toString(): string } } } } } })
         .cmTile.root.view.state.doc.toString())).toBe(fixture.text);
-    await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard")).toHaveCount(fixture.cards.length);
+    await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard")).toHaveCount(fixture.cards.length);
   });
 }

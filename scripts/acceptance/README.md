@@ -1609,7 +1609,7 @@ Enter + ⌘S 保存），期望值来自 `tests/unit/editing-oracle-model.ts` �
 - 人工结论只落 `.local/acceptance/<日期>-ime-matrix/ledger.md`（git 外），四态
   `NATIVE_IME_PASS` / `NATIVE_IME_FAIL` / `NATIVE_IME_BLOCKED` / `NATIVE_IME_NOT_RUN`；未选中的
   组记 `NOT_RUN`，自动段 PASS 不得转写为其中任何一态。
-- 前置不成立（候选窗不出现、输入法未切换、焦点不在 composer、tray 附件未建立）记 `BLOCKED`，
+- 前置不成立（候选窗不出现、输入法未切换、焦点不在 composer、inline widget 附件未建立）记 `BLOCKED`，
   不记产品 FAIL；看到 FAIL 签名后不得再降级成 `BLOCKED`。失败保留现场（不重跑、不退出 app、
   不切走输入法）的口径见场景正文「失败保留现场」节。
 

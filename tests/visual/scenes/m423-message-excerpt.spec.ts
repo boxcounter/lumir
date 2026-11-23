@@ -159,7 +159,7 @@ test("点钮：消息摘录卡入 composer（出处行「对话 · Agent」、×
   await expect(page.locator(".lumir-hp-transcript > .quote-gesture-btn")).toBeVisible();
   await page.locator(".lumir-hp-transcript > .quote-gesture-btn").click();
 
-  const card = page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard");
+  const card = page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard");
   await expect(card).toHaveCount(1);
   await expect(card).toHaveClass(/lumir-hp-msgquote/); // 新块类（样式仍走 .lumir-hp-qcard 整族）
   await expect(card.locator(".lumir-hp-qc-bar")).toHaveCount(1);
@@ -200,7 +200,7 @@ test("点钮：用户消息的摘录卡出处行是「对话 · 你」（真机�
   await expect(btn).toBeVisible();
   await btn.click();
 
-  const card = page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard");
+  const card = page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard");
   await expect(card).toHaveCount(1);
   // 出处行的角色来自来源消息的 role（不是固定串）：同一条通路在 Agent 消息上是「对话 · Agent」
   // （上面两条用例），用户消息上必须是「对话 · 你」——只判前者会把写死角色的实现判绿。
@@ -216,7 +216,7 @@ test("跳回高亮：点卡片 → 来源消息瞬态着色（~1.4s 退场）", 
   const flash = page.locator(".lumir-hp-msg.is-jump-flash");
   await expect(flash).toHaveCount(0);
 
-  await page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard").click();
+  await page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard").click();
   await expect(flash).toHaveCount(1);
   // 高亮的是来源 assistant 消息（含摘录原文），不是别的消息。
   await expect(flash.locator(".lumir-hp-body")).toContainText("先读结论");

@@ -9,14 +9,19 @@ import { mock, test } from "node:test";
 import assert from "node:assert/strict";
 import { createHarnessDraftStore } from "../../src/harness-draft.ts";
 import type { ComposerAttachment } from "../../src/quote-card.ts";
-import { serializeComposerDraft } from "../../src/quote-card.ts";
+import { serializeComposerDraft as serializeV3 } from "../../src/quote-card.ts";
 
 const MSG = "hi";
 const MSG2 = "hi there";
-const CARDS: ComposerAttachment[] = [{
+const CARD: ComposerAttachment = {
   kind: "quote",
   card: { file: "synth.md", heading: "H", headingPath: "H", lines: "1-1", text: "摘录" },
-}];
+};
+const CARDS = [{ card: CARD, anchor: 0 }];
+
+function serializeComposerDraft(text: string, caret: number | null, cards: readonly { card: ComposerAttachment; anchor: number }[]): string {
+  return serializeV3(text, caret, cards.map(({ card, anchor }) => ({ card, at: anchor })));
+}
 
 /** 让 await 链跑完（mock timers 只接管 setTimeout）。 */
 const flushAwait = async () => {
@@ -315,11 +320,11 @@ test("flush 在途 + 发送成功 clear：删除排在在途写之后（已发�
 });
 
 
-test("load：合法 v1 立即串行写回一次 v2，此后同内容 schedule 不双写", async () => {
+test("load：合法 v1 立即串行写回一次 v3，此后同内容 schedule 不双写", async () => {
   const { store, rig } = createRig();
   rig.file = JSON.stringify({
     version: 1,
-    blocks: [{ kind: "paragraph", text: "ab" }, ...CARDS, { kind: "paragraph", text: "cd" }],
+    blocks: [{ kind: "paragraph", text: "ab" }, CARD, { kind: "paragraph", text: "cd" }],
     caret: { block: 2, offset: 1 },
   });
   assert.deepEqual(await store.load(), { text: "ab\ncd", caret: 4, cards: CARDS });
@@ -327,11 +332,11 @@ test("load：合法 v1 立即串行写回一次 v2，此后同内容 schedule �
   assert.deepEqual(rig.writes, [migrated]);
   store.schedule("ab\ncd", 4, CARDS);
   await store.flush();
-  assert.deepEqual(rig.writes, [migrated], "迁移成功后只保留 v2 写面");
+  assert.deepEqual(rig.writes, [migrated], "迁移成功后只保留 v3 写面");
 });
 
 
-test("迁移写回失败：返回转换内容并 warning，保留待写，后续 flush 只写 v2", async () => {
+test("迁移写回失败：返回转换内容并 warning，保留待写，后续 flush 只写 v3", async () => {
   const { store, rig } = createRig();
   rig.file = JSON.stringify({ version: 1, blocks: [{ kind: "paragraph", text: "legacy" }], caret: { block: 0, offset: 2 } });
   rig.failWrite = true;

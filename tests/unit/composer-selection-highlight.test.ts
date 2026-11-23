@@ -9,11 +9,12 @@ import {
 } from "../../src/harness-composer.ts";
 import type { ComposerAttachment } from "../../src/quote-card.ts";
 
-const cards: ComposerAttachment[] = [
+const attachments: ComposerAttachment[] = [
   { kind: "quote", card: { file: "synthetic.md", heading: "合成", headingPath: "合成", lines: "1-1", text: "引用" } },
   { kind: "msgquote", card: { role: "assistant", at: null, text: "消息摘录" } },
   { kind: "image", card: { name: "pasted-0123456789abcdef.png", sourceMime: "image/png" } },
 ];
+const cards = attachments.map((card, index) => ({ id: index + 1, card, anchor: 0 }));
 
 test("全选与反向选区只改变文本 selection，不产生附件选区模型", () => {
   let state = createComposerState({ text: "ab\ncd", caret: 0, cards });

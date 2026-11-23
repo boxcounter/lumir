@@ -167,6 +167,37 @@ export const ACTIONS = new Set([
 ]);
 export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel", "geom", "bytes", "node", "metaLine"]);
 
+export function scopedAxOrder(nodes, scope, markers) {
+  const role = scope?.role;
+  const name = scope?.name;
+  const re = name instanceof RegExp ? name : name ? new RegExp(String(name)) : null;
+  const hits = nodes.filter((node) => {
+    if (role && node.role !== role) return false;
+    if (!re) return true;
+    return re.test(node.title ?? "") || re.test(node.label ?? "") || re.test(node.value ?? "");
+  });
+  if (hits.length !== 1) return { ok: false, error: `scope 应唯一，实际 ${hits.length} 个` };
+  const root = hits[0];
+  const subtree = [];
+  for (let index = root === nodes[0] ? 0 : nodes.indexOf(root); index < nodes.length; index += 1) {
+    const node = nodes[index];
+    if (node !== root && node.depth <= root.depth) break;
+    subtree.push(node);
+  }
+  const texts = subtree.map((node) => `${node.role} ${nodeName(node)}`.trim());
+  let cursor = 0;
+  const positions = [];
+  for (const marker of markers) {
+    const position = texts.findIndex((text, index) => index >= cursor && text.includes(String(marker)));
+    if (position < 0) return { ok: false, error: `composer 子树缺少或乱序 marker ${JSON.stringify(marker)}`, texts, positions };
+    positions.push(position);
+    cursor = position + 1;
+  }
+  const textAreas = subtree.filter((node) => node.role === "AXTextArea");
+  if (textAreas.some((node) => node.value === null)) return { ok: false, error: "composer 的 AXTextArea.value 不可读", texts, positions };
+  return { ok: true, root, subtree, texts, positions, textAreas };
+}
+
 /** 焦点读数（M678）：`ax: { focused: … }` 断言与 `focusWindow click` 的焦点校验**唯一**的实现
  *  （同一条语义两处实现，会在下一次改判定时只改到一处——REVIEW.md「同一语义两处真源」条）。
  *
@@ -996,8 +1027,8 @@ export function checkScenario(scenario) {
       else if (kinds[0] === "bytes" && !exp.bytes.path) push(`${at} expect[${j}] bytes 断言缺 path`);
       else if (kinds[0] === "bytes" && exp.bytes.magic === undefined && exp.bytes.nameHash === undefined)
         push(`${at} expect[${j}] bytes 断言缺 magic/nameHash（写错字段名会静默变成恒真断言）`);
-      else if (kinds[0] === "ax" && !["has", "not", "count", "focused"].some((k) => exp.ax[k] !== undefined))
-        push(`${at} expect[${j}] ax 断言缺 has/not/count/focused（写错字段名会静默变成恒真断言）`);
+      else if (kinds[0] === "ax" && !["has", "not", "count", "focused", "scope", "order", "notInValue"].some((k) => exp.ax[k] !== undefined))
+        push(`${at} expect[${j}] ax 断言缺 has/not/count/focused/scope/order/notInValue（写错字段名会静默变成恒真断言）`);
       else if (kinds[0] === "node") {
         // 节点在场性断言（M669）：`present` 必填（在场 / 不在场方向相反，缺省会让写错键静默变味）；
         // `name` 是**裸正则源**（与 `target.name` 同口径，`findNode` 直接 `new RegExp`），因此
@@ -2331,6 +2362,21 @@ export async function runScenario(ctx, scenario) {
       const ax = state.ax ?? (await readAx(cu, ctx.pid));
       state.ax = ax;
       const spec = expect.ax;
+      if (spec.scope !== undefined || spec.order !== undefined || spec.notInValue !== undefined) {
+        if (!isPlainTable(spec.scope) || !Array.isArray(spec.order) || spec.order.length === 0) {
+          return fail(`${label}（scoped AX 需要唯一 scope 与非空 order）`, "", ax);
+        }
+        const reading = scopedAxOrder(ax.nodes, spec.scope, spec.order);
+        if (!reading.ok) return fail(`${label}（${reading.error}）`, reading.texts?.join("\n") ?? "", ax);
+        if (spec.notInValue !== undefined) {
+          if (reading.textAreas.length === 0) return fail(`${label}（composer 内没有可读的 AXTextArea）`, "", ax);
+          const m = matcher(spec.notInValue);
+          for (const area of reading.textAreas) {
+            if (m.test(area.value)) return fail(`${label}（composer 的 AXTextArea.value 含禁用标记 ${m.show}）`, area.value, ax);
+          }
+        }
+        return pass(label, `composer 子树顺序 ${spec.order.join(" → ")}`);
+      }
       if (spec.focused !== undefined) {
         // 判定逻辑与 `focusWindow click` 的焦点校验同源（`focusedRoleReading`，M678）：
         // AX 里**恰有一个** focused 节点，且它的 role 命中 spec.focused（子串或 /…/ 正则）。

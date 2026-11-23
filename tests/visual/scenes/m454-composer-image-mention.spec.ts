@@ -126,7 +126,7 @@ test("composer 态：图片卡片带编号徽标 1、@ 插入引用钮、既有 
   await openPanel(page, { empty: true });
   await pasteImage(page);
 
-  const card = page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard");
+  const card = page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-imgcard");
   await expect(card).toHaveCount(1);
   // 编号徽标：缩略图角上的裸编号（design §8）。
   const badge = card.locator(".lumir-hp-qc-ord");
@@ -149,7 +149,7 @@ test("两张图：编号徽标按位序 1 / 2（只数图片块）", async ({ pa
   await pasteImage(page);
   await pasteImage(page, [137, 80, 78, 72]);
 
-  const cards = page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard");
+  const cards = page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-imgcard");
   await expect(cards).toHaveCount(2);
   await expect(cards.nth(0).locator(".lumir-hp-qc-ord")).toHaveText("1");
   await expect(cards.nth(1).locator(".lumir-hp-qc-ord")).toHaveText("2");
@@ -160,7 +160,7 @@ test("@ 插入引用：点击在光标处插入 Image N（N = 该卡编号）", 
   await page.locator(".lumir-hp-composer").click();
   await pasteImage(page);
 
-  const card = page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard");
+  const card = page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-imgcard");
   await expect(card).toHaveCount(1);
   await card.locator(".lumir-hp-qc-at").click();
   // 段落里出现引用文本 `Image 1`（N 与该卡编号一致）。
@@ -172,11 +172,11 @@ test("移除后位序重编：移除第一张，余图徽标变 1（无空号）
   await pasteImage(page);
   await pasteImage(page, [137, 80, 78, 72]);
 
-  const cards = page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard");
+  const cards = page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-imgcard");
   await expect(cards).toHaveCount(2);
   await cards.nth(0).locator(".lumir-hp-qc-x").click();
-  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard")).toHaveCount(1);
-  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard .lumir-hp-qc-ord")).toHaveText("1");
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-imgcard")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-imgcard .lumir-hp-qc-ord")).toHaveText("1");
 });
 
 test("transcript 态：图片卡片可访问名含编号（D447 改形）+ 徽标在场", async ({ page }) => {

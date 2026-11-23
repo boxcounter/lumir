@@ -84,6 +84,8 @@ import {
   composerAttachmentsField,
   composerBlocks,
   composerContentOf,
+  composerImageOrdinals,
+  composerInlineCards,
   composerIsEmpty,
   createComposerState,
   insertComposerText,
@@ -92,7 +94,8 @@ import {
   removeComposerAttachment,
   runComposerCommand as runCmComposerCommand,
 } from "./harness-composer";
-import type { ComposerContent } from "./harness-composer";
+import type { ComposerContent, PlacedAttachment } from "./harness-composer";
+import { createComposerImeCoordinator } from "./harness-composer-ime";
 import { currentLanguage, errorText, formatDate, formatRelative, onRelabel, t, tPlural } from "./copy";
 import type { CopyKey, Language } from "./copy";
 import {
@@ -342,7 +345,7 @@ export interface HarnessPanelHandle {
    *  （它走 `toggle()`，不经过这颗钮）。 */
   setChromeRetreat(on: boolean): void;
   /**
-   * 摘录卡片入区外附件 tray：不拆文本、不移动 caret；面板未开时先经 `deps.togglePane`
+   * 摘录卡片按 caret 落位：必要时拆行，插入后 caret 在卡下方；面板未开时先经 `deps.togglePane`
    * 打开再插入并聚焦 CM 文本面。卡片数据（含 lines 非空校验）由调用方经 `createQuoteCard` 产出。
    */
   insertQuoteCard(card: QuoteCard): void;
@@ -3822,11 +3825,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   ctxPop.hidden = true;
   ctxWrap.append(ctxRead, ctxPop);
 
-  // 最小 CM6 文本面 + 区外附件 tray。卡片不再参与 DOM Selection、IME 或文本删除。
-  const composerTray = document.createElement("div");
-  composerTray.className = "lumir-hp-composer-tray";
+  // 最小 CM6 文本面；附件是文档精确偏移处的零长度 block widget。
   const composer = document.createElement("div");
   composer.className = "lumir-hp-composer";
+  composer.setAttribute("role", "group");
+  composer.setAttribute("aria-label", t("D328"));
   const ctlSpacer = document.createElement("span");
   ctlSpacer.className = "lumir-hp-ctl-spacer";
   // 发送钮（M351 图标化，原型 .h-send）：26×26 accent 实心，↑ / ■ 两态 glyph 按相位显隐；
@@ -3883,7 +3886,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   persistenceNote.setAttribute("role", "status");
   persistenceNote.dataset.persistenceHealth = "true";
   persistenceNote.hidden = true;
-  composer.append(composerTray);
   composerBox.append(composer, ctl);
   composerArea.append(chip, quoteNote, persistenceNote, composerBox);
 
@@ -4403,9 +4405,20 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const cardData = new WeakMap<Element, QuoteCard | MessageQuoteCard | ImageCard>();
   let imeGateState = imeKeyGate();
   let quoteJumpHandler: ((card: QuoteCard) => void) | null = null;
-  let renderedComposerAttachments: readonly ComposerAttachment[] | null = null;
   const composerViewExtensions = [
     EditorView.lineWrapping,
+    composerInlineCards({
+      create(attachment, ordinal) {
+        return createCardEl(attachment.card.card, "composer", ordinal);
+      },
+      update(element, attachment, ordinal) {
+        if (attachment.card.kind !== "image" || ordinal === null) return;
+        const badge = element.querySelector<HTMLElement>(".lumir-hp-qc-ord");
+        badge?.replaceChildren(String(ordinal));
+        badge?.setAttribute("aria-label", t("D447", { n: String(ordinal), name: attachment.card.card.name }));
+      },
+      prune: () => imageThumbCache.prune(),
+    }),
     EditorView.contentAttributes.of({
       "aria-label": t("D328"),
       "aria-multiline": "true",
@@ -4415,8 +4428,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       const cardsChanged = update.startState.field(composerAttachmentsField)
         !== update.state.field(composerAttachmentsField);
       if (cardsChanged) {
-        renderComposerAttachments();
         refreshChip();
+        if (update.startState.field(composerAttachmentsField).length !== update.state.field(composerAttachmentsField).length && !update.view.compositionStarted) {
+          requestAnimationFrame(() => (update.view as unknown as { measure(): void }).measure());
+        }
       }
       if (update.docChanged || update.selectionSet || cardsChanged) {
         updateEmptyClass();
@@ -4652,9 +4667,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     at.addEventListener("mousedown", (event) => event.preventDefault());
     at.addEventListener("click", (event) => {
       event.stopPropagation();
-      const index = Number(el.dataset.attachmentIndex);
-      if (!Number.isInteger(index) || index < 0) return;
-      const ordinal = imageOrdinals(composerBlocks(composerView.state)).get(index);
+      const id = Number(el.dataset.attachmentId);
+      if (!Number.isInteger(id) || id < 0) return;
+      const ordinal = composerImageOrdinals(composerView.state).get(id);
       if (ordinal === undefined) return;
       insertComposerText(composerView, imageMentionText(ordinal), "input.image-mention");
       composerView.focus();
@@ -4723,9 +4738,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       remove.addEventListener("mousedown", (event) => event.stopPropagation());
       remove.addEventListener("click", (event) => {
         event.stopPropagation();
-        const index = Number(el.dataset.attachmentIndex);
-        if (!Number.isInteger(index) || index < 0) return;
-        removeAttachmentAt(index);
+        const id = Number(el.dataset.attachmentId);
+        if (!Number.isInteger(id) || id < 0) return;
+        removeAttachmentAt(id);
         composerView.focus();
       });
     } else {
@@ -4802,9 +4817,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       remove.addEventListener("mousedown", (event) => event.stopPropagation());
       remove.addEventListener("click", (event) => {
         event.stopPropagation();
-        const index = Number(el.dataset.attachmentIndex);
-        if (!Number.isInteger(index) || index < 0) return;
-        removeAttachmentAt(index);
+        const id = Number(el.dataset.attachmentId);
+        if (!Number.isInteger(id) || id < 0) return;
+        removeAttachmentAt(id);
         composerView.focus();
       });
       el.addEventListener("click", jump);
@@ -4825,55 +4840,48 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return el;
   }
 
-  function renderComposerAttachments(): void {
-    const attachments = composerView.state.field(composerAttachmentsField);
-    if (renderedComposerAttachments === attachments) return;
-    renderedComposerAttachments = attachments;
-    const blocks = composerBlocks(composerView.state);
-    const ordinals = imageOrdinals(blocks);
-    composerTray.replaceChildren();
-    for (let index = 0; index < attachments.length; index += 1) {
-      const attachment = attachments[index];
-      const el = createCardEl(attachment.card, "composer", ordinals.get(index) ?? null);
-      el.dataset.attachmentIndex = String(index);
-      composerTray.append(el);
-    }
-    // tray 是图片缩略图的活跃面：旧卡已随 replaceChildren 离场，重渲后立刻按新 DOM prune
-    //（被移除的卡片若使缓存超预算，其 URL 在这里释放；仍在场的图受 active 保护）。
-    imageThumbCache.prune();
-  }
-
   function updateEmptyClass(): void {
-    composer.classList.toggle("is-empty", composerView.state.doc.length === 0);
+    composer.classList.toggle("is-empty", composerIsEmpty(composerView.state));
   }
 
-  function resetComposer(content: ComposerContent = { text: "", caret: 0, cards: [] }): void {
+  function resetComposer(content: Parameters<typeof createComposerState>[0] = { text: "", caret: 0, cards: [] }): void {
     composerView.setState(createComposerState(content, composerViewExtensions));
-    renderComposerAttachments();
     updateEmptyClass();
-    // `renderComposerAttachments` 在附件引用未变时早退；复位 / 发送清空卡片也必须 prune
-    //（DOM 已是新投影，旧卡的缩略图在这里失去 active 身份）。
     imageThumbCache.prune();
   }
 
-  function syncAttachmentProjection(previous: readonly ComposerAttachment[]): void {
+  function syncAttachmentProjection(previous: readonly PlacedAttachment[]): void {
     if (previous === composerView.state.field(composerAttachmentsField)) return;
-    renderComposerAttachments();
     refreshChip();
     updateEmptyClass();
     markDraft();
   }
 
-  function appendAttachments(cards: readonly ComposerAttachment[]): void {
-    if (cards.length === 0) return;
+  function insertAttachmentsNow(cards: readonly ComposerAttachment[]): boolean {
+    if (cards.length === 0) return true;
     const previous = composerView.state.field(composerAttachmentsField);
-    composerView.dispatch(appendComposerAttachments(cards));
+    composerView.dispatch(appendComposerAttachments(composerView.state, cards));
     syncAttachmentProjection(previous);
+    return true;
   }
 
-  function removeAttachmentAt(index: number): void {
+  const composerIme = createComposerImeCoordinator<readonly ComposerAttachment[]>({
+    insert: insertAttachmentsNow,
+    send: () => performSend(),
+  });
+
+  function composerIsComposing(): boolean {
+    return composerView.composing || composerView.compositionStarted || imeGateState.composing;
+  }
+
+  function appendAttachments(cards: readonly ComposerAttachment[]): void {
+    if (cards.length === 0) return;
+    composerIme.insert(cards, viewGeneration, composerIsComposing());
+  }
+
+  function removeAttachmentAt(id: number): void {
     const previous = composerView.state.field(composerAttachmentsField);
-    composerView.dispatch(removeComposerAttachment(index));
+    composerView.dispatch(removeComposerAttachment(id));
     syncAttachmentProjection(previous);
   }
 
@@ -4991,6 +4999,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     segNew.setAttribute("aria-label", t("D330"));
     applySessionName();
     composer.dataset.placeholder = t("D328");
+    composer.setAttribute("aria-label", t("D328"));
     composerView.contentDOM.setAttribute("aria-label", t("D328"));
     emptyHint.textContent = t("D346");
     applyChip();
@@ -9787,6 +9796,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     persistenceSnapshotSeq += 1;
     // 视图世代（发送拒绝回包的归属判据，见 `viewGeneration` 的注释）：与快照作废同一个换代点。
     viewGeneration += 1;
+    composerIme.reset(viewGeneration);
     clearTranscriptSurface();
     // 引用失败的输入区状态行属于上一段输入（M662）：换会话即清（卡片上的留痕随卡片一起消失）。
     applyQuoteFailureNotice(null);
@@ -9943,6 +9953,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   function send(): void {
     if (currentActivity().phase !== "idle") return;
+    composerIme.send(viewGeneration, composerIsComposing());
+  }
+
+  function performSend(): void {
+    if (currentActivity().phase !== "idle") return;
     const content = composerContentOf(composerView.state);
     const blocks = composerBlocks(composerView.state);
     const projection = projectComposerDelivery(composerView.state);
@@ -10024,7 +10039,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         if (errorCodeOf(e) === "harness_image_unsupported") {
           // 能力闸：卡片标错误态 + toast（D445），不追加错误行——既有裁决的出口。
           for (const attachment of content.cards) {
-            if (attachment.kind === "image") imageGateErrored.add(attachment.card.name);
+            if (attachment.card.kind === "image") imageGateErrored.add(attachment.card.card.name);
           }
           rollbackRejectedSend(optimistic, prevFirstUserText, content);
           deps.toast(errorText(e));
@@ -10073,10 +10088,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }, true);
   composer.addEventListener("compositionstart", () => {
+    (composerView as unknown as { measure(): void }).measure();
     imeGateState = imeGateCompositionStart(imeGateState);
   });
   composer.addEventListener("compositionend", () => {
     imeGateState = imeGateCompositionEnd(imeGateState, Date.now());
+    composerIme.compositionEnd(viewGeneration);
   });
   composer.addEventListener("paste", (event: ClipboardEvent) => {
     event.preventDefault();
@@ -10583,6 +10600,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       if (chipWatchTimer !== null) window.clearInterval(chipWatchTimer);
       chipWatchTimer = window.setInterval(watchActiveSession, 400);
     } else {
+      composerIme.reset(viewGeneration);
       // 摘出 DOM（元素长驻内存：订阅 / CM history / 流式态不丢），浮层与刷新表随之收起。
       // 摘之前先把待写的草稿落盘（面板关闭是一个离散 flush 时点，design §4：面板收起后输入区
       // 不在屏幕上，用户不会再「顺手」给它一次防抖机会）——草稿没写走就再也没有第二次机会。

@@ -20,7 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, isStaleIndexError, KEY_CHANNELS, keyChannel, keysTarget, loadScenario, matcher, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, resolveKeysTarget, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, screenshotSize, settleEditorless } from "./execute.mjs";
+import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, isStaleIndexError, KEY_CHANNELS, keyChannel, keysTarget, loadScenario, matcher, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, resolveKeysTarget, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, scopedAxOrder, screenshotSize, settleEditorless } from "./execute.mjs";
 import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
 import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, SETTLE_SAMPLE_MS, settle, StepError } from "./drive.mjs";
 import { InfraError, repoRoot } from "./util.mjs";
@@ -3358,4 +3358,37 @@ test("resolveKeysTarget：键盘落在按钮上时身份钉住按钮，不因同
   const pinned = resolveKeysTarget(KEYS_AX_BUTTON_THEN_INPUT, target.identity);
   assert.equal(pinned.kind, "AXButton");
   assert.equal(pinned.value, "保存");
+});
+
+
+const SCOPED_COMPOSER_DUMP = `
+- [1] AXGroup (composer)
+  - [2] AXStaticText = "CW-CARD-A"
+  - [3] AXTextArea = "CW-TEXT-B"
+- [4] AXTextArea = "CW-CARD-A 编辑器原文"
+`;
+
+test("scoped AX：只在 composer 子树判序，编辑器原文不参与", () => {
+  const nodes = parseNodes(SCOPED_COMPOSER_DUMP);
+  const reading = scopedAxOrder(nodes, { role: "AXGroup", name: "composer" }, ["CW-CARD-A", "CW-TEXT-B"]);
+  assert.equal(reading.ok, true);
+  assert.deepEqual(reading.positions, [1, 2]);
+  assert.equal(reading.textAreas.length, 1);
+  assert.equal(reading.textAreas[0].value, "CW-TEXT-B");
+  assert.deepEqual(checkScenario({ id: "scoped", item: 0, steps: [{ name: "顺序", expect: [{ ax: { scope: { role: "AXGroup", name: "composer" }, order: ["CW-CARD-A", "CW-TEXT-B"] } }] }] }), []);
+});
+
+test("scoped AX 负控：只反转 composer 内顺序即判红", () => {
+  const nodes = parseNodes(SCOPED_COMPOSER_DUMP);
+  const reading = scopedAxOrder(nodes, { role: "AXGroup", name: "composer" }, ["CW-TEXT-B", "CW-CARD-A"]);
+  assert.equal(reading.ok, false);
+  assert.match(reading.error, /缺少或乱序/);
+});
+
+test("scoped AX：scope 缺失或不唯一、AXTextArea 不可读都 FAIL", () => {
+  const nodes = parseNodes(SCOPED_COMPOSER_DUMP);
+  assert.equal(scopedAxOrder(nodes, { role: "AXGroup", name: "missing" }, ["CW-CARD-A"]).ok, false);
+  assert.equal(scopedAxOrder(nodes, { role: "AXTextArea" }, ["CW-CARD-A"]).ok, false);
+  const unread = nodes.map((node) => node.role === "AXTextArea" && node.depth > 0 ? { ...node, value: null } : node);
+  assert.equal(scopedAxOrder(unread, { role: "AXGroup", name: "composer" }, ["CW-CARD-A"]).ok, false);
 });

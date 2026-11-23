@@ -188,13 +188,16 @@ function createDraftRig(seed: Record<string, string> = {}): DraftRig {
   return rig;
 }
 
-const CARDS: ComposerAttachment[] = [
-  {
-    kind: "quote",
-    card: { file: "synth.md", heading: "H", headingPath: "H", lines: "1-1", text: "摘录" },
-  },
-];
-const draft = (text: string, caret: number | null = null): string => serializeComposerDraft(text, caret, CARDS);
+const CARD: ComposerAttachment = {
+  kind: "quote",
+  card: { file: "synth.md", heading: "H", headingPath: "H", lines: "1-1", text: "摘录" },
+};
+const CARDS = [{ card: CARD, anchor: 0 }];
+const draft = (text: string, caret: number | null = null): string => serializeComposerDraft(
+  text,
+  caret,
+  CARDS.map(({ card, anchor }) => ({ card, at: anchor })),
+);
 
 // ---------------------------------------------------------------------------
 // 草稿：读 / 写交错

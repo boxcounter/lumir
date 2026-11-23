@@ -137,7 +137,7 @@ steps:
 Alex 2026-10-23 的两条报告：
 
 1. **composer ⌘A 全选**：修法是让 ⌘A 真正进统一键位层（Edit 菜单的预置 Select All 让出
-   加速键）+ 把 `editor.select-all` 收进 `text` 作用域（composer 侧由 CM selection 选择 0 → doc.length，附件 tray 不参与）。
+   加速键）+ 把 `editor.select-all` 收进 `text` 作用域（composer 侧由 CM selection 选择 0 → doc.length，零长度附件 widget 不参与）。
 2. **⌘⇧, / ⌘⇧. 切标签**：两条新绑定指向既有的 `tab.prev` / `tab.next`（零新命令）。
 
 真机判据取**同一条命令**经通道可达键触发的行为：`[keys]` 把 `editor.select-all` 绑到 `⌘J`、

@@ -49,7 +49,7 @@ steps:
       has: ["/pasted-[0-9a-f]{16}\\.webp/"]
     timeoutMs: 30000
 
-  - name: 焦点回 composer（图片卡在区外附件 tray，文本值仍为空），键入 A 侧提问
+  - name: 焦点回 composer（图片卡在文本区 widget，文本值仍为空），键入 A 侧提问
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
 

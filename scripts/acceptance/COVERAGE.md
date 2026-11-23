@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：276
+- 场景：277
 - 验收项（不同 item 编号）：245
-- 分档：core 30 / full 236 / bundle 5 / evidence 5（full 批 = 全部 276 个，含其余各档）
+- 分档：core 31 / full 236 / bundle 5 / evidence 5（full 批 = 全部 277 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -148,7 +148,7 @@
 | 124 | `124-harness-sessions-per-vault` | 会话留存按 vault 分目录：两 vault 各落各目录（目录名 = 注册表 id），浮层只见当前 vault 的会话，根下零平铺 | full |
 | 125 | `125-harness-sessions-migrate-script` | 一次性归位脚本：平铺留存按首行 vault_root 归入 vault 目录，不可归属进 _orphaned，根下零 *.jsonl，可重跑幂等 | full |
 | 126 | `126-window-geometry` | 主窗口尺寸：首启 = 工作区 90% / 二次启动按存档恢复 / 越界存档钳到工作区 / 存档损坏回落且自愈 | core |
-| 127 | `127-harness-composer-image-paste` | composer 贴图：落 harness 侧 attachments/<vault id>/（vault 零新增）+ 图片卡片 + wire 附件前置 + JSONL 无 base64 + 重启恢复 round-trip | core |
+| 127 | `127-harness-composer-image-paste` | composer 贴图：落 harness 侧 attachments/<vault id>/（vault 零新增）+ 图片卡片 + wire 锚点块序 + JSONL 无 base64 + 重启恢复 round-trip | core |
 | 128 | `128-harness-image-gate` | 图片能力闸：模型未声明 vision 时含图消息发送被挡（toast + 卡片标出 + 输入区保留 + 会话不推进） | full |
 | 129 | `129-harness-image-per-vault` | 贴图附件按 vault 分置：两 vault 各贴各落（attachments/<各自稳定 id>/），互不可见、留存互不污染 | full |
 | 131 | `131-harness-cache-session` | Harness 缓存读数①：控制行显示会话累计命中率、气泡命中率行同源（单回合值 / 成因句 / 写入行不上屏）、切 vault 回来读数仍在 | full |
@@ -260,6 +260,6 @@
 | 719 | `719-harness-retry-approval` | 重试后的新写工具仍需批准：批准前零副作用、批准卡再现、批准后恰好一次 | full |
 | 720 | `720-harness-retry-image-nonvision` | 含图失败切非 vision 模型：重试被前置闸拒绝（零请求、动作仍在） | full |
 | 721 | `721-harness-vault-unread` | 跨 vault 的活动记录：非当前 vault 的在途 / 未读在切换器行上可读，切过去但面板收起不清未读 | full |
-| 722 | `722-line-numbers-toggle` | 行号全局开关真机链路——默认 off 两模式都无 gutter（右键 oracle 拿不到）、⌘⇧N 与 modeline 指示钮同源切换、on 档两模式可复制、off + ⌥G 的临时 gutter 可复制、切换持久化与重启、后台标签切回已是新态、on → ⌥G → 切 off 的交叉态 | full |
+| 722 | `722-harness-composer-inline-cards`<br>`722-line-numbers-toggle` | composer 零长度 inline cards：精确块序 + scoped AX + 一步 undo + 纯文本复制 + 草稿 v3<br>行号全局开关真机链路——默认 off 两模式都无 gutter（右键 oracle 拿不到）、⌘⇧N 与 modeline 指示钮同源切换、on 档两模式可复制、off + ⌥G 的临时 gutter 可复制、切换持久化与重启、后台标签切回已是新态、on → ⌥G → 切 off 的交叉态 | core<br>full |
 | 724 | `724-harness-session-order` | 会话清单按最后活动排序（每文件一行）：恢复不置顶、sidecar 不计入、compact 不沿链、缺时间回落、打开期间不重排 | full |
 | 725 | `725-harness-approval-visibility` | 待批可见性：脱离态下批准卡到达仍有标题栏信号与未读；回底决策后清算；停止撤回无幻影 | full |

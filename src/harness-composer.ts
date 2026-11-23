@@ -1,6 +1,7 @@
 import {
   EditorSelection,
   EditorState,
+  RangeSetBuilder,
   StateEffect,
   StateField,
   Transaction,
@@ -23,13 +24,16 @@ import {
   selectLineStart,
   undo,
 } from "@codemirror/commands";
-import { EditorView } from "@codemirror/view";
+import { Decoration, EditorView, WidgetType } from "@codemirror/view";
+import type { DecorationSet } from "@codemirror/view";
 import type { CommandId } from "./keys";
 import {
   clusterBackward,
   clusterForward,
   currentKillSlot,
+  imageOrdinals,
   mergeKillText,
+  normalizeLineEndings,
   projectDelivery,
   setKillSlot,
   wordEndForward,
@@ -37,73 +41,129 @@ import {
 } from "./quote-card";
 import type { ComposerAttachment, ComposerBlock, DeliveryProjection } from "./quote-card";
 
+export interface PlacedAttachment {
+  readonly id: number;
+  readonly card: ComposerAttachment;
+  readonly anchor: number;
+}
+
+export type PlacedAttachmentInput = Omit<PlacedAttachment, "id" | "anchor"> & {
+  readonly id?: number;
+  readonly anchor?: number;
+  readonly at?: number;
+};
+
 export interface ComposerContent {
   text: string;
   caret: number | null;
-  cards: readonly ComposerAttachment[];
+  cards: readonly PlacedAttachment[];
+}
+
+export interface ComposerContentInput {
+  text: string;
+  caret: number | null;
+  cards: readonly PlacedAttachmentInput[];
 }
 
 type AttachmentEdit =
-  | { readonly type: "append"; readonly at: number; readonly cards: readonly ComposerAttachment[] }
-  | { readonly type: "remove"; readonly index: number };
+  | { readonly type: "insert"; readonly cards: readonly PlacedAttachment[] }
+  | { readonly type: "remove"; readonly ids: readonly number[] };
 
 export const composerAttachmentEffect = StateEffect.define<AttachmentEdit>();
+export const composerAnchorsSyncEffect = StateEffect.define<readonly PlacedAttachment[]>();
 
-export const composerAttachmentsField = StateField.define<readonly ComposerAttachment[]>({
+let attachmentId = 0;
+
+function nextAttachmentId(): number {
+  attachmentId += 1;
+  return attachmentId;
+}
+
+function sortPlacedAttachments(cards: readonly PlacedAttachment[]): PlacedAttachment[] {
+  return cards
+    .map((card, index) => ({ card, index }))
+    .sort((a, b) => a.card.anchor - b.card.anchor || a.index - b.index)
+    .map(({ card }) => card);
+}
+
+function mapComposerAttachments(
+  attachments: readonly PlacedAttachment[],
+  tr: Transaction,
+): PlacedAttachment[] {
+  let next = tr.docChanged
+    ? attachments.map((attachment) => ({
+      ...attachment,
+      anchor: tr.changes.mapPos(attachment.anchor, -1),
+    }))
+    : [...attachments];
+  for (const effect of tr.effects) {
+    if (!effect.is(composerAttachmentEffect)) continue;
+    if (effect.value.type === "insert") {
+      next.push(...effect.value.cards);
+    } else {
+      const removed = new Set(effect.value.ids);
+      next = next.filter((attachment) => !removed.has(attachment.id));
+    }
+  }
+  return sortPlacedAttachments(next);
+}
+
+export const composerAttachmentsField = StateField.define<readonly PlacedAttachment[]>({
   create: () => [],
   update(attachments, tr) {
-    let next = attachments;
-    for (const effect of tr.effects) {
-      if (!effect.is(composerAttachmentEffect)) continue;
-      if (effect.value.type === "append") {
-        const at = Math.max(0, Math.min(effect.value.at, next.length));
-        next = [...next.slice(0, at), ...effect.value.cards, ...next.slice(at)];
-      } else if (effect.value.index >= 0 && effect.value.index < next.length) {
-        next = [...next.slice(0, effect.value.index), ...next.slice(effect.value.index + 1)];
-      }
-    }
-    return next;
+    const sync = tr.effects.filter((effect) => effect.is(composerAnchorsSyncEffect));
+    if (sync.length > 0) return sync[sync.length - 1].value as readonly PlacedAttachment[];
+    const structural = tr.effects.some((effect) => effect.is(composerAttachmentEffect));
+    if (!tr.docChanged && !structural) return attachments;
+    return mapComposerAttachments(attachments, tr);
   },
 });
 
 const composerAttachmentInversions = invertedEffects.of((tr) => {
-  const inverse: StateEffect<AttachmentEdit>[] = [];
-  let current = [...tr.startState.field(composerAttachmentsField)];
-  for (const effect of tr.effects) {
-    if (!effect.is(composerAttachmentEffect)) continue;
-    const edit = effect.value;
-    if (edit.type === "append") {
-      const at = Math.max(0, Math.min(edit.at, current.length));
-      for (let index = 0; index < edit.cards.length; index += 1) {
-        inverse.push(composerAttachmentEffect.of({ type: "remove", index: at }));
-      }
-      current = [...current.slice(0, at), ...edit.cards, ...current.slice(at)];
-    } else {
-      const card = current[edit.index];
-      if (card !== undefined) {
-        inverse.push(composerAttachmentEffect.of({ type: "append", at: edit.index, cards: [card] }));
-        current = [...current.slice(0, edit.index), ...current.slice(edit.index + 1)];
-      }
-    }
+  if (!tr.effects.some((effect) => effect.is(composerAnchorsSyncEffect))) return [];
+  return [composerAnchorsSyncEffect.of(tr.startState.field(composerAttachmentsField))];
+});
+
+const composerHistoryGuard = EditorState.transactionFilter.of((tr) => {
+  if (
+    tr.docChanged &&
+    (tr.annotation(Transaction.addToHistory) === false || tr.annotation(Transaction.remote) === true)
+  ) {
+    throw new Error("composer: addToHistory:false / remote doc changes are forbidden; create a new EditorState");
   }
-  return inverse.reverse();
+  return tr;
+});
+
+const composerAnchorSync = EditorState.transactionExtender.of((tr) => {
+  const userEvent = tr.annotation(Transaction.userEvent) ?? "";
+  if (/^(?:select\.)?(?:undo|redo)/.test(userEvent)) return null;
+  if (tr.effects.some((effect) => effect.is(composerAnchorsSyncEffect))) return null;
+  if (!tr.docChanged && !tr.effects.some((effect) => effect.is(composerAttachmentEffect))) return null;
+  const before = tr.startState.field(composerAttachmentsField);
+  return { effects: composerAnchorsSyncEffect.of(mapComposerAttachments(before, tr)) };
 });
 
 /** composer 的物理 Backspace 闸门（M860）：折叠 caret 上无修饰的 Backspace
  *  （`deleteContentBackward`）按一个字素簇删除，步长与正文 `⌃H` / `⌃D` 同一份核
  *  （`quote-card.clusterBackward`）。修饰键变体以不同 inputType 到达（`⌥⌫` =
  *  `deleteWordBackward`、`⌘⌫` = `deleteHardLineBackward` / `deleteSoftLineBackward`），
- *  因此「只认 `deleteContentBackward`」就是「只认无修饰 Backspace」，不读键盘修饰位；
- *  IME 组合期、只读会话与非空选区保持既有路径（非空选区删除归编辑器侧 M854 的选区
- *  编辑合同；composer 是纯文本，原生删选区逐字节正确）。正文侧同一判定在
+ *  折叠 caret 只认 `deleteContentBackward`，不读键盘修饰位；非空选区在 block widget 旁按
+ *  Backspace / Delete 时按 `state.selection` 显式删除，避免原生 DOM 形状只移动选区而不改文档。
+ *  IME 组合期、只读会话与多选区保持既有路径。正文侧同一判定在
  *  `src/editor.ts` 的 `absorbGraphemeBackspace`（两个编辑面各自的入口，字素步长核只有
  *  一份——REVIEW.md「同一语义两处真源」条）。 */
 export function absorbComposerGraphemeBackspace(event: InputEvent, view: EditorView): boolean {
-  if (event.inputType !== "deleteContentBackward") return false;
+  if (event.inputType !== "deleteContentBackward" && event.inputType !== "deleteContentForward") return false;
   const state = view.state;
   if (state.readOnly || view.compositionStarted || event.isComposing) return false;
   const ranges = state.selection.ranges;
-  if (ranges.length !== 1 || !ranges[0].empty) return false;
+  if (ranges.length !== 1) return false;
+  if (!ranges[0].empty) {
+    event.preventDefault();
+    deleteRange(view, ranges[0].from, ranges[0].to, "delete.selection");
+    return true;
+  }
+  if (event.inputType !== "deleteContentBackward") return false;
   event.preventDefault();
   deleteCharBackward(view);
   return true;
@@ -117,19 +177,31 @@ export const composerStateExtensions = [
   history(),
   composerAttachmentsField,
   composerAttachmentInversions,
+  composerHistoryGuard,
+  composerAnchorSync,
   composerGraphemeBackspace,
 ];
 
-export function createComposerState(content: ComposerContent, extensions: readonly Extension[] = []): EditorState {
+export function createComposerState(content: ComposerContentInput, extensions: readonly Extension[] = []): EditorState {
+  const normalized = normalizeLineEndings(content.text);
+  const text = normalized.text;
   const caret = content.caret === null
-    ? content.text.length
-    : Math.max(0, Math.min(content.caret, content.text.length));
+    ? text.length
+    : Math.max(0, Math.min(normalized.mapOffset(content.caret), text.length));
+  const cards = sortPlacedAttachments(content.cards.map((attachment) => {
+    const suppliedId = attachment.id;
+    const id = suppliedId ?? nextAttachmentId();
+    attachmentId = Math.max(attachmentId, id);
+    const rawAnchor = attachment.anchor ?? attachment.at ?? 0;
+    const anchor = Math.max(0, Math.min(normalized.mapOffset(rawAnchor), text.length));
+    return { id, card: attachment.card, anchor };
+  }));
   return EditorState.create({
-    doc: content.text,
+    doc: text,
     selection: EditorSelection.cursor(caret),
     extensions: [
       ...composerStateExtensions,
-      composerAttachmentsField.init(() => content.cards),
+      composerAttachmentsField.init(() => cards),
       ...extensions,
     ],
   });
@@ -164,29 +236,194 @@ export function mergeRejectedComposerContent(
   return {
     text: restored.text + current.text,
     caret: current.caret === null ? null : restored.text.length + current.caret,
-    cards: [...restored.cards, ...current.cards],
+    cards: sortPlacedAttachments([
+      ...restored.cards,
+      ...current.cards.map((attachment) => ({
+        ...attachment,
+        anchor: attachment.anchor + restored.text.length,
+      })),
+    ]),
   };
 }
 
-export function appendComposerAttachments(cards: readonly ComposerAttachment[]): TransactionSpec {
+export function appendComposerAttachments(
+  state: EditorState,
+  cards: readonly ComposerAttachment[],
+): TransactionSpec {
+  const head = state.selection.main.head;
+  const line = state.doc.lineAt(head);
+  let anchor = head;
+  let changes: TransactionSpec["changes"];
+  if (state.doc.length > 0 && head !== line.from) {
+    if (head < line.to || line.number === state.doc.lines) {
+      changes = { from: head, insert: "\n" };
+      anchor = head + 1;
+    } else {
+      anchor = head + 1;
+    }
+  }
+  const placed = cards.map((card) => ({ id: nextAttachmentId(), card, anchor }));
   return {
-    effects: composerAttachmentEffect.of({ type: "append", at: Number.MAX_SAFE_INTEGER, cards }),
+    changes,
+    selection: EditorSelection.cursor(anchor),
+    effects: composerAttachmentEffect.of({ type: "insert", cards: placed }),
     annotations: isolateHistory.of("full"),
+    scrollIntoView: true,
+    userEvent: "input.card-insert",
   };
 }
 
-export function removeComposerAttachment(index: number): TransactionSpec {
+export function removeComposerAttachment(id: number): TransactionSpec {
   return {
-    effects: composerAttachmentEffect.of({ type: "remove", index }),
+    effects: composerAttachmentEffect.of({ type: "remove", ids: [id] }),
     annotations: isolateHistory.of("full"),
+    userEvent: "input.card-remove",
   };
 }
 
 export function composerBlocks(state: EditorState): ComposerBlock[] {
-  return [
-    ...state.field(composerAttachmentsField),
-    { kind: "paragraph", text: state.doc.toString() },
-  ];
+  const attachments = state.field(composerAttachmentsField);
+  const blocks: ComposerBlock[] = [];
+  let cursor = 0;
+  let index = 0;
+  while (index < attachments.length) {
+    const anchor = attachments[index].anchor;
+    let end = anchor;
+    if (end > cursor && state.doc.sliceString(end - 1, end) === "\n") end -= 1;
+    if (end > cursor) blocks.push({ kind: "paragraph", text: state.doc.sliceString(cursor, end) });
+    while (index < attachments.length && attachments[index].anchor === anchor) {
+      blocks.push(attachments[index].card);
+      index += 1;
+    }
+    cursor = anchor;
+  }
+  if (cursor < state.doc.length || blocks.length === 0) {
+    blocks.push({ kind: "paragraph", text: state.doc.sliceString(cursor) });
+  }
+  return blocks;
+}
+
+export function composerImageOrdinals(state: EditorState): ReadonlyMap<number, number> {
+  const blocks = composerBlocks(state);
+  const blockOrdinals = imageOrdinals(blocks);
+  const imageIds = state.field(composerAttachmentsField)
+    .filter((attachment) => attachment.card.kind === "image")
+    .map((attachment) => attachment.id);
+  const ordinals = new Map<number, number>();
+  let imageIndex = 0;
+  for (let index = 0; index < blocks.length; index += 1) {
+    if (blocks[index].kind !== "image") continue;
+    const id = imageIds[imageIndex];
+    const ordinal = blockOrdinals.get(index);
+    if (id !== undefined && ordinal !== undefined) ordinals.set(id, ordinal);
+    imageIndex += 1;
+  }
+  return ordinals;
+}
+
+export interface ComposerInlineCardRenderer {
+  create(attachment: PlacedAttachment, ordinal: number | null): HTMLElement;
+  update?(element: HTMLElement, attachment: PlacedAttachment, ordinal: number | null): void;
+  prune?(): void;
+}
+
+export class InlineCardsWidget extends WidgetType {
+  private readonly attachments: readonly PlacedAttachment[];
+  private readonly ordinals: ReadonlyMap<number, number>;
+  private readonly renderer: ComposerInlineCardRenderer;
+
+  constructor(
+    attachments: readonly PlacedAttachment[],
+    ordinals: ReadonlyMap<number, number>,
+    renderer: ComposerInlineCardRenderer,
+  ) {
+    super();
+    this.attachments = attachments;
+    this.ordinals = ordinals;
+    this.renderer = renderer;
+  }
+
+  private ordinalOf(attachment: PlacedAttachment): number | null {
+    return this.ordinals.get(attachment.id) ?? null;
+  }
+
+  private sameIdentity(other: InlineCardsWidget): boolean {
+    return this.attachments.length === other.attachments.length && this.attachments.every((attachment, index) => {
+      const previous = other.attachments[index];
+      return attachment.id === previous.id && attachment.card === previous.card;
+    });
+  }
+
+  eq(other: InlineCardsWidget): boolean {
+    return this.sameIdentity(other) && this.attachments.every((attachment) =>
+      this.ordinalOf(attachment) === other.ordinalOf(attachment));
+  }
+
+  toDOM(): HTMLElement {
+    const dom = document.createElement("div");
+    dom.className = "lumir-hp-cwidget";
+    dom.contentEditable = "false";
+    for (const attachment of this.attachments) {
+      const element = this.renderer.create(attachment, this.ordinalOf(attachment));
+      element.dataset.attachmentId = String(attachment.id);
+      dom.append(element);
+    }
+    return dom;
+  }
+
+  updateDOM(dom: HTMLElement, _view: EditorView, previous: this): boolean {
+    if (!this.sameIdentity(previous)) return false;
+    for (const attachment of this.attachments) {
+      const element = dom.querySelector<HTMLElement>(`[data-attachment-id="${attachment.id}"]`);
+      if (element === null) return false;
+      this.renderer.update?.(element, attachment, this.ordinalOf(attachment));
+    }
+    return true;
+  }
+
+  get estimatedHeight(): number {
+    return -1;
+  }
+
+  destroy(): void {
+    if (this.renderer.prune === undefined) return;
+    const composerInlineCardPrune = () => this.renderer.prune?.();
+    requestAnimationFrame(composerInlineCardPrune);
+  }
+}
+
+export function composerInlineCards(renderer: ComposerInlineCardRenderer): Extension {
+  const decorations = StateField.define<DecorationSet>({
+    create(state) {
+      return inlineCardDecorations(state, renderer);
+    },
+    update(value, tr) {
+      if (tr.startState.field(composerAttachmentsField) === tr.state.field(composerAttachmentsField)) return value;
+      return inlineCardDecorations(tr.state, renderer);
+    },
+  });
+  return [decorations, EditorView.decorations.from(decorations)];
+}
+
+function inlineCardDecorations(state: EditorState, renderer: ComposerInlineCardRenderer): DecorationSet {
+  const attachments = state.field(composerAttachmentsField);
+  const ordinals = composerImageOrdinals(state);
+  const builder = new RangeSetBuilder<Decoration>();
+  let index = 0;
+  while (index < attachments.length) {
+    const anchor = attachments[index].anchor;
+    const group: PlacedAttachment[] = [];
+    while (index < attachments.length && attachments[index].anchor === anchor) {
+      group.push(attachments[index]);
+      index += 1;
+    }
+    builder.add(anchor, anchor, Decoration.widget({
+      widget: new InlineCardsWidget(group, ordinals, renderer),
+      block: true,
+      side: -1,
+    }));
+  }
+  return builder.finish();
 }
 
 export function projectComposerDelivery(state: EditorState): DeliveryProjection {

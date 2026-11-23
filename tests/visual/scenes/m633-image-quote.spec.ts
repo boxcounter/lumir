@@ -277,7 +277,7 @@ test("跨文字与图片的选区：引用卡片 + 图片块按文档序进入�
   await expect(imageCard).toHaveCount(1);
   // 块序 = [卡片, 图片, 段落]（D3：卡片在前、图片按文档序在后）。
   const order = await page.evaluate(() => {
-    const el = document.querySelector(".lumir-hp-composer-tray") as HTMLElement;
+    const el = document.querySelector(".lumir-hp-composer .cm-content .lumir-hp-cwidget") as HTMLElement;
     return [...el.children].map((child) =>
       child.classList.contains("lumir-hp-imgcard")
         ? "image"
@@ -287,7 +287,7 @@ test("跨文字与图片的选区：引用卡片 + 图片块按文档序进入�
     );
   });
   expect(order).toEqual(["quote", "image"]);
-  await expect(composer.locator(".cm-content .lumir-hp-qcard")).toHaveCount(0);
+  await expect(composer.locator(".cm-line .lumir-hp-qcard")).toHaveCount(0);
   // 引用正文保留图片源码（design §5：不剥离，锚校验要逐字前缀）。
   await expect(quote.locator(".lumir-hp-qc-ex")).toContainText("![[pic.png]]");
   await expect(quote.locator(".lumir-hp-qc-src")).toContainText("harness-image-quote.md");
@@ -464,7 +464,7 @@ test("状态行的收口：文本摘录与消息摘录都是「下一次引用�
   // 路径一：**文本摘录**（insertQuoteCard）收口。选区取一段纯文字（不含图片），走卡片路径。
   await selectRange(page, "第一段文字", "第一段文字");
   await page.locator(".editor-pane > .quote-gesture-btn").click();
-  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard")).toHaveCount(1);
   await expect(note).toBeHidden();
 
   // 再失败一次 → 状态行重新在场（判据有区分度：不是一直隐藏）。
@@ -485,7 +485,7 @@ test("状态行的收口：文本摘录与消息摘录都是「下一次引用�
   });
   await expect(page.locator(".lumir-hp-transcript > .quote-gesture-btn")).toBeVisible();
   await page.locator(".lumir-hp-transcript > .quote-gesture-btn").click();
-  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-msgquote")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-msgquote")).toHaveCount(1);
   await expect(note).toBeHidden();
 });
 

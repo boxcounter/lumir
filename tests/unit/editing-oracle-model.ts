@@ -880,6 +880,7 @@ export interface ComposerSnapshot {
   anchor: number;
   head: number;
   cards: CardId[];
+  cardAnchors?: number[];
 }
 
 export interface ComposerDraft {
@@ -899,11 +900,27 @@ interface CompositionState {
   marked: string;
 }
 
+function mapCardAnchors(anchors: readonly number[], from: number, to: number, insertLength: number): number[] {
+  const delta = insertLength - (to - from);
+  return anchors.map((anchor) => {
+    if (anchor <= from) return anchor;
+    if (anchor >= to) return anchor + delta;
+    return from;
+  });
+}
+
+function sortCardsByAnchor(cards: readonly CardId[], anchors: readonly number[]): { cards: CardId[]; anchors: number[] } {
+  const pairs = cards.map((card, index) => ({ card, anchor: anchors[index], index }));
+  pairs.sort((a, b) => a.anchor - b.anchor || a.index - b.index);
+  return { cards: pairs.map((pair) => pair.card), anchors: pairs.map((pair) => pair.anchor) };
+}
+
 export class ComposerOracle {
   text: string;
   anchor: number;
   head: number;
   cards: CardId[];
+  private cardAnchors: number[];
   draft: ComposerDraft | null = null;
   sends = 0;
   private past: ComposerSnapshot[] = [];
@@ -921,6 +938,7 @@ export class ComposerOracle {
     this.anchor = Math.max(0, Math.min(caret, this.text.length));
     this.head = this.anchor;
     this.cards = [...(content.cards ?? [])];
+    this.cardAnchors = this.cards.map(() => 0);
   }
 
   get canUndo(): boolean {
@@ -954,7 +972,13 @@ export class ComposerOracle {
   }
 
   private snapshot(): ComposerSnapshot {
-    return { text: this.text, anchor: this.anchor, head: this.head, cards: [...this.cards] };
+    return {
+      text: this.text,
+      anchor: this.anchor,
+      head: this.head,
+      cards: [...this.cards],
+      cardAnchors: [...this.cardAnchors],
+    };
   }
 
   private push(kind: "changes" | "other" = "changes"): void {
@@ -973,6 +997,10 @@ export class ComposerOracle {
     const end = Math.max(from, to);
     this.push();
     this.text = this.text.slice(0, start) + insert + this.text.slice(end);
+    this.cardAnchors = mapCardAnchors(this.cardAnchors, start, end, insert.length);
+    const sorted = sortCardsByAnchor(this.cards, this.cardAnchors);
+    this.cards = sorted.cards;
+    this.cardAnchors = sorted.anchors;
     this.anchor = start + insert.length;
     this.head = this.anchor;
   }
@@ -1020,13 +1048,33 @@ export class ComposerOracle {
 
   addCard(id: CardId): void {
     this.push("other");
+    const head = this.head;
+    const lineStart = this.text.lastIndexOf("\n", Math.max(0, head - 1)) + 1;
+    const nextBreak = this.text.indexOf("\n", head);
+    const lineEnd = nextBreak < 0 ? this.text.length : nextBreak;
+    let anchor = head;
+    if (this.text.length > 0 && head !== lineStart) {
+      if (head < lineEnd || nextBreak < 0) {
+        this.text = this.text.slice(0, head) + "\n" + this.text.slice(head);
+        anchor = head + 1;
+      } else {
+        anchor = head + 1;
+      }
+    }
+    this.anchor = anchor;
+    this.head = anchor;
     this.cards = [...this.cards, id];
+    this.cardAnchors = [...this.cardAnchors, anchor];
+    const sorted = sortCardsByAnchor(this.cards, this.cardAnchors);
+    this.cards = sorted.cards;
+    this.cardAnchors = sorted.anchors;
   }
 
   removeCard(index: number): void {
     if (index < 0 || index >= this.cards.length) return;
     this.push("other");
     this.cards = [...this.cards.slice(0, index), ...this.cards.slice(index + 1)];
+    this.cardAnchors = [...this.cardAnchors.slice(0, index), ...this.cardAnchors.slice(index + 1)];
   }
 
   /** 组合开始：文本与卡片冻结为 `before`；组合期更新只改 marked 区。 */
@@ -1039,9 +1087,19 @@ export class ComposerOracle {
   private compositionApply(marked: string): void {
     const composition = this.composition;
     if (composition === null) return;
+    const previousMarkedLength = composition.marked.length;
     composition.marked = marked;
     const base = composition.before.text;
     this.text = base.slice(0, composition.start) + marked + base.slice(composition.start);
+    this.cardAnchors = mapCardAnchors(
+      composition.before.cardAnchors ?? [],
+      composition.start,
+      composition.start + previousMarkedLength,
+      marked.length,
+    );
+    const sorted = sortCardsByAnchor(this.cards, this.cardAnchors);
+    this.cards = sorted.cards;
+    this.cardAnchors = sorted.anchors;
     this.anchor = composition.start + marked.length;
     this.head = this.anchor;
   }
@@ -1067,6 +1125,7 @@ export class ComposerOracle {
     this.anchor = composition.before.anchor;
     this.head = composition.before.head;
     this.cards = [...composition.before.cards];
+    this.cardAnchors = [...(composition.before.cardAnchors ?? [])];
     this.composition = null;
   }
 
@@ -1087,6 +1146,11 @@ export class ComposerOracle {
     this.anchor = composition.start + candidate.length;
     this.head = this.anchor;
     this.cards = [...composition.before.cards];
+    this.cardAnchors = mapCardAnchors(composition.before.cardAnchors ?? [], composition.start, composition.start, candidate.length);
+    const sorted = sortCardsByAnchor(this.cards, this.cardAnchors);
+    this.cards = sorted.cards;
+    this.cardAnchors = sorted.anchors;
+    this.cardAnchors = [...(composition.before.cardAnchors ?? [])];
     this.composition = null;
   }
 
@@ -1100,6 +1164,7 @@ export class ComposerOracle {
     this.anchor = before.anchor;
     this.head = before.head;
     this.cards = [...before.cards];
+    this.cardAnchors = [...(before.cardAnchors ?? [])];
   }
 
   redo(): void {
@@ -1112,9 +1177,10 @@ export class ComposerOracle {
     this.anchor = after.anchor;
     this.head = after.head;
     this.cards = [...after.cards];
+    this.cardAnchors = [...(after.cardAnchors ?? [])];
   }
 
-  /** 草稿落盘快照：v2 的 text / caret / cards 三字段。 */
+  /** 草稿落盘快照：v3 的 text / caret / placed cards。 */
   saveDraft(): void {
     this.draft = { text: this.text, caret: this.head, cards: [...this.cards] };
   }
@@ -1126,6 +1192,7 @@ export class ComposerOracle {
     this.anchor = 0;
     this.head = 0;
     this.cards = [];
+    this.cardAnchors = [];
     this.past = [];
     this.future = [];
     this.pastKind = [];

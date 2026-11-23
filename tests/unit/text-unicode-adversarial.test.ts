@@ -183,7 +183,11 @@ function bodyReading(state: EditorState): Reading {
 }
 
 function composerStateWith(text: string, caret: number, cards: readonly ComposerAttachment[] = [CARD]): EditorState {
-  return createComposerState({ text, caret, cards });
+  return createComposerState({
+    text,
+    caret,
+    cards: cards.map((card, index) => ({ id: index + 1, card, anchor: 0 })),
+  });
 }
 
 /** 生产 composer 命令入口（`editor.delete-char-backward` 等）。 */
@@ -206,7 +210,7 @@ function composerReading(state: EditorState): Reading & { cards: ComposerAttachm
     text: state.doc.toString(),
     anchor: main.anchor,
     head: main.head,
-    cards: [...state.field(composerAttachmentsField)],
+    cards: state.field(composerAttachmentsField).map((attachment) => attachment.card),
   };
 }
 
@@ -392,13 +396,23 @@ test("composer 物理 Backspace：折叠 caret 一次删完整簇 + caret 落删
   }
 });
 
-test("composer 物理 Backspace：非空选区 / 修饰键变体 / IME 组合 / 只读保持既有路径", () => {
-  const withSelection = createComposerState({ text: "abcde", caret: 3, cards: [CARD] }).update({
-    selection: EditorSelection.range(1, 3),
-  }).state;
+test("composer 物理 Backspace / Delete：非空选区按 state.selection 删除，附件只映射 anchor", () => {
+  for (const inputType of ["deleteContentBackward", "deleteContentForward"]) {
+    const initial = composerStateWith("abcde", 3).update({ selection: EditorSelection.range(1, 3) }).state;
+    const handle = fakeView(initial);
+    const event = fakeBeforeInput(inputType);
+    const consumed = absorbComposerGraphemeBackspace(event as unknown as InputEvent, handle.view);
+    assert.equal(consumed, true);
+    assert.equal(event.prevented, true);
+    assert.equal(handle.state.doc.toString(), "ade");
+    assert.deepEqual(handle.state.field(composerAttachmentsField).map((attachment) => attachment.card), [CARD]);
+    assert.equal(handle.state.field(composerAttachmentsField)[0].anchor, 0);
+  }
+});
+
+test("composer 物理 Backspace：修饰键变体 / IME 组合 / 只读保持既有路径", () => {
   const readOnly = createComposerState({ text: "abcde", caret: 5, cards: [CARD] }, [EditorState.readOnly.of(true)]);
   const cases: { label: string; state: EditorState; inputType: string; isComposing?: boolean; compositionStarted?: boolean }[] = [
-    { label: "非空选区", state: withSelection, inputType: "deleteContentBackward" },
     { label: "⌥⌫ 词删除变体", state: composerStateWith("abcde", 5), inputType: "deleteWordBackward" },
     { label: "⌘⌫ 行删除变体", state: composerStateWith("abcde", 5), inputType: "deleteHardLineBackward" },
     { label: "行删除软变体", state: composerStateWith("abcde", 5), inputType: "deleteSoftLineBackward" },
@@ -493,7 +507,7 @@ for (const c of SELECTION_CASES) {
     const redone = composerRedo(undone);
     // redo 的选区由 CM 回填（与模型的 after 快照可以不同），只钉文本与附件。
     assert.equal(redone.doc.toString(), expected.text, `${c.name}: redo 文本`);
-    assert.deepEqual(redone.field(composerAttachmentsField), [CARD], `${c.name}: redo 附件`);
+    assert.deepEqual(redone.field(composerAttachmentsField).map((attachment) => attachment.card), [CARD], `${c.name}: redo 附件`);
   });
 }
 

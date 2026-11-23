@@ -1416,20 +1416,20 @@ async function openComposer(page: Page, text: string, caret: number, cards: unkn
         return invoke(cmd, args);
       };
     },
-    { draft: { version: 2, text, caret, cards }, providers: standardProviders() },
+    { draft: { version: 3, text, caret, cards: cards.map((card) => ({ card, at: 0 })) }, providers: standardProviders() },
   );
   await page.goto("/");
   await page.locator('.ft-row[title="oracle.md"]').click();
   await page.locator(".lumir-hp-toggle").click();
   await expect.poll(async () => (await composerState(page)).doc).toBe(text);
-  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard")).toHaveCount(cards.length);
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard")).toHaveCount(cards.length);
 }
 
 test("composer：⌘A + Backspace 只改文本；⌘Z 恢复；附件 × 可撤销", async ({ page }) => {
   await openComposer(page, "问题", 2, [QUOTE_CARD]);
   const content = page.locator(".lumir-hp-composer .cm-content");
-  const tray = page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard");
-  await content.click();
+  const tray = page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard");
+  await content.locator(".cm-line").first().click();
   await page.keyboard.press("Meta+a");
   await page.keyboard.press("Backspace");
   await expect.poll(async () => (await composerState(page)).doc).toBe("");
@@ -1452,8 +1452,8 @@ test("composer CDP 真引擎 IME：组合中删除 / 取消 / 提交（Chromium�
   test.skip(browserName !== "chromium", "CDP 只存在于 Chromium；WebKit 合成事件不能冒充原生 IME");
   await openComposer(page, "我", 1, [QUOTE_CARD]);
   const content = page.locator(".lumir-hp-composer .cm-content");
-  await content.click();
-  const tray = page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard");
+  await content.locator(".cm-line").first().click();
+  const tray = page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard");
   const cdp = await page.context().newCDPSession(page);
   const model = new ComposerOracle({ text: "我", caret: 1, cards: ["q"] });
   let step = 0;
@@ -1465,17 +1465,15 @@ test("composer CDP 真引擎 IME：组合中删除 / 取消 / 提交（Chromium�
     await expect(tray).toHaveCount(1);
     step += 1;
   };
-  const compose = async (text: string, replacementStart: number, replacementEnd = replacementStart): Promise<void> => {
+  const compose = async (text: string): Promise<void> => {
     await cdp.send("Input.imeSetComposition", {
       text,
       selectionStart: text.length,
       selectionEnd: text.length,
-      replacementStart,
-      replacementEnd,
     });
   };
 
-  await compose("s", 1);
+  await compose("s");
   applyComposerOp(model, { kind: "compositionStart" });
   applyComposerOp(model, { kind: "compositionUpdate", text: "s" });
   await expect.poll(async () => (await composerState(page)).doc).toBe("我s");
@@ -1487,7 +1485,7 @@ test("composer CDP 真引擎 IME：组合中删除 / 取消 / 提交（Chromium�
   await expect.poll(async () => (await composerState(page)).doc).toBe("我");
   await compare("compositionDelete");
 
-  await compose("shuang", 1);
+  await compose("shuang");
   applyComposerOp(model, { kind: "compositionUpdate", text: "shuang" });
   await page.keyboard.press("Backspace");
   applyComposerOp(model, { kind: "compositionDelete" });
@@ -1506,7 +1504,7 @@ test("composer CDP 真引擎 IME：组合中删除 / 取消 / 提交（Chromium�
   await expect.poll(async () => (await composerState(page)).doc).toBe("我");
   await compare("compositionCancel");
 
-  await compose("shi", 1);
+  await compose("shi");
   applyComposerOp(model, { kind: "compositionStart" });
   applyComposerOp(model, { kind: "compositionUpdate", text: "shi" });
   await cdp.send("Input.insertText", { text: "是" });

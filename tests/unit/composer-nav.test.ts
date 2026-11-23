@@ -22,6 +22,7 @@ const attachment: ComposerAttachment = {
   kind: "quote",
   card: { file: "synth.md", heading: "", headingPath: "", lines: "1-1", text: "引用" },
 };
+const placedAttachment = { id: 1, card: attachment, anchor: 0 };
 
 // 假 view 的度量按**比例字体**建模：CM 的竖直移动把 goal column 当像素 x（coordsAtPos 测左缘、
 // posAtCoords 取最近字符边界），而 composer 实际字体是 --font-sans。若这里用字符列当像素，
@@ -54,7 +55,7 @@ function nearestColumn(text: string, goal: number): number {
 
 function viewWith(text: string, caret: number) {
   const view = {
-    state: createComposerState({ text, caret, cards: [attachment] }),
+    state: createComposerState({ text, caret, cards: [placedAttachment] }),
     dispatch(spec: TransactionSpec | Transaction) {
       view.state = spec instanceof Transaction ? spec.state : view.state.update(spec).state;
     },
@@ -155,7 +156,7 @@ for (const item of commandCases) {
     assert.equal(view.state.doc.toString(), item.expectedText ?? item.text);
     assert.equal(view.state.selection.main.anchor, item.anchor);
     assert.equal(view.state.selection.main.head, item.head);
-    assert.deepEqual(view.state.field(composerAttachmentsField), [attachment]);
+    assert.deepEqual(view.state.field(composerAttachmentsField), [placedAttachment]);
   });
 }
 

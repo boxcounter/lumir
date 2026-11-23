@@ -199,7 +199,7 @@ async function insertQuoteCard(page: Page): Promise<void> {
   );
   await page.locator(`${scope} .quote-gesture-btn`).click();
   await expect(page.locator(".lumir-harness")).toBeVisible();
-  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard:not(.lumir-hp-imgcard)")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard:not(.lumir-hp-imgcard)")).toHaveCount(1);
 }
 
 /** 合成剪贴板图片粘贴（m440 同款；DataTransfer 只在 Chromium 构造器路径可靠）。 */
@@ -209,7 +209,7 @@ async function pasteImage(page: Page): Promise<void> {
     dt.items.add(new File([new Uint8Array([137, 80, 78, 71])], "paste.png", { type: "image/png" }));
     el.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dt }));
   });
-  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-imgcard")).toHaveCount(1);
 }
 
 /** 打开文档并展开 harness 面板（纯文本场景；引用卡场景由摘录钮自动开面板）。 */
@@ -330,7 +330,7 @@ test("provider_missing：撤销幽灵消息，富内容逐字段还原（text / 
   await insertQuoteCard(page);
   await pasteImage(page);
 
-  await page.locator(".lumir-hp-composer .cm-content").click();
+  await page.locator(".lumir-hp-composer .cm-line").first().click();
   await page.keyboard.type("alpha-line-1");
   await page.keyboard.press("Shift+Enter");
   await page.keyboard.type("beta-line-2");
@@ -354,10 +354,10 @@ test("provider_missing：撤销幽灵消息，富内容逐字段还原（text / 
   await expect.poll(() => composerState(page)).toEqual(before);
   // ② 卡片仍在 tray：引用卡 1 张、图片卡 1 张，且图片卡**没有**被标成能力闸错误态
   //    （provider_missing 是配置缺失，不是「模型不支持图片」）。
-  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard")).toHaveCount(1);
-  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard")).not.toHaveClass(/is-error/);
-  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard")).toHaveCount(2);
-  await expect(page.locator(".lumir-hp-composer-tray")).toContainText("第一段用于摘录");
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-imgcard")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-imgcard")).not.toHaveClass(/is-error/);
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard")).toHaveCount(2);
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget")).toContainText("第一段用于摘录");
 
   // ③ 幽灵消息不存在：transcript 没有留下一条「看起来发出去了」的用户气泡。
   await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(0);
@@ -556,7 +556,7 @@ test("拒绝迟到 + 期间新输入：合并保留文本 / 卡片 / caret，草
   await openPanel(page);
   await insertQuoteCard(page); // 原文自带一张引用卡（合并顺序的另一半）
 
-  await page.locator(".lumir-hp-composer .cm-content").click();
+  await page.locator(".lumir-hp-composer .cm-line").first().click();
   await page.keyboard.type(RESTORED);
   await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(1);
@@ -564,7 +564,7 @@ test("拒绝迟到 + 期间新输入：合并保留文本 / 卡片 / caret，草
 
   // 等待期间：贴一张图片卡 → 打一段新文本 → caret 放到新文本第 2 位。
   await pasteImage(page);
-  await page.locator(".lumir-hp-composer .cm-content").click();
+  await page.locator(".lumir-hp-composer .cm-line").first().click();
   await page.keyboard.type(TYPED);
   await setComposerCaret(page, 2);
   expect(await composerState(page)).toEqual({ doc: TYPED, head: 2 });
@@ -574,7 +574,7 @@ test("拒绝迟到 + 期间新输入：合并保留文本 / 卡片 / caret，草
   const merged = RESTORED + TYPED;
   await expect.poll(() => composerState(page)).toEqual({ doc: merged, head: RESTORED.length + 2 });
   // 卡片两边都在且顺序确定：原引用卡在前、等待期间贴的图片卡在后。
-  const cards = page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard");
+  const cards = page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard");
   await expect(cards).toHaveCount(2);
   await expect(cards.nth(0)).not.toHaveClass(/lumir-hp-imgcard/);
   await expect(cards.nth(1)).toHaveClass(/lumir-hp-imgcard/);
@@ -593,7 +593,7 @@ test("拒绝迟到 + 期间新输入：合并保留文本 / 卡片 / caret，草
   });
   expect(draft.text).toBe(merged);
   expect(draft.caret).toBe(RESTORED.length + 2);
-  expect(draft.cards.map((card: { kind: string }) => card.kind)).toEqual(["quote", "image"]);
+  expect(draft.cards.map((placed: { card: { kind: string } }) => placed.card.kind)).toEqual(["quote", "image"]);
 });
 
 // ── 成功回执的草稿归属（reviewer 新阻断）：按发送时 vault + 编辑版本清，不靠视图世代 ──
@@ -622,7 +622,7 @@ test("同视图：成功回执迟到 + 期间新输入，B 的草稿不被取消
 
   // 等待期间：贴图 + 新文本 + 中部 caret（B 的输入与草稿）。
   await pasteImage(page);
-  await page.locator(".lumir-hp-composer .cm-content").click();
+  await page.locator(".lumir-hp-composer .cm-line").first().click();
   await page.keyboard.type("B-DRAFT 发送后的新输入");
   await setComposerCaret(page, 2);
   const before = await composerState(page);
@@ -749,7 +749,7 @@ test("原 vault 内发送后继续编辑再切走：迟到成功回执不得删�
   await waitForPendingSend(page);
 
   // 发送后在 A 继续编辑（新文本 + 中部 caret），落盘后切到另一个 vault。
-  await page.locator(".lumir-hp-composer .cm-content").click();
+  await page.locator(".lumir-hp-composer .cm-line").first().click();
   await page.keyboard.type("A-NEW 发送后的编辑");
   await setComposerCaret(page, 2);
   const edited = await composerState(page);

@@ -237,13 +237,13 @@ async function openComposer(
         return invoke(cmd, args);
       };
     },
-    { draft: { version: 2, text, caret, cards }, providers: standardProviders() },
+    { draft: { version: 3, text, caret, cards: cards.map((card) => ({ card, at: 0 })) }, providers: standardProviders() },
   );
   await page.goto("/");
   await page.locator('.ft-row[title="oracle.md"]').click();
   await page.locator(".lumir-hp-toggle").click();
   await expect.poll(async () => (await composerState(page)).doc).toBe(text);
-  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard")).toHaveCount(cards.length);
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard")).toHaveCount(cards.length);
 }
 
 async function composerState(page: Page): Promise<EditorReading> {
@@ -262,7 +262,7 @@ async function setComposerSelection(page: Page, anchor: number, head = anchor): 
   }, { anchor, head });
 }
 
-const composerTray = (page: Page) => page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard");
+const composerTray = (page: Page) => page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard");
 const bodySelector = ".cm-content";
 const composerSelector = ".lumir-hp-composer .cm-content";
 
@@ -367,7 +367,7 @@ pageTest("code 模式物理 Backspace：折叠 caret 也按字素簇整簇 + 单
 
 pageTest("composer 修饰变体保持既有路径：⌥⌫ 仍是词删除（双引擎）", async (page) => {
   await openComposer(page, "alpha beta", 10);
-  await page.locator(composerSelector).click();
+  await page.locator(composerSelector).locator(".cm-line").first().click();
   await setComposerSelection(page, 10);
   await page.keyboard.press("Alt+Backspace");
   await expect.poll(async () => (await composerState(page)).doc, { message: "⌥⌫ 词删除（不得退化为单簇删除）" }).toBe("alpha ");
@@ -410,7 +410,7 @@ pageTest("正文 ⌃D：10 类簇整簇前删 + 撤销", async (page) => {
 pageTest("composer ⌃D：10 类簇整簇前删 + 撤销 + 附件不动", async (page) => {
   for (const c of CLUSTERS) {
     await openComposer(page, clusterDoc(c), c.prefix.length, [QUOTE_CARD]);
-    await page.locator(composerSelector).click();
+    await page.locator(composerSelector).locator(".cm-line").first().click();
     await setComposerSelection(page, c.prefix.length);
     await page.keyboard.press("Control+d");
     await expect.poll(async () => (await composerState(page)).doc, { message: `${c.name}: ⌃D` }).toBe(removed(c));
@@ -423,7 +423,7 @@ pageTest("composer ⌃D：10 类簇整簇前删 + 撤销 + 附件不动", async 
 pageTest("composer ⌃H：10 类簇整簇 + caret 落删除起点 + 单步撤销 + 附件不动", async (page) => {
   for (const c of CLUSTERS) {
     await openComposer(page, clusterDoc(c), clusterEnd(c), [QUOTE_CARD]);
-    await page.locator(composerSelector).click();
+    await page.locator(composerSelector).locator(".cm-line").first().click();
     await setComposerSelection(page, clusterEnd(c));
     await page.keyboard.press("Control+h");
     await expect.poll(async () => (await composerState(page)).doc, { message: `${c.name}: ⌃H 第一拍必须是整簇` }).toBe(removed(c));
@@ -504,7 +504,7 @@ pageTest("正文反向选区粘贴：caret 落在 from+insert.length，一次撤
 pageTest("composer 反向选区粘贴：附件不动、一次撤销恢复文本与方向", async (page) => {
   const doc = "甲乙丙丁";
   await openComposer(page, doc, 0, [QUOTE_CARD]);
-  await page.locator(composerSelector).click();
+  await page.locator(composerSelector).locator(".cm-line").first().click();
   await setComposerSelection(page, 3, 1);
   const model = new ComposerOracle({ text: doc, caret: 0 });
   model.setSelection(3, 1);
@@ -596,7 +596,7 @@ pageTest("正文图片粘贴：图优先、恰好一次落盘、引用替换选�
 
 pageTest("composer 粘贴优先级：plain 压过 HTML，uri-list/HTML-only/文件项都不消费", async (page) => {
   await openComposer(page, "alpha", 2, [QUOTE_CARD]);
-  await page.locator(composerSelector).click();
+  await page.locator(composerSelector).locator(".cm-line").first().click();
   await setComposerSelection(page, 2);
   const preventedText = await dispatchPaste(page, composerSelector, { text: "PLAIN", html: "<b>HTML</b>" });
   expect(preventedText).toBe(true);
@@ -604,7 +604,7 @@ pageTest("composer 粘贴优先级：plain 压过 HTML，uri-list/HTML-only/文�
   await expect(composerTray(page)).toHaveCount(1);
 
   await openComposer(page, "alpha", 2, [QUOTE_CARD]);
-  await page.locator(composerSelector).click();
+  await page.locator(composerSelector).locator(".cm-line").first().click();
   await setComposerSelection(page, 2);
   const preventedUri = await dispatchPaste(page, composerSelector, { uri: "https://example.invalid/x" });
   expect(preventedUri).toBe(true);
@@ -612,7 +612,7 @@ pageTest("composer 粘贴优先级：plain 压过 HTML，uri-list/HTML-only/文�
   expect((await composerState(page)).doc).toBe("alpha");
 
   await openComposer(page, "alpha", 2, [QUOTE_CARD]);
-  await page.locator(composerSelector).click();
+  await page.locator(composerSelector).locator(".cm-line").first().click();
   await setComposerSelection(page, 2);
   const preventedHtml = await dispatchPaste(page, composerSelector, { html: "<b>ONLYHTML</b>" });
   expect(preventedHtml).toBe(true);
@@ -620,7 +620,7 @@ pageTest("composer 粘贴优先级：plain 压过 HTML，uri-list/HTML-only/文�
   expect((await composerState(page)).doc).toBe("alpha");
 
   await openComposer(page, "alpha", 2, [QUOTE_CARD]);
-  await page.locator(composerSelector).click();
+  await page.locator(composerSelector).locator(".cm-line").first().click();
   await setComposerSelection(page, 2);
   const preventedFile = await dispatchPaste(page, composerSelector, { file: { name: "a.pdf", type: "application/pdf", text: "PDF" } });
   expect(preventedFile).toBe(true);
@@ -629,9 +629,9 @@ pageTest("composer 粘贴优先级：plain 压过 HTML，uri-list/HTML-only/文�
   expect(await harnessImageWrites(page)).toEqual([]);
 });
 
-pageTest("composer 图片粘贴：进 tray、一次落盘、文本不入、可撤销", async (page) => {
+pageTest("composer 图片粘贴：进 inline widget、一次落盘、文本按 caret 拆行、可撤销", async (page) => {
   await openComposer(page, "alpha", 2, [QUOTE_CARD]);
-  await page.locator(composerSelector).click();
+  await page.locator(composerSelector).locator(".cm-line").first().click();
   await setComposerSelection(page, 2);
   const prevented = await dispatchPaste(page, composerSelector, { text: "TEXTSHOULDNOT", image: { type: "image/png", bytes: PNG_BYTES } });
   expect(prevented).toBe(true);
@@ -639,7 +639,7 @@ pageTest("composer 图片粘贴：进 tray、一次落盘、文本不入、可�
   const writes = await harnessImageWrites(page);
   expect(writes).toHaveLength(1);
   expect(writes[0]?.source_mime).toBe("image/png");
-  expect((await composerState(page)).doc).toBe("alpha");
+  expect((await composerState(page)).doc).toBe("al\npha");
   expect((await composerState(page)).doc.includes("TEXTSHOULDNOT")).toBe(false);
 
   await page.waitForTimeout(1100);
@@ -683,7 +683,7 @@ pageTest("正文 drop：文本 / 文本文件插入一次且选中插入段；�
 pageTest("composer drop：文本按落点插入、文件/图片不消费", async (page) => {
   const doc = "alphabeta";
   await openComposer(page, doc, 5, [QUOTE_CARD]);
-  await page.locator(composerSelector).click();
+  await page.locator(composerSelector).locator(".cm-line").first().click();
   await setComposerSelection(page, 5);
   await dispatchDrop(page, composerSelector, { pos: 2, text: " DROP " });
   const afterDrop = await composerState(page);
@@ -701,7 +701,7 @@ pageTest("composer drop：文本按落点插入、文件/图片不消费", async
     { name: "a.png", type: "image/png", text: "\u0000\u0001PNG\u0002" },
   ]) {
     await openComposer(page, doc, 5, [QUOTE_CARD]);
-    await page.locator(composerSelector).click();
+    await page.locator(composerSelector).locator(".cm-line").first().click();
     await setComposerSelection(page, 5);
     await dispatchDrop(page, composerSelector, { pos: 2, file: payload });
     await page.waitForTimeout(60);
@@ -736,10 +736,11 @@ pageTest("IME 组合中粘贴：组合文本提交一次、粘贴追加一次、
 
   // composer
   await openComposer(page, "我", 1, [QUOTE_CARD]);
-  await page.locator(composerSelector).click();
+  await page.locator(composerSelector).locator(".cm-line").first().click();
   await setComposerSelection(page, 1);
+  await page.locator(composerSelector).locator(".cm-line").first().click();
   const composerCdp = await page.context().newCDPSession(page);
-  await composerCdp.send("Input.imeSetComposition", { text: "shi", selectionStart: 3, selectionEnd: 3, replacementStart: 1, replacementEnd: 1 });
+  await composerCdp.send("Input.imeSetComposition", { text: "shi", selectionStart: 3, selectionEnd: 3 });
   await expect.poll(async () => (await composerState(page)).doc).toBe("我shi");
   await dispatchPaste(page, composerSelector, { text: "PASTE" });
   await expect.poll(async () => (await composerState(page)).doc).toBe("我shiPASTE");
@@ -962,7 +963,7 @@ pageTest("composer 随机对拍 seed=71,73：Unicode 粘贴 / 选区 / 历史 / 
   for (const seed of [71, 73]) {
     const start = "种子🙂";
     await openComposer(page, start, 2, [QUOTE_CARD]);
-    await page.locator(composerSelector).click();
+    await page.locator(composerSelector).locator(".cm-line").first().click();
     await setComposerSelection(page, 2);
     const model = new ComposerOracle({ text: start, caret: 2, cards: ["quote"] });
     const rng = makeRng((seed >>> 0) ^ 0x7a3d19e5);
@@ -1181,7 +1182,7 @@ pageTest("Markdown 源码（text/plain）正文 drop：插入一次、原有字�
 pageTest("Markdown 源码（text/plain）composer 粘贴与 drop：按纯文本消费、附件不动", async (page) => {
   const doc = "alpha";
   await openComposer(page, doc, 2, [QUOTE_CARD]);
-  await page.locator(composerSelector).click();
+  await page.locator(composerSelector).locator(".cm-line").first().click();
   await setComposerSelection(page, 2, 4);
   const preventedPaste = await dispatchPaste(page, composerSelector, { text: MD_SOURCE });
   expect(preventedPaste).toBe(true);
@@ -1192,7 +1193,7 @@ pageTest("Markdown 源码（text/plain）composer 粘贴与 drop：按纯文本�
   await expect.poll(async () => (await composerState(page)).doc).toBe(doc);
 
   await openComposer(page, doc, 2, [QUOTE_CARD]);
-  await page.locator(composerSelector).click();
+  await page.locator(composerSelector).locator(".cm-line").first().click();
   await setComposerSelection(page, 1, 4);
   const preventedDrop = await dispatchDrop(page, composerSelector, { pos: 2, text: MD_SOURCE });
   expect(preventedDrop).toBe(true);
@@ -1224,7 +1225,7 @@ pageTest("text/markdown-only：正文 caret、正文 drop、composer 粘贴与 d
 
   // composer 粘贴 / drop：只读 text/plain ⇒ 安全 no-op，选区与附件不动。
   await openComposer(page, "alpha", 2, [QUOTE_CARD]);
-  await page.locator(composerSelector).click();
+  await page.locator(composerSelector).locator(".cm-line").first().click();
   await setComposerSelection(page, 1, 4);
   const composerPaste = await dispatchPaste(page, composerSelector, { markdown: MD_SOURCE });
   expect(composerPaste).toBe(true);
@@ -1233,7 +1234,7 @@ pageTest("text/markdown-only：正文 caret、正文 drop、composer 粘贴与 d
   await expect(composerTray(page)).toHaveCount(1);
 
   await openComposer(page, "alpha", 2, [QUOTE_CARD]);
-  await page.locator(composerSelector).click();
+  await page.locator(composerSelector).locator(".cm-line").first().click();
   await setComposerSelection(page, 1, 4);
   const composerDrop = await dispatchDrop(page, composerSelector, { pos: 2, markdown: MD_SOURCE });
   expect(composerDrop).toBe(true);
@@ -1267,7 +1268,7 @@ pageTest("HTML drop：合成事件下双面安全 no-op，plain 优先", async (
 
   // composer HTML-only / HTML + plain。
   await openComposer(page, "alpha", 2, [QUOTE_CARD]);
-  await page.locator(composerSelector).click();
+  await page.locator(composerSelector).locator(".cm-line").first().click();
   await setComposerSelection(page, 1, 4);
   const composerHtmlOnly = await dispatchDrop(page, composerSelector, { pos: 2, html: "<b>HTML</b>" });
   expect(composerHtmlOnly).toBe(true);
@@ -1275,7 +1276,7 @@ pageTest("HTML drop：合成事件下双面安全 no-op，plain 优先", async (
   await expect(composerTray(page)).toHaveCount(1);
 
   await openComposer(page, "alpha", 2, [QUOTE_CARD]);
-  await page.locator(composerSelector).click();
+  await page.locator(composerSelector).locator(".cm-line").first().click();
   await setComposerSelection(page, 1, 4);
   const composerMixed = await dispatchDrop(page, composerSelector, { pos: 2, text: "PLAIN", html: "<b>HTML</b>" });
   expect(composerMixed).toBe(true);

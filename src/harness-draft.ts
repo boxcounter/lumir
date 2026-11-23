@@ -20,7 +20,7 @@
 // 的在途写无论何时执行都只落**旧** vault 的文件——不再依赖「命令执行时的当前 vault scope」
 // （那会把迟到写写进新 vault，且新 vault 下次装载会把它当成自己的草稿恢复）。
 
-import type { ComposerAttachment } from "./quote-card";
+import type { PlacedAttachment, PlacedAttachmentInput } from "./harness-composer";
 import { readComposerDraft, serializeComposerDraft } from "./quote-card";
 
 /**
@@ -46,7 +46,7 @@ export interface HarnessDraftStoreDeps {
 
 export interface HarnessDraftStore {
   /** composer 内容变化后调用（防抖落盘；与「上次已落盘的内容」相同则不排期）。 */
-  schedule(text: string, caret: number | null, cards: readonly ComposerAttachment[]): void;
+  schedule(text: string, caret: number | null, cards: readonly PlacedAttachment[]): void;
   /** 把待写内容立刻落盘（切 vault 前、面板关闭、窗口失焦 / 退出）。无待写则不写盘。 */
   flush(): Promise<void>;
   /** 丢弃待写内容（装载新 vault 时：旧 vault 的待写已由该次切换前的 flush 写走）。 */
@@ -65,11 +65,11 @@ export interface HarnessDraftStore {
   clear(): Promise<void>;
 }
 
-/** [`HarnessDraftStore.load`] 的返回：v2 文本、附件与全文光标。 */
+/** [`HarnessDraftStore.load`] 的返回：v3 归一文本、精确偏移附件与全文光标。 */
 export interface ComposerDraftLoaded {
   text: string;
   caret: number | null;
-  cards: ComposerAttachment[];
+  cards: PlacedAttachmentInput[];
 }
 
 export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDraftStore {
@@ -148,12 +148,12 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
     });
   }
 
-  function schedule(text: string, caret: number | null, cards: readonly ComposerAttachment[]): void {
+  function schedule(text: string, caret: number | null, cards: readonly PlacedAttachment[]): void {
     editGeneration += 1;
     // 归属编辑版本只推进当前 bound vault 的那一份（发送回执按它判「发送后有没有新编辑」）。
     // 即使下面的「无变更不写」提前返回也照增：重打相同的字 / 只动 caret 也算用户动过草稿。
     vaultEditVersion.set(boundVaultId, (vaultEditVersion.get(boundVaultId) ?? 0) + 1);
-    const draftJson = serializeComposerDraft(text, caret, cards);
+    const draftJson = serializeComposerDraft(text, caret, cards.map(({ card, anchor }) => ({ card, at: anchor })));
     // 先记 latest、再允许「无变更不写」早退：重打相同内容不会被排期（没有 pending），但删除
     // 在途时的链尾补写要能拿到它（MUST NOT 用 `written` 推断——删除会把盘上那份拿掉）。
     latestDraft.set(boundVaultId, draftJson);
@@ -212,14 +212,18 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
       if (epoch === loadEpoch && editGeneration === loadEditGeneration) written = null;
       return null;
     }
-    const { draft, migrated } = parsed;
+    const { draft, migrated, changed } = parsed;
     const normalized = serializeComposerDraft(draft.text, draft.caret, draft.cards);
     // 检查与 write 入链之间没有 await：新编辑要么让旧迁移写整体跳过，要么排在已入链的写之后。
     if (epoch === loadEpoch && editGeneration === loadEditGeneration) {
-      if (migrated) await write(normalized, vaultId);
+      if (migrated || changed) await write(normalized, vaultId);
       else written = normalized;
     }
-    return { text: draft.text, caret: draft.caret, cards: draft.cards };
+    return {
+      text: draft.text,
+      caret: draft.caret,
+      cards: draft.cards.map(({ card, at }) => ({ card, anchor: at })),
+    };
   }
 
   async function clear(): Promise<void> {

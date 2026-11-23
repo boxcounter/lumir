@@ -227,12 +227,12 @@ test("模型自检：卡片删除是独立撤销步，组合与普通输入都�
   assert.deepEqual(model.cards, ["q", "img"]);
 });
 
-test("模型自检：草稿 v2 快照与发送后新编辑史隔离", () => {
+test("模型自检：草稿 v3 快照与发送后新编辑史隔离", () => {
   const model = new ComposerOracle();
   model.insert("草稿");
   model.addCard("q1");
   model.saveDraft();
-  assert.deepEqual(model.draft, { text: "草稿", caret: 2, cards: ["q1"] });
+  assert.deepEqual(model.draft, { text: "草稿\n", caret: 3, cards: ["q1"] });
   model.send();
   assert.equal(model.sends, 1);
   assert.equal(model.text, "");
@@ -640,7 +640,7 @@ function composerAdapter(content: { text?: string; caret?: number | null; cards?
   let state = createComposerState({
     text: content.text ?? "",
     caret: content.caret ?? null,
-    cards: (content.cards ?? []).map(attachmentOf),
+    cards: (content.cards ?? []).map((id, index) => ({ id: index + 1, card: attachmentOf(id), anchor: 0 })),
   });
   let draft: ComposerReading["draft"] = null;
   let sends = 0;
@@ -660,7 +660,7 @@ function composerAdapter(content: { text?: string; caret?: number | null; cards?
     from: number,
     to: number,
     insert: string,
-    options: { isolate?: boolean; history?: false; compose?: boolean } = {},
+    options: { isolate?: boolean; compose?: boolean } = {},
   ): void => {
     const spec: {
       changes: { from: number; to: number; insert: string };
@@ -670,13 +670,11 @@ function composerAdapter(content: { text?: string; caret?: number | null; cards?
     } = {
       changes: { from, to, insert },
       selection: EditorSelection.cursor(from + insert.length),
-      userEvent: options.compose ? "input.type.compose" : "input.type",
+      userEvent: options.compose
+        ? composing?.marked === "" ? "input.type.compose.start" : "input.type.compose"
+        : "input.type",
     };
-    if (options.history === false && options.isolate) {
-      spec.annotations = [Transaction.addToHistory.of(false), isolateHistory.of("full")];
-    } else if (options.history === false) {
-      spec.annotations = Transaction.addToHistory.of(false);
-    } else if (options.isolate) {
+    if (options.isolate) {
       spec.annotations = isolateHistory.of("full");
     }
     state = state.update(spec as never).state;
@@ -687,7 +685,7 @@ function composerAdapter(content: { text?: string; caret?: number | null; cards?
       text: state.doc.toString(),
       anchor: selectionOf().anchor,
       head: selectionOf().head,
-      cards: state.field(composerAttachmentsField).map(attachmentId),
+      cards: state.field(composerAttachmentsField).map((attachment) => attachmentId(attachment.card)),
       draft,
       sends,
     }),
@@ -725,11 +723,12 @@ function composerAdapter(content: { text?: string; caret?: number | null; cards?
           return;
         }
         case "addCard": {
-          state = applyComposerTransaction(state, appendComposerAttachments([attachmentOf(op.id)]));
+          state = applyComposerTransaction(state, appendComposerAttachments(state, [attachmentOf(op.id)]));
           return;
         }
         case "removeCard": {
-          state = applyComposerTransaction(state, removeComposerAttachment(op.index));
+          const attachment = state.field(composerAttachmentsField)[op.index];
+          if (attachment !== undefined) state = applyComposerTransaction(state, removeComposerAttachment(attachment.id));
           return;
         }
         case "compositionStart": {
@@ -748,7 +747,7 @@ function composerAdapter(content: { text?: string; caret?: number | null; cards?
         case "compositionUpdate": {
           assert.ok(composing, "compositionUpdate 前必须先 start");
           const start = composing.start;
-          replaceRange(start, start + composing.marked.length, op.text, { compose: true, history: false });
+          replaceRange(start, start + composing.marked.length, op.text, { compose: true });
           composing.marked = op.text;
           return;
         }
@@ -757,13 +756,13 @@ function composerAdapter(content: { text?: string; caret?: number | null; cards?
           const marked = composing.marked;
           const cut = marked.slice(0, graphemeBefore(marked, marked.length));
           // 字素口径与模型同源（graphemeBefore）：组合中 Backspace 不得越过 marked 区。
-          replaceRange(composing.start, composing.start + marked.length, cut, { compose: true, history: false });
+          replaceRange(composing.start, composing.start + marked.length, cut, { compose: true });
           composing.marked = cut;
           return;
         }
         case "compositionCancel": {
           assert.ok(composing, "compositionCancel 前必须先 start");
-          replaceRange(composing.start, composing.start + composing.marked.length, "", { compose: true, history: false });
+          replaceRange(composing.start, composing.start + composing.marked.length, "", { compose: true });
           state = state.update({
             selection: EditorSelection.range(composing.baseAnchor, composing.baseHead),
             annotations: Transaction.addToHistory.of(false),
@@ -776,11 +775,7 @@ function composerAdapter(content: { text?: string; caret?: number | null; cards?
           // 先把 marked 区收回 base（不进 history），再单独插入候选：CM 的 history 逆事件
           // 用事务 startState 的文本还原被删内容，若直接替换 marked 区，一次 undo 会退回
           // 组合中的拼音（"我shi"）而不是组合前。两步合起来仍只有一个 history 事件。
-          replaceRange(composing.start, composing.start + composing.marked.length, "", {
-            compose: true,
-            history: false,
-          });
-          replaceRange(composing.start, composing.start, op.text, { compose: true, isolate: true });
+          replaceRange(composing.start, composing.start + composing.marked.length, op.text, { compose: true });
           composing = null;
           return;
         }
@@ -794,13 +789,17 @@ function composerAdapter(content: { text?: string; caret?: number | null; cards?
         }
         case "saveDraft": {
           const parsed = parseComposerDraft(
-            serializeComposerDraft(state.doc.toString(), selectionOf().head, state.field(composerAttachmentsField)),
+            serializeComposerDraft(
+              state.doc.toString(),
+              selectionOf().head,
+              state.field(composerAttachmentsField).map(({ card, anchor }) => ({ card, at: anchor })),
+            ),
           );
-          assert.ok(parsed !== null, "生产 v2 序列化必须可读回");
+          assert.ok(parsed !== null, "生产 v3 序列化必须可读回");
           draft = {
             text: parsed.text,
             caret: parsed.caret,
-            cards: parsed.cards.map(attachmentId),
+            cards: parsed.cards.map(({ card }) => attachmentId(card)),
           };
           return;
         }

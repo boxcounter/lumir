@@ -76,7 +76,7 @@ steps:
    `.local/acceptance/<日期>-ime-matrix/ledger.md`；场景自动段的 `status.txt` / `summary.md`
    不承载人工结论。
 3. **按变更面选组，不要求每次全跑。** 选组表见下一节；未被选中的组不执行、也不写 PASS。
-4. **前置不成立不记产品 FAIL。** 候选窗没出现、输入法没切过去、焦点不在 composer、tray 附件
+4. **前置不成立不记产品 FAIL。** 候选窗没出现、输入法没切过去、焦点不在 composer、inline widget 附件
    没建立起来，一律记 `BLOCKED`（native 未执行），重试一次同组；仍不成立就停下来找 tower，
    不得把环境问题写成产品缺陷，也不得把自动段 PASS 写成 native PASS。
 5. **失败保留现场。** 见「失败保留现场」节：不重跑、不退出 app、不切走输入法、不改文档，
@@ -92,8 +92,8 @@ steps:
 | composer 文本内核、CM 版本、keymap、选区/删除命令 | G1、G2、G5 |
 | `compositionstart` / `compositionend`、Enter 发送门、候选确认路径 | G2、G4 |
 | CM history、undo / redo、附件 history、`composerAttachmentsField` | G3、G5 |
-| composer 布局、`lineWrapping`、min/max 高度、滚动、tray 位置 | G3 |
-| 附件 tray、摘录卡片渲染（DOM / 视觉 / 布局） | G3 |
+| composer 布局、`lineWrapping`、min/max 高度、滚动、inline widget 位置 | G3 |
+| 附件 inline widget、摘录卡片渲染（DOM / 视觉 / 布局） | G3 |
 | 焦点管理、pane 切换、transcript 交互、窗口激活/失活 | G4 |
 | paste 处理器、剪贴板、附件装配 | G6 |
 | macOS / WKWebView / 系统输入法升级、发布前回归 | G0–G6 全跑 |
@@ -113,8 +113,8 @@ G0 的共享前置。每组结束时把四态之一写进 `ledger.md` 对应行�
      证据目录 `.local/acceptance/<日期>/262-native-ime-exploration/` 存在；把该路径抄进
      `env.md`。
   4. 自动段的两行探针在 composer 中可见：第一行 `hnl-imx-a`，第二行 `hnl-imx-b`；截图记录。
-  5. 在编辑器里选中一段文字，点浮动「摘录到对话」钮，正观测编辑区外 tray 至少一张附件
-     （出处行与 × 可见）；记录附件内容与顺序，并截图。若 tray 为空，本组前置不成立（`BLOCKED`），
+  5. 在编辑器里选中一段文字，点浮动「摘录到对话」钮，正观测文本区内 inline widget 至少一张附件
+     （出处行与 × 可见）；记录附件内容与顺序，并截图。若 inline widget 为空，本组前置不成立（`BLOCKED`），
      不得继续执行任何「附件不变」判定。
   6. 用真实鼠标点 composer，看到 `focus-within` 边框变化；记录焦点在 composer。
 - **操作**：把上述读数写进 `env.md`（版本、macOS、输入法、窗口尺寸、run 证据目录、基线文本、
@@ -134,7 +134,7 @@ case 的前置正观测。**G5 不走这套复位**：它直接断言 CM history
 2. **文本复位**：删除本组上一 case 追加的字符；若上一 case 撤销 / 删除了基线文本，用重做或
    重新键入补回。目标是 composer 文本逐字回到两行 `hnl-imx-a` / `hnl-imx-b`；截图确认，
    caret 放到第二行行尾。
-3. **附件复位**：tray 恢复为 G0 记录的数量、内容与顺序；多出的用 × 移除，缺的重新摘录。
+3. **附件复位**：inline widget 恢复为 G0 记录的数量、内容与顺序；多出的用 × 移除，缺的重新摘录。
 4. **焦点复位**：真实鼠标点 composer 第二行行尾，确认 `focus-within`。
 5. **失败兜底**：任一项复位不回去，停止该组，退出 app 并重跑
    `node scripts/acceptance/run.mjs 262 --keep-app`，重新执行 G0 建立附件后再继续；**不得**
@@ -161,7 +161,7 @@ case 的前置正观测。**G5 不走这套复位**：它直接断言 CM history
   - 四个 case 都从同一份 G0 基线独立开始；case 间的唯一差异是拼音与选择方式。
   - 前置的 `ma` 只用于观测候选窗，不进入任何 case 的判据。
   - 四种选择方式都只把候选提交到 caret 处，caret 落在提交字之后。
-  - 组合期与提交后都**不发送**；第一行、第二行既有内容与 tray 附件不变。
+  - 组合期与提交后都**不发送**；第一行、第二行既有内容与 inline widget 附件不变。
   - 提交后不残留拼音原串（如 `nihao` 不会留在文本里），除非明确按 Esc 取消。
   - 四种方式提交的字与候选窗实际选中项一致。
 - **FAIL 签名**：已提交文本丢失、重复提交、提交到错误位置、发送被触发、拼音原串残留、
@@ -174,7 +174,7 @@ case 的前置正观测。**G5 不走这套复位**：它直接断言 CM history
 
 - **触发面**：`compositionstart/end`、Enter 发送门、Backspace 删除路径。
 - **前置正观测**：G0 成立；caret 在第二行末尾；先用候选提交一个「我」作为已提交基线，
-  截图记录「我」在 composer 中、tray 附件仍在。
+  截图记录「我」在 composer 中、inline widget 附件仍在。
 - **操作**：
   1. 输入 `s`（或 `shi`）开始组合，marked text 可见；按一次 **Backspace**。
   2. 重新组合多个字符，连续按 **Backspace**，每次记录 composer 实际文本。
@@ -185,7 +185,7 @@ case 的前置正观测。**G5 不走这套复位**：它直接断言 CM history
   - 连续 Backspace 不吃已提交文本，也不删行、不删附件。
   - Esc 取消后文本回到组合前，caret 不跳走。
   - 确认候选的 Enter 只提交候选、**不发送**；确认窗外再按 Enter 才发送。
-  - 发送后 transcript 中附件上下文在前、完整问题文本在后，消息内容与 composer 终态一致。
+  - 发送后 transcript 按 composer 块序呈现，消息内容与 composer 终态一致。
 - **FAIL 签名**：Backspace 删掉已提交字符 / 整行 / 附件；Esc 后残留组合文本；确认候选时
   发送；发送内容缺行、错序或与 composer 不一致。
 - **记录**：`.local/acceptance/<日期>-ime-matrix/g2/notes.md`，逐步前后截图、发送后的
@@ -193,7 +193,7 @@ case 的前置正观测。**G5 不走这套复位**：它直接断言 CM history
 
 ## G3 位置矩阵：行首 / 行尾 / 软折行 / 空行 / 附件附近
 
-- **触发面**：composer 布局、`lineWrapping`、高度 / 滚动、tray 位置、附件渲染。
+- **触发面**：composer 布局、`lineWrapping`、高度 / 滚动、inline widget 位置、附件渲染。
 - **前置正观测**：G0 成立；逐格建立 caret 位置，用截图与相邻文本证明位置（光标 / 选区在 AX
   层不可断言，截图是唯一正观测）。
 - **操作**（逐格执行，每格前先恢复到 G0 基线）：
@@ -202,16 +202,16 @@ case 的前置正观测。**G5 不走这套复位**：它直接断言 CM history
   3. **软折行**：键入一条超过 composer 宽度的长行（记录窗口宽度），在视觉折行边界前后各放
      一次 caret，分别组合 `shi` 并提交。
   4. **空行**：用 ⇧Enter 在两段之间建立空行，caret 落在空行，组合 `wo` 并提交。
-  5. **附件附近**：tray 有附件时，分别在首行行首、末行行尾、以及「只有附件、没有文本」的空
+  5. **附件附近**：inline widget 有附件时，分别在首行行首、末行行尾、以及「只有附件、没有文本」的空
      composer 三种位置组合并提交（第三种先用 ⌘A 选文本再 Backspace 删除，附件不参与选区，
-     tray 应保留；删完先截图正观测「只有附件」再组合）。
+     inline widget 应保留；删完先截图正观测「只有附件」再组合）。
 - **预期**：
   - 提交文本落在 caret 所在行，不窜到相邻行，不拆行。
   - 软折行格不得插入硬换行：⌘A 全选后 ⌘C 复制、粘贴到外部纯文本编辑器，整条长行必须仍是
     **一行**（记录粘贴结果）；提交后文本与候选窗不得错位。
   - 空行格只改空行，前后两行内容与顺序不变。
-  - 附件附近格：附件内容、顺序、× 钮不变；文本不进入 tray；只有附件时提交文本后仍可发送，
-    且附件上下文在前、问题在后。
+  - 附件附近格：附件内容、顺序、× 钮不变；文本不进入 inline widget；只有附件时提交文本后仍可发送，
+    且附件与问题按 composer 块序投递。
 - **FAIL 签名**：提交文本落到相邻行、插入硬换行、软折行 / 候选窗错位、附件被改动、空行格
   吞掉相邻行。
 - **记录**：`.local/acceptance/<日期>-ime-matrix/g3/<位置>/notes.md` + 截图；软折行格另存
@@ -253,7 +253,7 @@ case 的前置正观测。**G5 不走这套复位**：它直接断言 CM history
   2. 重跑 `node scripts/acceptance/run.mjs 262 --keep-app`，等自动段 PASS，两行探针
      `hnl-imx-a` / `hnl-imx-b` 在 composer 中可见；把本次 run 的证据目录抄进该 case 的
      notes。
-  3. 重新执行 G0 的附件建立：编辑器选中一段文字 → 点「摘录到对话」→ 正观测 tray 出处行与
+  3. 重新执行 G0 的附件建立：编辑器选中一段文字 → 点「摘录到对话」→ 正观测 inline widget 出处行与
      ×；记录附件内容与顺序。
   4. 真实鼠标点 composer 第二行行尾，确认 `focus-within`；截图记录本次 case 的 G0 基线。
   5. 重启或附件建立失败 ⇒ 该 case `BLOCKED`，不得用编辑动作凑一个看似相同的基线继续。
@@ -310,7 +310,7 @@ case 的前置正观测。**G5 不走这套复位**：它直接断言 CM history
   - 已提交文本不丢失、不重复；组合与粘贴的先后关系记录为实际读数。
   - 多行粘贴保留换行，不塌成一行。
   - 富文本退化为纯文本，不带样式或 HTML。
-  - 附件内容、顺序、× 钮不变；粘贴文本不进入 tray。
+  - 附件内容、顺序、× 钮不变；粘贴文本不进入 inline widget。
 - **FAIL 签名**：粘贴触发发送、文本重复或丢失、换行丢失、富文本样式进入源码、附件变化、
   case 间状态串扰（上一 case 的残留文本或剪贴板内容被带进下一 case）。
 - **记录**：`.local/acceptance/<日期>-ime-matrix/g6/notes.md` + 每次复位与粘贴前后截图 +
@@ -353,7 +353,7 @@ case 的前置正观测。**G5 不走这套复位**：它直接断言 CM history
 任一 FAIL 签名出现时：
 
 1. 立即停手：不重跑场景、不退出 app、不切走输入法、不修改文档、不更新任何基线。
-2. 截全窗截图；候选窗仍在时连候选窗一起截；记下原始拼音串、候选列表、caret 位置、tray
+2. 截全窗截图；候选窗仍在时连候选窗一起截；记下原始拼音串、候选列表、caret 位置、inline widget
    附件内容与顺序。
 3. 需要 AX 读数时不要自行重启实例：保持窗口不动，通知 tower，由 agent 用 KimiCU 取 AX
    dump 后再继续。

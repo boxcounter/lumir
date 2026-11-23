@@ -23,11 +23,10 @@
 //     模型指代单张图的唯一把手，故图片块携带 `Image N` 标签与编号（见 `imageOrdinals` /
 //     `imageMentionText` 与该 change 的 spec 增量）。
 //
-// composer 草稿复用本模块作为 v2 text / caret / cards 的唯一存储实现点；
-// 现存 v1 blocks 仅在读取时一次性转换，成功后在 store 层立即写回 v2。
+// composer 草稿复用本模块作为 v3 text / caret / placed cards 的唯一存储实现点；
+// 现存 v1/v2 草稿仅在读取时一次性转换，成功后在 store 层立即写回 v3。
 //
-// 本模块是纯数据 + 纯函数（无 DOM、无文案），消费者（CM composer 与区外附件 tray、
-// 消息装配、transcript 沉淀）在后续 mission 接线。
+// 本模块是纯数据 + 纯函数（无 DOM、无文案），消费者是 CM composer、消息装配与 transcript 沉淀。
 
 import { findClusterBreak } from "@codemirror/state";
 
@@ -314,59 +313,97 @@ export function serializeQuoteMessage(blocks: readonly ComposerBlock[]): string 
 // ---------------------------------------------------------------------------
 // composer 草稿的 (反)序列化（change composer-draft-persistence design §6）
 //
-// 草稿是存储形态，与投递投影分开。当前模型是 v2 text / caret / cards；v1 blocks 只在读取时
+// 草稿是存储形态，与投递投影分开。当前模型是 v3 text / caret / placed cards；v1/v2 只在读取时
 // 一次性转换。Rust 侧仍只搬运、不解析内容。
 // ---------------------------------------------------------------------------
 
-/**
- * 草稿 schema 当前版本。v1 reader 只服务现存草稿的一次性迁移；所有产出均为 v2。
- */
-export const DRAFT_VERSION = 2;
+export const DRAFT_VERSION = 3;
+
+export interface DraftPlacedAttachment {
+  card: ComposerAttachment;
+  at: number;
+}
 
 export interface ComposerDraft {
-  version: 2;
+  version: 3;
   text: string;
-  /** 全文 UTF-16 偏移；缺席 / 非法时恢复方按全文末尾处理。 */
   caret: number | null;
-  cards: ComposerAttachment[];
+  cards: DraftPlacedAttachment[];
 }
 
 export interface ParsedComposerDraft {
   draft: ComposerDraft;
-  /** true = 本次从合法 v1 转换，store 必须立即写回 v2。 */
   migrated: boolean;
+  changed: boolean;
 }
 
-/** v2 草稿 JSON 的唯一产出点。 */
 export function serializeComposerDraft(
   text: string,
   caret: number | null,
-  cards: readonly ComposerAttachment[],
+  cards: readonly DraftPlacedAttachment[],
 ): string {
   const validCaret = caret !== null && Number.isInteger(caret) && caret >= 0 && caret <= text.length ? caret : null;
-  const draft: ComposerDraft = { version: DRAFT_VERSION, text, caret: validCaret, cards: [...cards] };
+  const draft: ComposerDraft = {
+    version: DRAFT_VERSION,
+    text,
+    caret: validCaret,
+    cards: cards.map(({ card, at }) => ({ card, at })),
+  };
   return JSON.stringify(draft);
 }
 
-/** JSON 值的对象（非数组、非 null）判别。 */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** 有限正数（图片像素尺寸）。 */
 function positiveNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
-/**
- * 草稿 JSON → v2 内容。空串 / 非 JSON / 未知版本 / 已知卡片不成形均返回 null；
- * 合法 v1 的未知块经 `draftUnknownBlockText` 转入文本，不静默丢文。
- */
+export function normalizeLineEndings(text: string): {
+  text: string;
+  changed: boolean;
+  mapOffset(offset: number): number;
+} {
+  const offsets = new Array<number>(text.length + 1);
+  let normalized = "";
+  let index = 0;
+  offsets[0] = 0;
+  while (index < text.length) {
+    const ch = text[index];
+    if (ch === "\r") {
+      const width = text[index + 1] === "\n" ? 2 : 1;
+      if (width === 2) offsets[index + 1] = normalized.length;
+      normalized += "\n";
+      index += width;
+    } else {
+      normalized += ch;
+      index += 1;
+    }
+    offsets[index] = normalized.length;
+  }
+  return {
+    text: normalized,
+    changed: normalized !== text,
+    mapOffset(offset: number): number {
+      const clamped = Math.max(0, Math.min(Math.trunc(offset), text.length));
+      return offsets[clamped] ?? normalized.length;
+    },
+  };
+}
+
+export function normalizeDraftForState(draft: ComposerDraft): { draft: ComposerDraft; changed: boolean } {
+  const normalized = normalizeLineEndings(draft.text);
+  const caret = draft.caret === null ? null : normalized.mapOffset(draft.caret);
+  const cards = draft.cards.map(({ card, at }) => ({ card, at: normalized.mapOffset(at) }));
+  const changed = normalized.changed || caret !== draft.caret || cards.some((card, index) => card.at !== draft.cards[index].at);
+  return { draft: { version: 3, text: normalized.text, caret, cards }, changed };
+}
+
 export function parseComposerDraft(text: string): ComposerDraft | null {
   return readComposerDraft(text)?.draft ?? null;
 }
 
-/** 读取 v2，或把合法 v1 转为 v2 并标记立即写回。 */
 export function readComposerDraft(text: string): ParsedComposerDraft | null {
   let value: unknown;
   try {
@@ -375,30 +412,58 @@ export function readComposerDraft(text: string): ParsedComposerDraft | null {
     return null;
   }
   if (!isRecord(value)) return null;
-  if (value.version === 2) {
-    const draft = parseDraftV2(value);
-    return draft === null ? null : { draft, migrated: false };
+  let draft: ComposerDraft | null = null;
+  let migrated = false;
+  let changed = false;
+  if (value.version === 3) {
+    const parsed = parseDraftV3(value);
+    draft = parsed?.draft ?? null;
+    changed = parsed?.changed ?? false;
+  } else if (value.version === 2) {
+    draft = parseDraftV2(value);
+    migrated = true;
+  } else if (value.version === 1) {
+    draft = migrateDraftV1(value);
+    migrated = true;
   }
-  if (value.version === 1) {
-    const draft = migrateDraftV1(value);
-    return draft === null ? null : { draft, migrated: true };
+  if (draft === null) return null;
+  const normalized = normalizeDraftForState(draft);
+  return { draft: normalized.draft, migrated, changed: changed || normalized.changed };
+}
+
+function validDraftCaret(raw: unknown, length: number): number | null {
+  return typeof raw === "number" && Number.isInteger(raw) && raw >= 0 && raw <= length ? raw : null;
+}
+
+function parseDraftV3(value: Record<string, unknown>): { draft: ComposerDraft; changed: boolean } | null {
+  if (typeof value.text !== "string" || !Array.isArray(value.cards)) return null;
+  const cards: DraftPlacedAttachment[] = [];
+  let changed = false;
+  for (const item of value.cards) {
+    if (!isRecord(item)) return null;
+    const block = parseKnownDraftBlock(item.card);
+    if (block === null || block.kind === "paragraph") return null;
+    const rawAt = item.at;
+    const at = typeof rawAt === "number" && Number.isFinite(rawAt)
+      ? Math.max(0, Math.min(Math.trunc(rawAt), value.text.length))
+      : 0;
+    if (at !== rawAt) changed = true;
+    cards.push({ card: block, at });
   }
-  return null;
+  const caret = validDraftCaret(value.caret, value.text.length);
+  if (caret !== value.caret && value.caret !== null && value.caret !== undefined) changed = true;
+  return { draft: { version: 3, text: value.text, caret, cards }, changed };
 }
 
 function parseDraftV2(value: Record<string, unknown>): ComposerDraft | null {
   if (typeof value.text !== "string" || !Array.isArray(value.cards)) return null;
-  const cards: ComposerAttachment[] = [];
+  const cards: DraftPlacedAttachment[] = [];
   for (const item of value.cards) {
     const block = parseKnownDraftBlock(item);
     if (block === null || block.kind === "paragraph") return null;
-    cards.push(block);
+    cards.push({ card: block, at: 0 });
   }
-  const caret = typeof value.caret === "number" && Number.isInteger(value.caret) &&
-      value.caret >= 0 && value.caret <= value.text.length
-    ? value.caret
-    : null;
-  return { version: 2, text: value.text, caret, cards };
+  return { version: 3, text: value.text, caret: validDraftCaret(value.caret, value.text.length), cards };
 }
 
 function migrateDraftV1(value: Record<string, unknown>): ComposerDraft | null {
@@ -423,7 +488,8 @@ function migrateDraftV1(value: Record<string, unknown>): ComposerDraft | null {
     visibleCount += 1;
   }
   const cards = blocks.filter((block): block is ComposerAttachment => block.kind !== "paragraph" &&
-    (block.kind === "quote" || block.kind === "msgquote" || block.kind === "image"));
+    (block.kind === "quote" || block.kind === "msgquote" || block.kind === "image"))
+    .map((card) => ({ card, at: 0 }));
   let migratedCaret: number | null = null;
   if (caret !== null) {
     if (caret.block >= blocks.length) {
@@ -446,7 +512,7 @@ function migrateDraftV1(value: Record<string, unknown>): ComposerDraft | null {
       }
     }
   }
-  return { version: 2, text, caret: migratedCaret, cards };
+  return { version: 3, text, caret: migratedCaret, cards };
 }
 
 /** 单个 v1 块：已知块类逐字段校验；未知块类原样保留供迁移成可见文本。 */

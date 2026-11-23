@@ -14,7 +14,7 @@ config:
     fixture: "$fixtures/harness-mock-basic.json"
 steps:
   # 自动化段只建立两行文本；机器组合覆盖归 m831 CDP 与 m361 adapter。
-  # 原生 WKWebView 拼音仍需人工终判，且必须先建立并正观测 tray 附件。
+  # 原生 WKWebView 拼音仍需人工终判，且必须先建立并正观测 inline widget 附件。
   - name: ⌘⇧A 打开 harness pane（旁侧分栏）
     do: keys
     keys: ["cmd+shift+a"]
@@ -57,7 +57,7 @@ steps:
 
   - name: 记录自动化边界（证据型 note，不卡 PASS/FAIL）
     do: note
-    text: "自动化到此为止：原生 IME 组合段进不了 TSM；机器覆盖归 m831 CDP 与 m361 adapter。人工继续前须按正文先建立并正观测至少一张 tray 附件。"
+    text: "自动化到此为止：原生 IME 组合段进不了 TSM；机器覆盖归 m831 CDP 与 m361 adapter。人工继续前须按正文先建立并正观测至少一张 inline widget 附件。"
     expect:
       - shot: 02-待手动复验现场
 ---
@@ -75,12 +75,12 @@ steps:
 
 前置：自动化段只建立了两行文本，尚未建立附件。
 
-1. 在编辑器中选中一段文字并点击「摘录到对话」，正观测编辑区外 tray 至少有一张附件（摘录与 × 可见），记录其内容；若 tray 为空则前置 FAIL，不得继续执行“附件不变”判定。随后把 caret 放回 composer 第二行。
+1. 在编辑器中选中一段文字并点击「摘录到对话」，正观测文本区内 inline widget 至少有一张附件（摘录与 × 可见），记录其内容；若没有附件则前置 FAIL，不得继续执行“附件不变”判定。随后把 caret 放回 composer 第二行。
 2. 在第二行已提交「我」，切换中文输入法并组合 `s`。
 3. 组合中按一次 Backspace：只删除组合内容，已提交「我」和第一行必须保留，附件内容与顺序不变。
 4. 再组合多个字符并连续 Backspace：不得吃任何已提交文本；按 Esc 取消后文本回到组合前。
 5. 重新组合并提交候选：候选落在原 caret 所在第二行，第一行和附件不变；确认候选的 Enter 不发送。
-6. 确认窗外再按 Enter：才发送。投递为附件上下文在前、完整多行问题在后。
+6. 确认窗外再按 Enter：才发送。附件与多行问题按 composer 块序投递。
 7. 用 ⌘Z 撤销一段组合：文本按 CM history 恢复，附件不丢、不复制。
 
 任一失败都记录原始拼音、候选动作和 AX/截图，不用合成事件结果替代真机结论。

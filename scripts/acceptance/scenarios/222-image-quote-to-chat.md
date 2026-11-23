@@ -75,7 +75,7 @@ steps:
       - shot: 02-图片卡入composer
   - name: 键入问题（typeInNode：composer 素材注入通道）
     do: typeInNode
-    # 图片卡在区外附件 tray；非空 composer 的 AX 名是值本身，后态必须匹配 qimgmark。
+    # 图片卡在文本区 widget；非空 composer 的 AX 名是值本身，后态必须匹配 qimgmark。
     target: { role: AXTextArea, name: "问点什么|qimgmark" }
     text: "qimgmark"
     expect:

@@ -36,7 +36,7 @@ async function setup(page: Page): Promise<void> {
     view.dispatch({ selection: { anchor: start, head: start + quoted.length } });
   }, QUOTED);
   await page.locator(".quote-gesture-btn").click();
-  await page.locator(".lumir-hp-composer .cm-content").click();
+  await page.locator(".lumir-hp-composer .cm-line").first().click();
   await page.keyboard.type("我");
 }
 
@@ -45,15 +45,13 @@ test("Chromium CDP 真引擎组合：Backspace 不吃 committed 文本，取消/
   test.skip(test.info().project.name !== "chromium", "CDP 会话只在 chromium 提供；WebKit 侧由 m361 场景判组合事件序");
   await setup(page);
   const content = page.locator(".lumir-hp-composer .cm-content");
-  const tray = page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard");
+  const tray = page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard");
   const cdp = await page.context().newCDPSession(page);
-  const compose = async (text: string, replacementStart: number) => {
+  const compose = async (text: string) => {
     await cdp.send("Input.imeSetComposition", {
       text,
       selectionStart: text.length,
       selectionEnd: text.length,
-      replacementStart,
-      replacementEnd: replacementStart,
     });
   };
 
@@ -62,18 +60,18 @@ test("Chromium CDP 真引擎组合：Backspace 不吃 committed 文本，取消/
   await page.keyboard.press("Meta+z");
   await expect(tray).toHaveCount(1);
   await expect(tray.locator(".lumir-hp-qc-ex")).toHaveText(QUOTED);
-  await expect(content).toHaveText("我");
-
-  await compose("s", 1);
-  await expect(content).toHaveText("我s");
+  await expect.poll(async () => (await composerState(page)).doc).toBe("我");
+  await page.locator(".lumir-hp-composer .cm-line").first().click();
+  await compose("s");
+  await expect.poll(async () => (await composerState(page)).doc).toBe("我s");
   await page.keyboard.press("Backspace");
-  await expect(content).toHaveText("我");
+  await expect.poll(async () => (await composerState(page)).doc).toBe("我");
   await expect(tray).toHaveCount(1);
 
-  await compose("shuang", 1);
+  await compose("shuang");
   await page.keyboard.press("Backspace");
   await page.keyboard.press("Backspace");
-  expect((await content.textContent())?.startsWith("我")).toBe(true);
+  expect((await composerState(page)).doc.startsWith("我")).toBe(true);
   await cdp.send("Input.imeSetComposition", {
     text: "",
     selectionStart: 0,
@@ -81,22 +79,22 @@ test("Chromium CDP 真引擎组合：Backspace 不吃 committed 文本，取消/
     replacementStart: 1,
     replacementEnd: 5,
   });
-  await expect(content).toHaveText("我");
+  await expect.poll(async () => (await composerState(page)).doc).toBe("我");
   await expect(tray).toHaveCount(1);
 
-  await compose("shi", 1);
+  await compose("shi");
   await cdp.send("Input.insertText", { text: "是" });
-  await expect(content).toHaveText("我是");
+  await expect.poll(async () => (await composerState(page)).doc).toBe("我是");
   await expect(tray).toHaveCount(1);
 
-  await compose("ma", 2);
+  await compose("ma");
   await page.keyboard.press("Enter");
   expect(await page.evaluate(() => (window as unknown as { __sentMessages: string[] }).__sentMessages)).toEqual([]);
   await cdp.send("Input.insertText", { text: "吗" });
   await page.waitForTimeout(300);
   await page.keyboard.press("Enter");
   await expect.poll(() => page.evaluate(() => (window as unknown as { __sentMessages: string[] }).__sentMessages.length)).toBe(1);
-  await expect(content).toHaveText("");
+  await expect.poll(async () => (await composerState(page)).doc).toBe("");
 });
 
 // ── 竖直移动的列位口径（M834）─────────────────────────────────────────────────────────
@@ -126,7 +124,7 @@ async function openDraftComposer(page: Page, text: string, caret: number): Promi
     const w = window as unknown as Record<string, any>;
     const invoke = w.__TAURI_INTERNALS__.invoke;
     w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: unknown) => {
-      if (cmd === "harness_draft_get") return JSON.stringify({ version: 2, ...draft, cards: [] });
+      if (cmd === "harness_draft_get") return JSON.stringify({ version: 3, ...draft, cards: [] });
       if (cmd === "harness_draft_put") return null;
       if (cmd === "harness_state") {
         return JSON.stringify({ messages: [], usage: { ctx_pct: 0, cache_pct_session: 0 }, pending_approval: null, warn_ctx_pct: 85 });
@@ -138,7 +136,7 @@ async function openDraftComposer(page: Page, text: string, caret: number): Promi
   await page.locator('.ft-row[title="ime.md"]').click();
   await page.locator(".lumir-hp-toggle").click();
   await expect.poll(async () => (await composerState(page)).doc).toBe(text);
-  await page.locator(".lumir-hp-composer .cm-content").click();
+  await page.locator(".lumir-hp-composer .cm-line").first().click();
   await setComposerCaret(page, caret);
 }
 
@@ -184,7 +182,7 @@ test("⇧Enter 换行并键入后 ⌃P 按字符列落点", async ({ page }) => 
   await page.goto("/");
   await page.locator('.ft-row[title="ime.md"]').click();
   await page.locator(".lumir-hp-toggle").click();
-  await page.locator(".lumir-hp-composer .cm-content").click();
+  await page.locator(".lumir-hp-composer .cm-line").first().click();
   await page.keyboard.type("yabzcdw");
   await page.keyboard.press("Shift+Enter");
   await page.keyboard.type("mn");

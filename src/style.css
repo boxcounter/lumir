@@ -303,17 +303,18 @@ body {
   background: var(--sel);
   color: var(--sel-text);
 }
-.lumir-hp-composer-tray {
-  display: contents;
+.lumir-hp-cwidget {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-block: 0;
+  padding-block: var(--sp-2);
 }
-.lumir-hp-composer-tray:empty {
-  display: none;
+.lumir-hp-cwidget:first-child {
+  padding-top: 0;
 }
-.lumir-hp-composer-tray > .lumir-hp-qcard:first-child {
-  margin-top: 0;
-}
-.lumir-hp-composer:has(.lumir-hp-composer-tray:not(:empty)) > .cm-editor {
-  margin-top: var(--sp-1);
+.lumir-hp-cwidget > .lumir-hp-qcard {
+  margin-block: 0;
 }
 .lumir-hp-composer > .cm-editor {
   height: auto;

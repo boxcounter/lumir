@@ -84,8 +84,10 @@ steps:
         file: { path: "env:harness/drafts/acc-draft.json", not: "base64" }
       - label: ③ 草稿不落 vault 的任何角落（MUST NOT 触碰 vault）
         glob: { dir: ".", pattern: "acc-draft\\.json$", exact: 0 }
-      - label: ① 草稿是 v2 JSON（version + text + caret + cards）
-        file: { path: "env:harness/drafts/acc-draft.json", has: '"version":2' }
+      - label: ① 草稿是 v3 JSON（version + text + caret + placed cards）
+        file: { path: "env:harness/drafts/acc-draft.json", has: '"version":3' }
+      - label: ① 文末图片的精确 anchor 落盘（draftmark 后补一个换行 ⇒ at=10）
+        file: { path: "env:harness/drafts/acc-draft.json", has: '"at":10' }
       - shot: 02-落盘后-composer
 
   - name: 记下草稿文件基线（重启后断言恢复不写盘）
@@ -131,8 +133,8 @@ spec「composer 草稿自动保存与恢复」的保存与恢复两条主干：
 
 - **保存**：在输入区编辑（文本 + 一张图片卡片）后，内容作为**当前 vault 的草稿**落
   `<config_dir>/harness/drafts/<vault 稳定 id>.json`（tmp + rename 原子替换）；
-- **恢复**：重启 app 装载同一 vault 后，输入区还原文本、光标与区外图片附件；
-- **形态**：草稿存 v2 JSON（`version` + `text` + `caret` + `cards`），图片以**内容寻址引用**在场，
+- **恢复**：重启 app 装载同一 vault 后，输入区还原文本、光标与精确偏移图片附件；
+- **形态**：草稿存 v3 JSON（`version` + `text` + `caret` + `cards:[{card,at}]`），图片以**内容寻址引用**在场，
   **MUST NOT 内联 base64**；
 - **不碰 vault**：草稿落配置目录，vault 内零新增。
 

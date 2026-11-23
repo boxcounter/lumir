@@ -360,7 +360,10 @@ function installFakeDom(): void {
   (host.document as { getSelection?: () => unknown }).getSelection = () => (host.getSelection as () => unknown)();
   (host.document as { hasFocus?: () => boolean }).hasFocus = () => false;
   (host.document as { activeElement?: unknown }).activeElement = null;
-  host.requestAnimationFrame = (): number => 0;
+  host.requestAnimationFrame = (callback: () => void): number => {
+    if (callback.name === "composerInlineCardPrune") setImmediate(callback);
+    return 0;
+  };
   host.cancelAnimationFrame = (): void => {};
   host.MutationObserver = class {
     observe(): void {}
@@ -496,15 +499,15 @@ async function mountPanel(limits: { maxBytes: number; maxEntries: number }): Pro
 
 /** composer tray 里当前在场的图片卡（按 DOM 序）。 */
 function trayImageCards(mount: FakeEl): FakeEl[] {
-  const tray = mount.querySelector(".lumir-hp-composer-tray");
-  return tray === null ? [] : tray.querySelectorAll(".lumir-hp-imgcard");
+  const widget = mount.querySelector(".lumir-hp-cwidget");
+  return widget === null ? [] : widget.querySelectorAll(".lumir-hp-imgcard");
 }
 
 /** transcript 里当前在场的图片卡（排除 composer tray 那一份）。 */
 function transcriptImageCards(mount: FakeEl): FakeEl[] {
   return mount
     .querySelectorAll(".lumir-hp-imgcard")
-    .filter((card) => card.closest(".lumir-hp-composer-tray") === null);
+    .filter((card) => card.closest(".lumir-hp-cwidget") === null);
 }
 
 /** 图片卡上的缩略图 URL（成功路径经 `img.src` 写属性；失败卡没有 `<img>`，返回空串）。 */
@@ -524,7 +527,7 @@ function removeCard(mount: FakeEl, index: number): void {
   const cards = trayImageCards(mount);
   assert.ok(index < cards.length, `图片卡 ${index} 应在场（当前 ${cards.length} 张）`);
   const card = cards[index];
-  assert.equal(card.dataset.attachmentIndex, String(index), "卡片索引与 DOM 序同源");
+  assert.ok(Number(card.dataset.attachmentId) > 0, "卡片带稳定附件 id");
   const remove = card.querySelector(".lumir-hp-qc-x");
   assert.ok(remove !== null, "图片卡应带移除钮");
   remove.fire("click");

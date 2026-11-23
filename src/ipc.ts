@@ -610,7 +610,7 @@ export function harnessReadImage(name: string): Promise<string> {
 }
 
 /** 读**归属 vault** 的 composer 草稿（change composer-draft-persistence；归属改显式见 change
- *  fix-draft-vault-ownership-nov19）：块模型 JSON **原文**（`{"version":2,…}`），无草稿 /
+ *  fix-draft-vault-ownership-nov19）：placed-cards JSON **原文**（`{"version":3,…}`），无草稿 /
  *  无 vault → `null`。`vault_id` 是发起方在装载时绑定的稳定 id（`null` = 无 vault），后端
  *  **只**按它解析落点、不读当前 scope——所以晚到的旧读返回旧 vault 的内容，不会把新 vault
  *  的草稿顶给旧装载。**本层不解析内容**：(反)序列化的唯一实现点在 `src/quote-card.ts`

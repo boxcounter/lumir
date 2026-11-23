@@ -132,7 +132,7 @@ function methodBodyOf(source: string, name: string): string {
 }
 
 const HANDLE = functionBodyOf(PANEL_SOURCE, "handleEvent");
-const SEND = functionBodyOf(PANEL_SOURCE, "send");
+const SEND = functionBodyOf(PANEL_SOURCE, "performSend");
 const RESET = functionBodyOf(PANEL_SOURCE, "resetView");
 const VAULT_CHANGED = functionBodyOf(PANEL_SOURCE, "vaultChanged");
 const PANE_SETTLED = functionBodyOf(PANEL_SOURCE, "paneSettled");

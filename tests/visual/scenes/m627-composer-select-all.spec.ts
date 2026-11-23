@@ -36,7 +36,7 @@ async function addQuote(page: Page): Promise<void> {
     view.dispatch({ selection: { anchor: start, head: start + quoted.length } });
   }, QUOTED);
   await page.locator(".quote-gesture-btn").click();
-  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard")).toHaveCount(1);
 }
 
 test("⌘A 选择全部问题文本，选区端点都在 CM contentDOM 内", async ({ page }) => {
@@ -60,21 +60,21 @@ test("⌘A 后键入替换全文，undo 恢复，tray 附件逐字段不变", as
   await openDoc(page);
   await addQuote(page);
   const content = page.locator(".lumir-hp-composer .cm-content");
-  const card = page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard");
+  const card = page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard");
   await page.keyboard.type("card-question");
   await page.keyboard.press("Meta+a");
   await page.keyboard.type("X");
-  await expect(content).toHaveText("X");
+  await expect(content.locator(".cm-line")).toHaveText("X");
   await expect(card).toHaveCount(1);
   await expect(card.locator(".lumir-hp-qc-ex")).toHaveText(QUOTED);
   const cardInsideSelection = await page.evaluate(() => {
     const selection = window.getSelection()!;
-    const card = document.querySelector(".lumir-hp-composer-tray > .lumir-hp-qcard")!;
+    const card = document.querySelector(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard")!;
     return selection.rangeCount > 0 && selection.getRangeAt(0).intersectsNode(card);
   });
   expect(cardInsideSelection).toBe(false);
   await page.keyboard.press("Meta+z");
-  await expect(content).toHaveText("card-question");
+  await expect(content.locator(".cm-line")).toHaveText("card-question");
   await expect(card).toHaveCount(1);
 });
 

@@ -192,21 +192,21 @@ for (const fixture of IME_SELECTION_CASES) {
   });
 }
 
-test("点浮动钮：面板未开先开，卡片入区外 tray，焦点回 CM 并可继续输入", async ({ page }) => {
+test("点浮动钮：面板未开先开，卡片入 CM inline widget，焦点回 CM 并可继续输入", async ({ page }) => {
   await openDoc(page);
   await selectQuotedLine(page);
   await page.locator(".quote-gesture-btn").click();
   await expect(page.locator(".lumir-harness")).toBeVisible();
   await expect(page.locator(".pane-divider")).toBeVisible();
-  const card = page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard");
+  const card = page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard");
   await expect(card).toHaveCount(1);
   await expect(card.locator(".lumir-hp-qc-bar")).toHaveCount(1);
   await expect(card.locator(".lumir-hp-qc-ex")).toHaveText(QUOTED);
   await expect(card.locator(".lumir-hp-qc-src")).toHaveText("harness-quote.md · 摘录卡片基线");
   await expect(page.locator(".lumir-hp-composer .cm-content")).toBeFocused();
-  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-qcard")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-composer .cm-line .lumir-hp-qcard")).toHaveCount(0);
   await page.keyboard.type("继续提问");
-  await expect(page.locator(".lumir-hp-composer .cm-content")).toHaveText("继续提问");
+  await expect(page.locator(".lumir-hp-composer .cm-line")).toHaveText("继续提问");
   await expect(card).toHaveCount(1);
 });
 
@@ -215,7 +215,7 @@ test("× 移除钮：DOM 装配完整、点击移除整张卡片", async ({ page
   await selectQuotedLine(page);
   await page.locator(".quote-gesture-btn").click();
 
-  const card = page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard");
+  const card = page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard");
   await expect(card).toHaveCount(1);
 
   // 结构判据（M343 的模块装缺陷就出在这里：按钮创建了却没 append）。
@@ -252,7 +252,7 @@ test("粘贴净化：带 text/html 的粘贴只落纯文本", async ({ page }) =
   await expect(composer).not.toContainText("HTML-ONLY");
   await expect(composer.locator("b")).toHaveCount(0);
   // 粘贴不产卡片（quirk ①：只进纯文本段落）。
-  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard")).toHaveCount(1);
 });
 
 // M531（fix-quote-button-viewport-clamp）：浮动钮落点钳制的专用 fixture。
@@ -409,7 +409,7 @@ test("跳回高亮：点卡片跳回原文并瞬态高亮，~1.4s 后退场", as
   const flash = page.locator(".cm-quote-jump-flash");
   await expect(flash).toHaveCount(0);
 
-  await page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard").click();
+  await page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard").click();
   await expect(flash).toHaveCount(1);
   // 高亮覆盖的正是被摘录那一段（mark 的范围 = 跳回锚点）。
   await expect(flash).toHaveText(QUOTED);
