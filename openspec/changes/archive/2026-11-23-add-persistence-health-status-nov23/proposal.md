@@ -203,15 +203,17 @@ V5 已按推荐值纳入（2026-11-23）：`recovery_list` 的读失败进入横
 
 ## 节点 2（归档放行材料，2026-11-23）
 
-> 状态：**五要件齐，待归档**。未 merge、未 archive；10.8 保持未勾，归档动作由 tower 在合并后执行。
+> 状态：**已归档**（2026-11-23）。归档提交 `de28bae7`；包装器 `openspec archive` 输出
+> `Totals: + 1, ~ 2, - 0, → 0`，归档后修链 0 处（5 篇 Markdown / 0 条相对链接），相对链接门禁 PASS；
+> `node scripts/openspec-archive-check.mjs --archived add-persistence-health-status-nov23` PASS
+> （2 条 MODIFIED，对比 64 段；人工恢复 0 段，声明认领 0 段）。
 
 1. **节点 1 批准依据**：Alex 2026-11-23 原话「三项推荐。」——本批三项提案一次答复，V1–V7
    全部按推荐值批准；范围 / 呈现以本文件「What Changes」为准。
 2. **独立评审**：最终独立终审 **clean / merge**，绑定 tip `e74cb727`（2026-11-23），P1 / P2
    清零。评审文件：本批终审结论由 tower 转述，未生成独立 `.tower/comms/reviews/` 文件；
    本 block 以该终审结论为准。
-3. **tasks 完成数**：`tasks.md` **62/63** 已勾；唯一未勾 `10.8`（归档动作本身，留待归档）。
-   无放弃任务；`10.5` 的 backlog 条目已先补并在合并时复核。
+3. **tasks 完成数**：`tasks.md` **63/63** 已勾，无放弃任务；归档提交与 `--archived` 审计结果见上方状态块。
 4. **要求的门禁与真机证据**：
    - `scripts/gate.sh quick`：`GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0；日志
      `.local/missions/persistence-health-nov23/gate-quick-node2.log`。

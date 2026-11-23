@@ -188,8 +188,8 @@
       凭据）；截图与 fixture 用合成数据；诊断日志断言不含正文
 - [x] 10.7 独立 reviewer 评审：结论 **clean / merge**，绑定 tip `e74cb727`；P1 / P2
       清零（2026-11-23 最终独立终审）
-- [ ] 10.8 节点 2 五要件齐后归档：`node scripts/openspec-archive.mjs
-      add-persistence-health-status-nov23` → 提交归档结果 → `--archived` 审计 PASS
+- [x] 10.8 节点 2 五要件齐后归档：归档提交 `de28bae7`；`--archived` 审计 PASS
+      （2 条 MODIFIED / 64 段，人工恢复 0 段，声明认领 0 段）
 
 ## 11. 验证（change 的验收动作）
 
