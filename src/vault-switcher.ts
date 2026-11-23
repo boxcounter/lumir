@@ -40,7 +40,7 @@ import type { EditorSession, ScrollSnapshot } from "./editor";
 import { keyToken } from "./keys";
 import { escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import { FILTER_LABEL, FILTER_PLACEHOLDER, NO_MATCH_TEXT, createListFilter } from "./list-filter";
-import { errorText, formatRelative, t, tPlural } from "./copy";
+import { errorText, formatRelative, onRelabel, t, tPlural } from "./copy";
 import { activityKind, activityStatusKey } from "./harness-activity";
 import type { ActivityState } from "./harness-activity";
 // 诊断读数出口（见本文件 diagnostics）：前端唯一的日志通道，落盘在 Rust 侧。
@@ -907,6 +907,9 @@ class VaultSwitcher implements VaultSwitcherHandle {
     // 活动记录跃迁 → 就地更新行标记（浮层关闭时回调直接返回：零 DOM 工作）。订阅与浮层
     // 同生命周期（两者都长驻到应用退出），退订函数因此不持有。
     deps.subscribeActivity(() => this.refreshActivity());
+    // 语言切换 → 行 `title` 里的状态词随语言重绘（独立评审 P1-4b）：浮层保持打开时切语言，
+    // 行上的「处理中 / 有新的回复 / 有失败结果」MUST NOT 停在旧语言。浮层关闭时回调零 DOM。
+    onRelabel(() => this.refreshActivity());
 
     const popover = document.createElement("div");
     popover.className = "vault-pop";
@@ -1019,6 +1022,9 @@ class VaultSwitcher implements VaultSwitcherHandle {
 
   async onVaultLoaded(vaultId: string, entries: readonly FsEntry[]): Promise<void> {
     this.currentId = vaultId;
+    // 当前项一变，行标记与 `title` 必须立即按新身份重算（独立评审 P1-4a）：`ensureCronVault`
+    // 这类程序化切 vault 不关浮层，原非当前行的标记会留在新当前行上（违反 D4「当前行不显示」）。
+    this.refreshActivity();
     await this.store.onVaultLoaded(vaultId, entries);
   }
 

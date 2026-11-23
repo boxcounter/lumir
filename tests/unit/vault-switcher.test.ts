@@ -14,6 +14,7 @@ import type { VaultSession } from "../../src/bindings/VaultSession.ts";
 import type { EditorSession, ScrollSnapshot } from "../../src/editor.ts";
 import type { ToastAction, VaultSwitchBlock } from "../../src/save-controller.ts";
 import { commandError, installBackend } from "./harness.ts";
+import { resetRelabels, runRelabels, setLanguageRoot } from "../../src/copy.ts";
 import type { FakeBackend } from "./harness.ts";
 import { NO_MATCH_TEXT } from "../../src/list-filter.ts";
 import {
@@ -1657,6 +1658,9 @@ interface SwitcherRig {
 }
 
 function createSwitcherRig(rows: VaultListEntry[]): SwitcherRig {
+  // 每个 rig 重建前清空重绘表：切换器构造期注册 onRelabel，旧实例的回调不该在后续用例里跑
+  // （同一进程里会累积；`resetRelabels` 是本层为此预留的入口）。
+  resetRelabels();
   const doc = installFakeDocument();
   const mounts = new FakeEl("div");
   // 挂点挂到 body 下：只有「在文档里」的节点才可聚焦、才谈得上被移除时丢焦点（同浏览器）。
@@ -2698,4 +2702,42 @@ test("行标记：显式移除后行与标记随列表消失；无行记录不�
   rig.switcher.toggle();
   await flush();
   assert.equal(rig.list().find("vault-row-activity").length, 0, "无行记录不得变成任何可见标记");
+});
+
+test("行标记：当前项变化立即刷新（程序化切 vault 不关浮层时不留残影，D4）", async () => {
+  const rig = await openActivityRig();
+  // 浮层开着时 B 有未读、A 是当前项。
+  rig.setActivity("/tmp/lumir-act-b", { phase: "idle", unread: "reply" });
+  assert.equal(activityRow(rig, "act-b").find("vault-row-activity").length, 1);
+  assert.equal(activityRow(rig, "act-b").title, "act-b · 有新的回复");
+
+  // 程序化切到 B（`ensureCronVault` 等路径不关浮层）：当前项一变，B 的行标记与 title
+  // MUST 立即消失（当前行由标题栏钮承载，D4），A 行按自己的记录重新呈现。
+  rig.setActivity("/tmp/lumir-act-a", { phase: "idle", unread: "failure" });
+  rig.switcher.onVaultLoaded("act-b", []);
+  await flush();
+  assert.equal(activityRow(rig, "act-b").find("vault-row-activity").length, 0, "新当前行不留标记");
+  assert.equal(activityRow(rig, "act-b").title, "", "新当前行不留 title");
+  assert.equal(activityRow(rig, "act-a").find("vault-row-activity")[0].dataset.activity, "failure");
+  assert.equal(activityRow(rig, "act-a").title, "act-a · 有失败结果");
+});
+
+test("行标记：语言切换重绘行 title（浮层保持打开时状态词跟随语言）", async () => {
+  const rig = await openActivityRig();
+  rig.setActivity("/tmp/lumir-act-b", { phase: "idle", unread: "reply" });
+  rig.setActivity("/tmp/lumir-act-c", { phase: "running", unread: null });
+  assert.equal(activityRow(rig, "act-b").title, "act-b · 有新的回复");
+
+  try {
+    setLanguageRoot(() => ({ lang: "en" }));
+    runRelabels();
+    await flush();
+    assert.equal(activityRow(rig, "act-b").title, "act-b · New reply", "D871 的英文档"  );
+    assert.equal(activityRow(rig, "act-c").title, "act-c · Working", "D870 的英文档");
+    assert.equal(activityRow(rig, "act-b").find("vault-row-activity")[0].dataset.activity, "reply", "形状不随语言变");
+  } finally {
+    setLanguageRoot(() => ({ lang: "zh-Hans" }));
+    runRelabels();
+  }
+  assert.equal(activityRow(rig, "act-b").title, "act-b · 有新的回复", "切回中文档");
 });

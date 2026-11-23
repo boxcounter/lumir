@@ -3439,6 +3439,13 @@ async function handleCronRun(payload: CronRunPayload): Promise<void> {
     // 发起失败也是终态：先把乐观切屏撤回（M612——面板回到后端真实会话，不留下没发出去的
     // prompt），再立即回执（cron_state 不写 last_fired、不误判 busy），并给人话提示。
     // 只在**本次确实切了屏**时回滚：忙时（交互轮次在途）面板原样未动，回滚反而会清掉流式泡。
+    // **先判**发起视图是否仍当前，再回滚（回滚会推进视图世代，顺序反了会把「同一视图里的失败」
+    // 也判成「已切走」而吞掉提示）。提示只在发起视图仍是当前视图时落地（独立评审 P1-1a：A 的
+    // 失败提示 MUST NOT 写进用户已经切到的 B——toast 锚的是当前 pane）。未切屏
+    // （adopted === null）时失败发生在用户当前所在的视图（dirty 拦截 / 忙），提示照常给。
+    const originCurrent =
+      adopted === null ||
+      (harnessPanel.isViewCurrent(adopted.viewToken) && loadedRoot === adopted.targetVault);
     if (adopted !== null) harnessPanel.reloadSession(adopted);
     void invoke("cron_run_result", {
       run_id: payload.origin.run_id,
@@ -3446,7 +3453,7 @@ async function handleCronRun(payload: CronRunPayload): Promise<void> {
       session_id: null,
       error: isCommandError(error) ? error.code : "cron_run_failed",
     }).catch(() => {});
-    void showToast(harnessPaneMount(), errorText(error));
+    if (originCurrent) void showToast(harnessPaneMount(), errorText(error));
   }
 }
 
@@ -3456,23 +3463,29 @@ async function handleCronRun(payload: CronRunPayload): Promise<void> {
  *  MUST NOT 被抢走。显式打开 / 切换 harness 的 composer 聚焦行为（`openHarnessPane()` 缺省）
  *  逐字不变。 */
 async function handleCronOpenSession(payload: { vault: string; session_id: string }): Promise<void> {
+  // 恢复的目标在**发起之前**定格（经 `ensureCronVault` 的实际目标根）与视图世代：回包到达时
+  // 用户可能已经在别的 vault，收口与失败提示都必须按这份定格（design §8：MUST NOT 在
+  // resolve 后读当前会话 / 当前 vault）。`null` = 还没开始（ensureCronVault 就失败）。
+  let target: { targetVault: string; viewToken: number } | null = null;
   try {
     await ensureCronVault(payload.vault);
-    // 恢复**发起之前**捕获目标（经 `ensureCronVault` 的实际目标根）与视图世代：回包到达时
-    // 用户可能已经在别的 vault，收口必须按这份定格（design §8：MUST NOT 在 resolve 后读
-    // 当前会话 / 当前 vault）。
-    const targetVault = loadedRoot ?? payload.vault;
-    const viewToken = harnessPanel.viewToken();
+    target = { targetVault: loadedRoot ?? payload.vault, viewToken: harnessPanel.viewToken() };
     await invoke("harness_resume_session", { session_id: payload.session_id });
-    const stillCurrent = harnessPanel.viewToken() === viewToken && loadedRoot === targetVault;
+    const stillCurrent =
+      harnessPanel.isViewCurrent(target.viewToken) && loadedRoot === target.targetVault;
     // 清目标 vault 的活动记录；只在目标仍当前、世代未变时复位视图并重取快照。取代旧的
     // `vaultChanged("", null)` + `vaultChanged(root)` 空哨兵（它会破坏显示门、触发两次完整重建）。
-    harnessPanel.reloadSessionView({ targetVault, viewToken });
+    harnessPanel.reloadSessionView(target);
     // 只在这一代视图里打开面板：切走后 MUST NOT 把 B 的 harness pane 打开（那会抢走用户
     // 正在看的东西）。A 的恢复内容留在后端会话里，切回 A 时由快照重建。
     if (stillCurrent) openHarnessPane(false);
   } catch (error) {
-    void showToast(harnessPaneMount(), errorText(error));
+    // 失败提示只在发起视图仍是当前视图时落地（独立评审 P1-1a）：切到 B 之后 A 的恢复失败
+    // MUST NOT 以 toast 的形式出现在 B 的 pane 上。
+    const originCurrent =
+      target === null ||
+      (harnessPanel.isViewCurrent(target.viewToken) && loadedRoot === target.targetVault);
+    if (originCurrent) void showToast(harnessPaneMount(), errorText(error));
   }
 }
 

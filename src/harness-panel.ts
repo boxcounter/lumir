@@ -5994,7 +5994,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (vault !== currentVault) return;
     const next = activity.of(vault);
     // 世代只由**事件**推进：进入快照是快照自身的回填，不是新事件，不能作废自己这一代。
-    if (next.phase !== prev.phase && event.type !== "enter_snapshot") phaseEpoch += 1;
+    // **终态一律推进**（即使相位已经是 idle）：拒绝回滚会先把相位收回 idle，紧随的终态因此
+    // 是 idle → idle——只按「相位变化」推进的话，在途的旧快照会穿过世代闸复活已失效的重试
+    // 动作（重试 change 的 F5「延迟快照·终态后」现场，本 change 的回滚触发了它）。
+    if (
+      event.type !== "enter_snapshot" &&
+      (next.phase !== prev.phase || event.type === "terminal")
+    ) {
+      phaseEpoch += 1;
+    }
     switch (event.type) {
       case "turn_started":
         turnOpen = true;
@@ -7100,14 +7108,30 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     lastAssistantEl = null;
     stageWaiting = true;
     const generation = viewGeneration;
-    dispatchActivity(currentVault, { type: "turn_started" });
+    // 乐观起点与普通发送同一条通道：定格 vault + 捕获 before / 版本，拒绝时只撤销自己那一步
+    // （独立评审 P1-3：切走后拒绝不再让 A 永久停在「处理中」）。
+    const retryVault = currentVault;
+    const retryToken = retryVault === null ? null : beginSendActivity(retryVault);
     harnessRetry(turn)
       .then(() => {
         retryInFlight = false;
       })
       .catch((e: unknown) => {
         retryInFlight = false;
-        // 视图世代守卫：换代之后到达的旧拒绝回包属于上一段会话，整条 no-op。
+        // **先撤销重试时 vault 的乐观起点**（在视图世代守卫之前）。这遵守 retry change 的
+        // 「拒绝不按语义强制 idle」合同：恢复的是点击前的记录本身，不是「拒绝 ⇒ idle」；
+        // 期间若已有真实事件推进记录（auto_turn_started / 终态），版本门会挡住这次回滚。
+        const restored =
+          retryVault !== null && retryToken !== null
+            ? activity.rollbackSend(retryVault, retryToken)
+            : false;
+        if (restored && retryVault !== null && retryVault === currentVault) {
+          turnOpen = activity.of(retryVault).phase !== "idle";
+          midTakeover = false;
+          renderActivity();
+        }
+        // 视图世代守卫：换代之后到达的旧拒绝回包属于上一段会话——错误行与轻量快照都跳过
+        //（快照只服务当前 vault，对 A 也取不到权威读数；A 的收口靠切回时的进入快照）。
         if (viewGeneration !== generation) return;
         const code = errorCodeOf(e);
         const reason =
@@ -9929,11 +9953,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       options.targetVault === currentVault && options.viewToken === viewGeneration;
     // 记录：总是只复位目标 vault（即使已经切走——那是动作发起时的会话，换会话即换视图）。
     activity.reset(options.targetVault);
-    if (!stillCurrent) {
-      // 切走后整段跳过：MUST NOT 复位 / 渲染 / 重取 B 的视图与快照（B 的界面归 B 的会话）。
-      renderActivity();
-      return;
-    }
+    // 切走后整段跳过：MUST NOT 复位 / 渲染 / 重取 B 的视图与快照（B 的界面归 B 的会话）。
+    // 连 `renderActivity` 都不调——它读的是当前 vault 的记录，在这里调用只会在 B 上写一次
+    // 同值的 DOM（独立评审 P1-1b：目标非当前时不得有任何 B 的 DOM 写入）。
+    if (!stillCurrent) return;
     resetView({ clearActivityFor: null });
     fetchSnapshot();
   }

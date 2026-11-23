@@ -239,6 +239,37 @@ test("rollbackSend：版本已变 ⇒ no-op（不用陈旧的 before 覆盖真�
   assert.equal(store.of(B).phase, "stopping", "拒绝 MUST NOT 把真实 stopping 改回 idle");
 });
 
+test("enter_snapshot 被 epoch 拒绝：整条不应用，也 MUST NOT 推进回滚版本", () => {
+  // 现场（评审 P1-2）：进入快照在途 → 本地发送 → 旧快照返回 → 发送拒绝。旧快照被判据拒绝、
+  // 状态一字未变，它不是「输入」——若推进版本，`rollbackSend` 会以「记录已被推进」为由 no-op，
+  // 乐观 running 与轮次闸门就永久留在那里（假在途）。
+  const { store } = counter();
+  const token = store.beginSend(A);
+  store.dispatch(A, { type: "enter_snapshot", inFlight: false, epochAtRequest: 0, epoch: 1 });
+  assert.deepEqual(store.of(A), { phase: "running", unread: null }, "旧快照不得改相位");
+  assert.equal(store.rollbackSend(A, token), true, "被拒绝的快照 MUST NOT 作废发送令牌");
+  assert.deepEqual(store.of(A), { phase: "idle", unread: null });
+});
+
+test("enter_snapshot 应用且确认在途：版本推进，迟到的回滚不得撤销后端确认", () => {
+  const { store } = counter();
+  const token = store.beginSend(A);
+  // epoch 一致、inFlight=true：后端确认这一轮真的在跑（同相位，但它是权威读数）。
+  store.dispatch(A, { type: "enter_snapshot", inFlight: true, epochAtRequest: 1, epoch: 1 });
+  assert.equal(store.rollbackSend(A, token), false);
+  assert.deepEqual(store.of(A), { phase: "running", unread: null });
+});
+
+test("enter_snapshot 应用且报不在途：相位已收口，回滚只恢复发送前（同一份 idle）", () => {
+  const { store } = counter();
+  const token = store.beginSend(A);
+  store.dispatch(A, { type: "enter_snapshot", inFlight: false, epochAtRequest: 1, epoch: 1 });
+  assert.deepEqual(store.of(A), { phase: "idle", unread: null });
+  // 版本已推进 ⇒ no-op，但记录已经是权威的 idle——不再有假在途。
+  assert.equal(store.rollbackSend(A, token), false);
+  assert.deepEqual(store.of(A), { phase: "idle", unread: null });
+});
+
 test("rollbackSend：同相位的真实输入（auto_turn_started）同样挡下回滚", () => {
   const { store } = counter();
   const token = store.beginSend(A);

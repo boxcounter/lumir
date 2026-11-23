@@ -63,6 +63,12 @@ interface RaceStubOptions {
   holdNew?: number[];
   /** 把第 N 次 `harness_cron_run` 挂起，释放时按该信封 reject。 */
   cronReject?: { at: number; envelope: { code: string; message: string } };
+  /** 把第 N 次 `harness_retry` 挂起，释放时按该信封 reject。 */
+  retryReject?: { at: number; envelope: { code: string; message: string } };
+  /** 把第 N 次 `harness_resume_session` 挂起（`__release('resume', 'resolve'|'reject', …)`）。 */
+  holdResume?: number[];
+  /** 会话浮层的历史条目（`harness_list_sessions`）。 */
+  sessionList?: Array<{ session_id: string; first_user_text?: string | null; title?: string | null; ts?: number }>;
   /** 把第 N 次 `vault_session_get` 延迟这么多毫秒（造「布局尚未落定」的窗口）。 */
   sessionGetDelay?: { from: number; ms: number };
 }
@@ -93,7 +99,7 @@ async function stubRace(page: Page, options: RaceStubOptions = {}): Promise<void
       if (mode === "reject") pending.reject(error);
       else pending.resolve(null);
     };
-    const counts = { send: 0, abort: 0, new: 0, cron: 0, sessionGet: 0 };
+    const counts = { send: 0, abort: 0, new: 0, cron: 0, retry: 0, resume: 0, sessionGet: 0 };
     const hold = (name: string): Promise<unknown> =>
       new Promise((resolve, reject) => {
         w.__pending[name] = { resolve: resolve as (v: unknown) => void, reject };
@@ -153,6 +159,26 @@ async function stubRace(page: Page, options: RaceStubOptions = {}): Promise<void
         }
         return null;
       }
+      if (cmd === "harness_retry") {
+        const call = counts.retry;
+        counts.retry += 1;
+        if (opts.retryReject && opts.retryReject.at === call) {
+          return new Promise((_resolve, reject) => {
+            w.__pending.retry = {
+              resolve: () => {},
+              reject: () => reject(opts.retryReject!.envelope),
+            };
+          });
+        }
+        return null;
+      }
+      if (cmd === "harness_resume_session") {
+        const call = counts.resume;
+        counts.resume += 1;
+        if (opts.holdResume?.includes(call)) return hold("resume");
+        return { session_token: null, messages: [] };
+      }
+      if (cmd === "harness_list_sessions") return opts.sessionList ?? [];
       if (cmd === "harness_state") return snapshotFor(w.__root);
       if (cmd === "vault_session_get") {
         const call = counts.sessionGet;
@@ -230,6 +256,33 @@ async function rowMarker(page: Page, vaultId: string) {
 async function closeSwitcher(page: Page): Promise<void> {
   await page.locator(".ft-vault").click();
   await expect(page.locator(".vault-pop")).toBeHidden();
+}
+
+/** 盯住标题栏 toggle 的属性写入（`renderActivity` 会写 `data-activity` 与 `title`）：
+ *  返回读取函数，读到的是一次观察窗内的 MutationRecord 数。用来判「切走之后 MUST NOT 渲染
+ *  B 的 DOM」——产品行为正确时窗口内应当是 0 条。 */
+async function watchToggle(page: Page): Promise<() => Promise<number>> {
+  await page.evaluate(() => {
+    const w = window as unknown as Record<string, any>;
+    const el = document.querySelector(".lumir-hp-toggle");
+    w.__toggleMutations = 0;
+    const mo = new MutationObserver((records) => {
+      w.__toggleMutations += records.length;
+    });
+    mo.observe(el as Node, { attributes: true, attributeFilter: ["data-activity", "title"] });
+    w.__toggleObserver = mo;
+  });
+  return () =>
+    page.evaluate(() => {
+      const w = window as unknown as Record<string, any>;
+      w.__toggleObserver?.disconnect();
+      return (w.__toggleMutations as number) ?? 0;
+    });
+}
+
+/** 页面里所有 toast 的文本（toast 锚在 harness pane / 活跃 doc pane，两处都覆盖）。 */
+async function toastTexts(page: Page): Promise<string[]> {
+  return page.locator(".lumir-toast").evaluateAll((els) => els.map((el) => el.textContent ?? ""));
 }
 
 /** 切到某个 vault（经切换器行）并**确认真的装载完成**：浮层收起不等于装载成功（桩的
@@ -465,6 +518,8 @@ test("cron 发起失败回滚跨 vault：只回滚 A，MUST NOT 复位 / 重取 
     (root) => (window as unknown as { __stateCallsFor: (r: string) => number }).__stateCallsFor(root),
     B_ROOT,
   );
+  const toastsBefore = await toastTexts(page);
+  const readToggleMutations = await watchToggle(page);
 
   await release(page, "cron", "reject", null);
   // B 的快照 MUST NOT 被这次回滚重取（旧实现：reloadSession → resetView → fetchSnapshot 打在 B 上）。
@@ -474,6 +529,10 @@ test("cron 发起失败回滚跨 vault：只回滚 A，MUST NOT 复位 / 重取 
     B_ROOT,
   );
   expect(stateCallsAfter).toBe(stateCallsBefore);
+  // A 的失败提示 MUST NOT 锚到 B（评审 P1-1a）：toast 集合不得新增。
+  expect(await toastTexts(page)).toEqual(toastsBefore);
+  // 目标非当前：MUST NOT 渲染 B 的 DOM（`renderActivity` 会写 toggle 的 data-activity / title）。
+  expect(await readToggleMutations()).toBe(0);
   await expect(toggle(page)).toHaveAttribute("data-activity", "idle");
 
   // A 的记录回到发起前（不留在途）。
@@ -540,4 +599,218 @@ test("cron 结果通知恢复跨 vault：不打开 B 的面板、不清 B 的未
     B_ROOT,
   );
   expect(stateCallsAfter).toBe(stateCallsBefore);
+});
+
+test("cron 发起失败（未切走）：提示照常落地（守卫 MUST NOT 吞掉同一视图的失败）", async ({ page }) => {
+  await stubTauri(page, A_FIXTURE);
+  await stubRace(page, {
+    cronReject: { at: 0, envelope: { code: "harness_busy", message: "对话正在处理中" } },
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="a-note.md"]').click();
+  const toastsBefore = await toastTexts(page);
+  await page.evaluate(
+    (payload) =>
+      (window as unknown as { __fireCronRun: (p: unknown) => void }).__fireCronRun(payload),
+    {
+      origin: { kind: "cron", task: "acc-activity", run_id: "run-activity-2" },
+      session_target: { kind: "interactive" },
+      tool_policy: { allow: [] },
+      budget: { max_rounds: 8, max_tokens: 0 },
+      approval_policy: { kind: "interactive" },
+      background: false,
+      trigger: "manual",
+      vault: A_ROOT,
+      prompt: "CRON-A 这一条会失败（未切走）",
+      session: "new",
+      session_id: null,
+      model: null,
+    },
+  );
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await release(page, "cron", "reject", null);
+  await expect
+    .poll(async () => (await toastTexts(page)).length, { timeout: 5000 })
+    .toBeGreaterThan(toastsBefore.length);
+});
+
+test("cron 通知恢复被拒跨 vault：A 的失败提示不写进 B，也不重绘 B", async ({ page }) => {
+  await stubTauri(page, A_FIXTURE);
+  await stubRace(page, {
+    holdResume: [0],
+    state: { [B_ROOT]: { messages: [], inFlight: false } },
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="a-note.md"]').click();
+  // 先在 B 造一条未读（面板收起），再切回 A：B 有未读、当前是 A。
+  await page.keyboard.press("Meta+Shift+A");
+  await page.keyboard.press("Meta+Shift+A");
+  await switchTo(page, "act-b", "lumir-activity-b");
+  await fire(page, { type: "done", vault: B_ROOT });
+  await expect(toggle(page)).toHaveAttribute("data-activity", "reply");
+  await switchTo(page, "act-a", "lumir-activity-a");
+
+  // 通知点击（目标 A），恢复挂起；随后用户切到 B，回包这时才 reject。
+  await page.evaluate(
+    (payload) =>
+      (window as unknown as { __fireCronOpen: (p: unknown) => void }).__fireCronOpen(payload),
+    { vault: A_ROOT, session_id: "session-a-reject" },
+  );
+  await expect(page.locator(".ft-vault-name")).toHaveText("lumir-activity-a");
+  await switchTo(page, "act-b", "lumir-activity-b");
+  const toastsBefore = await toastTexts(page);
+  const readToggleMutations = await watchToggle(page);
+  const stateCallsBefore = await page.evaluate(
+    (root) => (window as unknown as { __stateCallsFor: (r: string) => number }).__stateCallsFor(root),
+    B_ROOT,
+  );
+
+  await release(page, "resume", "reject", { code: "harness_busy", message: "对话正在处理中" });
+  await page.waitForTimeout(400);
+
+  // A 的失败提示 MUST NOT 出现在 B（toast 集合不变）、B 的 DOM 不被重绘、快照不重取。
+  expect(await toastTexts(page)).toEqual(toastsBefore);
+  expect(await readToggleMutations()).toBe(0);
+  const stateCallsAfter = await page.evaluate(
+    (root) => (window as unknown as { __stateCallsFor: (r: string) => number }).__stateCallsFor(root),
+    B_ROOT,
+  );
+  expect(stateCallsAfter).toBe(stateCallsBefore);
+  await expect(toggle(page)).toHaveAttribute("data-activity", "reply");
+  await expect(page.locator(".lumir-harness")).toBeHidden();
+});
+
+test("重试拒绝跨 vault：A 不残留假在途，B 不受影响，且不强制 idle", async ({ page }) => {
+  await stubTauri(page, A_FIXTURE);
+  await stubRace(page, {
+    retryReject: { at: 0, envelope: { code: "harness_busy", message: "对话正在处理中" } },
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="a-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+
+  // 一轮失败（带 retry 键）→ 错误行上出现重试动作。
+  await page.locator(".lumir-hp-composer .cm-content").fill("这一轮会失败");
+  await page.locator(".lumir-hp-send").click();
+  await fire(page, {
+    type: "error",
+    code: "llm_upstream",
+    message: "上游炸了",
+    retry: { turn: 1 },
+    vault: A_ROOT,
+  });
+  await expect(page.locator(".lumir-hp-retry-btn")).toBeVisible();
+
+  // 点重试（乐观 turn_started，`harness_retry` 挂起），随后切到 B，拒绝才回来。
+  await page.locator(".lumir-hp-retry-btn").click();
+  await expect(toggle(page)).toHaveAttribute("data-activity", "inflight");
+  await page.keyboard.press("Meta+Shift+A");
+  await switchTo(page, "act-b", "lumir-activity-b");
+  const toastsBefore = await toastTexts(page);
+  const stateCallsBefore = await page.evaluate(
+    (root) => (window as unknown as { __stateCallsFor: (r: string) => number }).__stateCallsFor(root),
+    B_ROOT,
+  );
+
+  await release(page, "retry", "reject", null);
+  await page.waitForTimeout(300);
+
+  // A：乐观起点被撤销（不残留「处理中」），B：提示 / DOM / 快照都不被这次拒绝触碰。
+  await openSwitcher(page);
+  expect(await rowMarker(page, "act-a")).toBeNull();
+  await closeSwitcher(page);
+  expect(await toastTexts(page)).toEqual(toastsBefore);
+  const stateCallsAfter = await page.evaluate(
+    (root) => (window as unknown as { __stateCallsFor: (r: string) => number }).__stateCallsFor(root),
+    B_ROOT,
+  );
+  expect(stateCallsAfter).toBe(stateCallsBefore);
+  await expect(toggle(page)).toHaveAttribute("data-activity", "idle");
+});
+
+test("重试拒绝跨 vault：期间已有真实终态 ⇒ 版本门阻止回滚（不强制 idle）", async ({ page }) => {
+  await stubTauri(page, A_FIXTURE);
+  await stubRace(page, {
+    retryReject: { at: 0, envelope: { code: "harness_busy", message: "对话正在处理中" } },
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="a-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await page.locator(".lumir-hp-composer .cm-content").fill("这一轮会失败并重试");
+  await page.locator(".lumir-hp-send").click();
+  await fire(page, {
+    type: "error",
+    code: "llm_upstream",
+    message: "上游炸了",
+    retry: { turn: 2 },
+    vault: A_ROOT,
+  });
+  await page.locator(".lumir-hp-retry-btn").click();
+  await page.keyboard.press("Meta+Shift+A");
+  await switchTo(page, "act-b", "lumir-activity-b");
+
+  // 真实终态推进了 A 的记录（重试其实真的跑起来了并结束）——迟到的拒绝不得把它改回空闲。
+  await fire(page, { type: "done", vault: A_ROOT });
+  await release(page, "retry", "reject", null);
+  await openSwitcher(page);
+  expect(await rowMarker(page, "act-a")).toEqual({
+    kind: "reply",
+    title: "activity-a · 有新的回复",
+  });
+  await closeSwitcher(page);
+});
+
+test("会话恢复回包跨 vault（会话浮层入口）：只清 A 的记录，B 的 transcript 不被重建", async ({ page }) => {
+  await stubTauri(page, A_FIXTURE);
+  await stubRace(page, {
+    holdResume: [0],
+    sessionList: [{ session_id: "session-a-1", first_user_text: "A-OLD 历史会话提问", ts: 1759912345 }],
+    state: {
+      [A_ROOT]: { messages: [], inFlight: false },
+      [B_ROOT]: { messages: [{ role: "assistant", text: "B-KEEP B 的既有内容" }], inFlight: false },
+    },
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="a-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+
+  // A 的记录先在途（重试/自动回合都行）：恢复回包迟到时它必须被复位，不得残留「处理中」。
+  await fire(page, { type: "auto_turn_started", vault: A_ROOT });
+  await expect(toggle(page)).toHaveAttribute("data-activity", "inflight");
+
+  // 从会话浮层选历史会话 → 恢复挂起。
+  await page.locator(".lumir-hp-session").click();
+  await expect(page.locator(".lumir-hp-sesspop-history").first()).toBeVisible();
+  await page.locator(".lumir-hp-sesspop-history").first().click();
+  await page.waitForTimeout(100);
+
+  // 回包在途时切到 B。
+  await page.keyboard.press("Meta+Shift+A");
+  await switchTo(page, "act-b", "lumir-activity-b");
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-hp-transcript")).toContainText("B-KEEP B 的既有内容");
+  const stateCallsBefore = await page.evaluate(
+    (root) => (window as unknown as { __stateCallsFor: (r: string) => number }).__stateCallsFor(root),
+    B_ROOT,
+  );
+
+  await page.evaluate(() => {
+    const w = window as unknown as Record<string, any>;
+    w.__release("resume", "resolve");
+  });
+  await page.waitForTimeout(300);
+
+  // B 的 transcript 不被 A 的恢复内容重建；A 的记录已复位（切回 A 看行标记）。
+  await expect(page.locator(".lumir-hp-transcript")).toContainText("B-KEEP B 的既有内容");
+  await expect(page.locator(".lumir-hp-transcript")).not.toContainText("A-OLD 历史会话提问");
+  const stateCallsAfter = await page.evaluate(
+    (root) => (window as unknown as { __stateCallsFor: (r: string) => number }).__stateCallsFor(root),
+    B_ROOT,
+  );
+  expect(stateCallsAfter).toBe(stateCallsBefore);
+  await page.keyboard.press("Meta+Shift+A");
+  await openSwitcher(page);
+  expect(await rowMarker(page, "act-a")).toBeNull();
 });

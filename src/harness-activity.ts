@@ -203,6 +203,10 @@ export function createVaultActivityStore(): VaultActivityStore {
    *  `displayed` 只在真的清掉未读时算一次跃迁。返回状态是否有变化。 */
   function apply(vault: string, event: ActivityEvent, touch = true): boolean {
     const prev = current(vault)?.state ?? INITIAL_ACTIVITY;
+    // 被世代 / stopping 判据拒绝的进入快照**不是记录输入**：整条不应用，也不推进版本。
+    // 否则「进入快照在途 → 本地发送 → 旧快照返回 → 发送拒绝」会因版本被无谓推进而回滚失效，
+    // 乐观 running 与轮次闸门永久留在那里（独立评审 P1-2 的现场）。
+    if (event.type === "enter_snapshot" && !enterSnapshotApplies(prev, event)) return false;
     const next = reduceActivity(prev, event);
     const changed = next.phase !== prev.phase || next.unread !== prev.unread;
     if (!changed && !touch) return false;

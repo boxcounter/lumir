@@ -143,6 +143,7 @@ const RELOAD = functionBodyOf(PANEL_SOURCE, "reloadTargetSession");
 const APPLY_LAYOUT = functionBodyOf(MAIN_SOURCE, "applyStoredLayout");
 const CRON_OPEN = functionBodyOf(MAIN_SOURCE, "handleCronOpenSession");
 const CRON_HANDLER = functionBodyOf(MAIN_SOURCE, "handleCronRun");
+const BEGIN_RETRY = functionBodyOf(PANEL_SOURCE, "beginRetry");
 const STOP_HANDLER = arrowBodyOf(PANEL_SOURCE, "stopHandler");
 const REFRESH_ACTIVITY = methodBodyOf(SWITCHER_SOURCE, "refreshActivity");
 
@@ -306,8 +307,9 @@ test("projectActivity：turnOpen 与 midTakeover 只在这里写（含进入快�
   }
 });
 
-test("projectActivity：非快照的相位跃迁推进世代，快照回填不推进", () => {
-  assert.match(PROJECT, /next\.phase !== prev\.phase && event\.type !== "enter_snapshot"/, "世代只由事件推进");
+test("projectActivity：非快照的相位跃迁推进世代；终态一律推进；快照回填不推进", () => {
+  assert.match(PROJECT, /event\.type !== "enter_snapshot"/, "快照回填不作废自己这一代");
+  assert.match(PROJECT, /next\.phase !== prev\.phase \|\| event\.type === "terminal"/, "终态即使相位已是 idle 也推进世代（拒绝回滚后的终态不能放行旧快照）");
 });
 
 test("终态对账：只在「中途接管」/ cron 收尾时做，且走内容档位", () => {
@@ -391,6 +393,18 @@ test("停止：发送钮的点击路由读当前 vault 的记录（不读局部�
   assert.match(PANEL_SOURCE, /if \(currentActivity\(\)\.phase === "idle"\) send\(\);/, "发送路由按记录判相位");
 });
 
+test("重试拒绝：按点击时 vault 撤销乐观起点，且回滚排在视图世代守卫之前", () => {
+  assert.match(BEGIN_RETRY, /const retryVault = currentVault;/, "点击时定格 vault");
+  assert.match(BEGIN_RETRY, /beginSendActivity\(retryVault\)/, "乐观起点走同一条 beginSend 令牌通道");
+  assert.match(BEGIN_RETRY, /activity\.rollbackSend\(retryVault, retryToken\)/, "拒绝先撤销自己的乐观起点");
+  const rollback = BEGIN_RETRY.indexOf("activity.rollbackSend(retryVault, retryToken)");
+  const guard = BEGIN_RETRY.indexOf("viewGeneration !== generation");
+  assert.notEqual(rollback, -1, "必须有回滚");
+  assert.notEqual(guard, -1, "视图世代守卫仍在");
+  assert.ok(rollback < guard, "回滚 MUST 排在视图世代守卫之前（切走后 A 不得残留假在途）");
+  assert.match(BEGIN_RETRY, /if \(restored && retryVault !== null && retryVault === currentVault\)/, "只有撤销生效且仍是当前视图时才动本视图闸门");
+});
+
 test("自动回合：auto_turn_started 记账后投影（闸门先开，首段分片不被丢弃）", () => {
   assert.match(ACCOUNT_OF, /case "auto_turn_started":[\s\S]{0,120}type: "turn_started"/, "自动回合进记录");
   const block = switchCaseOf(HANDLE, "auto_turn_started");
@@ -468,15 +482,25 @@ test("cron 回滚 / cron 通知：显式 { targetVault, viewToken }，内部不�
   assert.match(CRON_HANDLER, /harnessPanel\.beginCronRun\(payload\.prompt\)/, "点击运行仍走 beginCronRun");
   assert.match(CRON_HANDLER, /const viewToken = harnessPanel\.beginCronRun/, "令牌取自 beginCronRun 的返回值（resetView 之后那一代）");
   assert.match(CRON_HANDLER, /harnessPanel\.reloadSession\(adopted\)/, "失败回滚带上 { targetVault, viewToken }");
-  assert.match(CRON_OPEN, /const targetVault = loadedRoot \?\? payload\.vault;/, "目标 vault 在恢复发起前捕获（实际装载根）");
-  assert.match(CRON_OPEN, /const viewToken = harnessPanel\.viewToken\(\);/, "视图世代在恢复发起前捕获");
-  assert.match(CRON_OPEN, /harnessPanel\.reloadSessionView\(\{ targetVault, viewToken \}\)/, "resolve 后走 reloadSessionView");
+  assert.match(CRON_HANDLER, /if \(originCurrent\) void showToast\(/, "发起失败提示只在发起视图仍当前时落地");
+  assert.match(
+    CRON_OPEN,
+    /target = \{ targetVault: loadedRoot \?\? payload\.vault, viewToken: harnessPanel\.viewToken\(\) \};/,
+    "目标 vault 与视图世代在恢复发起前一次定格（实际装载根）",
+  );
+  assert.match(CRON_OPEN, /harnessPanel\.reloadSessionView\(target\)/, "resolve 后走 reloadSessionView");
+  // 失败提示按发起视图守卫（独立评审 P1-1a）：A 的失败提示 MUST NOT 以 toast 出现在 B 上。
+  assert.match(CRON_OPEN, /if \(originCurrent\) void showToast\(/, "恢复失败提示只在发起视图仍当前时落地");
   const still = CRON_OPEN.indexOf("const stillCurrent =");
   const open = CRON_OPEN.indexOf("if (stillCurrent) openHarnessPane(false);");
   assert.ok(still !== -1 && open !== -1 && still < open, "面板打开也要按同一份定格守卫（切走后 MUST NOT 打开 B 的 pane）");
   // reloadTargetSession：内部不读 currentVault 决定清谁（只用于守卫判断「是否仍当前」）。
   assert.match(RELOAD, /options\.targetVault === currentVault/, "守卫只比较目标与当前");
   assert.match(RELOAD, /activity\.reset\(options\.targetVault\)/, "记录复位只作用于目标");
+  // 目标非当前：只清记录就返回——MUST NOT 调 renderActivity / 复位视图 / 取快照
+  //（独立评审 P1-1b：「切走后 DOM 渲染全部跳过」）。
+  assert.match(RELOAD, /if \(!stillCurrent\) return;/, "切走后早退（不复位视图、不取快照）");
+  assertNoMatch(RELOAD, /renderActivity\(/, "切走后 MUST NOT 渲染当前视图的 DOM（同值写入也算违规）");
   const resetAt = RELOAD.indexOf("activity.reset(options.targetVault)");
   const early = RELOAD.indexOf("if (!stillCurrent)");
   const view = RELOAD.indexOf("resetView({");
