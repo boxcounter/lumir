@@ -242,9 +242,13 @@ pub type PersistenceReporter = Arc<dyn Fn(&PersistenceHealth) + Send + Sync>;
 #[derive(Clone, Default)]
 pub(crate) struct PersistenceTransitions(Arc<Mutex<TransitionState>>);
 
-/// 单条跃迁的 reporter 连续 panic 上限：达到后丢弃该条并记 stderr，继续后续项。
-/// 目的是「永久 panic 不无限重试 / 不递归崩溃」，同时不让毒项堵住队列。
-const MAX_REPORTER_PANICS: usize = 3;
+/// 同一 drainer 内对同一条跃迁的立即重试上限：达到后不丢弃，改为保留队首并由有界延迟的
+/// 自动重试线程接管。告警事件（degraded）不能因 reporter 暂时不可用而被丢弃——那会制造
+/// 持久的假健康。
+const MAX_IMMEDIATE_REPORTER_PANICS: usize = 3;
+/// 延迟重试的后台线程：首次 20ms，指数退避，封顶 2s。
+const RETRY_BASE_MS: u64 = 20;
+const RETRY_MAX_MS: u64 = 2_000;
 
 #[derive(Default)]
 struct TransitionState {
@@ -252,6 +256,10 @@ struct TransitionState {
     pending: VecDeque<PersistenceHealth>,
     /// 是否已有 drainer 在发送：同一队列只允许一个发送者（复审 P1：并发 drain 会乱序）。
     draining: bool,
+    /// 是否已有延迟重试线程在等待：同一队列只允许一个自动重试接管者。
+    retry_scheduled: bool,
+    /// 累计 reporter panic 次数（诊断节流：前 3 次 + 此后每 30 次一条）。
+    panic_total: u64,
 }
 
 impl PersistenceTransitions {
@@ -260,6 +268,8 @@ impl PersistenceTransitions {
             reporter,
             pending: VecDeque::new(),
             draining: false,
+            retry_scheduled: false,
+            panic_total: 0,
         })))
     }
 
@@ -272,6 +282,15 @@ impl PersistenceTransitions {
             .push_back(health.clone());
     }
 
+    /// 队列中尚未交付的跃迁数（延迟重试的退出判据；测试也用它断言事件未被丢弃）。
+    fn pending_len(&self) -> usize {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pending
+            .len()
+    }
+
     /// 在锁域外发出全部待发跃迁（调用方保证不持有 Session / Writer 锁）。
     ///
     /// **同一队列只有一个 drainer**，且它持续 drain 到队列为空：两个线程并发 flush 时，
@@ -281,8 +300,9 @@ impl PersistenceTransitions {
     /// reporter 调用始终在锁外，并用 `catch_unwind` 包住：
     /// - reporter 瞬时 panic：该条放回**队首**，同一次 flush 内重试，顺序不变；
     /// - panic 期间新入队的项：仍由当前 drainer 在恢复后继续取，不依赖新的 flush；
-    /// - reporter 永久 panic：同一条连续失败达到 [`MAX_REPORTER_PANICS`] 后丢弃并记 stderr，
-    ///   继续后续项；不会无限重试或把 panic 递归抛出。
+    /// - reporter 持续 panic：立即重试 [`MAX_IMMEDIATE_REPORTER_PANICS`] 次后**不丢弃**，
+    ///   该条保留队首，由有界延迟的自动重试线程接管；诊断按累计次数节流（前 3 次 + 每 30 次），
+    ///   不会忙转或把 panic 递归抛出。
     pub(crate) fn flush(&self) {
         {
             let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -312,31 +332,106 @@ impl PersistenceTransitions {
                 continue;
             };
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| reporter(&health))) {
-                Ok(()) => consecutive_panics = 0,
+                Ok(()) => {
+                    consecutive_panics = 0;
+                    let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+                    state.panic_total = 0;
+                }
                 Err(_) => {
                     consecutive_panics += 1;
-                    eprintln!(
-                        "lumir: persistence 事件发送 panic（{}，连续第 {} 次）",
-                        health.detail, consecutive_panics
-                    );
-                    if consecutive_panics < MAX_REPORTER_PANICS {
+                    let should_log = {
+                        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+                        state.panic_total += 1;
+                        state.panic_total <= 3 || state.panic_total.is_multiple_of(30)
+                    };
+                    if should_log {
+                        eprintln!(
+                            "lumir: persistence 事件发送 panic（{}，连续第 {} 次）",
+                            health.detail, consecutive_panics
+                        );
+                    }
+                    if consecutive_panics < MAX_IMMEDIATE_REPORTER_PANICS {
                         // 未成功交付：放回队首，保持顺序在同一次 flush 内重试。
                         self.0
                             .lock()
                             .unwrap_or_else(|e| e.into_inner())
                             .pending
                             .push_front(health);
-                    } else {
-                        eprintln!(
-                            "lumir: persistence 事件连续 panic {} 次，丢弃该跃迁（{}）",
-                            MAX_REPORTER_PANICS, health.detail
-                        );
-                        consecutive_panics = 0;
+                        continue;
                     }
+                    // 立即重试耗尽：**不丢弃**。保留队首，释放 drainer 并交给有界延迟的
+                    // 自动重试线程；它恢复后无需任何自然写入即可交付。
+                    let should_spawn = {
+                        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+                        state.pending.push_front(health);
+                        state.draining = false;
+                        if state.retry_scheduled {
+                            false
+                        } else {
+                            state.retry_scheduled = true;
+                            true
+                        }
+                    };
+                    if should_spawn {
+                        self.spawn_retry_thread();
+                    }
+                    return;
                 }
             }
         }
     }
+
+    /// 启动一个延迟重试线程（单队列至多一个；`retry_scheduled` 已在锁内置位）。
+    fn spawn_retry_thread(&self) {
+        let queue = self.clone();
+        let spawned = std::thread::Builder::new()
+            .name("lumir-persistence-retry".into())
+            .spawn(move || queue.retry_loop());
+        if let Err(e) = spawned {
+            // 线程起不来（资源耗尽）：事件仍保留在队列；后续自然写入会再次尝试调度。
+            eprintln!("lumir: persistence 事件重试线程启动失败：{e}");
+            self.0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .retry_scheduled = false;
+        }
+    }
+
+    /// 有界延迟重试：每次 sleep 后尝试 drain 到空；永久 panic 时事件留在队首、退避继续，
+    /// 不忙转、不递归。队列空后释放 `retry_scheduled` 并退出。
+    fn retry_loop(&self) {
+        let mut attempt: u32 = 0;
+        loop {
+            attempt = attempt.saturating_add(1);
+            std::thread::sleep(retry_backoff(attempt));
+            if self.pending_len() == 0 {
+                self.finish_retry();
+                return;
+            }
+            self.flush();
+            if self.pending_len() == 0 {
+                self.finish_retry();
+                return;
+            }
+        }
+    }
+
+    fn finish_retry(&self) {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retry_scheduled = false;
+    }
+}
+
+/// 指数退避（20ms 起，封顶 2s）。
+fn retry_backoff(attempt: u32) -> std::time::Duration {
+    let shift = attempt.saturating_sub(1).min(7);
+    std::time::Duration::from_millis(
+        RETRY_BASE_MS
+            .saturating_mul(1u64 << shift)
+            .min(RETRY_MAX_MS),
+    )
 }
 
 /// 一条 JSONL 行的写入失败。`partial` = 报错前是否已有字节落盘（无法区分时 MUST 按 true 处理）。
@@ -1962,57 +2057,145 @@ mod tests {
         );
     }
 
-    /// 复审终审 P1：永久 panic 不得无限重试或递归崩溃；连续失败达到上限后丢弃该条并继续
-    /// 后续项，错误留 stderr；之后正常写入仍可交付。
+    /// 复审终审 P1：degraded 事件在 reporter 连续 3 次 panic 后 MUST NOT 丢弃；保留在队首，
+    /// 由有界延迟的自动重试接管，reporter 恢复后无需任何自然写入即可交付。
     #[test]
-    fn transition_flush_bounds_permanent_reporter_panic_and_keeps_following_items() {
-        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    fn transition_flush_retains_degraded_after_three_panics_and_delivers_on_recovery() {
+        use std::sync::Barrier;
+
+        let seen = Arc::new(Mutex::new(Vec::<PersistenceState>::new()));
         let attempts = Arc::new(Mutex::new(0usize));
+        let panics = Arc::new(Mutex::new(0usize));
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
         let reporter_seen = seen.clone();
         let reporter_attempts = attempts.clone();
+        let reporter_panics = panics.clone();
+        let reporter_entered = entered.clone();
+        let reporter_release = release.clone();
         let reporter: PersistenceReporter = Arc::new(move |health: &PersistenceHealth| {
-            if health.detail == "A" {
-                *reporter_attempts.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+            let attempt = {
+                let mut count = reporter_attempts.lock().unwrap_or_else(|e| e.into_inner());
+                *count += 1;
+                *count
+            };
+            if attempt <= 3 {
+                *reporter_panics.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+                panic!("degraded event reporter panic #{attempt}");
+            }
+            if attempt == 4 {
+                // 延迟重试的第一次尝试：停在 reporter 里，供测试断言「3 次立即重试 + 第 4 次
+                // 自动迟到重试」的精确交接，而不是让断言与 20ms 退避赛跑。
+                reporter_entered.wait();
+                reporter_release.wait();
+            }
+            reporter_seen
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(health.state);
+        });
+        let transitions = PersistenceTransitions::with(Some(reporter));
+        // 这是告警事件，不是 ok 样本：丢弃会制造持久的假健康。
+        let degraded = PersistenceHealth {
+            state: PersistenceState::Degraded,
+            severity: Some(PersistenceSeverity::Annotation),
+            detail: "degraded-A".into(),
+            ..Default::default()
+        };
+        transitions.push(&degraded);
+
+        transitions.flush();
+        assert_eq!(
+            *panics.lock().unwrap(),
+            3,
+            "同一次 flush 必须精确执行 3 次立即重试后转入延迟路径"
+        );
+        assert_eq!(
+            transitions.pending_len(),
+            1,
+            "三次 panic 后 degraded 事件 MUST NOT 被丢弃"
+        );
+
+        // 延迟重试独立于任何自然写入：等待它进入 reporter（不调用 flush）。
+        entered.wait();
+        assert_eq!(
+            *attempts.lock().unwrap(),
+            4,
+            "第 4 次尝试必须来自有界延迟的自动重试"
+        );
+        release.wait();
+        wait_for_delivery(&seen, 1);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![PersistenceState::Degraded],
+            "reporter 恢复后 degraded 事件必须交付"
+        );
+        assert_eq!(transitions.pending_len(), 0);
+
+        // 之后正常写入仍按序交付。
+        let ok = PersistenceHealth::default();
+        transitions.push(&ok);
+        transitions.flush();
+        wait_for_delivery(&seen, 2);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![PersistenceState::Degraded, PersistenceState::Ok]
+        );
+    }
+
+    /// 复审终审 P1：reporter 持续 panic 时，同步 flush 有界返回（不忙转、不递归），事件保留；
+    /// 恢复后由延迟重试交付，无需自然写入。
+    #[test]
+    fn transition_flush_permanent_panic_returns_bounded_and_keeps_event_for_retry() {
+        let seen = Arc::new(Mutex::new(Vec::<PersistenceState>::new()));
+        let attempts = Arc::new(Mutex::new(0usize));
+        let recover = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reporter_seen = seen.clone();
+        let reporter_attempts = attempts.clone();
+        let reporter_recover = recover.clone();
+        let reporter: PersistenceReporter = Arc::new(move |health: &PersistenceHealth| {
+            *reporter_attempts.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+            if !reporter_recover.load(std::sync::atomic::Ordering::SeqCst) {
                 panic!("permanent reporter panic");
             }
             reporter_seen
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .push(health.detail.clone());
+                .push(health.state);
         });
         let transitions = PersistenceTransitions::with(Some(reporter));
-        let a = PersistenceHealth {
-            detail: "A".into(),
+        let degraded = PersistenceHealth {
+            state: PersistenceState::Degraded,
+            detail: "degraded-retry".into(),
             ..Default::default()
         };
-        let b = PersistenceHealth {
-            detail: "B".into(),
-            ..Default::default()
-        };
-        transitions.push(&a);
-        transitions.push(&b);
+        transitions.push(&degraded);
 
         transitions.flush();
-        let tries = *attempts.lock().unwrap();
-        assert!(
-            (1..=3).contains(&tries),
-            "永久 panic 必须有界重试（实际 {tries} 次）"
-        );
         assert_eq!(
-            *seen.lock().unwrap(),
-            vec!["B".to_string()],
-            "毒项丢弃后，后续项必须继续交付"
+            *attempts.lock().unwrap(),
+            3,
+            "同步 flush 只做 3 次立即重试后有界返回"
         );
+        assert_eq!(transitions.pending_len(), 1, "事件必须保留在队列中");
+        // 让延迟重试再遇到几次 panic 后恢复；事件仍在队列里。
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        recover.store(true, std::sync::atomic::Ordering::SeqCst);
+        wait_for_delivery(&seen, 1);
+        assert_eq!(*seen.lock().unwrap(), vec![PersistenceState::Degraded]);
+        assert_eq!(transitions.pending_len(), 0);
+    }
 
-        let c = PersistenceHealth {
-            detail: "C".into(),
-            ..Default::default()
-        };
-        transitions.push(&c);
-        transitions.flush();
-        assert_eq!(
-            *seen.lock().unwrap(),
-            vec!["B".to_string(), "C".to_string()]
-        );
+    /// 轮询等待 reporter 收取 N 条（延迟重试在独立线程，测试不做无限等待）。
+    fn wait_for_delivery(seen: &Arc<Mutex<Vec<PersistenceState>>>, expected: usize) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while seen.lock().unwrap().len() < expected {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "延迟重试未在 5s 内交付（已收 {} 条）",
+                seen.lock().unwrap().len()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 }
