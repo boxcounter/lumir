@@ -284,6 +284,38 @@ test("V3 state=ok + 缺口：显示「写入已恢复但记录缺失」，MUST N
   await expect(note).toContainText("写入已恢复，但此前部分记录缺失");
   await expect(note).toContainText("本次会话的新记录尚未落盘，退出后无法恢复");
 
+  // 缺口态两句话必须完整可见：只对 `data-persistence-health` 这一条允许换行，且容器高度
+  // 随换行增长（任务 9.3 候选 02 的信息可读性回归）。引用失败状态行仍保持单行省略。
+  const gapGeometry = await note.evaluate((el) => {
+    const style = getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const lineTops = new Set(Array.from(range.getClientRects(), (r) => Math.round(r.top * 10) / 10));
+    return {
+      whiteSpace: style.whiteSpace,
+      textOverflow: style.textOverflow,
+      overflow: style.overflow,
+      fontSize: parseFloat(style.fontSize),
+      lineHeight: style.lineHeight,
+      height: rect.height,
+      clientHeight: el.clientHeight,
+      scrollHeight: el.scrollHeight,
+      clientWidth: el.clientWidth,
+      scrollWidth: el.scrollWidth,
+      lines: lineTops.size,
+      text: el.textContent ?? "",
+    };
+  });
+  expect(gapGeometry.whiteSpace).toBe("normal");
+  expect(gapGeometry.textOverflow).not.toBe("ellipsis");
+  expect(gapGeometry.lines).toBeGreaterThanOrEqual(2);
+  expect(gapGeometry.scrollWidth).toBeLessThanOrEqual(gapGeometry.clientWidth + 1);
+  expect(gapGeometry.scrollHeight).toBeLessThanOrEqual(gapGeometry.clientHeight + 1);
+  expect(gapGeometry.height).toBeGreaterThanOrEqual(gapGeometry.fontSize * 2.2);
+  expect(gapGeometry.text).toContain("写入已恢复，但此前部分记录缺失");
+  expect(gapGeometry.text).toContain("本次会话的新记录尚未落盘，退出后无法恢复");
+
   // history_written 转 true：未落盘句消失，缺口文案仍在（状态行 MUST NOT 消失）。
   await fire(
     page,
@@ -298,6 +330,8 @@ test("V3 state=ok + 缺口：显示「写入已恢复但记录缺失」，MUST N
   );
   await expect(note).toBeVisible();
   await expect(note).toHaveText("写入已恢复，但此前部分记录缺失，这段历史可能不完整");
+  const oneLineHeight = await note.evaluate((el) => el.getBoundingClientRect().height);
+  expect(gapGeometry.height).toBeGreaterThan(oneLineHeight + 1);
 });
 
 // ── V4：横幅三形态 ────────────────────────────────────────────────────────

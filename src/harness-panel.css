@@ -1986,6 +1986,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 留存健康状态行（change add-persistence-health-status-nov23）：缺口态两句文案必须完整可读。
+   只覆盖带 data-persistence-health 的这一条；引用失败状态行仍保持单行省略。行高沿用继承值，
+   避免改变单行态（degraded / gap 消退态）的既有像素。 */
+.lumir-hp-qc-src[data-persistence-health="true"] {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
 .lumir-hp-qc-x {
   position: absolute;
   top: var(--sp-1);
