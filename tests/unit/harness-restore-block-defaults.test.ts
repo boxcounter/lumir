@@ -465,6 +465,7 @@ async function mountPanel(
     blocks,
     togglePane: () => {},
     toast: () => {},
+    stickyToast: () => {},
     openVaultPath: () => {}, // 这些用例不点路径：桩空实现
     isVaultDir: () => false, // 路径链接的目录判定（change harness-dir-link）：本文件不涉路径
     revealVaultDir: () => {},

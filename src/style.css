@@ -841,9 +841,59 @@ body {
   padding: 0;
   position: relative;
   background: var(--content-bg);
-  /* M316 分栏容器化：容器转 flex 行盒，pane 挂载元素（.editor-pane）在里头按比例分宽。
-     单栏时唯一子项 flex:1 占满——几何与此前逐像素一致（零基线更新判据）。 */
+  /* M316 分栏容器化 → change add-persistence-health-status-nov23 改为纵向两段：
+     顶部可有一条崩溃备份横幅，其下是 .editor-pane-row（原来的横向分栏行盒，pane 在其中
+     按比例分宽）。横幅 hidden（display:none）时不参与布局 ⇒ 单 / 双栏几何都与此前逐像素
+     一致（零基线更新判据）。 */
   display: flex;
+  flex-direction: column;
+}
+/* 分栏行盒：原来的 `.pane-editor` 行语义原样搬到这里（pane + 分隔条按 inline flexGrow 分宽）。 */
+.editor-pane-row {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+/* 崩溃备份失败的文档区 sticky 横幅（change add-persistence-health-status-nov23 design §5.3）：
+   只用既有 token（danger 底 / 文本、border 边、r10 圆角、ui 字级），不引入新色值与阴影。
+   两个子条件共用一条横幅，各自一行文案 + 自己的动作钮；不提供关闭 / 忽略出口。 */
+.recovery-banner {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px var(--sp-4);
+  padding: var(--sp-2) var(--sp-4);
+  background: var(--danger-tint);
+  color: var(--danger);
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--r10);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.recovery-banner[hidden] {
+  display: none;
+}
+.recovery-banner-segment {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+.recovery-banner-segment > span {
+  min-width: 0;
+}
+.recovery-banner-action {
+  flex: none;
+  padding: 2px 10px;
+  border: 1px solid currentColor;
+  border-radius: var(--r10);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
 }
 /* pane 挂载元素（M316）：pane 的 CM 内核与栏宽手柄覆盖层的挂点；position:relative 是
    两者的定位基准（content-width-handles 的 inset:0 与 CM 内部度量）。双栏时它与 pane B

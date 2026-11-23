@@ -41,13 +41,17 @@ export interface AppShell {
   /** 文件树 pane（createFileTree 挂载点）。 */
   fileTree: HTMLElement;
   treeMount: HTMLElement;
-  /** 编辑器 pane 容器（M316 起它是**分栏容器**：单栏时内层就是 `editorPane` 一个挂载元素，
-   *  几何与 M316 之前逐像素一致；双栏时容器内是 [paneA, 分隔条, paneB]，后两者由装配层
-   *  动态创建 / 移除，本模块不建）。notice / toast 等覆盖层仍挂它（定位基准不变）。 */
+  /** 编辑器 pane 容器（M316 起它是**分栏容器**；change add-persistence-health-status-nov23
+   *  改为纵向两段：顶部可有一条崩溃备份横幅，其下是 `editorRow`）。
+   *  单栏时 `editorRow` 内层就是 `editorPane` 一个挂载元素，几何与 M316 之前逐像素一致；
+   *  双栏时 row 内是 [paneA, 分隔条, paneB]，后两者由装配层动态创建 / 移除，本模块不建。
+   *  notice / toast 等覆盖层仍挂它（定位基准不变）。 */
   editor: HTMLElement;
   /** pane A 的挂载元素（`.editor-pane`）：pane A 的 CM 内核与栏宽手柄覆盖层都挂它；
    *  双栏时它与 pane B 的同类元素按比例（inline flexGrow）分容器宽。 */
   editorPane: HTMLElement;
+  /** pane 行容器（`.editor-pane-row`）：承载横幅之下的横向分栏行（pane A / 分隔条 / pane B）。 */
+  editorRow: HTMLElement;
   /** 标签条工厂（M316）：pane B 的标签槽在 split 时由装配层现建——读屏名的「唯一写入点 +
    *  运行期可重跑」口径（M285）必须同源，因此工厂在本模块（复制一份写法就是两处真源）。 */
   createTabStrip(): HTMLElement;
@@ -155,9 +159,12 @@ export function createShell(mount: HTMLElement): AppShell {
   // pane A 挂载元素（M316 分栏容器化）：CM 内核与栏宽手柄的挂点从 `.pane-editor` 容器
   // 下沉一层——双栏时容器内要并列第二个 pane 与分隔条，单栏时这一个元素 flex:1 填满容器，
   // 几何与此前逐像素一致（容器转 flex 行盒、唯一子项拉伸占满）。
+  const editorRow = document.createElement("div");
+  editorRow.className = "editor-pane-row";
   const editorPane = document.createElement("div");
   editorPane.className = "editor-pane";
-  editor.append(editorPane);
+  editorRow.append(editorPane);
+  editor.append(editorRow);
 
   // 栏宽拖拽手柄（M228，change content-width-drag，D5：md 与 code 模式都有）：shell 层覆盖
   // 元素，与 CM 挂载点并列、MUST NOT 进 `.cm-scroller` / `.cm-content`（CM 按 border-box 量
@@ -255,6 +262,7 @@ export function createShell(mount: HTMLElement): AppShell {
     treeMount,
     editor,
     editorPane,
+    editorRow,
     createTabStrip: makeTabStrip,
     widthHandles: { overlay: widthOverlay, left: widthLeft, right: widthRight },
     modeline,

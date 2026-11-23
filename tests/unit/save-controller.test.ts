@@ -797,3 +797,277 @@ test("图片会话（M629）：⌘S / 保存全部脏标签都零 document_write
   );
   stopTimers(rig);
 });
+
+// ---------------------------------------------------------------------------
+// change add-persistence-health-status-nov23：崩溃备份失败的双子条件（U1–U3 / U12）
+// ---------------------------------------------------------------------------
+
+test("U1 备份写失败进入失败集合、跨路径累积；某路径成功只清该条；全清且无枚举失败时集合为空", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const rig = createRig();
+    let changes = 0;
+    rig.controller.onRecoveryFailureChange(() => void (changes += 1));
+    rig.backend.handle("recovery_backup", (args: { path: string }) => {
+      if (args.path === "a.md" || args.path === "b.md") {
+        throw commandError("recovery_write_failed", "磁盘满");
+      }
+      return undefined;
+    });
+
+    rig.editor.open("a.md", "# A");
+    rig.controller.noteOpened("a.md", "rev-a");
+    rig.editor.edit("a.md", "# A 改");
+    mock.timers.tick(RECOVERY_DEBOUNCE_MS);
+    await flush();
+    assert.deepEqual(rig.controller.recoveryFailures(), {
+      paths: ["a.md"],
+      listFailed: false,
+    });
+    assert.ok(changes >= 1, "失败集合变化必须通知装配层（横幅 / 标签后缀的唯一数据源）");
+    assert.ok(
+      rig.backend.logEvents.some(
+        (entry) => entry.event === "recovery_write_failed" && entry.fields.path === "a.md",
+      ),
+      "写失败必须落一条只含路径的诊断事件（全量失败路径在日志里，横幅只展示首个）",
+    );
+
+    rig.editor.open("b.md", "# B");
+    rig.controller.noteOpened("b.md", "rev-b");
+    rig.editor.edit("b.md", "# B 改");
+    mock.timers.tick(RECOVERY_DEBOUNCE_MS);
+    await flush();
+    assert.deepEqual(
+      [...rig.controller.recoveryFailures().paths].sort(),
+      ["a.md", "b.md"],
+      "失败按路径累积（横幅的受影响数）",
+    );
+
+    // a 下一次备份成功：只清 a 的写失败子条件。
+    rig.backend.handle("recovery_backup", () => undefined);
+    rig.editor.activate("a.md");
+    rig.editor.edit("a.md", "# A 再改");
+    mock.timers.tick(RECOVERY_DEBOUNCE_MS);
+    await flush();
+    assert.deepEqual(rig.controller.recoveryFailures().paths, ["b.md"]);
+
+    // b 回到磁盘基线（放弃修改）：写失败子条件清空；没有枚举失败 ⇒ 空集合。
+    rig.editor.activate("b.md");
+    rig.editor.edit("b.md", "# B");
+    await flush();
+    assert.deepEqual(rig.controller.recoveryFailures(), {
+      paths: [],
+      listFailed: false,
+    });
+    assert.equal(rig.controller.isRecoveryFailure("b.md"), false);
+    stopTimers(rig);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("U2 转 clean / 放弃 / 改名清对应路径；改名后仍 dirty 且备份失败则新路径出现在集合里", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const rig = createRig();
+    rig.backend.handle("recovery_backup", () => {
+      throw commandError("recovery_write_failed", "目录不可创建");
+    });
+    rig.editor.open("a.md", "# A");
+    rig.controller.noteOpened("a.md", "rev-a");
+    rig.editor.edit("a.md", "# A 改");
+    mock.timers.tick(RECOVERY_DEBOUNCE_MS);
+    await flush();
+    assert.deepEqual(rig.controller.recoveryFailures().paths, ["a.md"]);
+
+    // 改名：旧路径的写失败随键迁移清除；新路径仍 dirty，立即补写并失败 ⇒ 新路径入集合。
+    rig.editor.rename("a.md", "renamed.md");
+    rig.controller.noteRenamed("a.md", "renamed.md");
+    await flush();
+    assert.equal(rig.controller.isRecoveryFailure("a.md"), false, "旧路径的失败随键作废");
+    assert.deepEqual(rig.controller.recoveryFailures().paths, ["renamed.md"]);
+
+    // 关标签时放弃修改（forgetBackup 显式清除）。
+    rig.controller.forgetBackup("renamed.md");
+    assert.deepEqual(rig.controller.recoveryFailures().paths, []);
+
+    // 另开一条路径制造失败，再用「打开换代」清除（noteOpened）。
+    rig.editor.open("c.md", "# C");
+    rig.controller.noteOpened("c.md", "rev-c");
+    rig.editor.edit("c.md", "# C 改");
+    mock.timers.tick(RECOVERY_DEBOUNCE_MS);
+    await flush();
+    assert.deepEqual(rig.controller.recoveryFailures().paths, ["c.md"]);
+    rig.controller.noteOpened("c.md", "rev-c2");
+    assert.deepEqual(rig.controller.recoveryFailures().paths, []);
+    stopTimers(rig);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("U3 备份写失败不产生「已备份」类成功语义，也不冒充保存失败", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const rig = createRig();
+    rig.backend.handle("recovery_backup", () => {
+      throw commandError("recovery_write_failed", "磁盘满");
+    });
+    rig.editor.open("a.md", "# A");
+    rig.controller.noteOpened("a.md", "rev-a");
+    rig.editor.edit("a.md", "# A 改");
+    mock.timers.tick(RECOVERY_DEBOUNCE_MS);
+    await flush();
+    assert.deepEqual(rig.controller.recoveryFailures().paths, ["a.md"]);
+    assert.deepEqual(rig.toasts.texts(), [], "备份失败不弹 toast，也不出现成功语义");
+    assert.equal(rig.backend.countOf("document_save"), 0, "备份 ≠ 保存：不得写 vault");
+    stopTimers(rig);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("U12 枚举失败子条件独立：写失败清空不撤下它；重新检查成功只清它", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const rig = createRig();
+    rig.backend.handle("recovery_list", () => {
+      throw commandError("recovery_list_failed", "目录不可读");
+    });
+    await rig.controller.checkRecovery();
+    assert.deepEqual(rig.controller.recoveryFailures(), {
+      paths: [],
+      listFailed: true,
+    });
+    assert.ok(
+      rig.backend.logEvents.some(
+        (entry) =>
+          entry.event === "recovery_list_failed" &&
+          entry.fields.code === "recovery_list_failed",
+      ),
+      "枚举失败必须落一条只含错误分类的诊断事件",
+    );
+
+    // 同时制造写失败：两个子条件并存。
+    rig.backend.handle("recovery_backup", () => {
+      throw commandError("recovery_write_failed", "磁盘满");
+    });
+    rig.editor.open("a.md", "# A");
+    rig.controller.noteOpened("a.md", "rev-a");
+    rig.editor.edit("a.md", "# A 改");
+    mock.timers.tick(RECOVERY_DEBOUNCE_MS);
+    await flush();
+    assert.deepEqual(rig.controller.recoveryFailures().paths, ["a.md"]);
+    assert.equal(rig.controller.recoveryFailures().listFailed, true);
+
+    // 写失败子条件清空（回到基线）——枚举失败仍在（横幅不得撤下）。
+    rig.editor.edit("a.md", "# A");
+    await flush();
+    assert.deepEqual(rig.controller.recoveryFailures(), {
+      paths: [],
+      listFailed: true,
+    });
+
+    // 重新检查成功：只清枚举失败；写失败子条件本已为空，不伪造新状态。
+    rig.backend.handle("recovery_list", () => []);
+    await rig.controller.checkRecovery();
+    assert.deepEqual(rig.controller.recoveryFailures(), {
+      paths: [],
+      listFailed: false,
+    });
+
+    // 反向：重新检查成功 MUST NOT 清除写失败子条件。
+    rig.backend.handle("recovery_backup", () => {
+      throw commandError("recovery_write_failed", "磁盘满");
+    });
+    rig.editor.edit("a.md", "# A 再改");
+    mock.timers.tick(RECOVERY_DEBOUNCE_MS);
+    await flush();
+    rig.backend.handle("recovery_list", () => {
+      throw commandError("recovery_list_failed", "目录不可读");
+    });
+    await rig.controller.checkRecovery();
+    rig.backend.handle("recovery_list", () => []);
+    await rig.controller.checkRecovery();
+    assert.deepEqual(rig.controller.recoveryFailures().paths, ["a.md"]);
+    stopTimers(rig);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("切 vault 复位清空失败集合与枚举失败（横幅不跨 vault 残留）", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const rig = createRig();
+    rig.backend.handle("recovery_backup", () => {
+      throw commandError("recovery_write_failed", "磁盘满");
+    });
+    rig.backend.handle("recovery_list", () => {
+      throw commandError("recovery_list_failed", "目录不可读");
+    });
+    rig.editor.open("a.md", "# A");
+    rig.controller.noteOpened("a.md", "rev-a");
+    rig.editor.edit("a.md", "# A 改");
+    mock.timers.tick(RECOVERY_DEBOUNCE_MS);
+    await flush();
+    await rig.controller.checkRecovery();
+    assert.deepEqual(rig.controller.recoveryFailures(), {
+      paths: ["a.md"],
+      listFailed: true,
+    });
+    rig.controller.noteVaultReset();
+    assert.deepEqual(rig.controller.recoveryFailures(), {
+      paths: [],
+      listFailed: false,
+    });
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("切 vault 之后旧 vault 的备份 / 枚举应答不写进新 vault（世代归属）", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const rig = createRig();
+    const backupDeferred: { reject?: (error: unknown) => void } = {};
+    rig.backend.handle(
+      "recovery_backup",
+      () => new Promise((_resolve, reject) => void (backupDeferred.reject = reject)),
+    );
+    rig.editor.open("a.md", "# A");
+    rig.controller.noteOpened("a.md", "rev-a");
+    rig.editor.edit("a.md", "# A 改");
+    mock.timers.tick(RECOVERY_DEBOUNCE_MS);
+    await flush();
+    assert.ok(backupDeferred.reject !== undefined, "前提：备份写入在途");
+
+    // 切 vault（放弃修改）之后，旧应答才失败：不得在新 vault 里弹出写失败横幅。
+    rig.controller.noteVaultReset();
+    backupDeferred.reject!(commandError("recovery_write_failed", "磁盘满"));
+    await flush();
+    assert.deepEqual(rig.controller.recoveryFailures(), {
+      paths: [],
+      listFailed: false,
+    });
+
+    // 枚举同理：旧 vault 在途的 list 失败不得写进新 vault 的子条件。
+    const listDeferred: { reject?: (error: unknown) => void } = {};
+    rig.backend.handle(
+      "recovery_list",
+      () => new Promise((_resolve, reject) => void (listDeferred.reject = reject)),
+    );
+    const pending = rig.controller.checkRecovery();
+    await flush();
+    assert.ok(listDeferred.reject !== undefined, "前提：枚举在途");
+    rig.controller.noteVaultReset();
+    listDeferred.reject!(commandError("recovery_list_failed", "目录不可读"));
+    await pending;
+    assert.deepEqual(rig.controller.recoveryFailures(), {
+      paths: [],
+      listFailed: false,
+    });
+  } finally {
+    mock.timers.reset();
+  }
+});

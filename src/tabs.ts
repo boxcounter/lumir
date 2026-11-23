@@ -186,6 +186,9 @@ export interface TabsDeps {
   /** 清除某路径的崩溃备份（main 的 save.forgetBackup）：「放弃修改并关闭」把会话直接摘掉，
    *  没有 dirty 转 clean 的跃迁可挂，备份只能由这条出口显式清除（M278）。 */
   forgetBackup: (path: string) => void;
+  /** 某路径的崩溃备份是否处于写失败子条件（change add-persistence-health-status-nov23
+   *  design §5.4）：只追加读屏名 / 悬停提示后缀，MUST NOT 改可见像素、图标或标签宽度。 */
+  isBackupFailed: (path: string) => boolean;
   /** wikilink 解析缓存整批失效（from 基准随前台文档而变，能力在 src/link-follow.ts）。 */
   invalidateResolve: () => void;
   /** 撤下「暂不支持预览」覆盖层（切换 / 关闭标签后）。 */
@@ -334,13 +337,17 @@ export function createTabs(deps: TabsDeps): TabsHandle {
         // D2 追加裁决）追加「vault 外只读」一句，未保存变体沿用 D90。M660 #7 起可见侧改成锁形
         // 图标（见下面的 lock）：图形语义不会自动进可访问名，只读这件事必须继续留在这条
         // aria-label 上——它是读屏用户唯一的来源。
-        open.setAttribute(
-          "aria-label",
-          session.external === true ? t("D579", { name }) : session.dirty ? t("D90", { name }) : name,
-        );
+        // 备份写失败后缀（change add-persistence-health-status-nov23 design §5.4）：与 D90
+        // 「（未保存）」同族，只进读屏名与悬停提示——可见像素零变化（不加图标、不改宽度）。
+        const backupFailed = session.path !== undefined && deps.isBackupFailed(session.path);
+        // 后缀前留一个空格：中文全角括号本身有视觉间隔，英文 `(backup failed)` 需要分隔。
+        const backupSuffix = backupFailed ? ` ${t("D960")}` : "";
+        const baseLabel =
+          session.external === true ? t("D579", { name }) : session.dirty ? t("D90", { name }) : name;
+        open.setAttribute("aria-label", `${baseLabel}${backupSuffix}`);
         // 悬停提示给完整路径（同名文件分散在不同目录时要能分辨，文案 D91）。vault 外只读会话的
         // path 就是**绝对路径**：这条 tooltip 因此天然满足「hover 显示完整绝对路径」。
-        open.title = path;
+        open.title = `${path}${backupSuffix}`;
         // 按钮上的这条与 M149 起逐字相同（点标签不该抢编辑器焦点、不拖出选区）。它不在
         // 拖拽问题的那条路径上（拖拽落点在标题栏右端的标识块），保留原样。
         open.addEventListener("mousedown", (event) => event.preventDefault());

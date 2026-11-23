@@ -116,6 +116,15 @@ export interface SaveControllerDeps {
   documentReplaced: () => void;
 }
 
+/** 崩溃备份的双子条件读数（change add-persistence-health-status-nov23 design §5.1）。
+ *  **只读快照**：装配层按它渲染横幅与标签后缀，MUST NOT 另存一份失败集合。 */
+export interface RecoveryFailures {
+  /** 写失败子条件：这些路径的 dirty 内容当前没有得到备份（按最近失败时刻升序）。 */
+  paths: string[];
+  /** 枚举失败子条件：无法确认是否存在残留备份（`recovery_list` 失败）。与 `paths` 相互独立。 */
+  listFailed: boolean;
+}
+
 export interface SaveController {
   /** 前台标签的 vault 相对路径；未打开文件为 undefined。 */
   displayedPath(): string | undefined;
@@ -179,6 +188,12 @@ export interface SaveController {
   showQuitBlocked(): void;
   /** vault 装载后检查残留崩溃备份并给恢复入口。 */
   checkRecovery(): Promise<void>;
+  /** 崩溃备份失败的只读快照（横幅 / 标签后缀的唯一数据源）。 */
+  recoveryFailures(): RecoveryFailures;
+  /** 订阅失败集合变化（写失败 / 成功 / 转 clean / 改名 / 枚举失败与恢复）；返回退订。 */
+  onRecoveryFailureChange(listener: () => void): () => void;
+  /** 某路径当前是否处于「备份写失败」子条件（标签读屏名 / 悬停提示后缀的判据）。 */
+  isRecoveryFailure(path: string): boolean;
 }
 
 // 保存失败的界面反馈（M101 验收修复）：冲突 / 写入失败 / 结果未知都必须给出
@@ -297,6 +312,26 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     return epochOf(ticket.path) === ticket.epoch && saving.get(ticket.path)?.token === ticket.token;
   }
 
+  // 崩溃备份失败的**唯一事实源**（design §5.1）：写失败按路径键控（值 = 最近失败时刻，
+  // 用于「首个受影响路径」的稳定排序）；枚举失败是独立子条件。只在内存、不写配置、不跨重启。
+  const failedBackups = new Map<string, number>();
+  let recoveryListFailed = false;
+  const recoveryFailureListeners = new Set<() => void>();
+
+  function notifyRecoveryFailures(): void {
+    for (const listener of recoveryFailureListeners) listener();
+  }
+
+  function markBackupFailed(path: string): void {
+    failedBackups.set(path, Date.now());
+    notifyRecoveryFailures();
+  }
+
+  /** 清除某路径的写失败子条件（幂等；无条目不通知——避免无界重绘）。 */
+  function clearBackupFailed(path: string): void {
+    if (failedBackups.delete(path)) notifyRecoveryFailures();
+  }
+
   /** 收尾只撤自己的租约（幂等）：token 不匹配说明该路径已被新一代保存接管，MUST NOT 误删。 */
   function endSave(ticket: SaveTicket): void {
     if (saving.get(ticket.path)?.token === ticket.token) saving.delete(ticket.path);
@@ -324,6 +359,9 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   /** 清除某路径的崩溃备份：幂等、失败只作罢（备份的清理不得反过来打断编辑路径）。
    *  「恢复提示的丢弃动作」另有一条带 toast 的同族函数（discardBackup），别混。 */
   function forgetBackup(path: string): void {
+    // 内容已被保存 / 放弃 / 改名：该路径不再有「dirty 内容未得到备份」的风险，
+    // 写失败子条件随之清除（design §5.2）。备份删除失败只作罢——它不改变风险读数。
+    clearBackupFailed(path);
     void recoveryDiscard(path).catch(() => {});
   }
 
@@ -467,6 +505,8 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     invalidateSaveResponses(path);
     revisions.set(path, revision);
     cancelBackupTimer(path);
+    // 这条路径上的文档换了一份：旧的备份失败描述的是上一代内容，随世代一起作废。
+    clearBackupFailed(path);
   }
 
   function noteVaultReset(): void {
@@ -484,6 +524,12 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     saving.clear();
     for (const timer of timers.values()) window.clearTimeout(timer);
     timers.clear();
+    // 备份失败集合属于旧 vault 的路径键：vault 复位后一并清空（横幅 / 标签后缀不得跨 vault
+    // 残留）。枚举失败子条件同样作废——新 vault 会重新 checkRecovery。
+    const hadFailures = failedBackups.size > 0 || recoveryListFailed;
+    failedBackups.clear();
+    recoveryListFailed = false;
+    if (hadFailures) notifyRecoveryFailures();
     removeRecoveryPrompts();
   }
 
@@ -883,7 +929,22 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     const revision = saveBaseline(path);
     const content = contentOf(path);
     if (!isDirty(path) || revision === null || content === null) return;
-    await recoveryBackup(path, content, revision).catch(() => {});
+    // 应答归属：vault 复位（含切 vault 放弃）之后，旧 vault 的写入应答已不属于当前失败集合
+    // ——路径是 vault 相对键，跨 vault 同路径会串。路径级装载世代覆盖「同路径换了文档」。
+    const generation = serial;
+    const epoch = epochOf(path);
+    try {
+      await recoveryBackup(path, content, revision);
+      if (generation !== serial || epoch !== epochOf(path)) return;
+      // 备份写成功：该路径的写失败子条件自动清除（不要求用户做任何操作，design §5.2）。
+      clearBackupFailed(path);
+    } catch {
+      if (generation !== serial || epoch !== epochOf(path)) return;
+      // 写失败不再被吞掉：记进失败集合，由装配层的 sticky 横幅 + 标签后缀表达。
+      // 全量路径进诊断日志（横幅只展示首个路径 + 数量，design §5.3）。
+      logEvent("recovery_write_failed", { path });
+      markBackupFailed(path);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -897,11 +958,29 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
 
   async function checkRecovery(): Promise<void> {
     removeRecoveryPrompts();
+    // 应答归属：vault 复位之后旧 vault 的枚举结果不写进新 vault 的子条件。
+    const generation = serial;
     let pending: string[];
     try {
       pending = await recoveryList();
-    } catch {
-      return; // 无后端（预览桩）/ vault 未打开：静默
+      if (generation !== serial) return;
+      // 重新枚举成功只清枚举失败子条件；写失败子条件不受影响（两个子条件相互独立）。
+      if (recoveryListFailed) {
+        recoveryListFailed = false;
+        notifyRecoveryFailures();
+      }
+    } catch (e) {
+      if (generation !== serial) return;
+      // 诊断只记错误分类（不记目录内容）。
+      logEvent("recovery_list_failed", {
+        code: isCommandError(e) ? e.code : "recovery_list_failed",
+      });
+      // 枚举失败 MUST NOT 被当作「没有残留备份」：进入独立子条件，给「重新检查」出口。
+      if (!recoveryListFailed) {
+        recoveryListFailed = true;
+        notifyRecoveryFailures();
+      }
+      return;
     }
     for (const path of pending) showRecoveryPrompt(path);
   }
@@ -1016,5 +1095,15 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     clearGuardToasts,
     showQuitBlocked,
     checkRecovery,
+    recoveryFailures: () => ({
+      // 按失败时刻升序：横幅的「首个受影响路径」= 最早失败的那条（稳定、不随 Map 插入顺序）。
+      paths: [...failedBackups.entries()].sort((a, b) => a[1] - b[1]).map(([path]) => path),
+      listFailed: recoveryListFailed,
+    }),
+    onRecoveryFailureChange: (listener) => {
+      recoveryFailureListeners.add(listener);
+      return () => void recoveryFailureListeners.delete(listener);
+    },
+    isRecoveryFailure: (path) => failedBackups.has(path),
   };
 }

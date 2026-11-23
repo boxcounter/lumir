@@ -18,6 +18,7 @@
 //! 载荷之上，本模块持有输出侧的两个 trait：[`EventSink`]（事件发射通道）与 [`StreamSink`]
 //!（M369 的流式增量转发口——解析层收到增量即转成上面的事件，而不是攒够整条响应再补发）。
 
+use super::jsonl::PersistenceHealth;
 use super::session::UsageSnapshot;
 
 /// 后端 → 面板的事件名（MUST NOT 改名，面板钉死）。
@@ -400,6 +401,24 @@ pub fn title(title: &str) -> serde_json::Value {
     serde_json::json!({"type": "title", "title": title})
 }
 
+/// `{"type":"persistence", ...}`——留存健康跃迁事件（change add-persistence-health-status-nov23
+/// design §4.4）。
+///
+/// 载荷的读数键 = [`PersistenceHealth`] 的序列化**本身**（顶层 `state` / `since_ts` / `severity` /
+/// `detail` / `history_written` / `history_gap` 六键，`history_gap` 内 `present` / `since_ts` /
+/// `detail` 三键）。`harness_state` 快照的 `persistence` 字段同吃这一份 `Serialize`——事件与
+/// 快照同键同值，MUST NOT 各列一份键清单（REVIEW.md「同一语义两处真源」条）。
+/// 事件另带判别键 `type`，vault 信封由 [`ScopedSink`] / 装配层盖上（M312 同一条纪律）。
+pub fn persistence(health: &PersistenceHealth) -> serde_json::Value {
+    let mut readings = match serde_json::to_value(health) {
+        Ok(serde_json::Value::Object(readings)) => readings,
+        // 不可达（全字段是标量与嵌套结构体，序列化不会失败）；落空对象不 panic。
+        _ => serde_json::Map::new(),
+    };
+    readings.insert("type".to_string(), serde_json::json!("persistence"));
+    serde_json::Value::Object(readings)
+}
+
 /// `{"type":"compact","summary":"..."}`（摘要可供面板展开）。
 pub fn compact(summary: &str) -> serde_json::Value {
     serde_json::json!({"type": "compact", "summary": summary})
@@ -665,5 +684,58 @@ mod tests {
             seen_b.lock().unwrap()[0][VAULT_FIELD],
             serde_json::json!("/tmp/vault-b")
         );
+    }
+
+    /// R8（事件面）：`persistence` 事件的读数键 = [`PersistenceHealth`] 的序列化键集合，
+    /// 且与快照 `persistence` 字段逐键同值（同键同值不变量，M534 同形）。
+    #[test]
+    fn persistence_payload_key_set_matches_health_serialization() {
+        use super::super::jsonl::HistoryGap;
+        use super::super::jsonl::PersistenceSeverity;
+        use super::super::jsonl::PersistenceState;
+
+        let health = PersistenceHealth {
+            state: PersistenceState::Degraded,
+            since_ts: 1_795_000_000,
+            severity: Some(PersistenceSeverity::History),
+            detail: "llm_request:write".into(),
+            history_written: true,
+            history_gap: HistoryGap {
+                present: true,
+                since_ts: 1_795_000_001,
+                detail: "llm_request:write".into(),
+            },
+        };
+        let payload = persistence(&health);
+        let readings = payload.as_object().unwrap();
+        let expected = serde_json::to_value(&health).unwrap();
+        let expected = expected.as_object().unwrap();
+        assert_eq!(readings.len(), expected.len() + 1, "事件多/少键：{payload}");
+        for (key, value) in expected {
+            assert_eq!(readings.get(key), Some(value), "事件与序列化不一致：{key}");
+        }
+        assert_eq!(payload["type"], serde_json::json!("persistence"));
+        // `history_gap` 三键恒在场（不用缺键表达健康）。
+        let gap = payload["history_gap"].as_object().unwrap();
+        assert_eq!(gap.len(), 3, "{payload}");
+        for key in ["present", "since_ts", "detail"] {
+            assert!(gap.contains_key(key), "history_gap 缺键 {key}：{payload}");
+        }
+        // ok 态的显式值：severity=null、since_ts=0、detail=""（不是缺键）。
+        let ok = persistence(&PersistenceHealth::default());
+        assert_eq!(ok["state"], serde_json::json!("ok"));
+        assert_eq!(ok["severity"], serde_json::Value::Null);
+        assert_eq!(ok["since_ts"], serde_json::json!(0));
+        assert_eq!(ok["detail"], serde_json::json!(""));
+        assert_eq!(ok["history_written"], serde_json::json!(false));
+        assert_eq!(ok["history_gap"]["present"], serde_json::json!(false));
+
+        // vault 信封：与其余事件同一装饰器（ScopedSink）。
+        let inner = Collect::default();
+        let seen = inner.0.clone();
+        ScopedSink::new(&inner, "/tmp/vault-a").emit(payload.clone());
+        let event = seen.lock().unwrap()[0].clone();
+        assert_eq!(event[VAULT_FIELD], serde_json::json!("/tmp/vault-a"));
+        assert_eq!(event["state"], serde_json::json!("degraded"));
     }
 }

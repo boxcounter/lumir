@@ -122,6 +122,11 @@ struct RuntimeInner {
     /// 生效值保证。它只是配置文件在本轮内的镜像（判定语义仍只有 `permissions.rs` 一份），
     /// 不是第二个配置真源。
     permissions: Mutex<Option<HarnessPermissions>>,
+    /// 留存健康跃迁的事件出口（change add-persistence-health-status-nov23 design §4.5）：
+    /// 写失败可能发生在轮次之外（批准 / 标题 / 继承 / 恢复），因此出口挂在 Runtime 而不是轮次
+    /// 私有的 `TauriEventSink` 上。`lib.rs` 在 setup 里装配；隔离运行（`Runtime::isolated()`）
+    /// 不装配——健康只进日志，不向面板呈现。`None` = 无面板可发（测试 / 运行槽）。
+    persistence_forward: Mutex<Option<Arc<dyn events::EventSink>>>,
 }
 
 /// 一次运行的终态读数（`cron_run_finished` 回执的素材）：成功与否只由 turn 的终态事件决定，
@@ -191,6 +196,7 @@ impl Default for Runtime {
                 terminal: Mutex::new(None),
                 tool_policies: Mutex::new(HashMap::new()),
                 permissions: Mutex::new(None),
+                persistence_forward: Mutex::new(None),
             }),
         }
     }
@@ -211,6 +217,41 @@ impl Runtime {
     /// 据此判 `RejectUnavailable`（`gated_execute` 在生成预览之前短路中止本运行）。
     pub fn is_isolated(&self) -> bool {
         self.inner.isolated
+    }
+
+    /// 装配留存健康的事件出口（`lib.rs` setup 在 `.manage(Runtime::default())` 之后调用一次）。
+    /// 隔离运行不调用：`Runtime::isolated()` 的 forward 恒为 `None`，健康只进诊断日志。
+    pub fn attach_persistence_forward(&self, sink: Arc<dyn events::EventSink>) {
+        *self
+            .inner
+            .persistence_forward
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(sink);
+    }
+
+    /// 给某个 vault 的会话留存建健康上报口：每次跃迁发一条带 vault 信封的 `persistence` 事件。
+    ///
+    /// 出口的唯一装配点是这里——`jsonl.rs` 只拿到一个回调，不依赖 tauri / AppHandle
+    /// （ADR 0002 §7）。隔离运行恒返回 `None`（健康只进日志，不向面板呈现）。
+    pub(crate) fn persistence_reporter(
+        &self,
+        scope: &VaultScope,
+    ) -> Option<jsonl::PersistenceReporter> {
+        if self.is_isolated() {
+            return None;
+        }
+        let sink = self
+            .inner
+            .persistence_forward
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()?;
+        let vault = scope.key();
+        Some(Arc::new(move |health: &jsonl::PersistenceHealth| {
+            let mut payload = events::persistence(health);
+            events::stamp_vault(&mut payload, &vault);
+            sink.emit(payload);
+        }))
     }
 
     /// 播种本轮生效的权限规则（change harness-permission-rules-oct23 design §4）：每轮开始时
@@ -682,7 +723,12 @@ impl Runtime {
             // 逐 run 终态汇总种子（M822）：这份文件再被恢复时，`task` 行的终态真源不断档。
             "subrun_runs": serde_json::to_value(&subrun_runs).unwrap_or_default(),
         });
-        let writer = jsonl::JsonlWriter::create(&new_id, &scope.vault_id, &open_payload)?;
+        let writer = jsonl::JsonlWriter::create(
+            &new_id,
+            &scope.vault_id,
+            &open_payload,
+            self.persistence_reporter(scope),
+        )?;
         // 面板视角重建（M398）：灌回的 input 项映射成面板消息，reasoning 明文挂其后的
         // assistant。先建好再 move `restored` 进会话。approval sidecar（kind=approval，
         // 批准的终态记录）按文件序收集，供工具行回填 decision——「已采纳 / 已拒绝」的
@@ -1326,7 +1372,12 @@ fn ensure_session<'a>(
             thinking::ThinkingEffort::default(),
             OpenExtras::default(),
         );
-        let writer = jsonl::JsonlWriter::create(&session_id, &scope.vault_id, &open)?;
+        let writer = jsonl::JsonlWriter::create(
+            &session_id,
+            &scope.vault_id,
+            &open,
+            runtime.persistence_reporter(scope),
+        )?;
         sessions.insert(
             key.clone(),
             session::Session::new(
@@ -3031,6 +3082,176 @@ mod tests {
         assert!(!runtime.session_busy(&scope));
         runtime.acquire_turn(&scope, &config).unwrap();
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// R4（change add-persistence-health-status-nov23）：切 vault 不清健康；事件只带本 vault
+    /// 信封；A→B→A 后 A 的缺口仍在。区分度：把健康挂在「当前展示的 vault」而不是会话上、
+    /// 或切 vault 时顺手重建会话，都会让 A 的 gap 变回 false。
+    #[test]
+    fn r4_vault_switch_keeps_session_health_and_scopes_events() {
+        struct Collect(Arc<Mutex<Vec<serde_json::Value>>>);
+        impl events::EventSink for Collect {
+            fn emit(&self, payload: serde_json::Value) {
+                self.0.lock().unwrap().push(payload);
+            }
+        }
+        struct FailSink;
+        impl jsonl::LineSink for FailSink {
+            fn write_line(&mut self, _line: &str) -> Result<(), jsonl::LineWriteError> {
+                Err(jsonl::LineWriteError {
+                    error: std::io::Error::other("scripted failure"),
+                    partial: false,
+                })
+            }
+        }
+        let _xdg = xdg_test_lock();
+        let root = std::env::temp_dir().join(format!(
+            "lumir-persistence-r4-{}-{:016x}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let vault_a = root.join("vault-a");
+        let vault_b = root.join("vault-b");
+        std::fs::create_dir_all(&vault_a).unwrap();
+        std::fs::create_dir_all(&vault_b).unwrap();
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+        let scope = |path: &PathBuf, id: &str| VaultScope {
+            root: path.clone(),
+            policy: {
+                let defaults = crate::config::VaultConfig::default();
+                IgnorePolicy::load(path, &[".gitignore".to_string()], &defaults.ignore)
+            },
+            vault_id: id.to_string(),
+        };
+        let a = scope(&vault_a, "vault-r4-a");
+        let b = scope(&vault_b, "vault-r4-b");
+        let config = config::test_mock(None);
+        let runtime = Runtime::default();
+        let sink = Collect(Arc::new(Mutex::new(Vec::new())));
+        let seen = sink.0.clone();
+        runtime.attach_persistence_forward(Arc::new(sink));
+
+        runtime.acquire_turn(&a, &config).unwrap();
+        let writer = jsonl::JsonlWriter::at_path_with_sink(
+            root.join("a-health.jsonl"),
+            &serde_json::json!({}),
+            Box::new(FailSink),
+            None,
+        );
+        runtime
+            .with_session(&a, |session| session.replace_jsonl_writer(writer))
+            .unwrap();
+        runtime
+            .with_session(&a, |session| {
+                session
+                    .jsonl()
+                    .record(&serde_json::json!({"kind": "llm_request", "request": {}}));
+            })
+            .unwrap();
+        let health_a =
+            serde_json::to_value(runtime.snapshot(&a, &config)).unwrap()["persistence"].clone();
+        assert_eq!(health_a["history_gap"]["present"], serde_json::json!(true));
+
+        // 切到 B：B 自身的健康是 ok；A 的会话不被销毁。
+        runtime.acquire_turn(&b, &config).unwrap();
+        let health_b =
+            serde_json::to_value(runtime.snapshot(&b, &config)).unwrap()["persistence"].clone();
+        assert_eq!(health_b["state"], serde_json::json!("ok"));
+        assert_eq!(health_b["history_gap"]["present"], serde_json::json!(false));
+
+        // 切回 A：缺口仍在（切 vault MUST NOT 清除 / 重置任何会话的健康）。
+        let health_a_again =
+            serde_json::to_value(runtime.snapshot(&a, &config)).unwrap()["persistence"].clone();
+        assert_eq!(
+            health_a_again["history_gap"]["present"],
+            serde_json::json!(true),
+            "切回 A 后缺口必须仍在：{health_a_again}"
+        );
+
+        // 事件只带 A 的 vault 信封（B 没有写失败，不发事件）。
+        let events = seen.lock().unwrap().clone();
+        assert!(!events.is_empty(), "A 的失败必须发 persistence 事件");
+        for event in &events {
+            assert_eq!(event["type"], serde_json::json!("persistence"));
+            assert_eq!(event["vault"], serde_json::json!(a.key()));
+            assert_eq!(event["history_gap"]["present"], serde_json::json!(true));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// R9：显式「新会话」后旧健康不残留；下一次建立的会话从空健康起算。
+    #[test]
+    fn r9_new_session_resets_persistence_health() {
+        struct FailSink;
+        impl jsonl::LineSink for FailSink {
+            fn write_line(&mut self, _line: &str) -> Result<(), jsonl::LineWriteError> {
+                Err(jsonl::LineWriteError {
+                    error: std::io::Error::other("scripted failure"),
+                    partial: false,
+                })
+            }
+        }
+        let _xdg = xdg_test_lock();
+        let root = std::env::temp_dir().join(format!(
+            "lumir-persistence-r9-{}-{:016x}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let vault = root.join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+        let scope = VaultScope {
+            root: vault.clone(),
+            policy: {
+                let defaults = crate::config::VaultConfig::default();
+                IgnorePolicy::load(&vault, &[".gitignore".to_string()], &defaults.ignore)
+            },
+            vault_id: "vault-r9".to_string(),
+        };
+        let config = config::test_mock(None);
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&scope, &config).unwrap();
+        let writer = jsonl::JsonlWriter::at_path_with_sink(
+            root.join("r9-health.jsonl"),
+            &serde_json::json!({}),
+            Box::new(FailSink),
+            None,
+        );
+        runtime
+            .with_session(&scope, |session| session.replace_jsonl_writer(writer))
+            .unwrap();
+        runtime
+            .with_session(&scope, |session| {
+                session
+                    .jsonl()
+                    .record(&serde_json::json!({"kind": "llm_request", "request": {}}));
+            })
+            .unwrap();
+        runtime.release_turn(&scope);
+        let before =
+            serde_json::to_value(runtime.snapshot(&scope, &config)).unwrap()["persistence"].clone();
+        assert_eq!(before["history_gap"]["present"], serde_json::json!(true));
+
+        runtime.new_session(&scope).unwrap();
+        let empty =
+            serde_json::to_value(runtime.snapshot(&scope, &config)).unwrap()["persistence"].clone();
+        assert_eq!(
+            empty["state"],
+            serde_json::json!("ok"),
+            "新会话后 MUST NOT 继续显示旧状态：{empty}"
+        );
+        assert_eq!(empty["history_gap"]["present"], serde_json::json!(false));
+
+        runtime.acquire_turn(&scope, &config).unwrap();
+        let fresh =
+            serde_json::to_value(runtime.snapshot(&scope, &config)).unwrap()["persistence"].clone();
+        assert_eq!(fresh["state"], serde_json::json!("ok"));
+        assert_eq!(fresh["severity"], serde_json::Value::Null);
+        assert_eq!(fresh["history_written"], serde_json::json!(false));
+        assert_eq!(fresh["history_gap"]["present"], serde_json::json!(false));
         let _ = std::fs::remove_dir_all(&root);
     }
 }

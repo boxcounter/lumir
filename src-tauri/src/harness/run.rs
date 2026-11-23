@@ -781,7 +781,12 @@ impl RunContext for SessionContext<'_> {
                 usage_seed: Some((usage_snapshot, session::CacheTotals::default())),
             },
         );
-        let writer = jsonl::JsonlWriter::create(&session_id, &self.scope.vault_id, &open)?;
+        let writer = jsonl::JsonlWriter::create(
+            &session_id,
+            &self.scope.vault_id,
+            &open,
+            self.runtime.persistence_reporter(self.scope),
+        )?;
         let _ = self.with_session(|session| {
             let mut items = vec![session::user_item(&format!(
                 "（此前会话已压缩为摘要，接着摘要继续）\n{summary}"

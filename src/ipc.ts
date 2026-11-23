@@ -531,6 +531,11 @@ export type HarnessEvent = HarnessEventEnvelope &
     // 字符串；前端只改会话名文本与 tooltip（不重渲染 transcript、不动滚动 / 焦点 / 清单
     // 顺序），压缩 / 恢复的继承标题也发一次。
     | { type: "title"; title: string }
+    // persistence（change add-persistence-health-status-nov23，design §4.4）：留存健康跃迁。
+    // 载荷与 `harness_state` 快照的 `persistence` 字段**同键同值**（顶层六键 + `history_gap`
+    // 三键，均由 Rust `PersistenceHealth` 的一份 `Serialize` 产出）。`state=ok` +
+    // `history_gap.present=true` 是合法状态（写入已恢复、缺口仍在），前端 MUST NOT 当健康。
+    | { type: "persistence"; state: "ok" | "degraded"; since_ts: number; severity: "history" | "annotation" | null; detail: string; history_written: boolean; history_gap: { present: boolean; since_ts: number; detail: string } }
     // ── 子代理可见面（change add-harness-subagents design §13 / §19）───────────────
     // 七类 `subagent_*` 是委派可见面的数据源（M822 起）：控制区行与 transcript 的 `task`
     // 行由 started / progress / step / finished 就地更新（过程 MUST NOT 进 transcript 正文）；
@@ -765,6 +770,7 @@ function isHarnessEventType(type: string): boolean {
     case "usage":
     case "compact":
     case "title":
+    case "persistence":
     case "subagent_started":
     case "subagent_progress":
     case "subagent_step":

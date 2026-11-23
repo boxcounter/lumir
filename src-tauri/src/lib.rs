@@ -241,6 +241,15 @@ pub fn run() {
             // 诊断日志先初始化：`[log] level` 在第一条事件之前生效（level = off 时
             // 整条链路都不落盘，见 logging 模块头）。
             logging::init();
+            // 留存健康的事件出口（change add-persistence-health-status-nov23 design §4.5）：
+            // 写失败可能发生在轮次之外，出口因此挂在 Runtime 上。隔离运行不装配（健康只进日志）。
+            {
+                let forward_handle = app.handle().clone();
+                app.state::<harness::Runtime>()
+                    .attach_persistence_forward(std::sync::Arc::new(
+                        harness::turn::TauriEventSink(forward_handle),
+                    ));
+            }
             // 注册表目录改名的一次性迁移（M248，backlog #37）：位置钉死在「配置目录已可解析
             // （logging::init 刚解析过）之后、任何注册表读者之前」——两个读者是紧随其后的
             // 启动恢复线程与前端 command（后者要等本回调返回）。同步跑完，读者看到的只有新名。

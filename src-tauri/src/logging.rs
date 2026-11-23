@@ -80,6 +80,16 @@ pub enum LogEventName {
     RecoveryWritten,
     /// 崩溃备份被恢复入口取走。
     RecoveryRestored,
+    /// 某路径的崩溃备份写入失败（change add-persistence-health-status-nov23 design §4.8 末条）：
+    /// 只记 vault 相对路径（同一失败集合的逐条落痕；横幅只展示首个路径，全量在日志里）。
+    RecoveryWriteFailed,
+    /// 崩溃备份枚举失败：只记错误分类（`code`），不记目录内容。
+    RecoveryListFailed,
+    /// 会话留存写入失败（change add-persistence-health-status-nov23 design §4.8）：`kind` =
+    /// 记录种类或 `session_open`、`code` = open / serialize / write / first_line、
+    /// `partial` = 是否可能已写入部分字节、`path` = 留存文件路径。**不含消息正文、文档内容
+    /// 或 system prompt**（白名单只有这四个字段）。
+    PersistenceWriteFailed,
     /// 渲染失败（mermaid / katex）。
     RenderError,
     /// 配置 warning（含 [keys] / [log] 的逐项回退）。
@@ -199,6 +209,9 @@ impl LogEventName {
             Self::SaveExternalChange => "save_external_change",
             Self::RecoveryWritten => "recovery_written",
             Self::RecoveryRestored => "recovery_restored",
+            Self::RecoveryWriteFailed => "recovery_write_failed",
+            Self::RecoveryListFailed => "recovery_list_failed",
+            Self::PersistenceWriteFailed => "persistence_write_failed",
             Self::RenderError => "render_error",
             Self::ConfigWarning => "config_warning",
             Self::SlowCallback => "slow_callback",
@@ -243,6 +256,9 @@ impl LogEventName {
             | Self::CronTaskRejected
             | Self::SubagentCatalogLarge
             | Self::SubagentRejected
+            | Self::PersistenceWriteFailed
+            | Self::RecoveryWriteFailed
+            | Self::RecoveryListFailed
             | Self::DependencyLog => "warn",
             Self::RenderError => "error",
             _ => "info",
@@ -254,7 +270,11 @@ impl LogEventName {
         match self {
             Self::SaveConflict => &["path", "code"],
             Self::SaveExternalChange => &["path", "change"],
-            Self::RecoveryWritten | Self::RecoveryRestored => &["path"],
+            Self::RecoveryWritten | Self::RecoveryRestored | Self::RecoveryWriteFailed => &["path"],
+            Self::RecoveryListFailed => &["code"],
+            // 只记分类：记录种类 / 错误分类 / 是否部分写 / 文件路径。正文、文档内容与
+            // system prompt 都不在白名单内（隐私边界）。
+            Self::PersistenceWriteFailed => &["kind", "code", "partial", "path"],
             // stage/code 是分类后的结果；原始错误文本（含文档片段）不入日志。
             Self::RenderError => &["kind", "stage", "code"],
             Self::ConfigWarning => &["source", "message"],
@@ -703,6 +723,23 @@ fn recovery_restored_to(sink: &Sink, path: &str) {
     emit(
         sink,
         Event::new(LogEventName::RecoveryRestored).field("path", path),
+    );
+}
+
+/// Rust 侧埋点：会话留存写入失败（`harness::jsonl` 的唯一写点）。只记分类——**不含消息正文、
+/// 文档内容或 system prompt**（白名单见 [`LogEventName::allowed_fields`]）。
+pub(crate) fn persistence_write_failed(kind: &str, code: &str, partial: bool, path: &str) {
+    persistence_write_failed_to(global(), kind, code, partial, path);
+}
+
+fn persistence_write_failed_to(sink: &Sink, kind: &str, code: &str, partial: bool, path: &str) {
+    emit(
+        sink,
+        Event::new(LogEventName::PersistenceWriteFailed)
+            .field("kind", kind)
+            .field("code", code)
+            .field("partial", if partial { "true" } else { "false" })
+            .field("path", path),
     );
 }
 
@@ -1487,6 +1524,9 @@ mod tests {
             LogEventName::SaveExternalChange,
             LogEventName::RecoveryWritten,
             LogEventName::RecoveryRestored,
+            LogEventName::RecoveryWriteFailed,
+            LogEventName::RecoveryListFailed,
+            LogEventName::PersistenceWriteFailed,
             LogEventName::RenderError,
             LogEventName::ConfigWarning,
             LogEventName::SlowCallback,
@@ -2384,5 +2424,51 @@ mod tests {
         let stored = lines[0]["message"].as_str().unwrap();
         assert_eq!(stored.chars().count(), MAX_VALUE_CHARS);
         assert!(stored.starts_with("任务投递失败："));
+    }
+
+    /// 留存写失败的诊断事件（change add-persistence-health-status-nov23 design §4.8）：
+    /// 只有 kind / code / partial / path 四个分类字段；正文类字段被白名单拒收（整条丢弃）。
+    #[test]
+    fn persistence_write_failed_lands_classification_only() {
+        let dir = TempDir::new();
+        let sink = sink(dir.path(), LogLevel::Info);
+        persistence_write_failed_to(
+            &sink,
+            "llm_request",
+            "write",
+            true,
+            "/tmp/lumir-config/harness/sessions/vault-1/s1.jsonl",
+        );
+        sink.flush();
+        let lines = read_lines(dir.path());
+        assert_eq!(lines.len(), 1);
+        let line = &lines[0];
+        assert_eq!(line["event"], "persistence_write_failed");
+        assert_eq!(line["level"], "warn");
+        assert_eq!(line["kind"], "llm_request");
+        assert_eq!(line["code"], "write");
+        assert_eq!(line["partial"], "true");
+        assert!(line["path"].as_str().unwrap().ends_with("s1.jsonl"));
+        // 不含消息正文 / 文档内容 / system prompt（白名单只有四个分类字段）。
+        for forbidden in ["message", "text", "content", "body", "system", "prompt"] {
+            assert!(
+                line.get(forbidden).is_none(),
+                "诊断日志混入正文类字段：{line}"
+            );
+        }
+
+        // 反向验证：把正文塞进这条事件会被白名单整条拒收（不是静默截断后照写）。
+        emit(
+            &sink,
+            Event::new(LogEventName::PersistenceWriteFailed)
+                .field("kind", "llm_request")
+                .field("message", "用户正文不该进日志"),
+        );
+        sink.flush();
+        assert_eq!(
+            read_lines(dir.path()).len(),
+            1,
+            "非白名单字段必须让整条事件被拒收"
+        );
     }
 }

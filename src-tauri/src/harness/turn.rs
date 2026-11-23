@@ -1809,7 +1809,7 @@ pub(crate) fn run_auto_turn_acquired(
 }
 
 /// AppHandle 事件发射（真机路径；payload 是 JSON 对象，m303 零改动接入）。
-struct TauriEventSink(tauri::AppHandle);
+pub(crate) struct TauriEventSink(pub(crate) tauri::AppHandle);
 
 impl EventSink for TauriEventSink {
     fn emit(&self, payload: serde_json::Value) {

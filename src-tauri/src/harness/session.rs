@@ -19,7 +19,7 @@ use ts_rs::TS;
 use crate::commands::CommandError;
 
 use super::approval::{ApprovalDecision, ApprovalRequest, ApprovalSignal};
-use super::jsonl::JsonlWriter;
+use super::jsonl::{JsonlWriter, PersistenceHealth};
 use super::llm::{normalize_reasoning_item, Usage};
 use super::permissions::DecisionReason;
 use super::scheduler::AutoWakeSnapshot;
@@ -433,6 +433,7 @@ impl StateSnapshot {
                 supported: thinking_supported,
             },
             title: None,
+            persistence: PersistenceHealth::default(),
         }
     }
 }
@@ -487,6 +488,10 @@ pub struct StateSnapshot {
     /// 同一读取口径（活会话是内存态的有效标题，恢复 / 列举从留存读）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// 留存健康（change add-persistence-health-status-nov23）：两维 + `history_written`，
+    /// 六键 + `history_gap` 三键恒在场（`StateSnapshot::empty` 同形）。取值来自会话持有的
+    /// `JsonlWriter`（唯一写点与唯一上报点），快照与 `persistence` 事件同吃一份 `Serialize`。
+    pub persistence: PersistenceHealth,
 }
 
 /// 在跑子运行的一行（`harness_state.live_subruns`，change rework-harness-delegation-ux-nov02）：
@@ -1011,6 +1016,14 @@ impl Session {
         &mut self.jsonl
     }
 
+    /// 测试专用：换一份留存句柄（故障注入）。健康与上报口从旧句柄沿用——与 `rotate` 同口径，
+    /// 测试因此能往 Runtime 建立的会话里注入写失败而不改变会话身份。
+    #[cfg(test)]
+    pub(crate) fn replace_jsonl_writer(&mut self, mut writer: JsonlWriter) {
+        writer.adopt_health_from(&self.jsonl);
+        self.jsonl = writer;
+    }
+
     /// 换系统上下文 + 换留存句柄（自动压缩开新逻辑会话的落点）：旧文件封闭不再追加，
     /// 新句柄带自己的 `session_open`（opened_from=compact）。输入历史由调用侧替换。
     ///
@@ -1022,7 +1035,10 @@ impl Session {
     /// 会话自动命名（design D8 的轮换条款）：调度计数与 mock 标题游标随逻辑会话重置（cadence
     /// 不从记录重建——记录不携带轮序号）；**有效标题不清**——继承标题由调用侧随新文件的
     /// `inherit` 记录一起灌入（`set_title`），新会话（对象重造）才从无标题起步。
-    pub fn rotate(&mut self, system: String, jsonl: JsonlWriter) {
+    pub fn rotate(&mut self, system: String, mut jsonl: JsonlWriter) {
+        // 自动压缩是同一逻辑会话换文件：两维 + `history_written` 与上报口一并沿用
+        // （新文件首次成功只把当前写健康转 ok，MUST NOT 清除缺口）。
+        jsonl.adopt_health_from(&self.jsonl);
         self.system = system;
         self.jsonl = jsonl;
         self.cache_totals = CacheTotals::default();
@@ -1070,7 +1086,14 @@ impl Session {
                 supported: thinking_supported,
             },
             title: self.title.clone(),
+            persistence: self.persistence(),
         }
+    }
+
+    /// 当前集会话的留存健康（两维 + `history_written`）。健康挂在留存句柄上：自动压缩换文件
+    /// 时由 `rotate` 沿用到新句柄，新会话 / 从历史恢复建新句柄、从空健康起算。
+    pub fn persistence(&self) -> PersistenceHealth {
+        self.jsonl.persistence().unwrap_or_default()
     }
 
     /// 挂起批准请求（工具循环线程 park 前调用）。列表按 ask 时间排序（push 即时间序）：

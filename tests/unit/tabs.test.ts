@@ -226,6 +226,7 @@ function createRig(sessions: EditorSession[], active: EditorSession): Rig {
     },
     saveCurrent: async () => {},
     forgetBackup: () => {},
+    isBackupFailed: () => false,
     invalidateResolve: () => {},
     showEditor: () => {},
     syncActiveDocument: () => order.push("syncActiveDocument"),

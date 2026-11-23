@@ -525,6 +525,16 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         (w.__dirtyReports as boolean[]).push(args.dirty ?? false);
         return null;
       },
+      // 崩溃备份链路（change add-persistence-health-status-nov23）：真后端的这组命令始终可用。
+      // 桩此前不实现它们——save-controller 曾把失败吞掉，所以缺实现无声；现在枚举失败会
+      // 进入可见横幅（D957），桩必须与真后端同形：empty list + 成功写入 / 丢弃。
+      // 需要造失败面的场景在自己的 init script 里覆盖这些命令（persistence-health-nov23 /
+      // persistence-adversarial 是样例）。
+      recovery_list: () => [],
+      recovery_backup: () => null,
+      recovery_discard: () => null,
+      recovery_load: () => null,
+      recovery_base_revision: () => null,
       config_get: () => {
         // 形状按 Rust 的 `ConfigSnapshot` **全量**给出（M597）：`AppConfig` 的每张表都不是
         // Option，真后端序列化必带；桩少给一张表，启动装配链就会在首个非可选解引用处抛

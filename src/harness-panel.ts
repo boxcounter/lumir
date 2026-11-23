@@ -222,6 +222,11 @@ export interface HarnessPanelDeps {
    *  消息摘录失锚（D443）经它上屏；面板**不自建** toast 产出点（toast 归属单一来源，M423
    *  按 tower 裁决从面板自持实现收回装配层）。 */
   toast(text: string): void;
+  /** 本逻辑会话首次进入 `severity=history`（含 `annotation→history` 升级）或 `history_gap`
+   *  首次 present 时的一条 sticky 提示（change add-persistence-health-status-nov23 design
+   *  §4.7 / V2）。装配层接到既有 sticky 浮条：点击关闭只移除本次提示，不撤状态行、不清缺口、
+   *  不构成静音（面板不持有静音状态，也不写配置）。 */
+  stickyToast(text: string): void;
   /**
    * 点击 vault 路径的落点（change harness-path-link）：装配层经既有唯一打开链路以「新标签」
    * 意图打开，可选 1-based 行号落点。`lineEnd` 是正文路径链接的闭区间止行（单行 / 行列形态等于
@@ -3325,6 +3330,71 @@ export function parseApprovalSource(value: unknown):
   return null;
 }
 
+/** 留存健康读数（change add-persistence-health-status-nov23 design §4.4 / §4.7）。
+ *
+ * 快照 `persistence` 与 `persistence` 事件同键同值，本函数是**两路共用的唯一解析**：
+ * 缺 `persistence` / `history_gap` / `history_written` 键按旧后端宽容（`ok` /
+ * `present=false` / `history_written=true`，不误报「尚未落盘」），MUST NOT 因缺键显示状态行。
+ */
+export interface PersistenceView {
+  state: "ok" | "degraded";
+  severity: "history" | "annotation" | null;
+  historyWritten: boolean;
+  gap: boolean;
+}
+
+export function persistenceViewOf(raw: unknown): PersistenceView {
+  const fallback: PersistenceView = {
+    state: "ok",
+    severity: null,
+    historyWritten: true,
+    gap: false,
+  };
+  if (typeof raw !== "object" || raw === null) return fallback;
+  const object = raw as Record<string, unknown>;
+  const gapRaw = object.history_gap;
+  const gap =
+    typeof gapRaw === "object" &&
+    gapRaw !== null &&
+    (gapRaw as Record<string, unknown>).present === true;
+  const state = object.state === "degraded" ? "degraded" : "ok";
+  const severity =
+    object.severity === "history"
+      ? "history"
+      : object.severity === "annotation"
+        ? "annotation"
+        : null;
+  const historyWritten =
+    typeof object.history_written === "boolean" ? object.history_written : true;
+  return { state, severity, historyWritten, gap };
+}
+
+/** 状态行文案（缺口优先；`history_written=false` 且存在告警时追加「尚未落盘」）。
+ *  健康（`ok` 且无缺口）返回 null ⇒ 元素 `hidden`。 */
+export function persistenceText(view: PersistenceView): string | null {
+  let text: string;
+  if (view.gap) {
+    text = view.state === "ok" ? t("D950") : t("D951");
+  } else if (view.state === "degraded") {
+    text = view.severity === "annotation" ? t("D953") : t("D952");
+  } else {
+    return null;
+  }
+  return view.historyWritten ? text : `${text} ${t("D954")}`;
+}
+
+/** 本逻辑会话是否该给一条首次 history sticky：仅当进入 history（含缺口首次出现）且该 vault
+ *  的「已提示」标记尚未置位。`annotation` 只亮状态行，不触发 sticky。 */
+export function persistenceStickyDue(
+  view: PersistenceView,
+  vault: string | null,
+  shown: ReadonlySet<string>,
+): boolean {
+  const historyNow =
+    view.gap || (view.state === "degraded" && view.severity === "history");
+  return historyNow && !shown.has(vault ?? "");
+}
+
 export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const { shell, editor } = deps;
 
@@ -3671,9 +3741,61 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   quoteNote.className = "lumir-hp-qc-src lumir-hp-quote-note";
   quoteNote.setAttribute("role", "status");
   quoteNote.hidden = true;
+  // 留存健康的常驻状态行（change add-persistence-health-status-nov23 design §4.7）：复用引用
+  // 失败状态行的类与小字样式（不新增样式面），`role="status"` 让读屏也听到。健康时 hidden、
+  // 不自动消隐、无关闭按钮；缺口文案与当前失败文案共用这一条元素，不叠加两行。
+  const persistenceNote = document.createElement("div");
+  persistenceNote.className = "lumir-hp-qc-src lumir-hp-quote-note";
+  persistenceNote.setAttribute("role", "status");
+  persistenceNote.dataset.persistenceHealth = "true";
+  persistenceNote.hidden = true;
   composer.append(composerTray);
   composerBox.append(composer, ctl);
-  composerArea.append(chip, quoteNote, composerBox);
+  composerArea.append(chip, quoteNote, persistenceNote, composerBox);
+
+  /** 状态行按当前读数重取文案（`applyPersistence` 与语言切换的 relabel 共用这一份）。 */
+  function renderPersistenceLine(): void {
+    if (persistenceLineHidden) {
+      persistenceNote.textContent = "";
+      persistenceNote.hidden = true;
+      return;
+    }
+    const text = persistenceText(persistenceView);
+    persistenceNote.textContent = text ?? "";
+    persistenceNote.hidden = text === null;
+  }
+
+  /** 应用一次两维读数：状态行就地更新（不重建 transcript / 不动滚动焦点）；本逻辑会话首次
+   *  进入 history 或首次出现缺口时给一条 sticky（按 vault 键控，每个逻辑会话只一条）。 */
+  function applyPersistence(view: PersistenceView): void {
+    persistenceView = view;
+    persistenceLineHidden = false;
+    renderPersistenceLine();
+    if (!persistenceStickyDue(view, currentVault, historyStickyShown)) return;
+    historyStickyShown.add(currentVault ?? "");
+    deps.stickyToast(t("D955"));
+  }
+
+  /** 显式「新会话」/ 从历史恢复：旧逻辑会话的健康读数与「已提示」标记一并作废。
+   *  后端新会话本身从空健康起算，这里只清渲染面与一次性提示的节流键。 */
+  function resetPersistenceView(): void {
+    persistenceView = {
+      state: "ok",
+      severity: null,
+      historyWritten: true,
+      gap: false,
+    };
+    persistenceLineHidden = true;
+    renderPersistenceLine();
+    historyStickyShown.delete(currentVault ?? "");
+  }
+
+  /** 切 vault：只藏当前状态行（新 vault 的快照随后带回它自己的读数）；MUST NOT 清除
+   *  后端健康，也 MUST NOT 清「已提示」标记——切回同一会话时缺口仍在显示。 */
+  function hidePersistenceLine(): void {
+    persistenceLineHidden = true;
+    renderPersistenceLine();
+  }
 
   /** 输入区失败状态行：`text` = 已渲染的人话（D586），null = 收起。面板生命周期内只由引用
    *  事务与发送 / 切会话改写（不做自动消隐——「持久可见」正是本条的目的）。 */
@@ -3847,6 +3969,20 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  （`harness_state.title` 快照 / `title` 事件 / 会话清单 `title`）——前端 MUST NOT 自行
    *  生成或猜测。非空时优先于 `firstUserText` 显示（标题已受 20 码点硬上限，不带省略号）。 */
   let sessionTitle: string | null = null;
+  /** 留存健康读数（change add-persistence-health-status-nov23）：快照 / `persistence` 事件
+   *  两路解析成同一形状（纯函数在模块层导出，本层只持有一次性提示的键控集合）。 */
+  /** 本逻辑会话是否已给过 history sticky（键 = 当前 vault；每个逻辑会话只一条；切 vault /
+   *  新会话 / 从历史恢复的处置见 `applyPersistence` 与两个 reset 出口）。 */
+  const historyStickyShown = new Set<string>();
+  /** 状态行的当前读数与显隐（语言切换时按这份状态重取文案；`hidden` 单独记，避免切 vault
+   *  后一次 relabel 把旧 vault 的读数重新显示出来）。 */
+  let persistenceView: PersistenceView = {
+    state: "ok",
+    severity: null,
+    historyWritten: true,
+    gap: false,
+  };
+  let persistenceLineHidden = true;
   let streamingEl: HTMLElement | null = null;
   /** 本轮完整正文源（全部文本段的拼接）——复制源用；分段渲染不改变它。 */
   let streamingText = "";
@@ -4634,6 +4770,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     applyPermChip();
     rebuildPermPopIfOpen();
     applyUsage();
+    // 留存健康状态行是长驻文案：语言切换后按当前两维读数重取（隐藏态不复活旧 vault 的读数）。
+    renderPersistenceLine();
     // 发送钮 / 阶段指示按当前相位重取文案（running 时钮面是「停止」、进度条阶段行重渲）。
     applySendPhase(activity.phase);
     // 活动状态文案（处理中 / 有新的回复 / 有失败结果）随语言重绘：可访问名与状态文本
@@ -8172,6 +8310,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         retitleOpenSessRows(previousShown, sessionNameShown(sessionTitle, firstUserText));
         return;
       }
+      case "persistence": {
+        // 留存健康跃迁（change add-persistence-health-status-nov23）：状态行按两维读数就地
+        // 更新；首次 history / 缺口给一条 sticky。事件与快照同键同值，解析走同一份。
+        applyPersistence(persistenceViewOf(event));
+        return;
+      }
       case "subagent_started": {
         // 段号判重只有一处实现（reduceSubruns 的 isNewSegment）：同段重复 / 旧段重放不换出新视图，
         //  这里据此决定要不要收 resume 的重复任务行 / 刷新行——MUST NOT 自己再判「run 已存在 = resume」。
@@ -8691,6 +8835,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       thinkLevel = thinking.level;
       thinkSupported = thinking.supported;
     }
+    // 留存健康（change add-persistence-health-status-nov23）：快照是重挂载 / 重载 / 切回
+    // vault 时的地板。缺键按旧后端宽容（`persistenceViewOf` 的缺省）。
+    applyPersistence(persistenceViewOf(state.persistence));
     // 会话标题（change add-session-auto-naming，design D11）：`title` 缺键 = 无标题 ⇒ 回落
     // 首条用户消息口径（不伪造）。快照是恢复 / 切 vault 回来时标题的唯一来源。
     sessionTitle =
@@ -8878,6 +9025,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     clearTranscriptSurface();
     // 引用失败的输入区状态行属于上一段输入（M662）：换会话即清（卡片上的留痕随卡片一起消失）。
     applyQuoteFailureNotice(null);
+    // 留存健康状态行也属于上一段会话的读数：先隐藏，真相由随后的进入快照带回（切 vault /
+    // 新会话 / 恢复共用这一条）。MUST NOT 在这里清后端健康或「已提示」标记。
+    hidePersistenceLine();
     // M644：视图复位 = 换了一个会话，跟随态回 following、清未读、写底（快照 / 恢复路径随后
     // 各自再「强制」一次，白名单动作不靠这一句兜底）。
     follow.reset();
@@ -8930,6 +9080,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     currentVault = root;
     currentVaultId = vaultId;
     if (sameVault) return;
+    // 切 vault 只切换展示哪份快照：先藏旧 vault 的状态行，新 vault 的快照随后带回它自己的
+    // 读数。MUST NOT 本地清除健康，也 MUST NOT 清「已提示」标记（切回同一会话缺口仍在）。
+    hidePersistenceLine();
     // 旧 vault 的在途读回从这一刻起作废（成功 / 失败落地都整条 no-op）：必须在 resetView /
     // resetComposer / clear 之前推进——三者会清掉旧 vault 的渲染面与缓存，旧代结果不得
     // 再写回来。
@@ -9153,6 +9306,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 清空的是**渲染面**：会话真源在 Rust，重置成功后本地视图随之清空；待决批准项随
         // 会话失效，一并撤下（它们的 id 已不属于任何会话）——口径见 resetView 的注释。
         resetView();
+        // 新逻辑会话：旧会话的「已提示」标记作废，未来再进入 history 仍可给一条 sticky。
+        resetPersistenceView();
         // resetView 只清渲染面、不碰 chip 读数：档位随会话对象一起被丢弃（M362 裁决点 1），
         // 不重取快照的话 chip 会停在上一段会话的档位，与后端「无会话 = 默认 High」分叉
         // （M366 finding）。重取走 refreshThinkingState 的既有通道——快照是档位的唯一真源，
@@ -9426,6 +9581,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     harnessResumeSession(entry.sessionId)
       .then((info) => {
         resetView();
+        // 从历史恢复 = 新逻辑会话：两维与 history_written 从空健康起算，旧「已提示」作废。
+        resetPersistenceView();
         renderSnapshotMessages(Array.isArray(info.messages) ? info.messages : []);
         firstUserText = entry.firstUserText;
         // 恢复后的标题 = 选中项的有效标题（后端 `SessionSummary.title` 的同一读数；恢复入口在

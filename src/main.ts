@@ -376,7 +376,7 @@ function createPaneHandle(paneId: PaneId, kind: PaneKind): PaneHandle {
     divider.setAttribute("aria-orientation", "vertical");
     divider.setAttribute("aria-label", SPLITTER_LABEL()); // 读屏名（M319，D368）
     wireDividerDrag(divider);
-    shell.editor.append(divider, mountEl);
+    shell.editorRow.append(divider, mountEl);
     dividerEl = divider;
     const assembly: PaneAssembly = {
       mountEl,
@@ -399,7 +399,7 @@ function createPaneHandle(paneId: PaneId, kind: PaneKind): PaneHandle {
     divider.setAttribute("aria-orientation", "vertical");
     divider.setAttribute("aria-label", SPLITTER_LABEL()); // 读屏名（M319，D368）
     wireDividerDrag(divider);
-    shell.editor.append(divider, mountEl);
+    shell.editorRow.append(divider, mountEl);
     shell.tabStrip.after(stripEl);
     dividerEl = divider;
   }
@@ -679,6 +679,7 @@ function createPaneTabs(paneId: PaneId, handle: EditorHandle, stripEl: HTMLEleme
     saveCurrent: () => save.save(),
     // 「放弃修改并关闭」这条出口不产生 dirty 跃迁（会话直接被摘掉），备份得由它显式清除。
     forgetBackup: (path) => save.forgetBackup(path),
+    isBackupFailed: (path) => save.isRecoveryFailure(path),
     invalidateResolve: () => linkFollow.invalidate(),
     showEditor: () => showEditor(),
     syncActiveDocument: () => syncActiveDocument(),
@@ -1651,7 +1652,10 @@ window.addEventListener("resize", () => applySidebarWidth(sidebarWidthIntent));
 const notice = document.createElement("div");
 notice.className = "editor-notice";
 notice.hidden = true;
-shell.editor.append(notice);
+// 挂进 pane 行盒（change add-persistence-health-status-nov23）：`.pane-editor` 改为纵向两段后，
+// 遮罩要盖的是**正文区**（pane 行），不是顶部健康横幅；同时保持在 pane 之后的 DOM 顺序，
+// 分栏时 harness / 文档 pane 仍在遮罩之上（与改动前 `.pane-editor` 的层序一致）。
+shell.editorRow.append(notice);
 
 /** 空 vault 首入态的重绘钩子（语言切换后按当前语言重新取值）：undefined = 当前提示不是空态。 */
 let relabelNotice: (() => void) | undefined;
@@ -1839,6 +1843,77 @@ const save = createSaveController({
   restoreReadingPosition: (path) => readingPositions.restoreFor(path),
   documentReplaced: () => closeDocumentOverlays(),
 });
+
+// ---------------------------------------------------------------------------
+// 崩溃备份失败的 sticky 横幅（change add-persistence-health-status-nov23 design §5.3）
+// ---------------------------------------------------------------------------
+//
+// 位置：文档区顶部、标签条之下、正文之上。两个**相互独立**的子条件共用这一条横幅：
+//   - 写失败子条件（`failedBackups` 非空）：受影响文档数 + 首个路径 + 「全部保存」；
+//   - 枚举失败子条件（`recoveryListFailed`）：无法检查残留备份 + 「重新检查」。
+// 在场 ⇔ 任一子条件成立；两个都清除才撤下。数据源只有 save-controller 的失败集合
+// （本文件 MUST NOT 另存一份）。
+//
+// 布局：`.pane-editor` 是分栏容器；横幅 `flex: 0 0 100%`，容器 `flex-wrap: wrap` 让它在
+// 首行独占一条、pane 落到第二行。`hidden` = `display:none` ⇒ 健康态零占位、零像素漂移。
+const recoveryBanner = document.createElement("section");
+recoveryBanner.className = "recovery-banner";
+recoveryBanner.setAttribute("role", "status");
+recoveryBanner.hidden = true;
+shell.editor.prepend(recoveryBanner);
+
+/** 横幅的一段子条件：文案 + 它自己的动作钮（两段可同时在场，各自带动作）。 */
+function recoveryBannerSegment(
+  text: string,
+  actionLabel: string,
+  run: () => void,
+): HTMLElement {
+  const segment = document.createElement("div");
+  segment.className = "recovery-banner-segment";
+  const label = document.createElement("span");
+  label.textContent = text;
+  const action = document.createElement("button");
+  action.type = "button";
+  action.className = "recovery-banner-action";
+  action.textContent = actionLabel;
+  action.addEventListener("click", run);
+  segment.append(label, action);
+  return segment;
+}
+
+/** 按双子条件重绘横幅（只在集合变化时调用一次；不重建编辑器 / transcript）。 */
+function renderRecoveryBanner(): void {
+  const failures = save.recoveryFailures();
+  if (failures.paths.length === 0 && !failures.listFailed) {
+    recoveryBanner.replaceChildren();
+    recoveryBanner.hidden = true;
+    return;
+  }
+  const segments: HTMLElement[] = [];
+  if (failures.paths.length > 0) {
+    segments.push(
+      recoveryBannerSegment(
+        t("D956", { n: String(failures.paths.length), path: failures.paths[0] }),
+        t("D958"),
+        () => void save.saveAllDirty(),
+      ),
+    );
+  }
+  if (failures.listFailed) {
+    segments.push(
+      recoveryBannerSegment(t("D957"), t("D959"), () => void save.checkRecovery()),
+    );
+  }
+  recoveryBanner.replaceChildren(...segments);
+  recoveryBanner.hidden = false;
+}
+
+save.onRecoveryFailureChange(() => {
+  renderRecoveryBanner();
+  // 标签读屏名 / 悬停提示的「备份失败」后缀跟着失败集合走（可见像素零变化）。
+  renderAllTabStrips();
+});
+renderRecoveryBanner();
 
 function emitReadiness(name: string, detail: object = {}): void {
   window.dispatchEvent(new CustomEvent(`lumir:${name}`, { detail }));
@@ -3126,6 +3201,9 @@ const harnessPanel = createHarnessPanel({  shell,
   // 面板发起的瞬态提示（消息摘录失锚 D443）走装配层的 showToast，锚 harness pane 右下角
   //（M420 合同 O4：提示锚定**发起它的 pane**）——toast 产出点单一来源，面板不自建。
   toast: (text) => void showToast(harnessPaneMount(), text),
+  // 留存健康的首次 history sticky（change add-persistence-health-status-nov23）：沿用装配层
+  // 的 sticky 浮条（点击关闭只移除本次提示）；面板不自建浮条、不持有静音状态。
+  stickyToast: (text) => void showToast(harnessPaneMount(), text, [], true),
   // 面板里的 vault 路径点击（change harness-path-link）：唯一打开链路 + **新标签**意图；带行号
   // 时落点走 editor.revealLine（与 TOC 同一算式），整个视口动作经转场窗口守 CL-2。行跳转的
   // plan 由 `jumpPlanFor` 提供——与快速打开**同一份**（M655 的 design §1.2：复核判据一旦分叉，
@@ -3789,6 +3867,8 @@ function activeImageViewerInfo(session: EditorSession): ImageInfo | null {
 onRelabel(() => {
   syncDirtyIndicator();
   syncModelineMeta();
+  // 崩溃备份横幅是长驻文案（两个子条件各有动作）：语言切换后按当前失败集合重取。
+  renderRecoveryBanner();
   // 主题钮的悬停提示 / 读屏名由 `applyTheme` 写，而它在启动块里跑在 `applyLanguage` **之前**
   //（那时 `<html lang>` 还没写，取值落到默认档）——这里按当前主题重写一遍。
   const theme = currentTheme(document.documentElement);

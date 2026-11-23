@@ -108,7 +108,7 @@ test("对话面板：pane 口径展开态结构 + 标题栏元素级基线", asy
   expect(shellCols).toBe(2);
   await expect(page.locator(".app-shell")).not.toHaveClass(/dock-open/);
   // 默认宽度比 harness:文档 = 1:1（Alex 2026-10-10 裁决）——分栏后两个 pane 等宽。
-  const panes = await page.locator(".pane-editor > .editor-pane").all();
+  const panes = await page.locator(".editor-pane-row > .editor-pane").all();
   const paneBoxes = await Promise.all(panes.map((pane) => pane.boundingBox()));
   const widths = paneBoxes.map((box) => box?.width ?? 0);
   expect(widths.length).toBe(2);

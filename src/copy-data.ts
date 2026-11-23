@@ -2749,6 +2749,55 @@ const COPY_TABLE = {
     zh: "初始化取网页标题请求失败",
     en: "Couldn't initialize the page title request",
   },
+  // D950–D955：harness 留存健康（change add-persistence-health-status-nov23）。缺口文案优先于
+  // 当前失败文案——`state=ok` + gap 也必须明确「记录缺失」，MUST NOT 呈现为健康。
+  D950: {
+    zh: "写入已恢复，但此前部分记录缺失，这段历史可能不完整",
+    en: "Writing has recovered, but earlier records are missing; this history may be incomplete",
+  },
+  D951: {
+    zh: "对话记录写入仍在失败，且此前记录已缺失",
+    en: "Conversation recording is still failing, and earlier records are already missing",
+  },
+  D952: {
+    zh: "对话记录写入失败，这段历史可能不完整",
+    en: "Couldn't write the conversation record; this history may be incomplete",
+  },
+  D953: {
+    zh: "部分对话记录写入失败，不影响继续对话",
+    en: "Some conversation records couldn't be written; you can keep chatting",
+  },
+  D954: {
+    zh: "本次会话的新记录尚未落盘，退出后无法恢复",
+    en: "This session's new records haven't been saved yet and can't be recovered after quitting",
+  },
+  D955: {
+    zh: "对话记录写入失败。若继续对话，这段历史可能无法完整恢复。",
+    en: "Conversation recording failed. If you keep chatting, this history may not be fully recoverable.",
+  },
+  // D956–D959：崩溃备份失败的双子条件横幅（change add-persistence-health-status-nov23 §5.3）。
+  // 写失败段给「全部保存」，枚举失败段给「重新检查」；两者可同时在场。
+  D956: {
+    zh: "无法为 {n} 份未保存的文档写入崩溃备份（首个：{path}）。保存后即不再有丢失风险。",
+    en: "Couldn't write crash backups for unsaved documents: {n} affected (first: {path}). Saving removes the risk of loss.",
+  },
+  D957: {
+    zh: "无法检查残留备份，可能有备份未被提示。",
+    en: "Couldn't check for leftover backups; some may exist without a prompt.",
+  },
+  D958: {
+    zh: "全部保存",
+    en: "Save all",
+  },
+  D959: {
+    zh: "重新检查",
+    en: "Check again",
+  },
+  // D960：标签读屏名 / 悬停提示的「备份失败」后缀（与 D90「（未保存）」同族；可见像素不变）。
+  D960: {
+    zh: "（备份失败）",
+    en: "(backup failed)",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
