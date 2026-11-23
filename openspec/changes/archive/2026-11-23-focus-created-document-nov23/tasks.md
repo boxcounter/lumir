@@ -6,7 +6,7 @@
 >
 > ## 实现与验证状态（2026-11-23）
 >
-> 实现已落地并验证；本 change **未 merge / 未归档**，节点 2 等合并时另行核对。
+> 实现已合并并推送至 master（`57c64851`）；归档提交 `a977e5a4`，归档后审计 PASS。
 >
 > - 实现提交：`8d746878`（mission 分支 `feat/focus-created-document-nov23`）。验证制品返修
 >   （harness composer / dirty 守卫 / 新建子目录 / 标签栏矩形 / 节点状态）单独一次
@@ -25,7 +25,7 @@
 > - 真机（返修后重跑）：`47c-create-and-delete` 1/1 PASS / 31.0s / 43 条断言（`ax: { focused:
 >   "AXTextArea" }` + 键入 `focus47c` 读回），证据
 >   `.local/acceptance/2026-11-23-focus-created-document/`。
-> - 未验项：见 1.5 / 3.2 / 6.3 的就地理由。
+> - 未验项：见 1.5 / 3.2 的就地理由。
 > - **节点 2**：五要件材料齐（独立评审 clean / merge 绑定 `df1658d8`；门禁 quick 13/13、
 >   visual 15/15 且 1272 passed；真机 47c 43 断言 PASS；archive-check 门禁模式 PASS、
 >   `validate --all --strict` 37/37、归档队列唯一条目）。**merge 与归档待执行**，逐条读数见
@@ -179,7 +179,7 @@
       verdict `/Users/boxcounter/.kimi-code/sessions/wd_lumir_97a6261b51e9/session_fb5487b7-c3d6-4a95-8717-2dde1e8c3acc/agents/main/tasks/agent-k7ptmn91/output.log`；
       四项返修后复审 **clean / merge** 绑定 `df1658d8`，verdict
       `/Users/boxcounter/.kimi-code/sessions/wd_lumir_97a6261b51e9/session_fb5487b7-c3d6-4a95-8717-2dde1e8c3acc/agents/main/tasks/agent-9myars66/output.log`。
-      五要件逐条读数见 `proposal.md` 文末「节点 2」块；merge / 归档待执行。
+      五要件逐条读数见 `proposal.md` 文末「节点 2」块；merge、归档与归档后审计均已完成。
 
 ## 7. 信息卫生
 

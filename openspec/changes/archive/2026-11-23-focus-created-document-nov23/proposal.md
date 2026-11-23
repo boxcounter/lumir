@@ -190,10 +190,9 @@ F2 的修订值来自 2026-11-23 第二轮评审：原「移走即不聚焦」�
    - 本节点材料以 **docs-only** 提交落地（只改本 change 的 `proposal.md` / `tasks.md` 与
      `docs/backlog.md`，不动 `src/**` / `tests/**` / `scripts/acceptance/**`），评审覆盖的实现面
      不变；tip 上因此多出的这一个文档提交不构成新的评审对象。
-3. **tasks 完成数**：`tasks.md` 共 **54** 项，**51/54** 已勾。未勾 3 项就地写明理由（不删任务项、
-   不留空勾）：1.5（`restoreFocus` spy 页面侧不可观测）、3.2（该链路文档恒为空文件）、6.3（队列条目
-   已随本节点落，剩「合并时」这一时序动作，随 merge 待执行）。merge / 归档动作本身不在 tasks 的
-   实施项里，见本块状态行。
+3. **tasks 完成数**：`tasks.md` 共 **54** 项，**52/54** 已勾。未勾 2 项就地写明理由（不删任务项、
+   不留空勾）：1.5（`restoreFocus` spy 页面侧不可观测）、3.2（该链路文档恒为空文件）。
+   merge / 归档动作本身不在 tasks 的实施项里，见本块状态行。
 4. **要求的门禁与真机证据**（全部落 `.local/`，git 外；worktree 会被清理，指针均为主仓绝对路径）：
    - `scripts/gate.sh visual`（含 quick 层 13 项 + 视觉两项；动过 `tests/visual/**`，必须本地跑）：
      **`GATE RESULT: 15/15 PASS（SKIP 0）`**，exit 0；`visual-regression` 861s、**1272 passed /
@@ -223,6 +222,11 @@ F2 的修订值来自 2026-11-23 第二轮评审：原「移走即不聚焦」�
      硬上限 80）。按人读规则「tasks 全部勾选（或标注放弃原因）后落一条」已落地；本 change 的
      tasks 未全勾（3 项带理由），`archive-check` 的「已完成 change 必须有唯一条目」分支因此
      不触发——这一条的实际判据是上面的 `grep -c` 读数。
+
+6. **归档执行与审计**：实现已合并并推送至 master（`57c64851`）。归档提交 `a977e5a4`；归档包装器
+   输出 `Totals: + 0, ~ 2, - 0, → 0`，修链 0 处。`node scripts/openspec-archive-check.mjs
+   --archived focus-created-document-nov23`：**PASS**（2 条 MODIFIED，对比 23 段；人工恢复 0 段，
+   声明认领 0 段）。归档跟踪队列条目已移除。
 
 **已知边界（不计入上述 PASS 的覆盖面）**：未验项 1.5 / 3.2 的口径见 `tasks.md` 同名条目；
 「装载中焦点被抢 / 装载中打开浮层」的时序反例只在 chromium 层覆盖，真机只验正常路径（分工见
