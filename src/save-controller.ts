@@ -315,11 +315,32 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   // 崩溃备份失败的**唯一事实源**（design §5.1）：写失败按路径键控（值 = 最近失败时刻，
   // 用于「首个受影响路径」的稳定排序）；枚举失败是独立子条件。只在内存、不写配置、不跨重启。
   const failedBackups = new Map<string, number>();
+  /** 路径 → 最近一次备份请求的序号。只有最新请求的应答能改失败集合——同一路径前一次备份
+   *  仍在途时后一次可以开始，旧应答（成功或失败）都不能覆盖新状态。 */
+  const backupRequests = new Map<string, number>();
+  let backupSeq = 0;
+  /** 枚举请求序号：启动检查与「重新检查」可以重叠，只接收最新一次结果。 */
+  let recoveryCheckSeq = 0;
   let recoveryListFailed = false;
   const recoveryFailureListeners = new Set<() => void>();
 
   function notifyRecoveryFailures(): void {
     for (const listener of recoveryFailureListeners) listener();
+  }
+
+  function beginBackupRequest(path: string): number {
+    const request = ++backupSeq;
+    backupRequests.set(path, request);
+    return request;
+  }
+
+  /** 该请求是否仍是这条路径上最新的一次备份（旧应答整体作废）。 */
+  function isLatestBackupRequest(path: string, request: number): boolean {
+    return backupRequests.get(path) === request;
+  }
+
+  function settleBackupRequest(path: string, request: number): void {
+    if (backupRequests.get(path) === request) backupRequests.delete(path);
   }
 
   function markBackupFailed(path: string): void {
@@ -506,6 +527,8 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     revisions.set(path, revision);
     cancelBackupTimer(path);
     // 这条路径上的文档换了一份：旧的备份失败描述的是上一代内容，随世代一起作废。
+    // 备份请求序号一并推进（旧应答不再是最新请求）。
+    beginBackupRequest(path);
     clearBackupFailed(path);
   }
 
@@ -528,6 +551,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     // 残留）。枚举失败子条件同样作废——新 vault 会重新 checkRecovery。
     const hadFailures = failedBackups.size > 0 || recoveryListFailed;
     failedBackups.clear();
+    backupRequests.clear();
     recoveryListFailed = false;
     if (hadFailures) notifyRecoveryFailures();
     removeRecoveryPrompts();
@@ -929,17 +953,22 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     const revision = saveBaseline(path);
     const content = contentOf(path);
     if (!isDirty(path) || revision === null || content === null) return;
-    // 应答归属：vault 复位（含切 vault 放弃）之后，旧 vault 的写入应答已不属于当前失败集合
-    // ——路径是 vault 相对键，跨 vault 同路径会串。路径级装载世代覆盖「同路径换了文档」。
+    // 应答归属三层：vault 复位（serial）、路径装载世代（epoch）、**同路径备份请求序号**。
+    // 最后一层是评审 P1-1：同一路径的旧备份应答（成功或失败）不得覆盖较新的备份状态。
     const generation = serial;
     const epoch = epochOf(path);
+    const request = beginBackupRequest(path);
     try {
       await recoveryBackup(path, content, revision);
       if (generation !== serial || epoch !== epochOf(path)) return;
+      if (!isLatestBackupRequest(path, request)) return;
+      settleBackupRequest(path, request);
       // 备份写成功：该路径的写失败子条件自动清除（不要求用户做任何操作，design §5.2）。
       clearBackupFailed(path);
     } catch {
       if (generation !== serial || epoch !== epochOf(path)) return;
+      if (!isLatestBackupRequest(path, request)) return;
+      settleBackupRequest(path, request);
       // 写失败不再被吞掉：记进失败集合，由装配层的 sticky 横幅 + 标签后缀表达。
       // 全量路径进诊断日志（横幅只展示首个路径 + 数量，design §5.3）。
       logEvent("recovery_write_failed", { path });
@@ -958,19 +987,21 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
 
   async function checkRecovery(): Promise<void> {
     removeRecoveryPrompts();
-    // 应答归属：vault 复位之后旧 vault 的枚举结果不写进新 vault 的子条件。
+    // 应答归属：vault 复位之后旧 vault 的枚举结果不写进新 vault 的子条件；同一 vault 内
+    // 启动检查与「重新检查」可以重叠，只接收最新一次枚举的结果（评审 P1-2）。
     const generation = serial;
+    const request = ++recoveryCheckSeq;
     let pending: string[];
     try {
       pending = await recoveryList();
-      if (generation !== serial) return;
+      if (generation !== serial || request !== recoveryCheckSeq) return;
       // 重新枚举成功只清枚举失败子条件；写失败子条件不受影响（两个子条件相互独立）。
       if (recoveryListFailed) {
         recoveryListFailed = false;
         notifyRecoveryFailures();
       }
     } catch (e) {
-      if (generation !== serial) return;
+      if (generation !== serial || request !== recoveryCheckSeq) return;
       // 诊断只记错误分类（不记目录内容）。
       logEvent("recovery_list_failed", {
         code: isCommandError(e) ? e.code : "recovery_list_failed",

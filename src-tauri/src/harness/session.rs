@@ -419,6 +419,7 @@ impl StateSnapshot {
     pub fn empty(vault: &str, warn_ctx_pct: f64, thinking_supported: bool) -> Self {
         Self {
             vault: vault.to_string(),
+            session_token: 0,
             messages: Vec::new(),
             usage: UsageSnapshot::default(),
             pending_approvals: Vec::new(),
@@ -456,6 +457,10 @@ pub struct StateSnapshot {
     /// 会话标识 = vault 根路径（M312）：面板据此丢弃「切走之后才回来的」旧快照
     /// （与 `harness:event` 的信封字段同源：都是 `VaultScope::key()`）。
     pub vault: String,
+    /// 逻辑会话身份（MUST NOT 与 `subagent_token` 各造一份：它就是同一个会话对象令牌）。
+    /// 新会话 / 从历史恢复 / app 重启会换新值；自动压缩换文件沿用。前端用它丢弃旧逻辑
+    /// 会话的迟到 `persistence` 事件；`0` = 无会话（空态）。
+    pub session_token: u64,
     pub messages: Vec<PanelMessage>,
     pub usage: UsageSnapshot,
     /// 呈现读：当前 vault 的会话是否**真的**有轮次在跑（change add-harness-activity-presence
@@ -619,6 +624,10 @@ impl PendingApprovalSnapshot {
 pub struct SessionResumeInfo {
     /// 续写的新会话 id（`sessions/<vault 稳定 id>/<id>.jsonl` 的文件名）。
     pub session_id: String,
+    /// 新逻辑会话的身份（后端 `Session::subagent_token`）：前端据此把恢复期间先到的
+    /// `persistence` 事件归到新会话，并丢弃旧会话的迟到事件。u64 → number 与 `ts` 同处理。
+    #[ts(type = "number")]
+    pub session_token: u64,
     /// 灌回的 LLM 侧历史条数（`input` 项数）：源文件最后一条会话轮次 llm_request 的
     /// messages，加末尾未入请求的 llm_response 折叠项（design §6.2 第 4 步——reasoning
     /// 回放项 + assistant 消息 + 悬空的 function_call 项）；空会话恢复为 0。
@@ -777,6 +786,8 @@ impl Session {
             .into_iter()
             .map(|item| normalize_reasoning_item(&item))
             .collect();
+        let subagent_token = next_subagent_token();
+        jsonl.set_session_token(subagent_token);
         Self {
             root,
             system,
@@ -794,7 +805,7 @@ impl Session {
             title: None,
             title_schedule: TitleSchedule::default(),
             title_cursor: 0,
-            subagent_token: next_subagent_token(),
+            subagent_token,
             subagent_hub: None,
             subrun_usage: BTreeMap::new(),
             subrun_runs: BTreeMap::new(),
@@ -1060,6 +1071,7 @@ impl Session {
     pub fn snapshot(&self, warn_ctx_pct: f64, thinking_supported: bool) -> StateSnapshot {
         StateSnapshot {
             vault: self.root.display().to_string(),
+            session_token: self.subagent_token,
             messages: self.panel.clone(),
             usage: self.usage,
             pending_approvals: self

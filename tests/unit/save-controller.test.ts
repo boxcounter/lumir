@@ -1071,3 +1071,151 @@ test("切 vault 之后旧 vault 的备份 / 枚举应答不写进新 vault（世
     mock.timers.reset();
   }
 });
+
+// ---------------------------------------------------------------------------
+// 独立评审 P1-1 / P1-2：备份与枚举的请求世代（旧应答不得覆盖新状态）
+// ---------------------------------------------------------------------------
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve(value: T): void;
+  reject(error: unknown): void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+test("P1-1a 同一路径两次备份在途：旧成功晚于新失败，MUST NOT 清掉新的写失败", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const rig = createRig();
+    const calls: Deferred<void>[] = [];
+    rig.backend.handle("recovery_backup", () => {
+      const call = deferred<void>();
+      calls.push(call);
+      return call.promise;
+    });
+    rig.editor.open("a.md", "# A");
+    rig.controller.noteOpened("a.md", "rev-a");
+    rig.editor.edit("a.md", "# A v1");
+    mock.timers.tick(RECOVERY_DEBOUNCE_MS);
+    await flush();
+    rig.editor.edit("a.md", "# A v2");
+    mock.timers.tick(RECOVERY_DEBOUNCE_MS);
+    await flush();
+    assert.equal(calls.length, 2, "前提：同一路径有两次备份在途");
+
+    // 新（v2）失败：写失败子条件成立。
+    calls[1].reject(commandError("recovery_write_failed", "磁盘满"));
+    await flush();
+    assert.deepEqual(rig.controller.recoveryFailures().paths, ["a.md"]);
+
+    // 旧（v1）迟到的成功：不得清掉 v2 的失败（v2 的 dirty 内容还没备份成功）。
+    calls[0].resolve();
+    await flush();
+    assert.deepEqual(
+      rig.controller.recoveryFailures().paths,
+      ["a.md"],
+      "旧请求的成功应答 MUST NOT 覆盖较新的失败",
+    );
+    stopTimers(rig);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("P1-1b 同一路径两次备份在途：旧失败晚于新成功，MUST NOT 重新标成写失败", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const rig = createRig();
+    const calls: Deferred<void>[] = [];
+    rig.backend.handle("recovery_backup", () => {
+      const call = deferred<void>();
+      calls.push(call);
+      return call.promise;
+    });
+    rig.editor.open("a.md", "# A");
+    rig.controller.noteOpened("a.md", "rev-a");
+    rig.editor.edit("a.md", "# A v1");
+    mock.timers.tick(RECOVERY_DEBOUNCE_MS);
+    await flush();
+    rig.editor.edit("a.md", "# A v2");
+    mock.timers.tick(RECOVERY_DEBOUNCE_MS);
+    await flush();
+    assert.equal(calls.length, 2, "前提：同一路径有两次备份在途");
+
+    calls[1].resolve();
+    await flush();
+    assert.deepEqual(rig.controller.recoveryFailures().paths, [], "新请求成功即清空");
+
+    calls[0].reject(commandError("recovery_write_failed", "磁盘满"));
+    await flush();
+    assert.deepEqual(
+      rig.controller.recoveryFailures().paths,
+      [],
+      "旧请求的失败应答 MUST NOT 覆盖较新的成功",
+    );
+    stopTimers(rig);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("P1-2a 两次枚举在途：旧成功晚于新失败，MUST NOT 清掉最新的枚举失败", async () => {
+  const rig = createRig();
+  const calls: Deferred<string[]>[] = [];
+  rig.backend.handle("recovery_list", () => {
+    const call = deferred<string[]>();
+    calls.push(call);
+    return call.promise;
+  });
+  const first = rig.controller.checkRecovery();
+  const second = rig.controller.checkRecovery();
+  await flush();
+  assert.equal(calls.length, 2, "前提：两次枚举在途");
+
+  calls[1].reject(commandError("recovery_list_failed", "目录不可读"));
+  await flush();
+  assert.equal(rig.controller.recoveryFailures().listFailed, true);
+
+  calls[0].resolve([]);
+  await Promise.all([first, second]);
+  assert.equal(
+    rig.controller.recoveryFailures().listFailed,
+    true,
+    "旧枚举的成功应答 MUST NOT 清掉较新的失败",
+  );
+});
+
+test("P1-2b 两次枚举在途：旧失败晚于新成功，MUST NOT 重新标成枚举失败", async () => {
+  const rig = createRig();
+  const calls: Deferred<string[]>[] = [];
+  rig.backend.handle("recovery_list", () => {
+    const call = deferred<string[]>();
+    calls.push(call);
+    return call.promise;
+  });
+  const first = rig.controller.checkRecovery();
+  const second = rig.controller.checkRecovery();
+  await flush();
+  assert.equal(calls.length, 2, "前提：两次枚举在途");
+
+  calls[1].resolve([]);
+  await flush();
+  assert.equal(rig.controller.recoveryFailures().listFailed, false);
+
+  calls[0].reject(commandError("recovery_list_failed", "目录不可读"));
+  await Promise.all([first, second]);
+  assert.equal(
+    rig.controller.recoveryFailures().listFailed,
+    false,
+    "旧枚举的失败应答 MUST NOT 覆盖较新的成功",
+  );
+});

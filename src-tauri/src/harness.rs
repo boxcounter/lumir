@@ -183,6 +183,15 @@ impl WeakRuntime {
             )),
         }
     }
+
+    /// 测试专用：sessions 锁是否正被持有（评审 P2-4 的证伪探针——emit 回调里调用它，
+    /// 若为 true 就说明事件发送仍在全局 Session 锁内）。
+    #[cfg(test)]
+    pub(crate) fn sessions_lock_contended(&self) -> bool {
+        self.upgrade()
+            .map(|runtime| runtime.sessions_lock_contended())
+            .unwrap_or(false)
+    }
 }
 
 impl Default for Runtime {
@@ -472,7 +481,21 @@ impl Runtime {
         let session = sessions
             .get_mut(&scope.key())
             .ok_or_else(|| CommandError::new("harness_no_session", "当前 vault 还没有对话会话"))?;
-        Ok(f(session))
+        // 健康跃迁只入队；**释放 sessions 锁之后**才交给 reporter（design §4.5）。
+        let transitions = session.jsonl().transitions();
+        let result = f(session);
+        drop(sessions);
+        transitions.flush();
+        Ok(result)
+    }
+
+    /// 测试专用：sessions 锁是否正被持有（`try_lock` 的 WouldBlock 判据）。
+    #[cfg(test)]
+    pub(crate) fn sessions_lock_contended(&self) -> bool {
+        matches!(
+            self.inner.sessions.try_lock(),
+            Err(std::sync::TryLockError::WouldBlock)
+        )
     }
 
     /// 当前 vault 的会话快照（`harness_state` 用）：无会话时空态（面板宽容解析）。
@@ -797,11 +820,15 @@ impl Runtime {
             new_session.jsonl().record(&title::inherit_payload(title));
             new_session.set_title(Some(title.clone()));
         }
+        let new_token = new_session.subagent_token();
+        let transitions = new_session.jsonl().transitions();
         self.inner
             .sessions
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(scope.key(), new_session);
+        // 恢复期间写 notice / inherit 的失败跃迁：插入会话、释放锁之后再发（P2-4）。
+        transitions.flush();
         self.inner
             .pending_open
             .lock()
@@ -809,6 +836,7 @@ impl Runtime {
             .remove(&scope.key());
         Ok(session::SessionResumeInfo {
             session_id: new_id,
+            session_token: new_token,
             restored_items,
             messages,
         })
@@ -3150,8 +3178,8 @@ mod tests {
                     .record(&serde_json::json!({"kind": "llm_request", "request": {}}));
             })
             .unwrap();
-        let health_a =
-            serde_json::to_value(runtime.snapshot(&a, &config)).unwrap()["persistence"].clone();
+        let snapshot_a = serde_json::to_value(runtime.snapshot(&a, &config)).unwrap();
+        let health_a = snapshot_a["persistence"].clone();
         assert_eq!(health_a["history_gap"]["present"], serde_json::json!(true));
 
         // 切到 B：B 自身的健康是 ok；A 的会话不被销毁。
@@ -3170,12 +3198,17 @@ mod tests {
             "切回 A 后缺口必须仍在：{health_a_again}"
         );
 
-        // 事件只带 A 的 vault 信封（B 没有写失败，不发事件）。
+        // 事件只带 A 的 vault 信封（B 没有写失败，不发事件）；逻辑会话 token 与快照一致。
         let events = seen.lock().unwrap().clone();
         assert!(!events.is_empty(), "A 的失败必须发 persistence 事件");
+        let token = snapshot_a["session_token"]
+            .as_u64()
+            .expect("快照带逻辑会话 token");
+        assert!(token > 0);
         for event in &events {
             assert_eq!(event["type"], serde_json::json!("persistence"));
             assert_eq!(event["vault"], serde_json::json!(a.key()));
+            assert_eq!(event["session_token"], serde_json::json!(token));
             assert_eq!(event["history_gap"]["present"], serde_json::json!(true));
         }
         let _ = std::fs::remove_dir_all(&root);
@@ -3252,6 +3285,89 @@ mod tests {
         assert_eq!(fresh["severity"], serde_json::Value::Null);
         assert_eq!(fresh["history_written"], serde_json::json!(false));
         assert_eq!(fresh["history_gap"]["present"], serde_json::json!(false));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// P2-4（独立评审）：留存健康事件 MUST NOT 在全局 sessions 锁内发送。
+    /// 探针 sink 在 emit 回调里检查 sessions 锁是否被持有；当前实现把 reporter 调在
+    /// `with_session` 的锁内，探针会看到 WouldBlock——本用例因此判红（修好后转绿）。
+    #[test]
+    fn persistence_events_are_emitted_outside_the_sessions_lock() {
+        struct LockProbe {
+            runtime: WeakRuntime,
+            seen: Arc<std::sync::atomic::AtomicUsize>,
+            contended: Arc<std::sync::atomic::AtomicBool>,
+        }
+        impl events::EventSink for LockProbe {
+            fn emit(&self, _payload: serde_json::Value) {
+                self.seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if self.runtime.sessions_lock_contended() {
+                    self.contended
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+        }
+        struct FailSink;
+        impl jsonl::LineSink for FailSink {
+            fn write_line(&mut self, _line: &str) -> Result<(), jsonl::LineWriteError> {
+                Err(jsonl::LineWriteError {
+                    error: std::io::Error::other("scripted failure"),
+                    partial: false,
+                })
+            }
+        }
+        let _xdg = xdg_test_lock();
+        let root = std::env::temp_dir().join(format!(
+            "lumir-persistence-lock-{}-{:016x}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let vault = root.join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+        let scope = VaultScope {
+            root: vault.clone(),
+            policy: {
+                let defaults = crate::config::VaultConfig::default();
+                IgnorePolicy::load(&vault, &[".gitignore".to_string()], &defaults.ignore)
+            },
+            vault_id: "vault-lock".to_string(),
+        };
+        let config = config::test_mock(None);
+        let runtime = Runtime::default();
+        let seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let contended = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        runtime.attach_persistence_forward(Arc::new(LockProbe {
+            runtime: runtime.downgrade(),
+            seen: seen.clone(),
+            contended: contended.clone(),
+        }));
+        runtime.acquire_turn(&scope, &config).unwrap();
+        let writer = jsonl::JsonlWriter::at_path_with_sink(
+            root.join("lock-health.jsonl"),
+            &serde_json::json!({}),
+            Box::new(FailSink),
+            None,
+        );
+        runtime
+            .with_session(&scope, |session| session.replace_jsonl_writer(writer))
+            .unwrap();
+        runtime
+            .with_session(&scope, |session| {
+                session
+                    .jsonl()
+                    .record(&serde_json::json!({"kind": "llm_request", "request": {}}));
+            })
+            .unwrap();
+        assert!(
+            seen.load(std::sync::atomic::Ordering::SeqCst) > 0,
+            "失败跃迁必须发出 persistence 事件"
+        );
+        assert!(
+            !contended.load(std::sync::atomic::Ordering::SeqCst),
+            "persistence 事件在 sessions 锁内被发送（design §4.5 MUST NOT）"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

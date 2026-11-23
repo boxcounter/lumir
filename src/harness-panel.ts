@@ -3395,6 +3395,30 @@ export function persistenceStickyDue(
   return historyNow && !shown.has(vault ?? "");
 }
 
+/** `session_token` 的宽容解析：缺失 / 非数字 / <=0 = 旧后端或无会话（`null`）。
+ *  新后端的事件与快照都带这个逻辑会话身份。 */
+export function persistenceSessionTokenOf(raw: unknown): number | null {
+  return typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : null;
+}
+
+/** 事件准入：旧逻辑会话的迟到事件 MUST NOT 复活告警。
+ *
+ *  - 旧后端没有 `session_token`（`null`）⇒ 放行（兼容读取，不误报）；
+ *  - 已作废（显式新会话 / 从历史恢复 / 重置）的 token ⇒ 丢弃；
+ *  - 当前无 token（新会话尚未建立 / 空态）⇒ 放行并接纳该 token（新会话的首条事件）；
+ *  - 否则只接纳同一或更新的 token（token 由后端单调分配；压缩轮换沿用同一 token）。
+ */
+export function persistenceEventAdmitted(
+  token: number | null,
+  current: number | null,
+  retired: ReadonlySet<number>,
+): boolean {
+  if (token === null) return true;
+  if (retired.has(token)) return false;
+  if (current === null) return true;
+  return token >= current;
+}
+
 export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const { shell, editor } = deps;
 
@@ -3776,9 +3800,35 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     deps.stickyToast(t("D955"));
   }
 
-  /** 显式「新会话」/ 从历史恢复：旧逻辑会话的健康读数与「已提示」标记一并作废。
+  /** 应用一次完整快照的 persistence 读数（快照是重置 / 恢复 / 切回 vault 时的地板）。 */
+  function applyPersistenceSnapshot(rawToken: unknown, rawPersistence: unknown): void {
+    const token = persistenceSessionTokenOf(rawToken);
+    // 快照是权威：即使该 token 曾被本地标成作废（例如切回同一会话），也以快照为准。
+    if (token !== null) retiredPersistenceTokens.delete(token);
+    persistenceSessionToken = token;
+    applyPersistence(persistenceViewOf(rawPersistence));
+  }
+
+  /** 只取 persistence 的完整快照（新会话 / 从历史恢复后的地板；不重放消息 / 不改相位）。 */
+  function fetchPersistenceSnapshot(): void {
+    const seq = ++persistenceSnapshotSeq;
+    void harnessState()
+      .then((json) => {
+        if (seq !== persistenceSnapshotSeq) return;
+        const state = parseSnapshot(json);
+        if (state === null) return;
+        applyPersistenceSnapshot(state.session_token, state.persistence);
+      })
+      .catch(() => {});
+  }
+
+  /** 显式「新会话」/ 从历史恢复：旧逻辑会话的 token、健康读数与「已提示」标记一并作废。
    *  后端新会话本身从空健康起算，这里只清渲染面与一次性提示的节流键。 */
   function resetPersistenceView(): void {
+    if (persistenceSessionToken !== null) {
+      retiredPersistenceTokens.add(persistenceSessionToken);
+    }
+    persistenceSessionToken = null;
     persistenceView = {
       state: "ok",
       severity: null,
@@ -3983,6 +4033,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     gap: false,
   };
   let persistenceLineHidden = true;
+  /** 当前逻辑会话身份（后端 `state.session_token` / 事件 envelope 的同名字段）。 */
+  let persistenceSessionToken: number | null = null;
+  /** 已作废的逻辑会话 token：显式新会话 / 从历史恢复 / 重置后，旧会话的迟到事件丢弃。 */
+  const retiredPersistenceTokens = new Set<number>();
+  /** 只取 persistence 的轻量快照请求世代（重置 / 恢复后的完整快照为地板）。 */
+  let persistenceSnapshotSeq = 0;
   let streamingEl: HTMLElement | null = null;
   /** 本轮完整正文源（全部文本段的拼接）——复制源用；分段渲染不改变它。 */
   let streamingText = "";
@@ -8311,8 +8367,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         return;
       }
       case "persistence": {
-        // 留存健康跃迁（change add-persistence-health-status-nov23）：状态行按两维读数就地
-        // 更新；首次 history / 缺口给一条 sticky。事件与快照同键同值，解析走同一份。
+        // 留存健康跃迁（change add-persistence-health-status-nov23）：先按**逻辑会话身份**
+        // 准入——旧会话（显式新会话 / 恢复 / 重置之前）的迟到事件不得复活告警；再按两维读数
+        // 就地更新状态行与首次 history sticky。事件与快照同键同值，解析走同一份。
+        const token = persistenceSessionTokenOf(event.session_token);
+        if (!persistenceEventAdmitted(token, persistenceSessionToken, retiredPersistenceTokens)) {
+          return;
+        }
+        if (token !== null) persistenceSessionToken = token;
         applyPersistence(persistenceViewOf(event));
         return;
       }
@@ -8837,7 +8899,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
     // 留存健康（change add-persistence-health-status-nov23）：快照是重挂载 / 重载 / 切回
     // vault 时的地板。缺键按旧后端宽容（`persistenceViewOf` 的缺省）。
-    applyPersistence(persistenceViewOf(state.persistence));
+    applyPersistenceSnapshot(state.session_token, state.persistence);
     // 会话标题（change add-session-auto-naming，design D11）：`title` 缺键 = 无标题 ⇒ 回落
     // 首条用户消息口径（不伪造）。快照是恢复 / 切 vault 回来时标题的唯一来源。
     sessionTitle =
@@ -9025,9 +9087,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     clearTranscriptSurface();
     // 引用失败的输入区状态行属于上一段输入（M662）：换会话即清（卡片上的留痕随卡片一起消失）。
     applyQuoteFailureNotice(null);
-    // 留存健康状态行也属于上一段会话的读数：先隐藏，真相由随后的进入快照带回（切 vault /
-    // 新会话 / 恢复共用这一条）。MUST NOT 在这里清后端健康或「已提示」标记。
-    hidePersistenceLine();
+    // 留存健康状态行不在这里隐藏：恢复会话时后端写失败事件可能先于 Promise 回执到达，
+    // 在这里隐藏会把它抹掉。新会话（resetPersistenceView）与切 vault（hidePersistenceLine）
+    // 各自在**知道换代**的调用点处理；恢复路径由随后的完整 persistence 快照做地板。
     // M644：视图复位 = 换了一个会话，跟随态回 following、清未读、写底（快照 / 恢复路径随后
     // 各自再「强制」一次，白名单动作不靠这一句兜底）。
     follow.reset();
@@ -9306,8 +9368,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 清空的是**渲染面**：会话真源在 Rust，重置成功后本地视图随之清空；待决批准项随
         // 会话失效，一并撤下（它们的 id 已不属于任何会话）——口径见 resetView 的注释。
         resetView();
-        // 新逻辑会话：旧会话的「已提示」标记作废，未来再进入 history 仍可给一条 sticky。
+        // 新逻辑会话：旧会话的 token 与「已提示」标记作废；完整快照是空健康的地板。
         resetPersistenceView();
+        fetchPersistenceSnapshot();
         // resetView 只清渲染面、不碰 chip 读数：档位随会话对象一起被丢弃（M362 裁决点 1），
         // 不重取快照的话 chip 会停在上一段会话的档位，与后端「无会话 = 默认 High」分叉
         // （M366 finding）。重取走 refreshThinkingState 的既有通道——快照是档位的唯一真源，
@@ -9578,11 +9641,23 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  （留存重算：最近一次真实读数 + 会话累计），经 harness_state 快照应用——控制行/气泡恢复后
    *  即有真值；从未发过请求的会话快照 has_usage=false，读数区保持隐藏（不假读数）。 */
   function resumeSession(entry: SessionEntry): void {
+    // 恢复期间先退役旧逻辑会话的 token 并藏掉旧状态行：新会话的写失败事件可能在 Promise
+    // 回执之前到达（后端在返回前写 notice / inherit），必须能显示；回执失败时整体回滚。
+    const previousToken = persistenceSessionToken;
+    const previousView = persistenceView;
+    const previousHidden = persistenceLineHidden;
+    const previousShown = historyStickyShown.has(currentVault ?? "");
+    if (previousToken !== null) retiredPersistenceTokens.add(previousToken);
+    persistenceSessionToken = null;
+    hidePersistenceLine();
     harnessResumeSession(entry.sessionId)
       .then((info) => {
         resetView();
-        // 从历史恢复 = 新逻辑会话：两维与 history_written 从空健康起算，旧「已提示」作废。
-        resetPersistenceView();
+        // 从历史恢复 = 新逻辑会话：采纳回执里的新 token；**MUST NOT** 在这里 reset 健康读数
+        // （会抹掉先于回执到达的真实写失败事件）。完整 persistence 快照随后做地板。
+        persistenceSessionToken = persistenceSessionTokenOf(info.session_token);
+        historyStickyShown.delete(currentVault ?? "");
+        fetchPersistenceSnapshot();
         renderSnapshotMessages(Array.isArray(info.messages) ? info.messages : []);
         firstUserText = entry.firstUserText;
         // 恢复后的标题 = 选中项的有效标题（后端 `SessionSummary.title` 的同一读数；恢复入口在
@@ -9604,7 +9679,24 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 读回空闲；但读口存在，将来放宽协议时不必再改这条路径。
         fetchActivitySnapshot();
       })
-      .catch((e: unknown) => appendError(t("D348", { message: errorText(e) })));
+      .catch((e: unknown) => {
+        // 恢复失败：恢复旧逻辑会话的身份 / 读数 / 显隐与「已提示」标记；期间若误接纳了
+        // 新 token 的事件，一并作废。
+        if (
+          persistenceSessionToken !== null &&
+          persistenceSessionToken !== previousToken
+        ) {
+          retiredPersistenceTokens.add(persistenceSessionToken);
+        }
+        if (previousToken !== null) retiredPersistenceTokens.delete(previousToken);
+        persistenceSessionToken = previousToken;
+        persistenceView = previousView;
+        persistenceLineHidden = previousHidden;
+        renderPersistenceLine();
+        if (previousShown) historyStickyShown.add(currentVault ?? "");
+        else historyStickyShown.delete(currentVault ?? "");
+        appendError(t("D348", { message: errorText(e) }));
+      });
   }
   // 会话名下拉：展开/收起浮层（浮层 = 历史会话选择器，M392；「新建会话」动作项随 M406
   // 退场，新建归首行加号钮）；浮层外交互（点击其他处）收起。按钮在标题栏（drag 区）

@@ -12,6 +12,11 @@ export type SessionResumeInfo = {
  */
 session_id: string, 
 /**
+ * 新逻辑会话的身份（后端 `Session::subagent_token`）：前端据此把恢复期间先到的
+ * `persistence` 事件归到新会话，并丢弃旧会话的迟到事件。u64 → number 与 `ts` 同处理。
+ */
+session_token: number, 
+/**
  * 灌回的 LLM 侧历史条数（`input` 项数）：源文件最后一条会话轮次 llm_request 的
  * messages，加末尾未入请求的 llm_response 折叠项（design §6.2 第 4 步——reasoning
  * 回放项 + assistant 消息 + 悬空的 function_call 项）；空会话恢复为 0。

@@ -535,7 +535,7 @@ export type HarnessEvent = HarnessEventEnvelope &
     // 载荷与 `harness_state` 快照的 `persistence` 字段**同键同值**（顶层六键 + `history_gap`
     // 三键，均由 Rust `PersistenceHealth` 的一份 `Serialize` 产出）。`state=ok` +
     // `history_gap.present=true` 是合法状态（写入已恢复、缺口仍在），前端 MUST NOT 当健康。
-    | { type: "persistence"; state: "ok" | "degraded"; since_ts: number; severity: "history" | "annotation" | null; detail: string; history_written: boolean; history_gap: { present: boolean; since_ts: number; detail: string } }
+    | { type: "persistence"; session_token?: number; state: "ok" | "degraded"; since_ts: number; severity: "history" | "annotation" | null; detail: string; history_written: boolean; history_gap: { present: boolean; since_ts: number; detail: string } }
     // ── 子代理可见面（change add-harness-subagents design §13 / §19）───────────────
     // 七类 `subagent_*` 是委派可见面的数据源（M822 起）：控制区行与 transcript 的 `task`
     // 行由 started / progress / step / finished 就地更新（过程 MUST NOT 进 transcript 正文）；

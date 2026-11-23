@@ -854,6 +854,9 @@ body {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+  /* 定位包含块：`.editor-notice` 的 inset:0 以 pane 行盒为界，只覆盖正文区、不覆盖顶部
+     健康横幅（独立评审 P2-5）。 */
+  position: relative;
 }
 /* 崩溃备份失败的文档区 sticky 横幅（change add-persistence-health-status-nov23 design §5.3）：
    只用既有 token（danger 底 / 文本、border 边、r10 圆角、ui 字级），不引入新色值与阴影。

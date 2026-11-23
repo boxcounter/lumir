@@ -27,6 +27,17 @@ const VAULT: VaultFixture & { root: string } = {
 interface HarnessStubOptions {
   /** `harness_state` 的 persistence 键（缺省 = 健康态新后端形状）。 */
   persistence?: Record<string, unknown>;
+  /** 初始快照的逻辑会话身份（后端 Session 的稳定 token；0 = 无会话）。 */
+  sessionToken?: number;
+  /** 恢复入口返回的新会话 token 与恢复后的完整持久化快照（地板）。 */
+  resumeSessionToken?: number;
+  resumePersistence?: Record<string, unknown>;
+  /** 新会话成功后的完整持久化快照（地板）。 */
+  afterNewSession?: { session_token: number; persistence?: Record<string, unknown> };
+  /** `harness_list_sessions` 的合成行（触发恢复路径）。 */
+  sessions?: Array<{ session_id: string; first_user_text: string; ts: number }>;
+  /** `harness_resume_session` 挂起到页面调用 `__resolveResume()`。 */
+  deferResume?: boolean;
   /** `recovery_backup` 是否失败（写失败子条件）。 */
   backupFails?: boolean;
   /** `recovery_list` 是否失败（枚举失败子条件）。 */
@@ -42,25 +53,68 @@ async function stubHealth(page: Page, options: HarnessStubOptions = {}): Promise
     const origInvoke = internals.invoke;
     w.__harnessEventHandlerIds = [];
     w.__backupCalls = 0;
+    w.__resumeStarted = false;
+    w.__resolveResume = null;
+    w.__afterResume = false;
+    w.__afterNewSession = false;
     internals.invoke = async (cmd: string, args: any) => {
       if (cmd === "harness_state") {
+        const persistence =
+          (w.__afterResume && opts.resumePersistence) ||
+          (w.__afterNewSession && opts.afterNewSession?.persistence) ||
+          opts.persistence ||
+          {
+            state: "ok",
+            since_ts: 0,
+            severity: null,
+            detail: "",
+            history_written: false,
+            history_gap: { present: false, since_ts: 0, detail: "" },
+          };
+        const sessionToken = w.__afterResume
+          ? opts.resumeSessionToken ?? 0
+          : w.__afterNewSession
+            ? opts.afterNewSession?.session_token ?? 0
+            : opts.sessionToken ?? 0;
         return JSON.stringify({
           vault: opts.root,
+          session_token: sessionToken,
           messages: [],
           usage: { ctx_pct: 0, cache_pct_session: 0 },
           pending_approvals: [],
           warn_ctx_pct: 85,
-          persistence:
-            opts.persistence ??
-            {
-              state: "ok",
-              since_ts: 0,
-              severity: null,
-              detail: "",
-              history_written: false,
-              history_gap: { present: false, since_ts: 0, detail: "" },
-            },
+          persistence,
         });
+      }
+      if (cmd === "harness_list_sessions") {
+        return JSON.stringify(opts.sessions ?? []);
+      }
+      if (cmd === "harness_resume_session") {
+        if (!opts.deferResume) {
+          w.__afterResume = true;
+          return {
+            session_id: "s-resumed",
+            restored_items: 0,
+            messages: [],
+            session_token: opts.resumeSessionToken ?? 0,
+          };
+        }
+        w.__resumeStarted = true;
+        return new Promise((resolve: (value: unknown) => void) => {
+          w.__resolveResume = () => {
+            w.__afterResume = true;
+            resolve({
+              session_id: "s-resumed",
+              restored_items: 0,
+              messages: [],
+              session_token: opts.resumeSessionToken ?? 0,
+            });
+          };
+        });
+      }
+      if (cmd === "harness_new_session") {
+        w.__afterNewSession = true;
+        return null;
       }
       if (cmd === "harness_send" || cmd === "harness_abort") return null;
       if (cmd === "recovery_list") {
@@ -257,4 +311,97 @@ test("V4c 横幅：写失败与枚举失败同时在场（同一横幅两段、�
   await expect(banner).toContainText("无法检查残留备份");
   await expect(banner.getByRole("button", { name: "全部保存" })).toBeVisible();
   await expect(banner.getByRole("button", { name: "重新检查" })).toBeVisible();
+});
+
+// ── P2-5：横幅与 notice 同场几何（notice 的包含块必须是 pane 行盒） ─────────────
+
+test("V5 横幅与编辑器 notice 同场：notice 从横幅下缘开始，不得覆盖横幅", async ({ page }) => {
+  const empty: VaultFixture & { root: string } = {
+    root: `${ROOT}-empty`,
+    entries: [],
+    files: {},
+    links: {},
+  };
+  await stubTauri(page, empty);
+  await stubHealth(page, { listFails: true });
+  await page.goto("/");
+  const banner = page.locator(".recovery-banner");
+  const notice = page.locator(".editor-notice");
+  await expect(banner).toBeVisible();
+  await expect(notice).toBeVisible();
+  const boxes = await page.evaluate(() => {
+    const bannerEl = document.querySelector(".recovery-banner") as HTMLElement;
+    const noticeEl = document.querySelector(".editor-notice") as HTMLElement;
+    const b = bannerEl.getBoundingClientRect();
+    const n = noticeEl.getBoundingClientRect();
+    return { bannerBottom: b.bottom, bannerTop: b.top, noticeTop: n.top, noticeBottom: n.bottom };
+  });
+  expect(boxes.noticeTop).toBeGreaterThanOrEqual(boxes.bannerBottom - 0.5);
+  expect(boxes.noticeTop).toBeGreaterThan(boxes.bannerTop);
+});
+
+// ── P1-3：逻辑会话归属（旧事件不得复活 / 恢复地板不得被 Promise 回执抹掉） ──────
+
+const degradedGap = (token: number) => ({
+  type: "persistence",
+  vault: ROOT,
+  session_token: token,
+  state: "degraded",
+  since_ts: 1795000000,
+  severity: "history",
+  detail: "llm_request:write",
+  history_written: true,
+  history_gap: { present: true, since_ts: 1795000000, detail: "llm_request:write" },
+});
+
+test("V6 恢复写失败事件先于 Promise 回执：完整快照为地板，告警不得被 reset 抹掉", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHealth(page, {
+    sessionToken: 41,
+    deferResume: true,
+    resumeSessionToken: 42,
+    resumePersistence: degradedGap(42),
+    sessions: [{ session_id: "s-old", first_user_text: "旧会话", ts: 1757000000000 }],
+  });
+  await openPanel(page);
+  const note = page.locator("[data-persistence-health]");
+  await page.locator(".lumir-hp-session").click();
+  await page.locator(".lumir-hp-sesspop-item").first().click();
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as Record<string, any>).__resumeStarted))
+    .toBe(true);
+
+  // 恢复后端的写失败事件先于 Promise 回执到达。
+  await fire(page, degradedGap(42));
+  await expect(note).toBeVisible();
+  await expect(note).toContainText("写入仍在失败");
+
+  // 回执落地：完整快照（同一 token / 同一失败）是地板，告警必须仍在。
+  await page.evaluate(() => {
+    const w = window as unknown as Record<string, any>;
+    w.__resolveResume();
+  });
+  await expect(note).toBeVisible({ timeout: 5000 });
+  await expect(note).toContainText("写入仍在失败");
+});
+
+test("V7 新会话后旧会话的迟到事件不复活告警；新会话自己的事件仍可见", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHealth(page, {
+    sessionToken: 41,
+    afterNewSession: { session_token: 0 },
+  });
+  await openPanel(page);
+  const note = page.locator("[data-persistence-health]");
+  await page.locator(".lumir-hp-seg-new").click();
+  await expect(page.locator(".lumir-hp-sname")).toHaveText("新会话");
+
+  // 旧逻辑会话（token 41）的迟到失败事件：MUST NOT 复活状态行。
+  await fire(page, degradedGap(41));
+  await expect(note).toBeHidden();
+
+  // 新会话自己的事件（token 43）照常显示。
+  await fire(page, degradedGap(43));
+  await expect(note).toBeVisible();
+  await expect(note).toContainText("写入仍在失败");
 });

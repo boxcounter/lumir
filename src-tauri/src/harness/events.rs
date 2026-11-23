@@ -416,6 +416,12 @@ pub fn persistence(health: &PersistenceHealth) -> serde_json::Value {
         _ => serde_json::Map::new(),
     };
     readings.insert("type".to_string(), serde_json::json!("persistence"));
+    // 逻辑会话身份是**信封元数据**（与 `type` / `vault` 同级），不是 health 的第七个键：
+    // health 序列化仍严格是六键 + gap 三键（同键同值不变量不受影响）。
+    readings.insert(
+        "session_token".to_string(),
+        serde_json::json!(health.session_token),
+    );
     serde_json::Value::Object(readings)
 }
 
@@ -705,16 +711,26 @@ mod tests {
                 since_ts: 1_795_000_001,
                 detail: "llm_request:write".into(),
             },
+            session_token: 42,
         };
         let payload = persistence(&health);
         let readings = payload.as_object().unwrap();
         let expected = serde_json::to_value(&health).unwrap();
         let expected = expected.as_object().unwrap();
-        assert_eq!(readings.len(), expected.len() + 1, "事件多/少键：{payload}");
+        assert_eq!(
+            readings.len(),
+            expected.len() + 2,
+            "事件多/少键（type + session_token）：{payload}"
+        );
         for (key, value) in expected {
             assert_eq!(readings.get(key), Some(value), "事件与序列化不一致：{key}");
         }
         assert_eq!(payload["type"], serde_json::json!("persistence"));
+        assert_eq!(
+            payload["session_token"],
+            serde_json::json!(42),
+            "逻辑会话身份必须以信封字段带出：{payload}"
+        );
         // `history_gap` 三键恒在场（不用缺键表达健康）。
         let gap = payload["history_gap"].as_object().unwrap();
         assert_eq!(gap.len(), 3, "{payload}");

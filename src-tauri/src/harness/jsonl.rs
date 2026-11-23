@@ -210,6 +210,11 @@ pub struct PersistenceHealth {
     pub detail: String,
     pub history_written: bool,
     pub history_gap: HistoryGap,
+    /// 逻辑会话身份（后端 `Session::subagent_token`）：MUST NOT 序列化进 health 载荷——
+    /// 事件以信封字段、快照以顶层 `session_token` 呈现，六键 + gap 三键的合同不变。
+    /// 前端据此丢弃旧逻辑会话的迟到事件（新会话 / 恢复 / 重置后）。
+    #[serde(skip)]
+    pub session_token: u64,
 }
 
 impl Default for PersistenceHealth {
@@ -221,12 +226,57 @@ impl Default for PersistenceHealth {
             detail: String::new(),
             history_written: false,
             history_gap: HistoryGap::default(),
+            session_token: 0,
         }
     }
 }
 
 /// 健康跃迁的上报口（由 `Runtime` 装配并盖 vault 信封；`jsonl.rs` MUST NOT 依赖 tauri）。
 pub type PersistenceReporter = Arc<dyn Fn(&PersistenceHealth) + Send + Sync>;
+
+/// 健康跃迁的**延迟发送队列**（design §4.5：发送 MUST NOT 在持有 Session / Writer 锁时进行）。
+///
+/// 写点只把完整快照推进队列（health 锁内只做状态更新，不调用任何 sink）；`Runtime::with_session`
+/// 在释放 sessions 锁之后 `flush()`，把快照交给 reporter。`jsonl.rs` 因此仍然不依赖 tauri。
+#[derive(Clone, Default)]
+pub(crate) struct PersistenceTransitions(Arc<Mutex<TransitionState>>);
+
+#[derive(Default)]
+struct TransitionState {
+    reporter: Option<PersistenceReporter>,
+    pending: Vec<PersistenceHealth>,
+}
+
+impl PersistenceTransitions {
+    fn with(reporter: Option<PersistenceReporter>) -> Self {
+        Self(Arc::new(Mutex::new(TransitionState {
+            reporter,
+            pending: Vec::new(),
+        })))
+    }
+
+    /// 记录一次跃迁（只入队，不发送）。
+    fn push(&self, health: &PersistenceHealth) {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pending
+            .push(health.clone());
+    }
+
+    /// 在锁域外发出全部待发跃迁（调用方保证不持有 Session / Writer 锁）。
+    pub(crate) fn flush(&self) {
+        let (reporter, pending) = {
+            let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            (state.reporter.clone(), std::mem::take(&mut state.pending))
+        };
+        if let Some(reporter) = reporter {
+            for health in pending {
+                reporter(&health);
+            }
+        }
+    }
+}
 
 /// 一条 JSONL 行的写入失败。`partial` = 报错前是否已有字节落盘（无法区分时 MUST 按 true 处理）。
 pub(crate) struct LineWriteError {
@@ -293,8 +343,8 @@ pub struct JsonlWriter {
     fresh: bool,
     /// 会话留存健康（子运行审计流水不挂健康：`create_at` / `append_at` 为 `None`）。
     health: Option<Arc<Mutex<PersistenceHealth>>>,
-    /// 跃迁上报口（`Runtime` 装配；子运行审计为 `None`）。
-    reporter: Option<PersistenceReporter>,
+    /// 跃迁队列（`Runtime` 在锁域外 flush；子运行审计无 reporter，队列只进不出）。
+    transitions: PersistenceTransitions,
 }
 
 impl JsonlWriter {
@@ -332,7 +382,7 @@ impl JsonlWriter {
             pending_open: Some(line),
             fresh: true,
             health: Some(Arc::new(Mutex::new(PersistenceHealth::default()))),
-            reporter,
+            transitions: PersistenceTransitions::with(reporter),
         })
     }
 
@@ -354,7 +404,7 @@ impl JsonlWriter {
             pending_open: Some(line),
             fresh: true,
             health: None,
-            reporter: None,
+            transitions: PersistenceTransitions::default(),
         })
     }
 
@@ -367,7 +417,7 @@ impl JsonlWriter {
             pending_open: None,
             fresh: false,
             health: None,
-            reporter: None,
+            transitions: PersistenceTransitions::default(),
         }
     }
 
@@ -382,7 +432,22 @@ impl JsonlWriter {
     /// 沿用，直到新文件首次成功追加；该成功只把当前写健康转 `ok`，MUST NOT 清除缺口）。
     pub fn adopt_health_from(&mut self, other: &JsonlWriter) {
         self.health = other.health.clone();
-        self.reporter = other.reporter.clone();
+        self.transitions = other.transitions.clone();
+    }
+
+    /// 跃迁队列（`Runtime` 在释放 sessions 锁后 flush）。
+    pub(crate) fn transitions(&self) -> PersistenceTransitions {
+        self.transitions.clone()
+    }
+
+    /// 绑定逻辑会话身份（`Session::new` 在首条记录之前调用；rotate 沿用同一 health）。
+    pub(crate) fn set_session_token(&self, token: u64) {
+        if let Some(health) = &self.health {
+            health
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .session_token = token;
+        }
     }
 
     /// 追加一条记录。首条记录先把挂起的 `session_open` 写出（**写成功后才丢弃挂起行**）。
@@ -544,7 +609,7 @@ impl JsonlWriter {
             changed.then(|| health.clone())
         };
         if let Some(snapshot) = transition {
-            self.emit(&snapshot);
+            self.transitions.push(&snapshot);
         }
     }
 
@@ -571,14 +636,7 @@ impl JsonlWriter {
             changed.then(|| health.clone())
         };
         if let Some(snapshot) = transition {
-            self.emit(&snapshot);
-        }
-    }
-
-    /// 上报一次健康跃迁。发送 MUST NOT 在持有健康锁时进行（锁内只克隆快照）。
-    fn emit(&self, snapshot: &PersistenceHealth) {
-        if let Some(reporter) = &self.reporter {
-            reporter(snapshot);
+            self.transitions.push(&snapshot);
         }
     }
 
@@ -623,7 +681,7 @@ impl JsonlWriter {
             pending_open: Some(line),
             fresh: true,
             health: Some(Arc::new(Mutex::new(PersistenceHealth::default()))),
-            reporter: None,
+            transitions: PersistenceTransitions::default(),
         }
     }
 
@@ -637,7 +695,7 @@ impl JsonlWriter {
     ) -> Self {
         let mut writer = Self::at_path(path, session_open);
         writer.sink = Some(sink);
-        writer.reporter = reporter;
+        writer.transitions = PersistenceTransitions::with(reporter);
         writer
     }
 
@@ -1108,13 +1166,15 @@ mod tests {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum ScriptMode {
         CleanFail,
-        PartialFail,
+        /// 先写入 N 字节、再返回错误——真实保留前缀字节（评审：不能只返回 partial 布尔）。
+        PartialFail(usize),
     }
 
     #[derive(Default)]
     struct ScriptState {
         mode: Option<ScriptMode>,
-        lines: Vec<String>,
+        /// 实际写入的字节（成功整行 / 部分写的前缀）。测试据此断言文件形态。
+        buffer: Vec<u8>,
     }
 
     #[derive(Clone, Default)]
@@ -1126,14 +1186,26 @@ mod tests {
         fn fail_clean(&self) {
             self.state.lock().unwrap().mode = Some(ScriptMode::CleanFail);
         }
-        fn fail_partial(&self) {
-            self.state.lock().unwrap().mode = Some(ScriptMode::PartialFail);
+        fn fail_partial(&self, bytes: usize) {
+            self.state.lock().unwrap().mode = Some(ScriptMode::PartialFail(bytes));
         }
         fn heal(&self) {
             self.state.lock().unwrap().mode = None;
         }
+        fn raw(&self) -> Vec<u8> {
+            self.state.lock().unwrap().buffer.clone()
+        }
         fn lines(&self) -> Vec<String> {
-            self.state.lock().unwrap().lines.clone()
+            let text = String::from_utf8_lossy(&self.state.lock().unwrap().buffer).to_string();
+            if text.is_empty() {
+                return Vec::new();
+            }
+            let mut lines: Vec<String> = text.split('\n').map(str::to_string).collect();
+            // 成功写入以换行收尾：末尾空元素不算一行；部分写没有换行，保留为一行。
+            if text.ends_with('\n') {
+                lines.pop();
+            }
+            lines
         }
     }
 
@@ -1142,19 +1214,30 @@ mod tests {
             let mut state = self.state.lock().unwrap();
             match state.mode {
                 None => {
-                    state.lines.push(line.to_string());
+                    state.buffer.extend_from_slice(line.as_bytes());
+                    state.buffer.push(b'\n');
                     Ok(())
                 }
                 Some(ScriptMode::CleanFail) => Err(LineWriteError {
                     error: std::io::Error::other("scripted clean failure"),
                     partial: false,
                 }),
-                Some(ScriptMode::PartialFail) => Err(LineWriteError {
-                    error: std::io::Error::other("scripted partial failure"),
-                    partial: true,
-                }),
+                Some(ScriptMode::PartialFail(bytes)) => {
+                    // 真实写入前缀字节（与生产 FileSink 的「已写 N 字节」同形），再报错。
+                    let end = bytes.min(line.len());
+                    state.buffer.extend_from_slice(&line.as_bytes()[..end]);
+                    Err(LineWriteError {
+                        error: std::io::Error::other("scripted partial failure"),
+                        partial: end > 0,
+                    })
+                }
             }
         }
+    }
+
+    /// 测试走 writer 直写（不经过 Runtime::with_session）：显式 flush 延迟发送队列。
+    fn flush_transitions(session: &mut crate::harness::session::Session) {
+        session.jsonl().transitions().flush();
     }
 
     fn test_session(writer: JsonlWriter) -> crate::harness::session::Session {
@@ -1261,6 +1344,7 @@ mod tests {
             "kind": "llm_request",
             "request": {"messages": [{"role": "user", "content": "心跳"}]},
         }));
+        flush_transitions(&mut session);
         let failed = persistence_of(&session);
         assert_eq!(failed["state"], serde_json::json!("degraded"));
         assert_eq!(failed["severity"], serde_json::json!("history"));
@@ -1272,6 +1356,7 @@ mod tests {
         session
             .jsonl()
             .record(&serde_json::json!({"kind": "llm_request", "request": {"messages": []}}));
+        flush_transitions(&mut session);
         let recovered = persistence_of(&session);
         assert_eq!(recovered["state"], serde_json::json!("ok"));
         assert_eq!(recovered["severity"], serde_json::Value::Null);
@@ -1328,7 +1413,7 @@ mod tests {
         session
             .jsonl()
             .record(&serde_json::json!({"kind": "llm_response", "text": "恢复"}));
-        sink.fail_partial();
+        sink.fail_partial(8);
         session
             .jsonl()
             .record(&serde_json::json!({"kind": "approval", "decision": "approved"}));
@@ -1451,7 +1536,7 @@ mod tests {
             .jsonl()
             .record(&serde_json::json!({"kind": "session_title", "title": "基线"}));
 
-        sink.fail_partial();
+        sink.fail_partial(8);
         session.jsonl().record(&serde_json::json!({
             "kind": "llm_request",
             "request": {"messages": [{"role": "user", "content": "部分写"}]},
@@ -1501,9 +1586,16 @@ mod tests {
             serde_json::json!(true)
         );
 
+        let token_before = session.subagent_token();
+        assert!(token_before > 0);
         let new_sink = ScriptedSink::default();
         let new_writer = writer_with(&dir, "r3-new", &new_sink, None);
         session.rotate("sys2".into(), new_writer);
+        // 自动压缩是同一逻辑会话换文件：逻辑会话 token（事件准入身份）沿用。
+        assert_eq!(
+            serde_json::to_value(session.snapshot(85.0, true)).unwrap()["session_token"],
+            serde_json::json!(token_before)
+        );
         let carried = persistence_of(&session);
         assert_eq!(
             carried["state"],
@@ -1552,6 +1644,7 @@ mod tests {
         session
             .jsonl()
             .record(&serde_json::json!({"kind": "llm_response", "text": "算"}));
+        flush_transitions(&mut session);
         assert_eq!(
             persistence_of(&session)["history_written"],
             serde_json::json!(true)
@@ -1584,6 +1677,59 @@ mod tests {
             persistence_of(&fresh)["history_written"],
             serde_json::json!(false)
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// R7b（评审「测试真实性」）：首行部分写——故障 sink **真实保留前缀字节**，随后重试挂起行
+    /// 会接在前缀之后，产出一行两个 JSON 对象的坏行；系统 MUST NOT 声称文件可恢复，gap latch。
+    #[test]
+    fn r7b_partial_first_line_preserves_prefix_and_retries_pending_open() {
+        let dir = tmpdir("health-r7b");
+        let sink = ScriptedSink::default();
+        let mut session = test_session(writer_with(&dir, "r7b", &sink, None));
+        sink.fail_partial(10);
+        session.jsonl().record(&serde_json::json!({
+            "kind": "llm_request",
+            "request": {"messages": [{"role": "user", "content": "R7B-LOST-REQUEST"}]},
+        }));
+        let prefix = sink.raw();
+        assert!(!prefix.is_empty(), "故障 sink 必须真实写入前缀字节");
+        assert!(
+            !prefix.contains(&b'\n'),
+            "部分写不应包含行尾（首行尚未写完）：{prefix:?}"
+        );
+        assert_eq!(
+            persistence_of(&session)["history_gap"]["present"],
+            serde_json::json!(true)
+        );
+
+        sink.heal();
+        session
+            .jsonl()
+            .record(&serde_json::json!({"kind": "llm_response", "text": "R7B-NEXT"}));
+        let raw = sink.raw();
+        assert!(raw.starts_with(&prefix), "重试必须接在已写前缀之后");
+        let text = String::from_utf8_lossy(&raw);
+        let first_line = text.split('\n').next().unwrap_or("");
+        assert!(
+            first_line.matches("\"payload\"").count() >= 2,
+            "前缀 + 重试的 session_open 必须在同一行（坏行形态）：{first_line}"
+        );
+        assert!(
+            serde_json::from_str::<serde_json::Value>(first_line).is_err(),
+            "部分写之后的首行不是合法 JSON（MUST NOT 声称可恢复）：{first_line}"
+        );
+        assert!(
+            text.contains("session_open"),
+            "挂起行仍必须被重试写出：{text}"
+        );
+        assert!(
+            !text.contains("R7B-LOST-REQUEST"),
+            "首行失败连带丢弃的 history payload MUST NOT 被补回：{text}"
+        );
+        let recovered = persistence_of(&session);
+        assert_eq!(recovered["state"], serde_json::json!("ok"));
+        assert_eq!(recovered["history_gap"]["present"], serde_json::json!(true));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -11,6 +11,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
+  persistenceEventAdmitted,
+  persistenceSessionTokenOf,
   persistenceStickyDue,
   persistenceText,
   persistenceViewOf,
@@ -164,16 +166,32 @@ test("接线：事件分支与快照路径走同一份解析（U4 / U6）", () =
     "persistence 事件必须经同一份宽容解析落到状态行",
   );
   assert.ok(
-    PANEL_SOURCE.includes("applyPersistence(persistenceViewOf(state.persistence))"),
-    "快照恢复 / 重载 / 切回 vault 必须按 persistence 键重建",
+    PANEL_SOURCE.includes("applyPersistenceSnapshot(state.session_token, state.persistence)"),
+    "快照恢复 / 重载 / 切回 vault 必须按 persistence 键 + 逻辑会话 token 重建",
   );
 });
 
-test("接线：新会话与从历史恢复重置「已提示」，切 vault 只藏行不清健康（U10 / U11）", () => {
+test("接线：新会话重置、恢复以完整快照为地板，切 vault 只藏行不清健康（U10 / U11 / P1-3）", () => {
   assert.equal(
     occurrenceCount(PANEL_SOURCE, "resetPersistenceView();"),
-    2,
-    "resetPersistenceView 只应在 startNewSession 与 resumeSession 两处调用（新逻辑会话）",
+    1,
+    "resetPersistenceView 只应在 startNewSession 调用（恢复路径 MUST NOT 在回执里清告警）",
+  );
+  const resume = PANEL_SOURCE.slice(
+    PANEL_SOURCE.indexOf("function resumeSession("),
+    PANEL_SOURCE.indexOf("// 会话名下拉：展开/收起浮层"),
+  );
+  assert.ok(
+    resume.includes("persistenceSessionToken = persistenceSessionTokenOf(info.session_token)"),
+    "恢复必须采纳回执里的新逻辑会话 token",
+  );
+  assert.ok(
+    resume.includes("fetchPersistenceSnapshot();"),
+    "恢复后的完整 persistence 快照必须是地板",
+  );
+  assert.ok(
+    !resume.includes("resetPersistenceView()"),
+    "恢复回执 MUST NOT 重置健康（会把先到的真实写失败告警抹掉）",
   );
   const vaultChanged = PANEL_SOURCE.slice(
     PANEL_SOURCE.indexOf("function vaultChanged("),
@@ -242,4 +260,30 @@ test("接线：状态行与横幅随语言切换重取（长驻文案不钉死�
     /onRelabel\(\(\) => \{[\s\S]*?renderRecoveryBanner\(\);/,
     "崩溃备份横幅是长驻文案，onRelabel 必须按当前失败集合重取",
   );
+});
+
+
+// ── 逻辑会话归属（P1-3） ──────────────────────────────────────────────────
+
+test("persistenceSessionTokenOf：只接纳正有限数；缺失 / 0 / 非法 = null（旧后端或无会话）", () => {
+  assert.equal(persistenceSessionTokenOf(42), 42);
+  assert.equal(persistenceSessionTokenOf(1), 1);
+  for (const bad of [undefined, null, 0, -1, Number.NaN, Number.POSITIVE_INFINITY, "42", {}]) {
+    assert.equal(persistenceSessionTokenOf(bad), null, String(bad));
+  }
+});
+
+test("persistenceEventAdmitted：旧后端放行、已退役丢弃、新会话首事件接纳、旧 token 不回退", () => {
+  const retired = new Set([41]);
+  // 旧后端没有 token：放行（不误报）。
+  assert.equal(persistenceEventAdmitted(null, 42, retired), true);
+  // 显式新会话 / 恢复后退役的旧 token：丢弃。
+  assert.equal(persistenceEventAdmitted(41, null, retired), false);
+  assert.equal(persistenceEventAdmitted(41, 42, retired), false);
+  // 新会话尚未建立（current=null）：接纳第一条新事件。
+  assert.equal(persistenceEventAdmitted(43, null, retired), true);
+  // 同一 token / 更新的 token：接纳；更旧且未退役：丢弃（防串会话）。
+  assert.equal(persistenceEventAdmitted(42, 42, retired), true);
+  assert.equal(persistenceEventAdmitted(43, 42, retired), true);
+  assert.equal(persistenceEventAdmitted(40, 42, retired), false);
 });
