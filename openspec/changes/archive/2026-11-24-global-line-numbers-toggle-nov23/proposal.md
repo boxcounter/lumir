@@ -32,7 +32,8 @@
 > A.1 / A.2 / B.1 / B.2 全通过；真机 56 / 707 / 722 **3/3 PASS**；quick
 > `GATE RESULT: 13/13 PASS（SKIP 0）`；批准基线后完整视觉 `GATE RESULT: 15/15 PASS（SKIP 0）`
 > （1302 passed / 1 skipped）。Alex 批准 modeline 候选，仅重截一张基线且与候选 SHA-256 一致。
-> archive-check 与五要件在合并前复核，无证据缺口。
+> archive-check 与五要件在合并前复核，无证据缺口。实现与节点 2 材料已合并推送至 master
+> （`4f4f1af3`）；本次提交执行归档，living specs 已由归档包装器并入。
 
 ## Why
 

@@ -6,8 +6,8 @@
   `proposal.md` 的「评审记录」（默认 off；md / code 合并；⌘⇧N + modeline 钮全局切换并持久化；
   `⌥G` 临时 gutter；只统一开关不统一外观；`[ui] line_numbers` + `data-line-numbers` 单一运行
   真源；旧键硬切断 + 启动 warning，不迁移、不双读）
-- [ ] 0.2 实现期发现新的价值 / 行为取舍时停手，更新 `proposal.md` 并重走节点 1；MUST NOT 静默
-  扩 scope（AGENTS.md 影响面升级线）
+- [x] 0.2 实现期发现新的价值 / 行为取舍时停手，更新 `proposal.md` 并重走节点 1；MUST NOT 静默
+  扩 scope（AGENTS.md 影响面升级线）——实现期未出现新的价值 / 行为取舍，未触发重裁
 
 ## 1. 制品与自验
 
