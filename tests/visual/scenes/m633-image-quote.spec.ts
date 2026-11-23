@@ -347,7 +347,7 @@ test("svg 引用走栅格化成功路径（M666）：卡片是位图内容寻址
   // 成功路径没有失败留痕、没有格式不支持的 toast（D585 / D586 只留给真正不支持的类型）。
   // 状态行的元素是**常驻**的（`hidden = true` 即收起，见 `applyQuoteFailureNotice`），
   // 因此判据是「收起」而不是「没有这个元素」。
-  await expect(page.locator(".lumir-hp-quote-note")).toBeHidden();
+  await expect(page.locator(".lumir-hp-quote-note:not([data-persistence-health])")).toBeHidden();
   await expect(imageCard.locator(".lumir-hp-qc-actions button[aria-label='插入图片引用']")).toHaveCount(1);
   await expect(page.locator(".lumir-toast", { hasText: "暂不支持引用该格式" })).toHaveCount(0);
 
@@ -375,8 +375,8 @@ test("不支持的格式：gif 引用在预检被拒——引用语境文案 + �
   await expect(toast).toContainText("image/gif");
   await expect(toast).not.toContainText("剪贴板");
   // 持久留痕（D586）：不是 3 秒 toast 能代替的那条——输入区状态行在场。
-  await expect(page.locator(".lumir-hp-quote-note")).toBeVisible();
-  await expect(page.locator(".lumir-hp-quote-note")).toContainText("1 张图片未能引用");
+  await expect(page.locator(".lumir-hp-quote-note:not([data-persistence-health])")).toBeVisible();
+  await expect(page.locator(".lumir-hp-quote-note:not([data-persistence-health])")).toContainText("1 张图片未能引用");
   await expect(page.locator(".lumir-hp-composer .lumir-hp-imgcard")).toHaveCount(0);
   // 预检拦在 IPC 之前：既没读 vault 字节，也没发写请求（后端写原语仍是最后一道闸，
   // 但可引用的判定面在 `src/preview/attachments.ts` 一处，见 M662 的格式对账）。
@@ -421,8 +421,8 @@ test("解码失败：引用一张字节解不开的图读 D588（不含「剪贴
   await expect(toast).not.toContainText("剪贴板");
   await expect(toast).not.toContainText("暂不支持引用该格式");
   // 持久留痕（D586）与失败契约：状态行在场、composer 无图片卡片、该张没进 harness 存储。
-  await expect(page.locator(".lumir-hp-quote-note")).toBeVisible();
-  await expect(page.locator(".lumir-hp-quote-note")).toContainText("1 张图片未能引用");
+  await expect(page.locator(".lumir-hp-quote-note:not([data-persistence-health])")).toBeVisible();
+  await expect(page.locator(".lumir-hp-quote-note:not([data-persistence-health])")).toContainText("1 张图片未能引用");
   await expect(page.locator(".lumir-hp-composer .lumir-hp-imgcard")).toHaveCount(0);
 });
 
@@ -445,7 +445,7 @@ test("状态行的收口：文本摘录与消息摘录都是「下一次引用�
   await page.locator(".lumir-hp-send").click();
   await expect(page.locator(".lumir-hp-msg-user .lumir-hp-qtext")).toHaveText("上一轮的问题");
 
-  const note = page.locator(".lumir-hp-quote-note");
+  const note = page.locator(".lumir-hp-quote-note:not([data-persistence-health])");
   // 失败夹具 = gif（可引用格式表之外的格式）：M666 起 svg 走成功路径，不能再拿它造失败现场。
   // 预检在 IPC 之前失败 ⇒ 零写请求、零卡片，只留 D586 状态行——正是本用例要的收口对象。
   const gifBox = page.locator(".cm-lp-image").filter({ has: page.locator('img[alt*="anim.gif"]') });
@@ -569,7 +569,7 @@ test("旧代回包：换会话后才写盘成功——不插图片卡片、无�
   await settlePendingWrite(page, "resolve", { name: "pasted-633ab12cd34ef567.webp", width: 1, height: 1 });
   await flushSettledWrite(page);
   await expect(page.locator(".lumir-hp-composer .lumir-hp-imgcard")).toHaveCount(0);
-  await expect(page.locator(".lumir-hp-quote-note")).toBeHidden();
+  await expect(page.locator(".lumir-hp-quote-note:not([data-persistence-health])")).toBeHidden();
   // toast 的「没有」用一次性 count：`toHaveCount(0)` 会重试到 5s，toast 3.5s 自动消失会喂出假绿。
   expect(await page.locator(".lumir-toast").count()).toBe(0);
 
@@ -595,7 +595,7 @@ test("旧代回包：换会话后才写盘失败——不弹旧代 toast、不�
   await settlePendingWrite(page, "reject", decodeFailure);
   await flushSettledWrite(page);
   expect(await page.locator(".lumir-toast").count()).toBe(0);
-  await expect(page.locator(".lumir-hp-quote-note")).toBeHidden();
+  await expect(page.locator(".lumir-hp-quote-note:not([data-persistence-health])")).toBeHidden();
   await expect(page.locator(".lumir-hp-composer .lumir-hp-imgcard")).toHaveCount(0);
 
   // 正向对照：同代失败照常 toast + 输入区状态行（旧代被丢不是因为失败链路坏了）。
@@ -603,6 +603,6 @@ test("旧代回包：换会话后才写盘失败——不弹旧代 toast、不�
   await expect.poll(() => pendingWrites(page)).toBe(1);
   await settlePendingWrite(page, "reject", decodeFailure);
   await expect(page.locator(".lumir-toast", { hasText: "无法解码这张图片" })).toBeVisible();
-  await expect(page.locator(".lumir-hp-quote-note")).toBeVisible();
-  await expect(page.locator(".lumir-hp-quote-note")).toContainText("1 张图片未能引用");
+  await expect(page.locator(".lumir-hp-quote-note:not([data-persistence-health])")).toBeVisible();
+  await expect(page.locator(".lumir-hp-quote-note:not([data-persistence-health])")).toContainText("1 张图片未能引用");
 });

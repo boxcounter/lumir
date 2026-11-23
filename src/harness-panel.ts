@@ -9082,6 +9082,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 于是旧回包能同时通过 seq 与 epoch 两道守卫（实现评审 r1 P1 的现场）。相位世代只覆盖
     // 「同一视图里开始了新一轮」，会话换代由这里作废（切 vault / cron 切屏 / 恢复会话同理）。
     snapshotSeq += 1;
+    // persistence 轻量快照同属上一代视图：换代时一并作废（否则旧会话的 persistence 回包
+    // 可能在新会话里落地）。
+    persistenceSnapshotSeq += 1;
     // 视图世代（发送拒绝回包的归属判据，见 `viewGeneration` 的注释）：与快照作废同一个换代点。
     viewGeneration += 1;
     clearTranscriptSurface();
@@ -9649,6 +9652,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const previousShown = historyStickyShown.has(currentVault ?? "");
     if (previousToken !== null) retiredPersistenceTokens.add(previousToken);
     persistenceSessionToken = null;
+    // 恢复期间旧 persistence 轻量快照的迟到回包整体作废（回执后以新快照为地板）。
+    persistenceSnapshotSeq += 1;
     hidePersistenceLine();
     harnessResumeSession(entry.sessionId)
       .then((info) => {

@@ -191,6 +191,11 @@ save-controller 的 `failedPaths` 与独立的枚举失败条件。前端 MUST N
   没有恢复性缺口。
 - 事件 `harness:event` 新增 `type: "persistence"`，载荷 = 同一份两维结构 + `type` + 信封
   `vault`。**同键同值不变量**：事件与快照共用同一份序列化，MUST NOT 各列一份键清单。
+- **实现期评审补充（2026-11-23）**：逻辑会话身份 `session_token`（后端
+  `Session::subagent_token`，新会话 / 恢复 / 重置换新、压缩轮换沿用）作为**信封元数据**
+  随 `persistence` 事件带出，快照以顶层 `session_token` 同值呈现。它不在 `persistence`
+  载荷内部——六键 + `history_gap` 三键的同键同值合同不变。前端据此丢弃旧逻辑会话的迟到
+  事件；新会话 / 恢复 / 切回 vault 以完整 `harness_state` 的 `persistence` 为地板。
 - 事件 SHALL 在以下跃迁时发出：当前写健康 `ok→degraded`、`degraded→ok`、
   `annotation→history`；历史缺口 `false→true`；`history_written` `false→true`。
   一次失败 / 成功可同时改变多项，发出一条完整载荷。**`degraded→ok` 且 gap 仍为 true 的
@@ -213,7 +218,9 @@ save-controller 的 `failedPaths` 与独立的枚举失败条件。前端 MUST N
   提升为 `pub(crate)`）。
 - 健康跃迁经 `Runtime` 的转发口发出，外套 `ScopedSink` 盖 vault 信封（只让当前 vault 的
   面板消费，切 vault 后旧事件被过滤）。发送 MUST NOT 在持有 Session / Writer 锁时进行：
-  先在锁内更新状态并取出跃迁，释放锁后再发事件。
+  写点只把完整快照推进延迟队列，`Runtime::with_session` 在释放 sessions 锁后 flush；
+  恢复路径在写 notice / inherit 后、释放锁后再 flush。实现由「emit 回调里 `try_lock`
+  sessions」的证伪测试守住（锁内发送即红）。
 - 隔离运行（cron `Runtime::isolated()`）**不装配** forward：健康只进日志，不向面板呈现。
 - 备选（不推荐）：每个会话建立点各自挂 hook。四种建立场景 + 轮次外写点会各写一份转发逻辑，
   比 Runtime 单一出口更碎、更易漂。
@@ -357,7 +364,9 @@ failedPaths: Map<path, { at: number, code: "recovery_write_failed" }>
   MUST NOT 在键入路径上引入同步 IO（ADR 0002 §6）。
 - **几何**：`hidden` 时零占位、零像素变化；可见时占据文档区顶部一条，不覆盖正文。
   实现提示：`.pane-editor` 目前是横向 flex 容器，容纳顶部常驻条需要在其内加一层纵向
-  布局（或等价方案）；健康态 MUST 与既有 CM 度量逐像素一致。
+  布局（或等价方案）；健康态 MUST 与既有 CM 度量逐像素一致。实现采用「横幅 + `.editor-pane-row`」
+  两段纵向布局；row 同时是 `position: relative` 的定位包含块，`.editor-notice` 的 `inset:0`
+  因此只覆盖正文区、不覆盖横幅（横幅与 notice 同场的几何断言在视觉场景里）。
 
 ### 5.4 标签读屏名与悬停提示
 
