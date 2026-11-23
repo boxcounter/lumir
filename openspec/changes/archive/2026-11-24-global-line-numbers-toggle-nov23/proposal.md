@@ -34,6 +34,10 @@
 > （1302 passed / 1 skipped）。Alex 批准 modeline 候选，仅重截一张基线且与候选 SHA-256 一致。
 > archive-check 与五要件在合并前复核，无证据缺口。实现与节点 2 材料已合并推送至 master
 > （`4f4f1af3`）；本次提交执行归档，living specs 已由归档包装器并入。
+>
+> 归档完成：归档提交 `fd332564`；包装器 `Totals: + 4, ~ 0, - 2, → 0`，修链 0 处，677 条相对
+> 链接 PASS。`--archived` 审计 PASS（0 条 MODIFIED / 对比 0 段，改名通道结构口径）；carryover
+> 人工承接 A.1 / A.2 / B.1 / B.2 已签字，归档队列条目已移除。
 
 ## Why
 
