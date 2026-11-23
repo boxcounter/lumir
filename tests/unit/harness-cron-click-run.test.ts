@@ -64,17 +64,24 @@ test("handleCronRun：交互槽位在 invoke 之前切屏（闸门先开，首�
 });
 
 test("handleCronRun：只有真正切屏成功才在失败时回滚（忙时未切屏 ⇒ 不重置渲染面）", () => {
+  // change extend-harness-activity-across-vaults-nov23：回滚令牌是 `{ targetVault, viewToken }`
+  // ——`beginCronRun` 返回 resetView 之后的世代令牌（null = 忙时未切屏）。
   assert.match(
     HANDLE_CRON_RUN,
-    /adopted = harnessPanel\.beginCronRun\(/,
+    /const viewToken = harnessPanel\.beginCronRun\(/,
     "必须接住 beginCronRun 的返回值：忙时它不切屏，失败路径也不能回滚",
+  );
+  assert.match(
+    HANDLE_CRON_RUN,
+    /adopted = viewToken === null \? null : \{ targetVault, viewToken \};/,
+    "回滚守卫由目标 vault + 发起视图的世代令牌组成",
   );
   const catchStart = HANDLE_CRON_RUN.search(/catch \(error\)/);
   assert.notEqual(catchStart, -1, "handleCronRun 必须有 catch 分支");
   const catchBody = HANDLE_CRON_RUN.slice(catchStart);
   assert.match(
     catchBody,
-    /if \(adopted\) harnessPanel\.reloadSession\(\);/,
+    /if \(adopted !== null\) harnessPanel\.reloadSession\(adopted\);/,
     "失败回滚必须以「本次确实切了屏」为条件——无条件 reloadSession 会 resetView 掉在途轮次的流式渲染（P2-1）",
   );
 });
@@ -82,41 +89,43 @@ test("handleCronRun：只有真正切屏成功才在失败时回滚（忙时未�
 test("beginCronRun：忙时（活动相位非 idle）不切屏，在途轮次不受影响", () => {
   // 相位自 change add-harness-activity-presence 起由活动状态机持有（`activity.phase`）：
   // 判据语义不变（忙 ⇒ 不切屏、返回 false），只是读的字段换成了状态机的唯一持有者。
-  const guard = BEGIN_CRON_RUN.search(/if \(activity\.phase !== "idle"\) return false;/);
+  const guard = BEGIN_CRON_RUN.search(/if \(currentActivity\(\)\.phase !== "idle"\) return null;/);
   assert.notEqual(guard, -1, "beginCronRun 必须先判忙：交互槽位在途 ⇒ 后端必 busy，乐观切屏注定被回滚");
-  const reset = BEGIN_CRON_RUN.search(/resetView\(\)/);
-  assert.notEqual(reset, -1, "beginCronRun 正常路径必须清渲染面");
+  const reset = BEGIN_CRON_RUN.search(/resetView\(\{ clearActivityFor: cronVault \}\)/);
+  assert.notEqual(reset, -1, "beginCronRun 正常路径必须清渲染面（并只清目标 vault 的记录）");
   assert.ok(guard < reset, "忙判定必须排在 resetView 之前——先清屏再判忙会把握手轮次的流式泡清掉（P2-1）");
-  assert.match(BEGIN_CRON_RUN, /return false;/, "忙时返回 false（装配层据此跳过失败回滚）");
-  assert.match(BEGIN_CRON_RUN, /return true;/, "切屏成功返回 true（装配层据此启用失败回滚）");
+  assert.match(BEGIN_CRON_RUN, /return null;/, "忙时返回 null（装配层据此跳过失败回滚）");
+  assert.match(BEGIN_CRON_RUN, /return viewGeneration;/, "切屏成功返回发起视图的世代令牌（回滚守卫用）");
 });
 
 // ── 面板：切屏入口的判据 ───────────────────────────────────────────────────
 
 test("beginCronRun：清渲染面 + prompt 上屏 + 开轮次闸门与发送相位", () => {
-  assert.match(BEGIN_CRON_RUN, /resetView\(\)/, "切屏必须先清空上一段会话的渲染面");
+  assert.match(BEGIN_CRON_RUN, /resetView\(\{ clearActivityFor: cronVault \}\)/, "切屏必须先清空上一段会话的渲染面");
   assert.match(BEGIN_CRON_RUN, /appendUserMessage\(/, "prompt 必须作为本轮用户消息上屏");
   // 闸门与相位由**同一个**接线层函数施加（change add-harness-activity-presence tasks 2.5：
   // 分散写会出现「相位收口了、闸门还开着」的半收口）：`dispatchActivity({ type: "sent" })`
   // 一次完成「相位入 running + turnOpen = true」，判据因此钉这条单一写入口。
   assert.match(
     BEGIN_CRON_RUN,
-    /dispatchActivity\(\{ type: "sent" \}\)/,
+    /dispatchActivity\(cronVault, \{ type: "turn_started" \}\)/,
     "轮次闸门与发送相位必须由状态机一并施加（否则正文分片被当作迟到产出丢弃、或半收口复活）",
   );
   assert.match(BEGIN_CRON_RUN, /cronRunAdopted = true/, "切屏态必须登记，收尾时据此重载快照");
 });
 
 test("done 收尾：cron 切屏态下按后端快照只重建内容（专用会话历史回屏，未读存活）", () => {
-  const doneStart = PANEL_SOURCE.search(/case "done":/);
+  // 只在 `handleEvent` 的函数体里找（面板别处也有 `case "done":`——文案 / 工具行的映射）。
+  const handleBody = functionBodyOf(PANEL_SOURCE, "handleEvent");
+  const doneStart = handleBody.search(/case "done":/);
   assert.notEqual(doneStart, -1, "handleEvent 里找不到 done 分支");
-  const doneEnd = PANEL_SOURCE.indexOf('case "aborted":', doneStart);
+  const doneEnd = handleBody.indexOf('case "aborted":', doneStart);
   assert.notEqual(doneEnd, -1, "done 分支之后找不到 aborted 分支（解析口径已过期）");
-  const doneBody = PANEL_SOURCE.slice(doneStart, doneEnd);
+  const doneBody = handleBody.slice(doneStart, doneEnd);
   // 重载仍在（专用会话历史回屏、面板回到单一真源），但口径自 change
   // add-harness-activity-presence r1 P1-2 起改为**只内容档位**：`reloadSession` 经 `resetView`
   // 以 `vault_changed` 结算，会把本轮刚产生的未读吃掉（点击 cron → 收起 → 完成，指示退回空闲）。
-  assert.match(doneBody, /const adopted = cronRunAdopted;/, "done 必须在派发前记住 cron 切屏态");
+  assert.match(doneBody, /const adopted = cronRunAdopted;/, "done 必须在投影前记住 cron 切屏态");
   assert.match(
     doneBody,
     /if \(takeover \|\| adopted\) fetchSnapshot\("content"\)/,

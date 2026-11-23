@@ -1415,7 +1415,16 @@ class FakeEl {
   /** 父链（焦点修复要沿它派发 focusout；`append` / `replaceChildren` 维护）。 */
   parent: FakeEl | null = null;
   textContent = "";
-  title = "";
+  /** `title` IDL 反射 content attribute（与浏览器同口径）：`removeAttribute("title")` 之后读回
+   *  空串。行标记的「空闲不设 title」判据同时看 `.title` 与 attribute，替身必须两边一致。 */
+  get title(): string {
+    return this.attrs.get("title") ?? "";
+  }
+
+  set title(value: string) {
+    if (value === "") this.attrs.delete("title");
+    else this.attrs.set("title", value);
+  }
   type = "";
   id = "";
   hidden = false;
@@ -1498,6 +1507,12 @@ class FakeEl {
   contains(node: unknown): boolean {
     if (node === this) return true;
     return this.children.some((child) => child.contains(node));
+  }
+
+  remove(): void {
+    if (this.parent === null) return;
+    this.parent.children = this.parent.children.filter((child) => child !== this);
+    this.parent = null;
   }
 
   /** 焦点转移（浏览器口径）：旧持焦节点的祖先链上派发 focusout（relatedTarget = 新焦点）。
@@ -1624,6 +1639,9 @@ interface SwitcherRig {
   removeFails: boolean;
   /** 从列表来源里摘掉一行（模拟后端删掉注册项：下次 `list()` 不再返回它）。 */
   dropRow(id: string): void;
+  /** 活动记录替身（change extend-harness-activity-across-vaults-nov23）：写入 + 通知订阅者，
+   *  与真 store 的「只在跃迁时通知」口径无关——浮层只做渲染，判据在行 DOM 上。 */
+  setActivity(path: string, state: { phase: "idle" | "running" | "stopping"; unread: null | "reply" | "failure" }): void;
   /** 当前选中行的 vault id（无选中行时 undefined）。 */
   activeRowId(): string | undefined;
   /** 编辑器替身：阅读位置（滚动值语义）+ 光标位置 + 三条 dep 的调用次序。 */
@@ -1646,6 +1664,12 @@ function createSwitcherRig(rows: VaultListEntry[]): SwitcherRig {
   const entry = new FakeEl("button");
   let notify: ((rows: VaultListEntry[]) => void) | null = null;
   const editor = { scrollTop: 0, caretTop: 0, calls: [] as string[] };
+  // 活动记录替身：键是后端根路径（与真 store 同口径）；未知键读回空闲且不分配。
+  const activity = new Map<
+    string,
+    { phase: "idle" | "running" | "stopping"; unread: null | "reply" | "failure" }
+  >();
+  const activityListeners: Array<() => void> = [];
   const rig: SwitcherRig = {
     switcher: undefined as unknown as ReturnType<typeof createVaultSwitcher>,
     doc,
@@ -1668,6 +1692,10 @@ function createSwitcherRig(rows: VaultListEntry[]): SwitcherRig {
       const index = rows.findIndex((row) => row.id === id);
       if (index >= 0) rows.splice(index, 1);
     },
+    setActivity: (path, state) => {
+      activity.set(path, state);
+      for (const listener of activityListeners) listener();
+    },
     activeRowId: () =>
       mounts.children[0]
         .find("vault-row")
@@ -1685,6 +1713,14 @@ function createSwitcherRig(rows: VaultListEntry[]): SwitcherRig {
       rig.listCalls += 1;
       notify?.(rows);
       return Promise.resolve(rows);
+    },
+    activityOf: (path) => activity.get(path) ?? { phase: "idle", unread: null },
+    subscribeActivity: (listener) => {
+      activityListeners.push(listener);
+      return () => {
+        const index = activityListeners.indexOf(listener);
+        if (index >= 0) activityListeners.splice(index, 1);
+      };
     },
     requestSwitch: (row) => void rig.switched.push(row),
     requestAdd: () => void (rig.added += 1),
@@ -1786,6 +1822,8 @@ test("浮层：未装载 vault（入口不存在）时打开是无操作", () =>
     toast: () => {},
     layout: () => ({ panes: [{ sessions: [], activePath: undefined }], ratio: 0.5, harnessPane: false }),
     list: () => Promise.resolve([]),
+    activityOf: () => ({ phase: "idle", unread: null }),
+    subscribeActivity: () => () => {},
     requestSwitch: () => {},
     requestAdd: () => {},
     requestRelocate: () => {},
@@ -2505,4 +2543,159 @@ test("属性：移除最后一个可移除行后列表仍有当前项，浮层�
   rig.input().value = "note";
   rig.input().fire("input", {});
   assertOpenWithFocus(rig, "清空后的输入筛选");
+});
+
+// ---------------------------------------------------------------------------
+// 行级活动标记（change extend-harness-activity-across-vaults-nov23 tasks 1.3 / 5.x）
+//
+// 判据都在行 DOM 上：`span.vault-row-activity` 是否存在、`data-activity` 取什么、行切换钮的
+// `title` 是什么。与标题栏钮共用同一份 store（替身按后端根路径键控）——本层不测 store 的
+// 转移规则（那是 `harness-vault-activity.test.ts` 的职责），只测渲染与就地更新。
+// ---------------------------------------------------------------------------
+
+/** 三行：当前项 A、非当前 B / C（路径即活动记录的键）。 */
+const ACTIVITY_ROWS = (): VaultListEntry[] => [
+  listRow({ id: "act-a", path: "/tmp/lumir-act-a", name: "act-a" }),
+  listRow({ id: "act-b", path: "/tmp/lumir-act-b", name: "act-b" }),
+  listRow({ id: "act-c", path: "/tmp/lumir-act-c", name: "act-c" }),
+];
+
+async function openActivityRig(): Promise<SwitcherRig> {
+  const rig = createSwitcherRig(ACTIVITY_ROWS());
+  rig.switcher.onVaultLoaded("act-a", []);
+  rig.switcher.toggle();
+  await flush();
+  return rig;
+}
+
+/** 行切换钮（按 vault id）。 */
+function activityRow(rig: SwitcherRig, id: string): FakeEl {
+  const row = rig.list().find("vault-row").find((el) => el.dataset.vault === id);
+  assert.ok(row !== undefined, `找不到行 ${id}`);
+  return row;
+}
+
+test("行标记：只有非当前且有状态的行建节点；空闲 / 当前行不建、不设 title", async () => {
+  const rig = await openActivityRig();
+  // 空闲：三行都没有标记节点、没有 title（零新增像素）。
+  for (const id of ["act-a", "act-b", "act-c"]) {
+    assert.equal(activityRow(rig, id).find("vault-row-activity").length, 0, `${id} 空闲无标记`);
+    assert.equal(activityRow(rig, id).title, "", `${id} 空闲不设 title`);
+  }
+
+  // B 在途：只有 B 建标记，且是空心环档；title 是「名字 · 处理中」。
+  rig.setActivity("/tmp/lumir-act-b", { phase: "running", unread: null });
+  const marker = activityRow(rig, "act-b").find("vault-row-activity");
+  assert.equal(marker.length, 1);
+  assert.equal(marker[0].dataset.activity, "inflight");
+  assert.equal(marker[0].textContent, "", "标记不得有文本（不新增行内文本）");
+  assert.equal(marker[0].getAttribute("aria-hidden"), "true", "标记不进入可访问名");
+  assert.equal(activityRow(rig, "act-b").title, "act-b · 处理中");
+  assert.equal(activityRow(rig, "act-a").find("vault-row-activity").length, 0, "当前行不重复呈现");
+
+  // 当前行即便有状态也不建（当前 vault 的信号由标题栏钮承载）。
+  rig.setActivity("/tmp/lumir-act-a", { phase: "idle", unread: "reply" });
+  assert.equal(activityRow(rig, "act-a").find("vault-row-activity").length, 0, "当前行永不建标记");
+  assert.equal(activityRow(rig, "act-a").title, "", "当前行不设 title");
+});
+
+test("行标记：未读两档的形状取值与 title 文案（回复 / 失败），空闲再清掉", async () => {
+  const rig = await openActivityRig();
+  rig.setActivity("/tmp/lumir-act-b", { phase: "idle", unread: "reply" });
+  assert.equal(activityRow(rig, "act-b").find("vault-row-activity")[0].dataset.activity, "reply");
+  assert.equal(activityRow(rig, "act-b").title, "act-b · 有新的回复");
+
+  rig.setActivity("/tmp/lumir-act-c", { phase: "idle", unread: "failure" });
+  assert.equal(activityRow(rig, "act-c").find("vault-row-activity")[0].dataset.activity, "failure");
+  assert.equal(activityRow(rig, "act-c").title, "act-c · 有失败结果");
+
+  // 回到空闲：节点移除、title 清掉（不残留可见标记）。
+  rig.setActivity("/tmp/lumir-act-b", { phase: "idle", unread: null });
+  assert.equal(activityRow(rig, "act-b").find("vault-row-activity").length, 0);
+  assert.equal(activityRow(rig, "act-b").title, "");
+});
+
+test("行标记：浮层打开期间就地更新，不触发第二次拉取、不重排、游标不变", async () => {
+  const rig = await openActivityRig();
+  const before = rig.list().find("vault-row").map((row) => row.dataset.vault);
+  const activeBefore = rig.activeRowId();
+  const callsBefore = rig.listCalls;
+
+  rig.setActivity("/tmp/lumir-act-c", { phase: "running", unread: null });
+  assert.equal(rig.listCalls, callsBefore, "活动跃迁 MUST NOT 重新拉取列表");
+  assert.deepEqual(
+    rig.list().find("vault-row").map((row) => row.dataset.vault),
+    before,
+    "行序不变",
+  );
+  assert.equal(rig.activeRowId(), activeBefore, "游标不变");
+  assert.equal(activityRow(rig, "act-c").find("vault-row-activity").length, 1, "标记就地出现");
+
+  // 同一行在浮层内由在途转未读：节点复用、取值更新（不重建行）。
+  const node = activityRow(rig, "act-c").find("vault-row-activity")[0];
+  rig.setActivity("/tmp/lumir-act-c", { phase: "idle", unread: "reply" });
+  assert.equal(activityRow(rig, "act-c").find("vault-row-activity")[0], node, "标记节点就地更新");
+  assert.equal(node.dataset.activity, "reply");
+});
+
+test("行标记：浮层关闭时不做 DOM 工作；重开按当前记录重建", async () => {
+  const rig = await openActivityRig();
+  rig.switcher.toggle(); // 浮层开着：再 toggle 一次即收起（handle 不暴露 close）
+  // 记录在关闭期间变化：不建任何浮层外节点（行 DOM 已随浮层隐藏）。
+  rig.setActivity("/tmp/lumir-act-b", { phase: "idle", unread: "reply" });
+  assert.equal(rig.popover().hidden, true, "浮层保持关闭");
+  rig.switcher.toggle();
+  await flush();
+  assert.equal(activityRow(rig, "act-b").find("vault-row-activity")[0].dataset.activity, "reply", "重开按记录重建");
+});
+
+test("行标记：失效行不显示标记（不可切换的行没有活动可言）", async () => {
+  const rig = createSwitcherRig([
+    listRow({ id: "act-a", path: "/tmp/lumir-act-a", name: "act-a" }),
+    listRow({ id: "act-x", path: "/tmp/lumir-act-x", name: "act-x", available: false }),
+  ]);
+  rig.switcher.onVaultLoaded("act-a", []);
+  rig.setActivity("/tmp/lumir-act-x", { phase: "idle", unread: "failure" });
+  rig.switcher.toggle();
+  await flush();
+  assert.equal(activityRow(rig, "act-x").find("vault-row-activity").length, 0);
+});
+
+test("行标记：旧拼写路径查不到记录 ⇒ 无标记（fail-closed），且不影响当前项的钮状态", async () => {
+  const rig = createSwitcherRig([
+    listRow({ id: "act-a", path: "/tmp/lumir-act-a", name: "act-a" }),
+    // 注册表原值：尾部多一个斜杠（旧拼写）——与事件键逐字不同。
+    listRow({ id: "act-old", path: "/tmp/lumir-act-old/", name: "act-old" }),
+  ]);
+  rig.switcher.onVaultLoaded("act-a", []);
+  // 记录键是规范化根（不带尾斜杠）。
+  rig.setActivity("/tmp/lumir-act-old", { phase: "idle", unread: "reply" });
+  rig.switcher.toggle();
+  await flush();
+  assert.equal(activityRow(rig, "act-old").find("vault-row-activity").length, 0, "对不上就无标记");
+  assert.equal(activityRow(rig, "act-old").title, "");
+  // 当前项的标题栏状态（由同一份 store 承载）不因旧拼写被清——本层只判行 DOM：
+  // 当前行不建节点这一条对旧拼写同样成立。
+  assert.equal(activityRow(rig, "act-a").find("vault-row-activity").length, 0);
+});
+
+test("行标记：显式移除后行与标记随列表消失；无行记录不产生可见标记（无 retain）", async () => {
+  const rig = await openActivityRig();
+  rig.setActivity("/tmp/lumir-act-b", { phase: "idle", unread: "reply" });
+  assert.equal(activityRow(rig, "act-b").find("vault-row-activity").length, 1);
+
+  // 显式移除（后端删注册项）：行消失，标记随之消失；记录本身由装配层 drop（不在本层）。
+  const wrap = rig.list().find("vault-row-wrap")[1];
+  wrap.find("vault-row-del")[0].fire("click", { stopPropagation: () => {} });
+  wrap.find("vault-row-confirm-yes")[0].fire("click", { stopPropagation: () => {} });
+  await flush();
+  assert.equal(rig.list().find("vault-row").some((row) => row.dataset.vault === "act-b"), false);
+
+  // 注册表里还有一条无行可显示的记录（C 被后端删了但记录还在）：重开列表不产生标记。
+  rig.switcher.toggle(); // 浮层开着：再 toggle 一次即收起
+  rig.dropRow("act-c");
+  rig.setActivity("/tmp/lumir-act-c", { phase: "idle", unread: "failure" });
+  rig.switcher.toggle();
+  await flush();
+  assert.equal(rig.list().find("vault-row-activity").length, 0, "无行记录不得变成任何可见标记");
 });

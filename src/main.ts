@@ -147,6 +147,7 @@ import type { VaultListEntry } from "./bindings/VaultListEntry";
 import { extensionOf, codeLanguageOfPath, isEditablePath, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
 import { openSearch } from "./search";
 import { createHarnessPanel } from "./harness-panel";
+import { createVaultActivityStore } from "./harness-activity";
 import { escapeDisposition, installEscapeRouter } from "./escape-router";
 import type { HarnessBlockFullscreenPort } from "./harness-panel";
 import { openPathAtLine } from "./harness-path-link";
@@ -805,6 +806,12 @@ function applyStoredLayout(
   }
   applySplitChrome();
   syncActiveDocument();
+  // 显式落定信号（change extend-harness-activity-across-vaults-nov23 design §4.4）：两条分支
+  // （有 / 无 harness pane）都在这里发；**已是目标形态、本次无改动也照常发**——目标是「布局
+  // 已落定」，不是「本次有改动」。已读清算只看这一条与面板挂载，不看切换瞬间的旧 DOM。
+  harnessPanel.paneSettled(
+    paneLayout.panes().some((pane) => pane.handle.kind === "harness"),
+  );
 }
 
 /** 建一个新 pane（账本落点规则：恒在活跃 pane 右侧并即活跃）并补标签条实例与 chrome。
@@ -2163,6 +2170,26 @@ async function undoVaultRemove(entry: RemovedVault): Promise<void> {
   switcher.refresh();
 }
 
+// 按 vault 键控的活动记录（change extend-harness-activity-across-vaults-nov23 design §4.1）：
+// 装配层创建并注入面板与切换器——**一份**记录同时服务标题栏钮与行标记（单一生产者）。
+// 它是纯内存、非持久化：应用重启 / webview 重载后从空 store 起算（未读水位不回放）。
+const vaultActivity = createVaultActivityStore();
+
+/** 各 vault 的**实际后端打开根**（稳定 id → `VaultInfo.root`）：只由 `applyVault` 写入。
+ *  显式删除 / 重定位时 `drop` 必须按它（`vault_list` / `RemovedVault.path` 是注册表原值，
+ *  旧拼写与事件键不同，拿它清理会误删当前标题栏仍在用的记录）。取不到就**不 drop**——
+ *  记录留到重载也不冒误删可见状态的风险（design §9.1）。 */
+const actualVaultRoots = new Map<string, string>();
+
+/** 行 / 删除载荷 → 实际后端打开根（取不到返回 null：宁可不 drop）。 */
+function actualRootOf(row: { id: string; path: string }): string | null {
+  const known = actualVaultRoots.get(row.id);
+  if (known !== undefined) return known;
+  // 兜底：本次装载的 vault 根与行路径逐字相同（同一份后端表示）时也可安全使用。
+  if (loadedRoot !== undefined && samePath(row.path, loadedRoot)) return loadedRoot;
+  return null;
+}
+
 const switcher: VaultSwitcherHandle = createVaultSwitcher({
   mount: shell.root, // 浮层挂点取 app-shell 根：左栏两个容器都 overflow:auto，挂进去会被裁掉
   entry: () => tree.vaultEntry(),
@@ -2181,6 +2208,10 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
     harnessPane: paneLayout.panes().some((pane) => pane.handle.kind === "harness"),
   }),
   list: () => vaultList(),
+  // 行级活动标记：与标题栏钮**同一份**按 vault 键控的记录。键是后端根路径；旧拼写对不上时
+  // 按无记录处理（fail-closed，不显示标记、不猜映射）。
+  activityOf: (path) => vaultActivity.of(path),
+  subscribeActivity: (listener) => vaultActivity.subscribe(listener),
   requestSwitch: (row) => guardVaultSwitch(() => switchToVault(row.path)),
   requestAdd: () => requestAddVault(),
   requestRelocate: (row, siblings) => guardVaultSwitch(() => requestRelocate(row, siblings)),
@@ -2198,6 +2229,11 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
       toast(errorText(e));
       throw e;
     }
+    // 记录随显式删除一起丢弃（change extend-harness-activity-across-vaults-nov23 §9.1）：
+    // 只在能指名**实际后端打开根**时 drop——注册表原值在旧拼写下与事件键不同，按它清理会
+    // 误删当前标题栏仍在用的记录（取不到实际根时宁可不 drop，记录留到重载）。
+    const removedRoot = actualRootOf(row);
+    if (removedRoot !== null) vaultActivity.drop(removedRoot);
     // null = 该注册项已经不在了（重复删除 / 竞态）：浮层照常重拉（那一行本来就会消失），
     // 但没有原值就没有撤销提示——MUST NOT 编一条指向不存在注册项的「撤销」。
     if (removed === null) return;
@@ -3267,6 +3303,7 @@ function jumpPlanFor(
 
 const harnessPanel = createHarnessPanel({  shell,
   editor,
+  activity: vaultActivity,
   // 块级全屏（M634）：面板里的代码块 / 表格走既有两个单实例遮罩，来源记「面板」。
   blocks: harnessBlocks,
   togglePane: toggleHarnessPane,
@@ -3365,9 +3402,12 @@ async function ensureCronVault(root: string): Promise<void> {
  *  runtime，事件不进当前 transcript）。 */
 async function handleCronRun(payload: CronRunPayload): Promise<void> {
   const slot = payload.session_target.kind === "interactive" ? "interactive" : "run";
-  // 本次是否真的切了屏（M612 r1 P2-1）：忙时 beginCronRun 返回 false、不动渲染面，失败回滚
-  // 也必须跟着跳过——无条件 reloadSession 会 resetView 掉在途轮次的流式渲染。
-  let adopted = false;
+  // 本次切屏的**发起视图**（M612 r1 P2-1 × change extend-harness-activity-across-vaults-nov23
+  // design §7）：`beginCronRun` 返回 resetView 之后的世代令牌，与当时的 vault 一起构成失败
+  // 回滚的守卫——回包迟到、用户已切到 B 时只回滚 A，B 的视图 / 快照 MISS NOT 被复位。
+  // null = 忙时未切屏（不动渲染面），失败回滚也必须跟着跳过（无条件 reloadSession 会
+  // resetView 掉在途轮次的流式渲染）。
+  let adopted: { targetVault: string; viewToken: number } | null = null;
   try {
     await ensureCronVault(payload.vault);
     if (slot === "interactive") {
@@ -3375,7 +3415,9 @@ async function handleCronRun(payload: CronRunPayload): Promise<void> {
       // 点击发起 = 面板切到这次运行（M612，场景 170）：prompt 上屏 + 轮次闸门立刻打开。
       // MUST 在 invoke 之前——后端不为 cron 回合发 `sent` / `auto_turn_started`，晚开闸门会
       // 把先到的正文分片当「已结束轮次的迟到产出」丢掉（面板停在空占位就是这个形态）。
-      adopted = harnessPanel.beginCronRun(payload.prompt);
+      const targetVault = loadedRoot ?? payload.vault;
+      const viewToken = harnessPanel.beginCronRun(payload.prompt);
+      adopted = viewToken === null ? null : { targetVault, viewToken };
     }
     await invoke("harness_cron_run", {
       payload: {
@@ -3397,7 +3439,7 @@ async function handleCronRun(payload: CronRunPayload): Promise<void> {
     // 发起失败也是终态：先把乐观切屏撤回（M612——面板回到后端真实会话，不留下没发出去的
     // prompt），再立即回执（cron_state 不写 last_fired、不误判 busy），并给人话提示。
     // 只在**本次确实切了屏**时回滚：忙时（交互轮次在途）面板原样未动，回滚反而会清掉流式泡。
-    if (adopted) harnessPanel.reloadSession();
+    if (adopted !== null) harnessPanel.reloadSession(adopted);
     void invoke("cron_run_result", {
       run_id: payload.origin.run_id,
       ok: false,
@@ -3416,12 +3458,19 @@ async function handleCronRun(payload: CronRunPayload): Promise<void> {
 async function handleCronOpenSession(payload: { vault: string; session_id: string }): Promise<void> {
   try {
     await ensureCronVault(payload.vault);
+    // 恢复**发起之前**捕获目标（经 `ensureCronVault` 的实际目标根）与视图世代：回包到达时
+    // 用户可能已经在别的 vault，收口必须按这份定格（design §8：MUST NOT 在 resolve 后读
+    // 当前会话 / 当前 vault）。
+    const targetVault = loadedRoot ?? payload.vault;
+    const viewToken = harnessPanel.viewToken();
     await invoke("harness_resume_session", { session_id: payload.session_id });
-    openHarnessPane(false);
-    // 面板的 `vaultChanged` 对同一 vault 是空操作；先置空再设回，等价于「重新装载该 vault
-    // 的会话面」——面板据此按恢复后的后端会话重取快照（不新增面板 API）。
-    harnessPanel.vaultChanged("", null);
-    harnessPanel.vaultChanged(payload.vault, loadedVaultId);
+    const stillCurrent = harnessPanel.viewToken() === viewToken && loadedRoot === targetVault;
+    // 清目标 vault 的活动记录；只在目标仍当前、世代未变时复位视图并重取快照。取代旧的
+    // `vaultChanged("", null)` + `vaultChanged(root)` 空哨兵（它会破坏显示门、触发两次完整重建）。
+    harnessPanel.reloadSessionView({ targetVault, viewToken });
+    // 只在这一代视图里打开面板：切走后 MUST NOT 把 B 的 harness pane 打开（那会抢走用户
+    // 正在看的东西）。A 的恢复内容留在后端会话里，切回 A 时由快照重建。
+    if (stillCurrent) openHarnessPane(false);
   } catch (error) {
     void showToast(harnessPaneMount(), errorText(error));
   }
@@ -4093,6 +4142,9 @@ async function requestRelocate(
   row: VaultListEntry,
   siblings: readonly VaultListEntry[],
 ): Promise<void> {
+  // 重定位前捕获旧的实际后端打开根（design §9.1）：成功后按它丢弃记录、**不迁移**到新路径
+  // （用户刚显式改了身份）。取不到就不 drop。
+  const previousRoot = actualRootOf(row);
   let picked: VaultInfo | null;
   try {
     picked = await vaultOpen(false);
@@ -4119,6 +4171,7 @@ async function requestRelocate(
     toast(errorMessage(e));
     return;
   }
+  if (previousRoot !== null) vaultActivity.drop(previousRoot);
   await switchToVault(picked.root);
 }
 
@@ -4209,6 +4262,8 @@ async function applyVault(
   vaultLoaded = true;
   loadedRoot = root;
   loadedVaultId = vaultId;
+  // 实际后端打开根（= `VaultInfo.root`）：显式删除 / 重定位的 `drop` 只认这个键。
+  actualVaultRoots.set(vaultId, root);
   const name = baseName(root);
   vaultName = name;
   // `lumir:vault-ready` = **前端装载完成**（面向就绪管线/测试，全仓无消费者），与后端

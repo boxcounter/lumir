@@ -48,6 +48,10 @@ export interface VaultSessionSeed {
   ratio?: number;
   version?: number;
   updated_at?: number;
+  /** 存储布局里有没有 harness pane（缺省 false）。change
+   *  extend-harness-activity-across-vaults-nov23 的「目标布局有 harness pane 时随在场清算」
+   *  场景需要这个位（真后端的 `harness_pane` 同名字段）。 */
+  harnessPane?: boolean;
 }
 
 /** 桩内部存的会话（= 真后端 `vault_session_get` 的返回形状）。 */
@@ -257,7 +261,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         {
           version: row.version ?? 2,
           panes: [{ tabs: row.tabs, active: row.active }],
-          harness_pane: false,
+          harness_pane: row.harnessPane ?? false,
           pane_split_ratio: row.ratio ?? 0.5,
           updated_at: row.updated_at ?? 0,
         },

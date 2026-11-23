@@ -41,6 +41,8 @@ import { keyToken } from "./keys";
 import { escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import { FILTER_LABEL, FILTER_PLACEHOLDER, NO_MATCH_TEXT, createListFilter } from "./list-filter";
 import { errorText, formatRelative, t, tPlural } from "./copy";
+import { activityKind, activityStatusKey } from "./harness-activity";
+import type { ActivityState } from "./harness-activity";
 // 诊断读数出口（见本文件 diagnostics）：前端唯一的日志通道，落盘在 Rust 侧。
 import { logEvent } from "./diagnostics";
 import type { ListFilter } from "./list-filter";
@@ -822,6 +824,14 @@ export interface VaultSwitcherDeps extends VaultSessionStoreDeps {
   entry(): HTMLElement | undefined;
   /** 列表来源（每次打开重新拉取，MUST NOT 常驻镜像）。 */
   list(): Promise<VaultListEntry[]>;
+  /**
+   * 该行 vault 的活动记录（change extend-harness-activity-across-vaults-nov23）：与标题栏钮
+   * **同一份**按 vault 键控的 store。键是后端根路径 / 当前 vault 根；行数据里的 `path` 是
+   * 注册表原值，旧拼写与事件键对不上时按**无记录**处理（fail-closed：不显示标记，不猜映射）。
+   */
+  activityOf(path: string): ActivityState;
+  /** 记录跃迁通知：浮层打开时就地更新行标记（不重新拉取、不重排、不改游标），关闭时零 DOM。 */
+  subscribeActivity(listener: () => void): () => void;
   /** 切换请求（装配层给 dirty 前置门 + vault_open_path + 装载）。 */
   requestSwitch(row: VaultListEntry): void;
   /** 新增 vault 请求（目录选择器 + remap 门的既有两出口）。 */
@@ -884,10 +894,19 @@ class VaultSwitcher implements VaultSwitcherHandle {
   private currentId: string | undefined;
   /** 浮层自身改行 DOM 的进行度（见 `rebuild`）：这期间收到的 `focusout` 不是用户意图。 */
   private rebuilding = 0;
+  /** 每行活动标记的视图（行标记就地更新用）：切换钮 → { 行数据, 顶行容器, 标记节点 }。
+   *  只服务**当前这份行 DOM**（随 `render` 重建），不是注册表镜像——活动的唯一真源仍是 store。 */
+  private rowViews = new Map<
+    HTMLButtonElement,
+    { row: VaultListEntry; top: HTMLElement; marker: HTMLElement | null }
+  >();
 
   constructor(deps: VaultSwitcherDeps) {
     this.deps = deps;
     this.store = createVaultSessionStore(deps);
+    // 活动记录跃迁 → 就地更新行标记（浮层关闭时回调直接返回：零 DOM 工作）。订阅与浮层
+    // 同生命周期（两者都长驻到应用退出），退订函数因此不持有。
+    deps.subscribeActivity(() => this.refreshActivity());
 
     const popover = document.createElement("div");
     popover.className = "vault-pop";
@@ -1122,6 +1141,7 @@ class VaultSwitcher implements VaultSwitcherHandle {
     const now = Date.now();
     this.rowEntries = [...list];
     this.rows = [];
+    this.rowViews.clear();
     this.activeIndex = -1;
     this.visible = this.filter.setQuery(
       this.input.value,
@@ -1197,6 +1217,13 @@ class VaultSwitcher implements VaultSwitcherHandle {
       top.append(flag);
     }
     el.append(top, this.subLine(summaryText(row.tab_count, row.last_opened_at, now, current)));
+    // 行级活动标记（change extend-harness-activity-across-vaults-nov23 tasks 5.2）：只在**非当前**
+    // 可用行、且有状态时出现；当前行由标题栏钮承载（同一状态 MUST NOT 两处出现）。
+    // 标记本身无文本、`aria-hidden`（不进入可访问名）；状态词只写进该行切换钮的 `title`
+    // （AX 的 `help=` 是真机可达的判据通道）。空闲 / 当前行不建节点、不设 title。
+    const view = { row, top, marker: null as HTMLElement | null };
+    this.rowViews.set(el, view);
+    this.applyRowActivity(el, view);
 
     if (row.available) {
       // 路径次行按 Alex 裁决裁掉（M217，gap 表 #12）：单行制收敛后路径不再上屏；
@@ -1235,6 +1262,45 @@ class VaultSwitcher implements VaultSwitcherHandle {
       wrap.append(del);
     }
     return wrap;
+  }
+
+  /** 单行的活动标记施加（唯一实现：`renderRow` 建行与订阅回调的就地更新共用一份）。
+   *
+   *  - 非当前、可用、状态非空 ⇒ 建 / 更新 `span.vault-row-activity` 并把状态词写进行 `title`；
+   *  - 其它情形（空闲 / 当前行 / 失效行）⇒ 移除可能残留的节点与 `title`（行由非当前变当前时
+   *    不得留痕）。 */
+  private applyRowActivity(
+    button: HTMLButtonElement,
+    view: { row: VaultListEntry; top: HTMLElement; marker: HTMLElement | null },
+  ): void {
+    const current = view.row.id === this.currentId;
+    const state = view.row.available && !current ? this.deps.activityOf(view.row.path) : null;
+    const kind = state === null ? "idle" : activityKind(state);
+    if (kind === "idle") {
+      if (view.marker !== null) {
+        view.marker.remove();
+        view.marker = null;
+      }
+      button.removeAttribute("title");
+      return;
+    }
+    if (view.marker === null) {
+      const marker = document.createElement("span");
+      marker.className = "vault-row-activity";
+      marker.setAttribute("aria-hidden", "true");
+      view.top.append(marker);
+      view.marker = marker;
+    }
+    view.marker.dataset.activity = kind;
+    const key = state === null ? null : activityStatusKey(state);
+    button.title = key === null ? view.row.name : `${view.row.name} · ${t(key)}`;
+  }
+
+  /** 活动记录跃迁时的就地更新：只遍历**当前这份行 DOM**（≤ 注册表条目数），不重新拉取列表、
+   *  不重排、不改游标；浮层关闭时零 DOM 工作。 */
+  private refreshActivity(): void {
+    if (!this.open) return;
+    for (const [button, view] of this.rowViews) this.applyRowActivity(button, view);
   }
 
   /** 行内两步确认（M646，与 M406 会话删除同一套语汇）：把行壳的两个子元素换成「确认句 +

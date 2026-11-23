@@ -30,6 +30,7 @@ import { runRelabels, setLanguageRoot, t } from "../../src/copy.ts";
 import { installBackend } from "./harness.ts";
 import type { FakeBackend } from "./harness.ts";
 import { createHarnessPanel } from "../../src/harness-panel.ts";
+import { createVaultActivityStore } from "../../src/harness-activity.ts";
 import type { HarnessBlockFullscreenPort, HarnessPanelEditor } from "../../src/harness-panel.ts";
 import type { AppShell } from "../../src/shell.ts";
 
@@ -462,6 +463,7 @@ async function mountPanel(
   const handle = createHarnessPanel({
     shell: { titlebar } as unknown as AppShell,
     editor: editorDouble(),
+    activity: createVaultActivityStore(),
     blocks,
     togglePane: () => {},
     toast: () => {},
@@ -667,8 +669,10 @@ test("内容换代（切 vault / 重载会话）关闭面板来源的全屏遮�
     // 切 vault = 内容换代。
     handle.vaultChanged("/tmp/lumir-m634-other-vault", "vault-m634-other");
     assert.equal(closed, afterMount + 1, "切 vault 必须显式关闭面板来源的遮罩");
-    // 重载会话（快照重取，如 cron 回滚）= 内容换代。
-    handle.reloadSession();
+    // 重载会话（快照重取，如 cron 回滚）= 内容换代。change
+    // extend-harness-activity-across-vaults-nov23 起它显式接收 { targetVault, viewToken }
+    // （内部 MUST NOT 读当前 vault）：这里是当前视图，令牌取当前世代。
+    handle.reloadSession({ targetVault: "/tmp/lumir-m634-other-vault", viewToken: handle.viewToken() });
     assert.equal(closed, afterMount + 2, "重载会话必须显式关闭面板来源的遮罩");
   } finally {
     handle.attachTo(null);

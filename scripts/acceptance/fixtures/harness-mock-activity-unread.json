@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "UG1-A 第一片。UG1-B 第二片。UG1-C 第三片。",
+      "chunks": ["UG1-A 第一片。", "UG1-B 第二片。", "UG1-C 第三片。"],
+      "chunk_delay_ms": 8000,
+      "usage": { "input_tokens": 1200, "cached_tokens": 300, "output_tokens": 30 }
+    },
+    {
+      "error": {
+        "code": "llm_upstream",
+        "message": "UG2-FAIL 上游失败"
+      },
+      "delay_ms": 1200
+    },
+    {
+      "text": "UG3-A 第一片。UG3-B 第二片。",
+      "chunks": ["UG3-A 第一片。", "UG3-B 第二片。"],
+      "chunk_delay_ms": 8000
+    },
+    {
+      "text": "UG4-OK 在另一个 vault 期间完成的一轮。"
+    }
+  ]
+}

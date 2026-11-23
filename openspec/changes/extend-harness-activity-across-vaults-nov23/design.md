@@ -1,6 +1,10 @@
 # Design: 跨 vault 的活动记录与按需未读入口
 
 > 本文件写实现合同与取舍，不是实现记录。行号是起草时（2026-11-23）的读数，实现时以符号为准。
+> **实现后回改（2026-11-23）**：§1 的表是**改动前**的事实底座（保留原读数，不回写历史）；最终符号以
+> §3.1 的接口与代码为准——`createVaultActivityStore` / `activityDisplayed` / `activityKind` /
+> `activityStatusKey` 在 `src/harness-activity.ts`，面板侧的 `accountActivity` / `projectActivity` /
+> `renderActivity` / `paneSettled` / `reloadSessionView` 在 `src/harness-panel.ts`。
 > 节点状态见 [proposal.md](proposal.md)：节点 1 已通过（2026-11-23，Alex 原话「三项推荐。」），
 > D1–D6 全部按推荐值生效（D2 = 三态）。
 
@@ -76,8 +80,8 @@ interface VaultActivityStore {
   of(vault: string): ActivityState;              // 未知键返回 INITIAL_ACTIVITY，不分配条目
   dispatch(vault: string, event: VaultActivityEvent): void;
   beginSend(vault: string): ActivityToken;       // 捕获 before + 记录版本，并置 turn_started
-  rollbackSend(vault: string, token: ActivityToken): void; // 版本未变才恢复；不产生未读
-  finishIfStopping(vault: string): void;         // 停止请求被拒：仅当仍为 stopping 才收口
+  rollbackSend(vault: string, token: ActivityToken): boolean; // 版本未变才恢复；返回是否生效
+  finishIfStopping(vault: string): boolean;      // 停止请求被拒：仅当仍为 stopping 才收口
   reset(vault: string): void;                    // 视图复位（换会话）：phase idle + unread null
   drop(vault: string): void;                     // 显式删除 / 重定位：按实际后端打开根丢弃记录，不迁移
   subscribe(listener: () => void): () => void;   // 行 / 钮的渲染通知
@@ -101,7 +105,10 @@ type VaultActivityEvent =
   可应用的事件；非当前 vault 不调用它（无快照）。
 - `beginSend` / `rollbackSend` 只服务「同步拒绝」：`beginSend` 记录 `before`、应用乐观 `turn_started`，并
   返回**应用之后**的记录版本；`rollbackSend` 只在当前版本仍等于该 token 版本时恢复 `before`（发送后若已有
-  真实事件推进了记录，回滚 MUST NOT 覆盖它）；它不产生未读、不当作一轮终态，不是第二个写入口，而是撤销
+  真实事件推进了记录，回滚 MUST NOT 覆盖它）。**版本在每条生命周期输入上都推进**（`turn_started` /
+  `stop_clicked` / `terminal` / `reset_view` / `enter_snapshot`），即使该输入没改变状态——乐观 `sent`
+  之后的 `auto_turn_started` 在记录上是「相位 already running、无状态跃迁」，但它证明这一轮确实起来了，
+  迟到的拒绝 MUST NOT 再把它撤销成空闲；`displayed` 只在真的清掉未读时算一次跃迁；它不产生未读、不当作一轮终态，不是第二个写入口，而是撤销
   一次乐观 `turn_started`（见 §6）。
 - `finishIfStopping` 服务「停止请求被拒」：只在记录仍为 stopping 时收口；若该 vault 已因终态回到 idle
   或已开始新的一轮，MUST NOT 改写（见 §6.4）。
@@ -296,8 +303,8 @@ const token = store.beginSend(sendVault);     // 捕获 before + 记录版本，
 
 | 异步动作 | 捕获的键 | 收口 API | DOM / 快照守卫 |
 |---|---|---|---|
-| 发送被同步拒绝 | `sendVault` + token | `rollbackSend(sendVault, token)` | `viewGeneration` |
-| 停止请求被拒 | `stopVault` | `finishIfStopping(stopVault)` | `viewGeneration` |
+| 发送被同步拒绝 | `sendVault` + token | `rollbackSend(sendVault, token)`（返回是否生效：生效才收口本视图闸门） | `viewGeneration` |
+| 停止请求被拒 | `stopVault` | `finishIfStopping(stopVault)`（同上） | `viewGeneration` |
 | 新会话 / 恢复回包 | `actionVault` + `actionToken` | `reset(actionVault)` | `actionToken` + `currentVault === actionVault` |
 | cron 发起失败回滚 | `cronVault` + `cronToken`（`beginCronRun` 时捕获） | `reset(cronVault)` | `cronToken` + `currentVault === cronVault` |
 | cron 通知打开会话 | `targetVault`（payload / 实际装载根）+ `cronToken` | `reset(targetVault)` | `cronToken` + `currentVault === targetVault` |
@@ -610,7 +617,8 @@ DOM，结构场景的「空闲零新增像素 / 当前行无标记」在旧实�
 
 ### 14.6 真机矩阵（真实 WKWebView，mock provider）
 
-新场景（编号由套件在实现时分配，当前最大数字 id 272 / item 708；**不预占 273**）：
+新场景（**实现期分配：id / item = 721**——起草时读数 272 / 708 已过时，实现时套件最大 id / item 均为
+720；`721-harness-vault-unread` 随本 change 同批落盘，fixture `harness-mock-activity-unread.json`）：
 
 1. A 发起慢流 → 收起面板 → 切到 B → 打开切换器 → A 行 `help` 含「处理中」；截图。
 2. 等终态 → A 行 `help` 含「有新的回复」；截图。
@@ -664,6 +672,12 @@ DOM，结构场景的「空闲零新增像素 / 当前行无标记」在旧实�
     MUST NOT 产生可见标记。取不到实际根时宁可不 drop，也不冒误删当前标题状态的风险（§9）。
 13. **旧拼写 + retain 的反例**：若实现图省事按 `vault_list` 的 `path` 周期清理，旧拼写会把规范化根的
     当前标题状态删掉；这是本 change 明确禁止的方案，源码断言与行为测试都要钉住。
+14. **可重试失败的 `beginRetry` 跨 vault（实现期发现的已知边界）**：重试点击也走乐观 `turn_started`，
+    但按 change add-harness-turn-retry-nov23 的纪律，它的同步拒绝**不本地收口**（相位由后端快照的
+    `in_flight` 权威决定）——`harness_state` 只服务当前 vault，因此在 A 点重试后立刻切到 B、且重试被拒
+    时，A 的记录会停在「处理中」直到用户切回 A（切回时那次进入快照会就地收口）。这是**保守的**残留
+    （标记可见、不静默丢失），不是假空闲；MUST NOT 用本地回滚修这条（那会把「另一轮其实在跑」误判成
+    空闲）。如需收口，另开 change 给非当前 vault 一条权威读数通道。
 
 ## 16. 实现期可另定的细节（不构成裁决点）
 

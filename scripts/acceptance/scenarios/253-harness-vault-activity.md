@@ -2,7 +2,7 @@
 id: "253-harness-vault-activity"
 item: 704
 tier: full
-title: harness 跨 vault 往返的在途准确：切回仍在途不呈空闲、续渲染并对账；完成后往返指示空闲
+title: harness 跨 vault 往返的在途准确：切回仍在途不呈空闲、续渲染并对账；完成后往返呈未读并在面板在场时清算
 open: harness-note.md
 marker: "HNL-ALPHA"
 # change add-harness-activity-presence 的症状二判据（Alex dogfood 原话的另一半）：
@@ -13,7 +13,9 @@ marker: "HNL-ALPHA"
 # 因此本场景的三个观测点都必须落在真机上：
 #   ① 切回仍在途的 vault ⇒ 发送钮是停止态、状态文本「处理中」、后续增量继续上屏；
 #   ② 该轮终态到达 ⇒ 渲染面按后端快照对账一次，transcript 是**完整回答**（不是缺开头的半截）；
-#   ③ 完成后往返（切走 → 该轮在别的 vault 期间结束 → 切回）⇒ 指示空闲，回答按快照铺开。
+#   ③ 完成后往返（切走 → 该轮在别的 vault 期间结束 → 切回）⇒ **呈未读**（change
+#      extend-harness-activity-across-vaults-nov23 起跨 vault 的终态按 vault 记账），切回后
+#      面板仍收起时未读保留在标题栏钮上，打开面板（transcript 真的在屏幕上）才清算。
 #
 # mock 脚本 `$fixtures/harness-mock-activity-vault.json`：三轮带 8s 片间隔的流，按轮次消费。
 # 8s × 3 片 = 切 vault 往返的在途窗口（够两次点击 + 装载完成）。
@@ -166,9 +168,12 @@ steps:
     expect:
       - label: 进入快照的呈现读为「不在途」⇒ 就地收口，不停在处理中等一个不会到达的事件
         ax: { not: "处理中" }
-      - label: 也不伪造未读档位（跨 vault 完成的未读不在本能力范围，D3 非目标）
-        ax: { not: "有新的回复" }
-      - shot: 06-完成后往返-空闲
+      # change extend-harness-activity-across-vaults-nov23（2026-11-23 节点 1 批准）：
+      # 该轮在 B 期间结束、A 的 transcript 不在屏幕上 ⇒ **记未读**。旧口径（「不伪造未读」）
+      # 已被本 change 显式修订；切换本身不是已读，打开面板才清（下一条判据）。
+      - label: 跨 vault 完成的终态呈未读（标题栏钮「有新的回复」，不是空闲）
+        ax: { has: "对话面板 · 有新的回复" }
+      - shot: 06-完成后往返-呈未读
 
   - name: 打开面板：回答按快照完整铺开
     do: keys
@@ -179,6 +184,19 @@ steps:
       - label: 末片也在场
         ax: { has: "VAULT2-C 第三片。" }
       - shot: 07-完成后往返-完整回答
+
+  - name: 收起面板：未读已随「打开面板」清算
+    do: keys
+    keys: ["cmd+shift+a"]
+    expect:
+      - label: 打开过面板（transcript 真的在屏幕上）⇒ 未读已清，钮不含任何状态词
+        ax: { not: "/对话面板 · (处理中|有新的回复|有失败结果)/" }
+  - name: 重新打开面板（下一轮在面板里发起）
+    do: keys
+    keys: ["cmd+shift+a"]
+    expect:
+      - label: 面板重新在场
+        ax: { has: "分隔条" }
 
   # ── 轮次三：反复切换不丢在途态、终态只收口一次 ──────────────────────────
   - name: 第三轮提问

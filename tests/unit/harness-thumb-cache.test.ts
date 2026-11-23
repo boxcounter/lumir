@@ -16,6 +16,7 @@ import assert from "node:assert/strict";
 import { installBackend } from "./harness.ts";
 import type { FakeBackend } from "./harness.ts";
 import { createHarnessPanel } from "../../src/harness-panel.ts";
+import { createVaultActivityStore } from "../../src/harness-activity.ts";
 import type { HarnessPanelDeps, HarnessPanelEditor } from "../../src/harness-panel.ts";
 import type { AppShell } from "../../src/shell.ts";
 import type { QuoteImageOutcome } from "../../src/quote-image.ts";
@@ -477,6 +478,7 @@ async function mountPanel(limits: { maxBytes: number; maxEntries: number }): Pro
   const deps = {
     shell: { titlebar } as unknown as AppShell,
     editor: editorDouble(),
+    activity: createVaultActivityStore(),
     togglePane: () => {},
     toast: (text: string) => void toasts.push(text),
     openVaultPath: () => {},
@@ -776,7 +778,7 @@ test("会话切换：transcript 图淘汰，composer 仍活跃的图保留（先
         ],
       }),
     );
-    handle.reloadSession();
+    handle.reloadSession({ targetVault: VAULT, viewToken: handle.viewToken() });
     await flush();
     assert.deepEqual(reads, ["pasted-session.webp"], "transcript 图读回一次");
     const transcriptUrl = cardUrls(transcriptImageCards(mount))[0];
@@ -790,7 +792,9 @@ test("会话切换：transcript 图淘汰，composer 仍活跃的图保留（先
     assert.equal(probe.revoked.length, 0, "两张都在场：活跃总字节可超预算");
 
     // 会话切换（resetView）：transcript 先清空再 prune → 会话图淘汰；composer 图仍活跃、保留。
-    assert.equal(handle.beginCronRun("切换后的提问"), true, "空闲态可切屏");
+    // change extend-harness-activity-across-vaults-nov23：返回值是发起视图的世代令牌
+    // （null = 忙时未切屏）；「是否切了屏」的判据变成非 null。编号本身无含义。
+    assert.notEqual(handle.beginCronRun("切换后的提问"), null, "空闲态可切屏");
     await flush();
     assert.deepEqual(probe.revoked, [transcriptUrl], "只淘汰已离场的会话图");
     assert.deepEqual(transcriptImageCards(mount), [], "transcript 已清空");

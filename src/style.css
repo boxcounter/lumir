@@ -2958,6 +2958,36 @@ body {
   font-size: var(--fs-label);
   color: var(--text-3);
 }
+/* 行级活动标记（change extend-harness-activity-across-vaults-nov23 tasks 5.4 / design §11）：
+   标题栏 toggle 钮状态点的**同一套形状语言**——在途 = 空心环、未读回复 = 实心点、未读失败 =
+   实心点 + 外环，同档 6×6。只在非当前行、有状态时存在（空闲行零新增像素、零占位宽度），
+   `pointer-events: none` 保证点击永远落到行切换钮上。`margin-left: auto` 推到右端；与名称
+   之间是 `.vault-row-top` 的既有 gap（6px），合起来是允许的「省略号最多提前 12px」收缩。
+   不加动画 / 过渡；三主题靠形状可分，eink 不依赖颜色（`--accent` / `--danger` 在 eink 恒
+   为 #000，外环仍有形状差异）。 */
+.vault-row-activity {
+  flex: none;
+  box-sizing: border-box;
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  border-radius: var(--r-pill);
+  pointer-events: none;
+}
+.vault-row-activity[data-activity="inflight"] {
+  border: 1.5px solid currentColor;
+}
+.vault-row-activity[data-activity="reply"] {
+  background: var(--accent);
+}
+.vault-row-activity[data-activity="failure"] {
+  background: var(--danger);
+  box-shadow: 0 0 0 1px var(--danger);
+}
+/* eink：在途描边用正文色提实（行文字色在选中底色下会被 `--sel-text` 覆盖，形状不变）。 */
+:root[data-theme="eink"] .vault-row-activity[data-activity="inflight"] {
+  border-color: var(--text);
+}
 .vault-row-sub {
   /* 与名称左缘对齐 = ✓ 槽位 12 + 行内 gap 6。 */
   padding-left: 18px;

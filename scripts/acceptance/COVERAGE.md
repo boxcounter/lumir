@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：272
-- 验收项（不同 item 编号）：241
-- 分档：core 30 / full 232 / bundle 5 / evidence 5（full 批 = 全部 272 个，含其余各档）
+- 场景：273
+- 验收项（不同 item 编号）：242
+- 分档：core 30 / full 233 / bundle 5 / evidence 5（full 批 = 全部 273 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -242,7 +242,7 @@
 | 655 | `230a-path-forms`<br>`230b-lazy-and-external-readonly`<br>`230c-restart-and-focus-scopes`<br>`230d-quick-open-select-all-dir-children` | 按路径快速打开（⌘P）之一：深层路径一次 Enter 落文件 / 冒号文件名整串优先 / path:line 落点不重开 / vault 内零命中<br>按路径快速打开（⌘P）之二：索引外惰性文件按精确路径打开 / vault 外只读打开（⌘S 不写盘、键入不生效）/ 外部路径不存在按找不到处置<br>按路径快速打开（⌘P）之三：重启后 vault 外标签不回来、vault 内标签照常恢复、文件树与 harness composer 焦点下同样命中<br>按路径快速打开（⌘P）之四：输入框内 ⌘A 全选输入串 / 目录语境只列直接子级文件、深层后代不混入 | full<br>full<br>full<br>full |
 | 702 | `231-quick-open-long-path-width`<br>`232-harness-ctxpop-width` | 快速打开浮层宽度：长路径下输入面按 26em 展开、路径全文仍在 AX 里<br>Context 气泡：长读数 hover 翻出、三段内容齐全且确实绘制（P 档 34em 上限；宽度数字归 chromium 矩阵） | full<br>full |
 | 703 | `234-harness-table-horizontal-scroll` | harness 对话宽表：固有宽铺开、横向滚轮在表格区域执行、滚动前后截图（几何归 chromium 矩阵） | full |
-| 704 | `252-cron-click-after-exit`<br>`252-harness-activity-presence`<br>`253-harness-vault-activity` | 应用退出后点击通知：跨进程恢复、快照会话与四类拒绝（change add-cron-notification-relaunch §8.2）<br>harness 面板的活动在场：收起期间的在途 / 未读提示，打开面板即清算，停止不点亮<br>harness 跨 vault 往返的在途准确：切回仍在途不呈空闲、续渲染并对账；完成后往返指示空闲 | bundle<br>full<br>full |
+| 704 | `252-cron-click-after-exit`<br>`252-harness-activity-presence`<br>`253-harness-vault-activity` | 应用退出后点击通知：跨进程恢复、快照会话与四类拒绝（change add-cron-notification-relaunch §8.2）<br>harness 面板的活动在场：收起期间的在途 / 未读提示，打开面板即清算，停止不点亮<br>harness 跨 vault 往返的在途准确：切回仍在途不呈空闲、续渲染并对账；完成后往返呈未读并在面板在场时清算 | bundle<br>full<br>full |
 | 705 | `269-harness-path-line-sentence-period` | 句末句号不吞行号（path:line. 仍是整段可点并落到目标行） | full |
 | 706 | `270-cron-open-session-keeps-doc-focus` | 点击 cron 结果通知：展开 pane 并恢复会话，正文焦点与输入落点不被抢 | bundle |
 | 707 | `707-gutter-copy` | 行号 gutter 右键复制 `{path}:{line}`——md（always / 合成 fixture 路径含空格与中文）与 code 首行、vault 外绝对路径、剪贴板逐字、文档零写入 | full |
@@ -259,3 +259,4 @@
 | 718 | `718-harness-retry-partial` | 半截正文标「未完成」，重试成功后并列第二条回答 | full |
 | 719 | `719-harness-retry-approval` | 重试后的新写工具仍需批准：批准前零副作用、批准卡再现、批准后恰好一次 | full |
 | 720 | `720-harness-retry-image-nonvision` | 含图失败切非 vision 模型：重试被前置闸拒绝（零请求、动作仍在） | full |
+| 721 | `721-harness-vault-unread` | 跨 vault 的活动记录：非当前 vault 的在途 / 未读在切换器行上可读，切过去但面板收起不清未读 | full |

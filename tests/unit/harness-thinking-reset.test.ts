@@ -20,6 +20,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { installBackend } from "./harness.ts";
 import { createHarnessPanel } from "../../src/harness-panel.ts";
+import { createVaultActivityStore } from "../../src/harness-activity.ts";
 import type { HarnessPanelEditor } from "../../src/harness-panel.ts";
 import type { AppShell } from "../../src/shell.ts";
 
@@ -449,6 +450,7 @@ test("新会话：chip 从会话档位（Max）回落默认 High，读屏名与�
   const handle = createHarnessPanel({
     shell: { titlebar } as unknown as AppShell,
     editor: editorDouble(),
+    activity: createVaultActivityStore(),
     togglePane: () => {},
     toast: () => {},
     stickyToast: () => {},
