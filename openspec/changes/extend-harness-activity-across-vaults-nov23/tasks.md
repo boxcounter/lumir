@@ -131,5 +131,6 @@
 - [x] 10.1 `tasks.md` 全部勾选，未勾项就地写放弃理由（不删任务项、不留空勾）。
   - 10.3 / 10.4 **留给 tower**：独立 reviewer 与节点 2 归档是本 change 的下一段流程（worker 不归档、不 merge、不 push）；verdict 须绑定本次提交的 tip
 - [x] 10.2 已在 `docs/backlog.md` 的归档跟踪队列落一条本 change 记录（见该文件「归档跟踪队列」末条）
-- [ ] 10.3 交独立 reviewer；评审判断层不降档；verdict 绑定当前 tip
+- [x] 10.3 交独立 reviewer；评审判断层不降档；verdict 绑定当前 tip → 最终结论 **clean / merge**，绑定 `bc742356`（前两轮 needs-changes 已闭环，读数与评审文件路径见 proposal 的「节点 2」块）
 - [ ] 10.4 归档前逐条核对节点 2 五要件；归档走 `node scripts/openspec-archive.mjs <change-id>`，归档提交后跑 `--archived` 审计至 PASS
+  - 五要件已在 proposal 的「节点 2」块逐条落读数；本项**由 tower 在 merge 与归档时执行**：归档前复核五要件、执行包装器、提交归档结果并跑 `--archived` 至 PASS。merge / 归档未发生前不得勾选。

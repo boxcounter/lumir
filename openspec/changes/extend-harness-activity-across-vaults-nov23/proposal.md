@@ -14,6 +14,8 @@
 > - 实现期若范围 / 行为需求发生变化，停下更新本文件并重走节点 1，不静默扩 scope。
 > - 本 change 只到提案层；living spec 的改动以 delta 形式留在本 change 目录内，归档时并入，不提前改写
 >   living spec。
+> - **节点 2 材料已备**（2026-11-23，五要件齐）：最终独立评审 clean / merge 绑定 tip `bc742356`；
+>   merge 与归档**待执行**（未发生），材料与读数见文末「节点 2」块。
 >
 > **r1 评审处置（2026-11-23，独立评审判 needs-changes）**：逐条落实跨 vault 阻塞与相关建议——
 > ① 清除语义改为「动作发起时捕获的 vault」，补新会话 / 恢复跨 vault 回包场景；② 删除通用 `retain` 与
@@ -172,3 +174,52 @@ D1 与 D2 是真正的产品语义取舍；D3–D6 是防噪声边界。六项�
 不需要 ADR：不改技术选型、不改分层，只新增一条前端行为与一条行级呈现；跨两个 capability 的行为变更由
 单个 OpenSpec change 承载（先例：`add-harness-vault-workspace-list` 同时改 `harness` 与
 `harness-subagents`）。
+
+## 节点 2（归档放行材料，2026-11-23）
+
+> 状态：**五要件齐，待 merge / 待归档**。本提交只落节点 2 材料（proposal / tasks / backlog），
+> **不 merge、不归档**。最终独立评审结论 **clean / merge**，绑定 tip `bc742356`；tip 之后只有这次
+> docs-only 材料提交，不改实现与规格 delta。
+
+1. **节点 1 批准依据**：Alex 2026-11-23 原话「三项推荐。」——本批三项提案（持久化健康状态 / 失败轮次
+   显式重试 / 跨 vault 终态未读）一次答复，语义为三项全部按推荐值批准；本 change 的 D1–D6 全部按
+   推荐值生效（D2 = 三态含在途）。实现期范围以本文件「What Changes」与两份 delta 为准，**无静默扩
+   scope**。
+2. **独立评审**：最终结论 **clean / merge**，绑定 tip `bc742356`，无 P1 / P2（2026-11-23）。前两轮
+   均为 needs-changes 并已逐条闭环（同一 reviewer，评审判断层未降档）：
+   - r1（绑定 `aa66571d`）：cron 两条 catch 的 toast / DOM 守卫、被 epoch 拒绝的快照推进版本、
+     `beginRetry` 跨 vault 假在途、切换器 currentId / 语言刷新、独立 resume deferred——verdict
+     `/Users/boxcounter/.kimi-code/sessions/wd_lumir_97a6261b51e9/session_fb5487b7-c3d6-4a95-8717-2dde1e8c3acc/agents/main/tasks/agent-9xztsl29/output.log`；
+     修复提交 `26189057`。
+   - r2（绑定 `26189057`）：cron 忙时未 adopt 的提示身份、retry busy 回滚关闸丢分片——verdict
+     `/Users/boxcounter/.kimi-code/sessions/wd_lumir_97a6261b51e9/session_fb5487b7-c3d6-4a95-8717-2dde1e8c3acc/agents/main/tasks/agent-nbl3au6h/output.log`；
+     修复提交 `bc742356`。
+   - **最终 clean / merge 的评审文件路径未提供**，本记录不代填。
+3. **tasks 完成数**：`tasks.md` 共 **70** 项，**69** 项已勾；唯一未勾项是 10.4（归档执行本身），
+   就地写明由 tower 执行——merge 与归档未发生前不得勾选，不留空勾。
+4. **要求的门禁与真机证据**（全部落 `.local/`，git 外；worktree 会被清理，指针均为主仓绝对路径）：
+   - `scripts/gate.sh quick`：`GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0。日志
+     `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/harness-activity-nov23/green/gate-quick-r2.log`。
+   - `scripts/gate.sh visual`（全量像素；动过 `src/style.css`，必须本地跑）：`GATE RESULT: 15/15 PASS
+     （SKIP 0）`，exit 0；`visual-regression` 836s / **1258 passed**。日志
+     `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/harness-activity-nov23/green/gate-visual-r2.log`。
+     **视觉基线未更新**（`git status tests/visual/baselines` 无改动；行标记是结构断言 + 空闲零像素，
+     不需要新基线）。
+   - `pnpm test`：**1853/1853 PASS**，exit 0。日志
+     `…/green/unit-r2.log`。
+   - 真机 **252 / 253 / 721 / 49：4/4 PASS**（零 INVALID、零 FAIL、无游离实例），逐场景断言数
+     34 / 31 / 29 / 22。证据目录
+     `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-23-harness-activity/`
+     （`summary.md` 四行全 PASS + 四个场景目录）；runner 日志 `…/green/acceptance-r2.log`。
+   - **已知边界（真机未覆盖，不计入上述 PASS 的覆盖面）**：验收套件不重启 webview，因此
+     「webview 重载后当前 vault 按进入快照恢复真实在途、非当前 vault 暂时未知」**未在真实 WKWebView
+     验证**。该边界的证据只有两层：模型层（`enter_snapshot` 只回填相位、store 纯内存无持久化 API）
+     与 chromium 装配层（切 vault 后 `fetchSnapshot` 的 `in_flight` 回填）。
+5. **规格对账（归档前读数）**：
+   - `node scripts/openspec-archive-check.mjs --change extend-harness-activity-across-vaults-nov23`：
+     **PASS**（2 份 delta / 1 条 MODIFIED / 对比 42 段，无静默丢段；归档队列对账通过）。
+   - `validate --all --strict`：`Totals: 37 passed, 0 failed (37 items)`。
+   - 归档跟踪队列：`docs/backlog.md` 有且仅有一条本 change 条目（grep count = 1）。
+
+**归档后待补**（归档执行后在同一块追加）：归档提交 hash、`openspec archive` 的实际输出、
+包装器的修链读数，以及 `--archived extend-harness-activity-across-vaults-nov23` 的 PASS 读数与时间。
