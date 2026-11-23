@@ -20,7 +20,9 @@
 # 钉回 1200×800，见 README 的「窗口几何的确定性」）。
 #
 # 覆盖边界（如实登记）：剪贴板**权限拒绝**无法在真机稳定造出（系统授权框不可脚本化），那一面由
-# chromium 场景以 `Clipboard.writeText` 拒绝注入覆盖。change `global-line-numbers-toggle-nov23` 起
+# chromium 场景以 `Clipboard.writeText` 拒绝注入覆盖。`⌥G` 是 **editor 作用域**命令：`do: open`
+# 打开**已存在的标签**（含重启恢复的那一份）时焦点留在 chrome 上，按键不命中（spec 的已知边界①）
+# ——每次 `⌥G` 前 MUST 先 `clickEditor` 并断言 `focused: AXTextArea`。change `global-line-numbers-toggle-nov23` 起
 # md 与只读 code 共用 `[ui] line_numbers` 一个开关：本场景的启动口径是 `on`（两模式 gutter 常驻），
 # 尾部再补一轮 `off` + `⌥G` 的临时 gutter 右键（两模式都不常驻时本手势唯一存在的形态）。
 id: "707-gutter-copy"
@@ -163,6 +165,11 @@ steps:
         editor: { has: "GUTTER-707-MARKER" }
       - shot: off-md-起点-无-gutter
 
+  - name: 重建编辑器焦点（打开已存在的标签 / 重启后焦点留在 chrome 上，⌥G 是 editor 作用域）
+    do: clickEditor
+    expect:
+      - label: 焦点落在编辑器正文里
+        ax: { focused: "AXTextArea" }
   - name: ⌥G 打开跳转输入条（临时 gutter 的唯一来源）
     do: key
     key: "alt+g"
@@ -198,6 +205,11 @@ steps:
       - label: code 文件已装载到前台
         ax: { has: "纯文本文件" }
 
+  - name: 重建编辑器焦点（同上：⌥G 只在编辑器焦点下命中）
+    do: clickEditor
+    expect:
+      - label: 焦点落在编辑器正文里
+        ax: { focused: "AXTextArea" }
   - name: ⌥G 在 code 模式打开输入条（临时 gutter 两模式一致）
     do: key
     key: "alt+g"

@@ -1778,7 +1778,7 @@ export interface EditorCreateOptions {
 }
 
 export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md", markdownConfig: Parameters<typeof markdown>[0] = { base: markdownLanguage, extensions: [GFM] }, options: EditorCreateOptions = {}): EditorHandle {
-  // 三个 Compartment（mode / 折行 / md gutter）是**模块级共享**的，理由见其声明处（M317 4.1）。
+  // 四个 Compartment（mode / 折行 / gutter / 基础层）是**模块级共享**的，理由见其声明处（M317 4.1）。
   // 前台会话「可编辑性」的**投影**：changeFilter 的闭包在 state 创建时就绑好了，只能读实例
   // 变量，所以真源放在会话上（EditorSession.editable），这里只是把它投给创建期闭包。
   // 唯一写入点是 syncProjection()，由激活 / 装载 / setMode 三处调用——不构成第二份真源。

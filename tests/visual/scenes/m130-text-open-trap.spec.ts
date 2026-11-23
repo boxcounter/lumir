@@ -74,7 +74,7 @@ const EDITABLE = Object.keys(FILES).filter(
   (path) => path !== "readme.md" && path !== "logo.png" && !NON_EDITOR.includes(path),
 );
 
-test("非 md 文本文件一律以可编辑 code 模式打开（可编辑、无只读态、有行号）", async ({ page }) => {
+test("非 md 文本文件一律以可编辑 code 模式打开（可编辑、无只读态、无 md 装饰层）", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
   const content = page.locator(".cm-content");

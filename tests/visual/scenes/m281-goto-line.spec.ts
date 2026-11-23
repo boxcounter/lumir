@@ -980,6 +980,45 @@ test("行号指示钮：三主题形态、on / off 等宽、右段其它元素�
       expect(box, `${width}px 读不到 ${selector}`).not.toBeNull();
       expect(box!.right).toBeLessThanOrEqual(width);
     }
+    // 「在场且不互相遮挡」的独立判据（评审 P2-3）：只判右缘会让两段互相覆盖也 PASS。
+    // 按 DOM 顺序取在场段的实测 rect——520px 必须五段全在，且后一段左缘不得压进前一段。
+    const segments = await page.evaluate(() => {
+      const right = document.querySelector(".modeline-right") as HTMLElement;
+      const order = [
+        ".modeline-meta",
+        ".modeline-version",
+        ".modeline-line-numbers",
+        ".modeline-theme",
+        ".modeline-language",
+      ];
+      const out: Array<{ selector: string; left: number; right: number }> = [];
+      for (const selector of order) {
+        const el = right.querySelector<HTMLElement>(selector);
+        if (el === null) continue;
+        const style = getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        if (style.display === "none" || el.hidden || rect.width <= 0) continue;
+        out.push({ selector, left: rect.left, right: rect.right });
+      }
+      return out;
+    });
+    expect(segments.map((seg) => seg.selector), `${width}px 右段在场项`).toEqual(
+      width === 520
+        ? [
+            ".modeline-meta",
+            ".modeline-version",
+            ".modeline-line-numbers",
+            ".modeline-theme",
+            ".modeline-language",
+          ]
+        : [".modeline-meta", ".modeline-line-numbers", ".modeline-theme", ".modeline-language"],
+    );
+    for (let i = 1; i < segments.length; i += 1) {
+      expect(
+        segments[i].left,
+        `${width}px ${segments[i].selector} 压住了 ${segments[i - 1].selector}`,
+      ).toBeGreaterThanOrEqual(segments[i - 1].right - 0.5);
+    }
     await expect(page.locator(".modeline-theme")).toBeVisible();
     await expect(page.locator(".modeline-language")).toBeVisible();
     // 切回 off，让下一轮的起点一致（本用例的判据是「每次 off → on 的位移」，不是交替态）

@@ -58,7 +58,7 @@
 #### Scenario: 行号 gutter 的两档与跳转临时档
 
 - **WHEN** 以 `[ui] line_numbers` 的 `"on"` / `"off"` 分别启动应用，各自打开同一份 md 文档（含 frontmatter 区块）与一个只读 code 文件，并在每份文档上按一次 `⌥G` 再收起
-- **THEN** `"on"`：md 与 code 的 gutter 都常驻在场，行号 = 源文档逻辑行号（1 基、与 `doc.lines` 同口径）、当前行的行号有高亮而正文行底色不变，输入条的开 / 关不改变在场；`"off"`（默认）：md 与 code 在文档打开时都没有 gutter，按 `⌥G` 后两种模式的 gutter 都临时在场，输入条收起后都重新消失；两档下正文列都仍居中、行号贴正文列左缘且不被裁切，frontmatter 区块覆盖的源行没有行号（块级替换折成 widget 行块的既有边界）
+- **THEN** `"on"`：md 与 code 的 gutter 都常驻在场，行号 = 源文档逻辑行号（1 基、与 `doc.lines` 同口径）、当前行的行号有高亮而正文行底色不变，输入条的开 / 关不改变在场；`"off"`（默认）：md 与 code 在文档打开时都没有 gutter，按 `⌥G` 后两种模式的 gutter 都临时在场，输入条收起后都重新消失；几何按窗口分两档（与本条 P3 的 `⌥G` 命令口径一致）：md 任意宽度与 code 左侧余量充足的宽窗下正文列仍居中、行号贴正文列左缘且不被裁切、开关瞬间 `.cm-content` 的实测 rect 逐值不变；code 左侧余量不足的窄窗允许正文列左移一个 gutter 宽，但 MUST NOT 出现横向滚动、MUST NOT 裁切行号（边界见 design §4.2 / §10.1）；frontmatter 区块覆盖的源行没有行号（块级替换折成 widget 行块的既有边界）
 
 #### Scenario: 取值由配置装载、非法值回落、旧键退场
 

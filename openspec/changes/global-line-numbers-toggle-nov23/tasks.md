@@ -184,8 +184,19 @@
   （`:204-289`），落 `[ui].line_numbers`
 - [x] 7.6 `scripts/acceptance/COVERAGE.md`：更新 56 / 707 两行的口径，新增 722 行；跑
   `node scripts/acceptance/coverage.mjs` 重新生成并 `node scripts/acceptance/run.mjs --check`
-- [ ] 7.7 真机执行 56 / 707 / 722，证据落 `.local/acceptance/<日期>/`（不进 git）；FAIL 项与
+- [x] 7.7 真机执行 56 / 707 / 722，证据落 `.local/acceptance/<日期>/`（不进 git）；FAIL 项与
   手感项进完工报告
+  - 2026-11-24 首轮：56 PASS；707 / 722 FAIL——根因是**场景手势**，不是产品回归：① `⌥G` 是
+    editor 作用域，`do: open` 打开已存在标签（含重启恢复）后焦点留在 chrome 上，按键不命中；
+    ② 负向右键落在**没有 gutter 的正文**上会弹 WKWebView 原生菜单（产品不接管 `contextmenu`
+    的预期行为），菜单吞掉后续键盘与第一次鼠标动作；③「没有成功提示」负向断言被上一条成功
+    toast 污染。修法（只动场景）：每次 `⌥G` 前 `clickEditor` 并断言 `focused: AXTextArea`；
+    每个负向右键后 `Escape` 关菜单并 `waitFor: not /AXMenuItem/`（收起有动画延迟，必须轮询）；
+    code-off 负向断言前等 `已复制` toast 消退。
+  - 最终复跑（返修含评审 P2-1 的后台标签覆盖顺序）：**3/3 PASS**——56（21.7s）、707（40.2s）、
+    722（44.4s）；无游离实例（STRAY-SCAN none）。证据：主仓
+    `.local/acceptance/2026-11-24-global-line-numbers/`，日志副本
+    `.local/missions/global-line-numbers-nov23/acceptance-56-707-722-final.log`。
 
 ## 8. 既有场景与文档回扫
 

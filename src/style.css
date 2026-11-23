@@ -772,7 +772,7 @@ body {
 }
 /* `on` / `off` 等宽：`off` 比 `on` 多一个字符，自然宽排版会让右段其余元素随切换整体位移。
    宽度按较长读数钉住、文本居中——判据是两种读数下钮 rect 宽相同、其它元素 rect 逐值不变
-   （tests/visual/scenes/modeline.spec.ts）。 */
+   （tests/visual/scenes/m281-goto-line.spec.ts 的指示钮用例；modeline.spec 只钉文本与元素基线）。 */
 .modeline-line-numbers {
   min-width: 3.2em;
   text-align: center;

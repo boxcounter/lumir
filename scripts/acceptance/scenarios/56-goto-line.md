@@ -214,7 +214,7 @@ change `global-line-numbers-toggle-nov23` 起 md 与只读 code 共用这一个�
   行号与源行号一致、贴正文列左缘、正文列仍居中、纵向对准、窄窗不被裁、以及**开关瞬间正文列
   不跳动**这些**几何判据**在 chromium 层断言（`tests/visual/scenes/m281-goto-line.spec.ts`，
   实测 rect）。本场景不设 `ui.line_numbers`（走默认 `off`）；`on` 档与切换入口的在场时机同样在
-  chromium 层覆盖（那里能改配置起两轮），真机侧由场景 721 覆盖 `⌘⇧N` 与指示钮。
+  chromium 层覆盖（那里能改配置起两轮），真机侧由场景 722 覆盖 `⌘⇧N` 与指示钮。
 - **输入条的读屏名（deck D152）在真机 AX 里读不到**（实测 `AXTextField = "1"`，没有 label/help）：
   真机侧判「框在场 + 值正确 + 焦点在它身上」，`aria-label` 的断言在 chromium 层（同一常量）。
 - **README 的一句已知边界被本场景证伪（已落 finding）**：`scripts/acceptance/README.md` 写

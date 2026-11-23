@@ -17,6 +17,14 @@
 #     与 gutter 不同——因此「点它」这条路能在真机走通。
 #   - 剪贴板哨兵：负向断言前先写一个哨兵串，右键后断言剪贴板**仍含哨兵**（`clipboard.not` 判
 #     不含 `{path}:1`，`has` 判哨兵仍在）——只判「不含路径」会在剪贴板不可读时假绿。
+#   - **⌥G 的焦点前置**：它是 `editor` 作用域命令；`do: open` 打开已存在的标签时焦点留在 chrome
+#     上（spec 已知边界①），每次 `⌥G` 前先 `clickEditor` 并断言 `focused: AXTextArea`。
+#   - **负向右键 → 原生菜单**：开关为 off 且输入条关闭时没有 gutter，右键落在正文上由产品交回
+#     默认行为，WKWebView 弹出原生菜单（Look Up / Translate / Reload…）。原生菜单会吞掉后续
+#     键盘与第一次鼠标动作（README 的 post-menu 边界）——这是手势副作用，不是产品缺陷。每个
+#     负向右键之后 MUST 用 `Escape` 关菜单并以 `ax: not /AXMenuItem/` 证明它已消失，再继续。
+#   - **成功 toast 的存续窗**：`已复制` toast 在屏上数秒；「没有成功提示」这类负向断言 MUST 先
+#     `waitFor: not 已复制` 等到上一条消退，否则被陈旧 toast 污染（M135 的「读不到当空」同族）。
 id: "722-line-numbers-toggle"
 item: 722
 tier: full
@@ -56,6 +64,24 @@ steps:
         clipboard: { not: "gutter 空格 中文.md:1" }
       - label: 没有成功提示
         ax: { not: "已复制" }
+
+  # 负向右键落在**没有** gutter 的正文上，产品不接管 contextmenu（预期行为）⇒ WKWebView 弹出
+  # 原生菜单。原生菜单会吞掉后续键盘（README 的 post-menu 边界，M498/M456）——这是本场景的
+  # 手势副作用，不是产品缺陷。先关菜单并以 AX 判据证明它真的关了，再重建编辑器焦点。
+  - name: 关闭负向右键弹出的原生菜单（Escape）
+    do: key
+    key: escape
+  - name: 等原生菜单从 AX 里消失（收起有动画延迟，必须轮询而不是读一拍）
+    do: waitFor
+    waitFor:
+      not: ["/AXMenuItem/"]
+    timeoutMs: 3000
+
+  - name: 重建编辑器焦点（⌥G 是 editor 作用域；负向右键不保证焦点仍在正文里）
+    do: clickEditor
+    expect:
+      - label: 焦点落在编辑器正文里
+        ax: { focused: "AXTextArea" }
 
   - name: ⌥G 打开跳转输入条：off 档的临时 gutter 由它带出
     do: key
@@ -123,6 +149,11 @@ steps:
     expect:
       - label: 配置已回写 off
         file: { path: env:config.json, has: "\"line_numbers\": \"off\"" }
+  - name: 等上一条「已复制」toast 自行消退（负向断言的前置；toast 存续约数秒）
+    do: waitFor
+    waitFor:
+      not: ["已复制"]
+    timeoutMs: 6000
   - name: 写入哨兵并右键 code 的原 gutter 位置（off ⇒ 没有 gutter）
     do: clipboardText
     text: "LINENUMS-SENTINEL-OFF2"
@@ -136,6 +167,15 @@ steps:
         clipboard: { not: "block-copy.txt:1" }
       - label: 没有成功提示
         ax: { not: "已复制" }
+
+  - name: 关闭负向右键弹出的原生菜单（Escape）
+    do: key
+    key: escape
+  - name: 等原生菜单从 AX 里消失（收起有动画延迟，必须轮询而不是读一拍）
+    do: waitFor
+    waitFor:
+      not: ["/AXMenuItem/"]
+    timeoutMs: 3000
 
   - name: 点击 modeline 行号指示钮（另一条同源入口）
     do: click
@@ -169,6 +209,11 @@ steps:
     do: open
     file: gutter 空格 中文.md
     marker: "GUTTER-707-MARKER"
+  - name: 重建编辑器焦点（打开已存在的标签时焦点留在 chrome 上，⌥G 是 editor 作用域）
+    do: clickEditor
+    expect:
+      - label: 焦点落在编辑器正文里
+        ax: { focused: "AXTextArea" }
   - name: ⌥G 打开输入条
     do: key
     key: "alt+g"
@@ -206,29 +251,41 @@ steps:
       - label: 剪贴板不含复制结果
         clipboard: { not: "gutter 空格 中文.md:1" }
 
-  - name: 重新切到 on 并打开第二个标签（后台标签切回时已是新态）
+  - name: 关闭负向右键弹出的原生菜单（Escape）
     do: key
-    key: "cmd+shift+n"
-    expect:
-      - label: 已切到 on
-        file: { path: env:config.json, has: "\"line_numbers\": \"on\"" }
-  - name: 打开 code 文件作为第二个标签
+    key: escape
+  - name: 等原生菜单从 AX 里消失（收起有动画延迟，必须轮询而不是读一拍）
+    do: waitFor
+    waitFor:
+      not: ["/AXMenuItem/"]
+    timeoutMs: 3000
+
+  # 后台标签的覆盖口径（评审 P2-1）：**先创建后台标签、再在它处于后台时切换开关**。
+  # 若先切 on 再开 code，code 会话创建时就读到 on——即使 `reconfigureGutter()` 漏掉后台会话，
+  # 这段也会 PASS（假覆盖，REVIEW.md「覆盖声明超出真实验证」条）。
+  - name: 先打开 code 文件作为第二个标签（此时开关仍是 off）
     do: open
     file: block-copy.txt
     marker: "纯文本文件"
-  - name: ⌘1 切回 md 标签
+  - name: ⌘1 切回 md 标签（code 留在后台）
     do: key
     key: "cmd+1"
     expect:
       - label: 回到 md 文档
         editor: { has: "GUTTER-707-MARKER" }
-  - name: 右键 md gutter 首行（切回后 oracle 仍成立）
+  - name: 在 code 处于后台时按 ⌘⇧N 切到 on（覆盖后台会话的 state 重配）
+    do: key
+    key: "cmd+shift+n"
+    expect:
+      - label: 已切到 on
+        file: { path: env:config.json, has: "\"line_numbers\": \"on\"" }
+  - name: 右键 md gutter 首行（前台 md 即时生效）
     do: click
     target: { role: AXTextArea, button: right, dx: -0.015, dy: 0.01 }
     expect:
       - label: 剪贴板 = 路径 + 第 1 行
         clipboard: { exact: "gutter 空格 中文.md:1" }
-  - name: ⌘2 切到 code 标签（后台标签切回）
+  - name: ⌘2 切到 code 标签（后台期间已切 on ⇒ 切回即新态，不是切回时才补）
     do: key
     key: "cmd+2"
     expect:
