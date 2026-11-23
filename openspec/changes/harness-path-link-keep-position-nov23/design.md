@@ -153,12 +153,18 @@ flash(session: EditorSession): void
 
 ### 3.2 真机（场景 221 扩展）
 
-- 新增一步「点裸路径（目标已在前台）」：点击前用 `do: recordEditor` 记基线 + 截图，点击后：
+- 新增一组步骤「点裸路径（目标已在前台）」：
+  - 点击前用 `do: recordEditor` 记基线；点击走 `clickInNode`（**真实鼠标坐标点击**，不是
+    AXPress）——真机因此也经过产品的 `mousedown` 路径，而不是只按一下 AX 元素；
   - `editor: { unchangedSince: <基线名> }` 做**逐字节**比较（验收 README 的 `recordEditor` /
     `unchangedSince` 通道；MUST NOT 用「`has` 关键标记 + 目标行不出现」这类子串近似）；
   - 标签栏出现闪烁态截图（点击后 ~0.6s 内，1.4s 窗口内）；
-  - 不点任何东西直接 `do: keys` 输入一个字符：`editor: { unchangedSince: <基线名> }` 仍成立、
-    composer 文本变化——证明焦点没有被编辑器抢走；焦点判据同样复用这份基线，不另写子串断言。
+  - 焦点证明：点击前在 composer 预置 `focusproof`，点击后按 `⌃H`——composer 应变成
+    `focusproo`（焦点留在 composer）、正文仍 `unchangedSince`（没有落进编辑器）。**MUST NOT
+    用可打印 `do: keys` 序列**：注入前身份名是空态占位读屏名，注入后 AX 名变成值，按身份复读
+    会判「目标消失」（M779 同族，是 oracle 限制而非产品重渲染）。
+  - 切回原文档后用 `do: waitFor` 轮询 `AXRadioButton … Value: true` 终态，不用 `settle` 猜；
+    单引号 YAML 里的正则只写**单个**反斜杠（写成两个反斜杠 `\\(` 会匹配字面反斜杠——真机 r1 的假红成因）。
 - `scrollTop` 在 AX 读不到（`scripts/acceptance/README.md` 已登记），「不滚动」只能靠截图前后
   对照与「目标行不出现」间接判；不要伪造 AX 判据。
 - 既有行锚步骤（`:39` / `:39-48`）保持并通过；新增的闪烁断言不改变它们的高亮判据。

@@ -117,15 +117,17 @@
 
 - [x] 5.1 扩展 `scripts/acceptance/scenarios/221-harness-path-line-range.md`：新增「点裸路径
       （目标已在前台）」步骤；点击前 `do: recordEditor` 记基线，点击后
-      `editor: { unchangedSince: <基线名> }`；截图紧跟点击（~0.6s，1.4s 窗口内）
-- [x] 5.2 同一步加焦点证明：不点任何东西直接 `do: keys` 输入字符 →
-      `editor: { unchangedSince: <基线名> }` 仍成立、composer 文本变化；焦点判据复用同一份
-      基线，MUST NOT 另写子串近似
+      `editor: { unchangedSince: <基线名> }`；截图紧跟点击（~0.6s，1.4s 窗口内）。
+      点击走 `clickInNode`（真实鼠标坐标点击）——真机也过产品的 mousedown 路径
+- [x] 5.2 同一步加焦点证明：点击前在 composer 预置 `focusproof`，点击后 `⌃H` 只删一个字符 →
+      composer 变 `focusproo`、`editor: { unchangedSince: <基线名> }` 仍成立。**不用可打印
+      `do: keys` 序列**：注入前 AX 身份名是占位读屏名、注入后变成值，身份复读会判「目标消失」
+      （M779 同族，oracle 限制；不是 flash / tab render 导致的产品重排）
 - [x] 5.3 「不滚动」的真机判据用「`unchangedSince` 逐字节 + 截图前后对照」；MUST NOT 用
       「`has` 关键标记 + 目标行不出现」这类子串近似，也 MUST NOT 伪造 AX `scrollTop` 读数
       （README 已登记读不到）
-- [ ] 5.4 既有行锚步骤（`:39` / `:39-48`）保持 PASS；闪烁断言不改变其高亮判据
-      - 未跑真机（本任务约束：不起 Lumir 实例、不跑真机）；步骤未改动，PASS 待主会话验收批次
+- [x] 5.4 既有行锚步骤（`:39` / `:39-48`）保持 PASS；闪烁断言不改变其高亮判据
+      - 2026-11-24 真机 221 PASS（`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-24-harness-path-link-r2/`）
 - [x] 5.5 `rg "harness|路径|goto-line" scripts/acceptance/scenarios/` 回扫所有点路径链接的场景：
       确认没有「点裸路径后期望滚动」或「闪烁窗口内截图」的旧期望；有则改准
 - [x] 5.6 若新增场景编号 / 标题 / item，同步 `scripts/acceptance/COVERAGE.md`
@@ -182,6 +184,11 @@
 - **评审返修（P2-1 / P2-2）**：不重载判据从 `Text` 身份改为副作用仪器 + 真实 undo；dispose /
   关闭路径补「不推进计时即重建 + `clearTimeout` spy」；浏览器场景头部删除并不存在的
   dispose spy / 收 pane / pageerror 覆盖声明。
-- **未跑 / 未覆盖（如实登记）**：全量 `gate.sh quick` / `visual`、真机场景 221、真实 WKWebView
-  的手感与像素层——按任务约束留给主会话串行；「闪烁中收 pane」的视觉现场在当前布局不可达
+- **真机 221（2026-11-24）**：首跑 r1 FAIL，两处均为验收 oracle 问题——① 单引号 YAML 里
+  期望正则写成双反斜杠（`\\(`），matcher 去找字面反斜杠，而 dump 里已有匹配行；② 焦点证明
+  用可打印 `do: keys`，composer 的 AX 身份名从占位读屏名变成值，回读判「目标消失」。修法：
+  正则改单反斜杠；焦点证明改「预置 focusproof + ⌃H 删一个字符」；切回文档后加 `waitFor`。
+  修后真机 221 PASS（证据 `.local/acceptance/2026-11-24-harness-path-link-r2/`）。
+- **未跑 / 未覆盖（如实登记）**：全量 `gate.sh quick` / `visual` 与真实 WKWebView 的手感 /
+  像素层——按任务约束留给主会话串行；「闪烁中收 pane」的视觉现场在当前布局不可达
   （见 4.10 注），由单测钉 `dispose()`。

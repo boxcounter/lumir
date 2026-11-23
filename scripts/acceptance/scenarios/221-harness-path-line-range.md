@@ -133,40 +133,53 @@ steps:
   - name: 切回原前台文档（裸路径的目标；行锚判据已收尾）
     do: click
     target: { role: AXRadioButton, name: "^harness-note\\.md$" }
+
+  - name: 等原文档成为前台（状态驱动，不用 settle）
+    do: waitFor
+    waitFor:
+      has: ['/AXRadioButton \(harness-note\.md\) Value: true/']
+    timeoutMs: 15000
     expect:
-      - label: 原文档成为前台
-        ax: { has: '/AXRadioButton \\(harness-note\\.md\\) Value: true/' }
       - label: 基线文档内容在场
         editor: { has: "HNL-ALPHA" }
 
-  - name: 点 composer 聚焦（裸路径点击后焦点必须仍在这里）
+  - name: 点 composer 聚焦（后面用真实鼠标点路径按钮，焦点必须留在这里）
     do: clickInNode
-    target: { role: AXTextArea, name: "问点什么" }
+    target: { role: AXTextArea, name: "问点什么|rlmark|focusproof" }
 
-  - name: 裸路径点击前记录编辑器基线（点击与键入后都拿它逐字节比较）
+  - name: 预置焦点证明文本（空态占位读屏名会随内容变成值，target 并联两态）
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|focusproof" }
+    text: "focusproof"
+    expect:
+      - label: composer 文本到位
+        ax: { has: "focusproof" }
+
+  - name: 裸路径点击前记录编辑器基线（点击与 ⌃H 后都拿它逐字节比较）
     do: recordEditor
     as: barePathBefore
     expect:
       - label: 基线读得到（不是不可读的空串）
         editor: { has: "HNL-ALPHA" }
 
-  - name: 点裸路径（目标已在前台）——截图紧跟点击、不 settle（1.4s 闪烁窗口内）
-    do: click
+  - name: 点裸路径（目标已在前台）——真实鼠标 mousedown（clickInNode），截图紧跟、不 settle
+    do: clickInNode
     target: { role: AXButton, name: "^harness-note\\.md$" }
     expect:
       - shot: 05-裸路径点击后（~0.6s 内；标签应带闪烁底色，正文与位置不动）
       - label: 点击后正文逐字节不变（不滚动、不重载、不动选区）
         editor: { unchangedSince: barePathBefore }
 
-  - name: 焦点证明：不点任何东西，直接键入（焦点应仍在 composer，正文不动）
-    do: keys
-    keys: ["f", "o", "c", "u", "s", "-", "p", "r", "o", "o", "f"]
-    gapMs: 60
+  - name: 焦点证明：⌃H 只删 composer 最后一个字符（焦点仍在 composer）
+    do: key
+    key: "ctrl+h"
     expect:
-      - label: 键入没有落进正文（逐字节仍与基线相同）
+      - label: composer 变成 focusproo（⌃H 落在 composer）
+        ax: { has: "focusproo" }
+      - label: 原串不再完整（确实删掉了一个字符）
+        ax: { not: "focusproof" }
+      - label: ⌃H 没有落进正文（焦点没有被编辑器抢走）
         editor: { unchangedSince: barePathBefore }
-      - label: 键入进了 harness composer（焦点没有被路径按钮 / 编辑器抢走）
-        ax: { has: "focus-proof" }
 ---
 
 # 221-harness-path-line-range —— 带行号路径可点击 + 点击后瞬态行高亮
@@ -188,8 +201,10 @@ mock provider 把三种形态一次铺开：
    ——失败模式不是「不可点」而是「吞半截」，判据落在「可点元素的名字里没有这个后缀」上。
 4. **裸路径 + 目标已在前台**（change `harness-path-link-keep-position-nov23`）：`harness-note.md`
    无行号点击 MUST NOT 改变滚动 / 选区 / 正文（`recordEditor` + `unchangedSince` 逐字节判），
-   标签闪一次（`05` 截图）；随后的键入不进正文、进 composer——证明按钮级 `mousedown`
-   `preventDefault()` 把焦点留在了发起点击的输入区。
+   标签闪一次（`05` 截图）。点击走 `clickInNode`（真实鼠标坐标点击，不是 AXPress）——这样
+   真机也经过产品的 `mousedown` 路径；随后在 composer 预置 `focusproof`，按 `⌃H` 只删最后一个
+   字符：焦点在 composer ⇒ 文本变成 `focusproo`；焦点在编辑器 ⇒ 正文 `unchangedSince` 红；
+   焦点在路径按钮 ⇒ 文本不变。三者把「焦点留在发起点击的输入区」钉成可判读数。
 
 ## 判据为什么这样写
 
@@ -221,7 +236,7 @@ mock provider 把三种形态一次铺开：
 - **`止` 越界不报错**（钳到末行）与 `:12 - 40` 带空白形态由单测覆盖，不在真机造现场。
 - **「重复点击重置消退计时」在真机层不可判**（需要毫秒级读数），由视觉场景的计时用例承担。
 - **裸路径的「不滚动」用逐字节基线判，不伪造 AX `scrollTop`**：第 04 步之后的 `recordEditor`
-  基线覆盖整篇文档文本；点击与随后键入各判一次 `unchangedSince`（M864 起读数是稳定读）。
+  基线覆盖整篇文档文本；点击与随后 `⌃H` 各判一次 `unchangedSince`（M864 起读数是稳定读）。
   AX 读不到滚动位置与选区（同 CL-1 / CL-2 的已知边界），「视口没动」由截图 `05` 与正文逐字节
   不变共同判读；MUST NOT 用「目标行不出现」这类子串近似冒充滚动判据。
 - **闪烁底色只有截图证据，且依赖 `05` 抢在 1.4s 窗口内**：截图直接挂在点击步的 expect 上
@@ -229,8 +244,11 @@ mock provider 把三种形态一次铺开：
   （先核步骤耗时），不当作产品缺陷。标签的几何、三主题底色与计时重置由 chromium 场景
   `harness-path-link-keep-position-nov23.spec.ts` 承担。
 - **按钮级 `mousedown` 的精确判据在 chromium 层**（真实按下 / 松开，断言 `document.activeElement`
-  仍是 composer）：真机 AX 只有 AXPress 通道，产不出 mousedown 序列；本场景用「AXPress 后直接
-  键入、正文不变且 composer 变化」作焦点未被抢走的整链判据。
+  仍是 composer）；真机本次也走真实鼠标（`clickInNode`），并用 `⌃H` 的落点做整链判据。
+- **可打印 `do: keys` 不用于 composer 焦点证明**：注入前 AX 身份名是空态占位读屏名，注入后
+  AX 名变成值，按身份复读必然「目标消失」（M779 同族，不是产品重渲染）。焦点证明因此用
+  「预置文本 + ⌃H 删一个字符」的 chord：落点由文本变化 / 正文逐字节不变共同判定，不依赖
+  composer 的可读名保持稳定。
 - **「闪烁中收 pane」在真机层不可造**：pane 上限两个，harness 在场时文档 pane 只有一个，
   右 pane 的标签条不可能被闪烁命中（与提案的「跨 pane 分支结构上不可达」同一事实）；`dispose`
   的生命周期由 `tests/unit/tabs.test.ts` 的 mock-timer 用例钉住。
