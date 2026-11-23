@@ -26,13 +26,19 @@
       `tests/visual/scenes/harness-turn-retry-nov23.spec.ts`；可提取的纯函数（事件 → 动作模型 /
       turn 选择）落 `tests/unit`。MUST NOT 把 DOM 行为塞进 unit 层；RED 判据是「动作不在场 /
       点击无调用 / 快照不重建 / busy 误收口」，不是场景语法错
-- [ ] 1.3 真机侧：先写 A1–A11 场景（design §11.3）并在未实现的当前树上跑一遍 RED——（**场景已写**：710–720 + 9 个 fixture，`run.mjs --check` 272 场景 PASS；**真机 RED 未执行**：被 Alex 安装版 Lumir 实例挡住，见 `.local/acceptance/2026-11-23-harness-turn-retry/blocked/BLOCKED.md`）
-      RED 判据是「重试动作不在场 / 点击无请求 / 新写工具未经批准即执行」，不是场景语法错
+- [ ] 1.3 真机侧：先写 A1–A11 场景（design §11.3）并在未实现的当前树上跑一遍 RED——
+      **场景已写且 11/11 真机 PASS**（710–720 + 9 个 fixture；`run.mjs --check` 272 场景 PASS）。
+      **「未实现树上的 RED」未执行**：首次真机批跑在已实现树上（4/11 PASS），其中 718 的 FAIL
+      正是产品缺陷本身（半截正文未标「未完成」，根因与现场见
+      `.local/missions/harness-turn-retry-nov23/triage-r1.md`；修复提交 `c3c3c260`），
+      不是「先红」形态的 RED。RED 判据仍为「重试动作不在场 / 点击无请求 / 新写工具未经批准
+      即执行」，不是场景语法错
 - [ ] 1.4 把三组 RED 证据路径写进实现报告（均落**主仓** `.local/`，不落 worktree）：
       `.local/reviews/harness-proposals/retry-red-{rust,frontend}.log` 与
       `.local/acceptance/<日期>/<场景>/RED-before-fix/`；写不出可 `ls` 的指针按「未跑」处理
-      （rust / frontend 两份已落；**acceptance 的 RED-before-fix 未生成**——真机被安装版实例挡住，
-      同 1.3 的 BLOCKED 指针，按「未跑」处理）
+      （rust / frontend 两份已落；**acceptance 的 RED-before-fix 未生成**——首次真机批跑在
+      已实现树上（4/11），不是「未实现树」的 RED；718 的 before-fix 现场已被复跑覆盖，
+      结论落在 `.local/missions/harness-turn-retry-nov23/triage-r1.md`，按「未跑」处理）
 
 ## 2. 补 mock 的测试表达能力（不得以「mock 表达不了」跳过）
 
@@ -230,8 +236,14 @@
       `item` 填准；注释写明「重试按钮存在性」「请求数」「批准前零副作用」的判据
 - [x] 9.10 `node scripts/acceptance/coverage.mjs` 重生成 `COVERAGE.md`；
       `node scripts/acceptance/run.mjs --check` 绿
-- [ ] 9.11 真机跑 A1–A11，证据落**主仓** `.local/acceptance/`（**未验**：安装版实例在场，起跑自检退出码 2；现场与复跑命令见 `.local/acceptance/2026-11-23-harness-turn-retry/blocked/`）（截图含失败态、重试后态、
-      批准前 / 后；JSONL 计数附文本读数）；未跑前在报告里写「未验」，不得写「已 PASS」
+- [x] 9.11 真机跑 A1–A11，证据落**主仓** `.local/acceptance/2026-11-23-harness-turn-retry/`
+      （截图含失败态、重试后态、批准前 / 后；JSONL 计数见 steps.md 的读数）。
+      **11/11 PASS**，分三批：
+      - 首轮：710 / 711 / 714 / 717 PASS（日志 `.local/missions/harness-turn-retry-nov23/acceptance-a1-a11.log`）
+      - 复跑：712 / 715 / 716 / 718 / 719 / 720 PASS（`…/acceptance-rerun-seven.log`）
+      - 单跑：713 PASS（`…/acceptance-713-rerun.log`）
+      逐场景 PASS 断言数（`steps.md` 的 `- PASS` 行）：710=10、711=11、712=6、713=5、714=3、
+      715=4、716=7、717=6、718=8、719=10、720=6。
 
 ## 10. 门禁、信息卫生与收尾
 
@@ -249,8 +261,10 @@
 - [x] 10.7 文案漂移门禁：新增 zh / en 文案编号与 `src/copy-data.ts` 一致；`pnpm test` 的文案用例绿
 - [x] 10.8 实现 PR 合并时在 `docs/backlog.md` 的归档跟踪队列落一条本 change 记录（一行 gist +
       五要件状态；后续归档按 `docs/process/openspec-workflow.md` 执行）
-- [ ] 10.9 覆盖声明对账：本文件所有「已验 / 已覆盖」逐条给场景名 + PASS 计数；拿不出证据的改写
-      「未验」；`tasks.md` 勾选状态与证据目录一致
+- [x] 10.9 覆盖声明对账：R1–R17（`cargo test` 全绿 + `.local/reviews/harness-proposals/
+      retry-red-rust.log`）、F1–F12（10/10，`tests/visual/scenes/harness-turn-retry-nov23.spec.ts`）、
+      A1–A11（11/11，场景名与 PASS 计数见 9.11）均给得出证据指针；拿不出证据的项保持「未验」
+      （acceptance 的 RED-before-fix 见 1.3 / 1.4）。
 
 ## 11. 验证（change 层）
 
@@ -258,5 +272,7 @@
       与 `validate --all --strict` 通过
 - [x] 11.2 `bash scripts/docs-check.sh` 通过（其中含 `openspec-archive-check.mjs` 门禁模式与
       相对链接检查）；本 change 未归档，`--archived` 审计不适用
-- [ ] 11.3 本 change 的验收动作：`design.md` §11 的 R / F / A 矩阵按 §8 对账表逐项 PASS；
-      真机证据落主仓 `.local/acceptance/`，门禁日志落主仓 `.local/`（不落 worktree）
+- [x] 11.3 本 change 的验收动作：`design.md` §11 的 R / F / A 矩阵按 §8 对账表逐项 PASS
+      （R：`cargo test` 全绿 + RED 日志；F：10/10；A：11/11，见 9.11）；
+      真机证据在主仓 `.local/acceptance/2026-11-23-harness-turn-retry/`，门禁日志在
+      `.local/missions/harness-turn-retry-nov23/gates.log`（不落 worktree）。

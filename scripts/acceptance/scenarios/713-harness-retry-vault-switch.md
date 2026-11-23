@@ -51,11 +51,13 @@ steps:
   - name: 切回 A
     do: click
     target: { any: "点击查看全部 vault" }
-  # 切到 B 之后 `mark_opened` 刷新了 B 的 last_opened_at，列表按最近打开倒序 ⇒ **B 排第一**。
-  # 旧写法 `nth: 0` 因此点到当前项 B（no-op），A 从未被切回。用负向前瞻精确选 A 那一行。
+  # 切到 B 之后 `mark_opened` 刷新了 B 的 last_opened_at，列表按最近打开倒序 ⇒ **B 排第一**；
+  # 旧写法 `nth: 0` 因此点到当前项 B（no-op），A 从未被切回。`target.any` 的裸字符串走
+  # `matcher()` 的**子串**匹配（要正则必须写成 `/…/`），负向前瞻按裸串写不生效；改用 A 行
+  # 独有的摘要标签（`1 个标签`）作稳定选择器，与当前行是不是当前项无关。
   - name: 点 A（按显示名精确排除 B 行）
     do: click
-    target: { role: AXStaticText, any: "lumir-m102-acceptance(?!-b)" }
+    target: { role: AXStaticText, any: "lumir-m102-acceptance 1 个标签" }
   - name: 等 A 回来
     do: waitFor
     waitFor:
