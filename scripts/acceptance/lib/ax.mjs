@@ -178,6 +178,22 @@ export function findByIndex(nodes, index) {
   return nodes.find((n) => n.index === index) ?? null;
 }
 
+/** 紧邻的下一个**同级**节点（M152-FIX）：节点数组是文档序，缩进给出 `depth`。
+ *
+ *  跳过 `depth > node.depth` 的子节点，取第一个 `depth <= node.depth` 的节点：等于本节点 depth
+ *  即下一个同级节点；更浅说明本节点是该层最后一个（没有下一个同级节点），回 null。
+ *  用途见 `execute.mjs` 的 `metaLineReading`：真机 AX 把「角色」与「· N秒前」渲染成两个相邻
+ *  `AXStaticText`，判它们是否成对只能按树结构算，不能按整份文本的连续子串算。 */
+export function nextSiblingNode(nodes, node) {
+  const i = nodes.indexOf(node);
+  if (i < 0) return null;
+  for (let j = i + 1; j < nodes.length; j += 1) {
+    if (nodes[j].depth > node.depth) continue;
+    return nodes[j].depth === node.depth ? nodes[j] : null;
+  }
+  return null;
+}
+
 /** 断言用：AX dump 文本里是否有匹配某模式的节点行。 */
 export function linesMatching(axText, pattern) {
   const re = pattern instanceof RegExp ? pattern : new RegExp(pattern);

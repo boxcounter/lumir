@@ -1021,6 +1021,134 @@ test("node 断言静态校验：present 必填、角色名 / 未知键 / 坏正�
   assert.deepEqual(errs({ node: { role: "AXButton", name: "^回到底部\\.md$", present: true } }), []);
 });
 
+/** 152 的现场（2026-11-23 真机 dump 的裁剪形态）：who 行是两个**相邻**的 AXStaticText——
+ *  `你` 与 `· 3秒前` 各占一个节点（Agent 同形）。连续文本正则 `/你 · ?…/` 跨不过节点边界，
+ *  读数在场也判红——这正是本场景首跑两条假 FAIL 的成因。 */
+const AX_WHO_LINE = [
+  "# Lumir App State",
+  "",
+  "- app: Lumir",
+  "- pid: 123",
+  "- window_bounds: x=8 y=40 w=1200 h=800 (screen points)",
+  "- screenshot: none — no image attached",
+  "- coords: bbox `@x,y w×h` are WINDOW-LOCAL POINTS (origin = window top-left, 1:1 points — NOT screenshot pixels)",
+  "",
+  "```text",
+  '- [0] AXApplication "Lumir"',
+  '  - [1] AXWindow "Lumir" @0,0 1200×800',
+  "    - [5] AXWebArea (Lumir)",
+  "      - [209] AXGroup (对话面板)",
+  '        - [210] AXStaticText = "你"',
+  '        - [211] AXStaticText = "· 3秒前"',
+  '        - [213] AXStaticText = "lktsmark"',
+  '        - [215] AXStaticText = "Agent"',
+  '        - [216] AXStaticText = "· 3秒前"',
+  '        - [218] AXStaticText = "段落里的裸链接"',
+  "```",
+].join("\n");
+
+const META_TIME = "/^· (刚刚|[0-9]+ ?(秒|分钟|小时)前|昨天)(?![\\s\\S])/";
+
+test("metaLine：角色与紧邻时间节点成对才 PASS——连续文本正则跨不过节点边界（152 的假 FAIL 形态）", async () => {
+  const root = tmpRoot("meta-line-pass");
+  useTmpEnv(root);
+  const scenario = {
+    steps: [
+      {
+        name: "恢复的 transcript",
+        expect: [
+          { label: "用户消息", metaLine: { role: "你", time: META_TIME } },
+          { label: "助手回复", metaLine: { role: "Agent", time: META_TIME } },
+        ],
+      },
+    ],
+  };
+  const { records } = await drive(root, scenario, { cu: { state: async () => ({ text: AX_WHO_LINE, image: null }) } });
+  assert.deepEqual(
+    records.map((r) => r.ok),
+    [true, true],
+    `相邻的角色 / 时间节点在场时必须绿；实际 ${JSON.stringify(records)}`,
+  );
+  assert.match(records[0].detail ?? "", /你 → · 3秒前/, "证据行要写出成对的角色与读数（可复核判到了哪两个节点）");
+  // 旧形态在同一份 dump 上恒不命中：这就是假 FAIL 的成因，钉住它防止退回连续文本判据。
+  assert.equal(
+    matcher("/你 · ?[0-9]+ ?(秒|分钟|小时)前/").test(AX_WHO_LINE),
+    false,
+    "连续文本正则跨不过节点边界——本场景首跑的两条假 FAIL 即此",
+  );
+});
+
+test("metaLine 反向：角色缺失 / 时间缺失 / 错配 / 不可读 / 退化快照 / 多消息缺一条 全部判 FAIL", async () => {
+  const root = tmpRoot("meta-line-reverse");
+  useTmpEnv(root);
+  const only = (role) => ({
+    steps: [{ name: "反向", expect: [{ label: "角色行", metaLine: { role, time: META_TIME } }] }],
+  });
+  const run = (text, role = "你") =>
+    drive(root, only(role), { cu: { state: async () => ({ text, image: null }) } }).then(({ records }) => records);
+  const without = (line) => AX_WHO_LINE.replace(`${line}\n`, "");
+
+  // 角色节点缺失：整行摘掉（读不到 ≠ 时间缺失，各自要有各自的错因）。
+  const noRole = await run(without('        - [210] AXStaticText = "你"'));
+  assert.deepEqual(noRole.map((r) => r.ok), [false], "角色缺失必须红");
+  assert.match(noRole[0].label, /角色节点缺失/, "错因要点明角色节点缺失");
+
+  // 时间缺失：角色后面直接是正文节点——相邻但不是读数。
+  const noTime = await run(
+    AX_WHO_LINE.replace('        - [211] AXStaticText = "· 3秒前"\n', ""),
+  );
+  assert.deepEqual(noTime.map((r) => r.ok), [false], "时间缺失必须红");
+  assert.match(noTime[0].label, /不匹配时间读数/, "错因要点明相邻节点不是时间读数");
+
+  // 错配：时间的位置换成另一个角色节点——相邻，但不是读数。
+  const mismatched = await run(AX_WHO_LINE.replace('        - [211] AXStaticText = "· 3秒前"', '        - [211] AXStaticText = "Agent"'));
+  assert.deepEqual(mismatched.map((r) => r.ok), [false], "错配必须红");
+
+  // 相邻节点不可读：没有 `= "…"` / `Value:` 的静态文本节点，parseNodes 取不到文本。
+  const unreadable = await run(AX_WHO_LINE.replace('        - [211] AXStaticText = "· 3秒前"', "        - [211] AXStaticText"));
+  assert.deepEqual(unreadable.map((r) => r.ok), [false], "相邻节点不可读必须红（不把读不到当空）");
+  assert.match(unreadable[0].label, /不可读/, "错因要点明不可读");
+
+  // 相邻节点不是文本节点（可访问名恰好是读数也不行）。
+  const wrongRole = await run(AX_WHO_LINE.replace('        - [211] AXStaticText = "· 3秒前"', '        - [211] AXButton (· 3秒前)'));
+  assert.deepEqual(wrongRole.map((r) => r.ok), [false], "相邻节点不是 AXStaticText 必须红");
+  assert.match(wrongRole[0].label, /不是时间读数节点/, "错因要点明节点角色不符");
+
+  // 退化快照（0 个节点）：不许在没有可观测树时下结论。
+  const degraded = await run("# App App State\n\n- pid: 1\n- element_count: 1\n");
+  assert.deepEqual(degraded.map((r) => r.ok), [false], "退化快照必须红");
+  assert.match(degraded[0].label, /快照退化/, "错因要点明快照退化");
+
+  // 多消息：第二条 `你` 没有时间读数——「至少有一条带读数」不算过，每条都要成对。
+  const twoMessages = AX_WHO_LINE.replace(
+    '        - [218] AXStaticText = "段落里的裸链接"',
+    '        - [218] AXStaticText = "段落里的裸链接"\n        - [230] AXStaticText = "你"\n        - [231] AXStaticText = "收尾。"',
+  );
+  const partial = await run(twoMessages);
+  assert.deepEqual(partial.map((r) => r.ok), [false], "多消息里只有一条带读数必须红（每一条都要成对）");
+});
+
+test("metaLine 静态校验：缺 role/time、非字符串、未知键、裸串正则转义都报 problem", () => {
+  const errs = (metaLine) => checkScenario({ id: "meta-line-check", item: 0, steps: [{ name: "m", expect: [{ metaLine }] }] });
+  assert.ok(
+    errs({ time: META_TIME }).some((p) => p.includes("metaLine.role 需要非空字符串")),
+    "缺 role 应报 problem（角色判据缺失 = 对着空文本找节点）",
+  );
+  assert.ok(
+    errs({ role: "你" }).some((p) => p.includes("metaLine.time 需要非空字符串")),
+    "缺 time 应报 problem（时间判据缺失 = 相邻节点随便什么都算过）",
+  );
+  assert.ok(
+    errs({ role: "你", time: META_TIME, bogus: 1 }).some((p) => p.includes("未知键 bogus")),
+    "未知键应报 problem（拼错即静默不判）",
+  );
+  assert.ok(
+    errs({ role: "你", time: "· \\d+秒前" }).some((p) => p.includes("metaLine.time") && p.includes("正则转义")),
+    "time 的裸串正则转义应报 problem（与其余 matcher 判据同口径）",
+  );
+  assert.deepEqual(errs({ role: "你", time: META_TIME }), []);
+});
+
 test("运行期兜底：零断言场景判 FAIL，不记绿", async () => {
   const root = tmpRoot("runtime-guard");
   useTmpEnv(root);

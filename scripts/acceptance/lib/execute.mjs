@@ -10,7 +10,7 @@ import { appendFile, open, readdir, readFile, rm, stat, writeFile } from "node:f
 import os, { tmpdir } from "node:os";
 import path from "node:path";
 import yaml from "js-yaml";
-import { coordsSpace, findNode, nodeName, parseNodes, windowBounds } from "./ax.mjs";
+import { coordsSpace, findNode, nextSiblingNode, nodeName, parseNodes, windowBounds } from "./ax.mjs";
 import {
   attachRelaunchedBundle,
   bundleBinary,
@@ -164,7 +164,7 @@ export const ACTIONS = new Set([
   // Vite 注入驱动里跑；报告写隔离 env，由场景用 file.jsonl 断言。
   "imeDrive",
 ]);
-export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel", "geom", "bytes", "node"]);
+export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel", "geom", "bytes", "node", "metaLine"]);
 
 /** 焦点读数（M678）：`ax: { focused: … }` 断言与 `focusWindow click` 的焦点校验**唯一**的实现
  *  （同一条语义两处实现，会在下一次改判定时只改到一处——REVIEW.md「同一语义两处真源」条）。
@@ -185,6 +185,54 @@ export function focusedRoleReading(nodes, { editor = null } = {}) {
     role: focused.length === 1 ? focused[0].role : null,
     isEditor: Boolean(editor) && focused.length === 1 && focused[0] === editor,
   };
+}
+
+/** 「角色 · 时间」行的结构化读数（场景 152 的假 FAIL 收口，2026-11-23）。
+ *
+ *  真机 AX 把 who 行渲染成**两个相邻的 AXStaticText**——`你` 与 `· 3秒前` 各占一个节点（Agent
+ *  同形）。连续文本判据 `/你 · ?[0-9]+ ?(秒|分钟|小时)前/` 因此永远跨不过节点边界：读数明明在场
+ *  （截图可证）而断言判红。这里改判**解析后的树结构**：文本恰等于 `role` 的节点之后，紧邻的下一个
+ *  同级节点必须是可读的 AXStaticText 且其文本命中 `time`（`matcher()` 口径）。
+ *
+ *  失败面全部判红、不静默：角色节点缺失、文本为角色的节点不是文本节点、后面没有同级节点、
+ *  相邻节点不可读、相邻节点不是 AXStaticText、相邻文本不匹配时间读数（错配）。**每一条**匹配到
+ *  角色的节点都要有读数——多消息里只有一条带读数同样是回归，不是「至少有一条就行」。
+ *
+ *  `role` 是**角色节点的完整文本**（逐字比较，不是正则）；`time` 是 `matcher()` 口径（子串或
+ *  `/…/`），与其余断言一致。 */
+export function metaLineReading(nodes, { role, time }) {
+  const m = matcher(time);
+  const roleNodes = nodes.filter((n) => nodeName(n) === role);
+  if (roleNodes.length === 0)
+    return { ok: false, reason: `角色节点缺失：AX 树里没有文本恰为 ${JSON.stringify(role)} 的节点`, readings: [] };
+  const readings = [];
+  const problems = [];
+  for (const roleNode of roleNodes) {
+    if (roleNode.role !== "AXStaticText") {
+      problems.push(`文本为 ${JSON.stringify(role)} 的节点角色是 ${roleNode.role}（不是可读文本节点）`);
+      continue;
+    }
+    const sibling = nextSiblingNode(nodes, roleNode);
+    if (!sibling) {
+      problems.push(`「${role}」后面没有同级节点（时间读数缺失）`);
+      continue;
+    }
+    const text = nodeName(sibling);
+    if (!text) {
+      problems.push(`「${role}」的相邻节点 ${sibling.role} 不可读（没有文本）`);
+      continue;
+    }
+    if (sibling.role !== "AXStaticText") {
+      problems.push(`「${role}」的相邻节点是 ${sibling.role} ${JSON.stringify(text)}（不是时间读数节点）`);
+      continue;
+    }
+    if (!m.test(text)) {
+      problems.push(`「${role}」的相邻节点是 ${JSON.stringify(text)}，不匹配时间读数 ${m.show}`);
+      continue;
+    }
+    readings.push(`${role} → ${text}`);
+  }
+  return problems.length === 0 ? { ok: true, readings } : { ok: false, reason: problems.join("；"), readings };
 }
 
 /** 真实正文单击的落点（相对 AXTextArea bbox 的**窗口局部点**偏移，M678；M762 改单位）：
@@ -973,6 +1021,22 @@ export function checkScenario(scenario) {
           }
         }
       }
+      else if (kinds[0] === "metaLine") {
+        // 「角色 · 时间」行（场景 152）：role 是角色节点的**完整文本**（逐字比较），time 走
+        // `matcher()`。形状写错（缺键 / 非字符串 / 未知键）会让判定对着空 role 或恒不命中的
+        // time 跑，故在静态层挡住。
+        const spec = exp.metaLine;
+        if (!isPlainTable(spec)) push(`${at} expect[${j}] metaLine 需要 { role, time }`);
+        else {
+          if (typeof spec.role !== "string" || spec.role === "")
+            push(`${at} expect[${j}] metaLine.role 需要非空字符串（角色节点的完整文本，逐字比较）`);
+          if (typeof spec.time !== "string" || spec.time === "")
+            push(`${at} expect[${j}] metaLine.time 需要非空字符串（子串或 /…/ 正则）`);
+          for (const k of Object.keys(spec)) {
+            if (!["role", "time"].includes(k)) push(`${at} expect[${j}] metaLine 未知键 ${k}（拼错即静默不判）`);
+          }
+        }
+      }
       else if (kinds[0] === "window") {
         // 窗口几何断言（M236；相对判据 M437）：至少一维或 moved；width/height 各是数值（绝对）
         // 或 `{ ofWork: 比例 }`（工作区 × 比例）。字段名 / 键名写错会静默变成「无期望值」，
@@ -1054,9 +1118,11 @@ export function checkScenario(scenario) {
         const judged =
           kinds[0] === "ax"
             ? { has: spec.has, not: spec.not, focused: spec.focused, "count.pattern": spec.count?.pattern }
-            : ["editor", "file", "clipboard"].includes(kinds[0])
-              ? { has: spec.has, not: spec.not }
-              : {};
+            : kinds[0] === "metaLine"
+              ? { time: spec.time }
+              : ["editor", "file", "clipboard"].includes(kinds[0])
+                ? { has: spec.has, not: spec.not }
+                : {};
         for (const [field, value] of Object.entries(judged))
           pushBare(`${at} expect[${j}] ${kinds[0]}.${field}`, value);
       }
@@ -2318,6 +2384,20 @@ export async function runScenario(ctx, scenario) {
       }
       if (spec.present === true) return fail(`${label}（期望 ${what} 节点在场，实际 AX 树里没有）`, tailAround(ax.text), ax);
       return pass(label, `节点不在场：${what}`);
+    }
+    if (expect.metaLine !== undefined) {
+      // 「角色 · 时间」行（场景 152）：判**树结构**而不是整棵树的连续文本——真机 dump 里 who 行
+      // 是两个相邻的 AXStaticText（`你` / `· 3秒前`），连续文本正则跨不过节点边界。判定与失败面
+      // 见 `metaLineReading`；这里只补「快照退化不下结论」（REVIEW.md「读不到当成空」条）与证据落盘。
+      const spec = expect.metaLine;
+      const ax = state.ax ?? (await readAx(cu, ctx.pid));
+      state.ax = ax;
+      if (ax.nodes.length === 0) {
+        return fail(`${label}（AX 快照退化：0 个节点，角色行与时间读数无法判定）`, "读不到一律判 FAIL，不在不可观测的窗口下结论", ax);
+      }
+      const reading = metaLineReading(ax.nodes, spec);
+      if (reading.ok) return pass(label, reading.readings.join("；"));
+      return fail(`${label}（${reading.reason}）`, tailAround(ax.text), ax);
     }
     if (expect.clipboard !== undefined) {
       // 剪贴板的断言形态（M244）：与 clipboardRead 动作共用同一个固定命令。
@@ -5186,6 +5266,10 @@ function describeExpect(expect) {
   if (expect.node) {
     const s = expect.node;
     return `节点${s.present ? "在场" : "不在场"}：${s.role ?? "任意角色"}${s.name ? ` name≈${s.name}` : ""}`;
+  }
+  if (expect.metaLine) {
+    const s = expect.metaLine;
+    return `角色行 ${JSON.stringify(s.role)} 带时间读数 ${matcher(s.time).show}`;
   }
   if (expect.shot) return `截图证据 ${expect.shot}`;
   return JSON.stringify(expect).slice(0, 80);
