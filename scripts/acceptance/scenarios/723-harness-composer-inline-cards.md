@@ -6,6 +6,8 @@ title: composer 零长度 inline cards：精确块序 + scoped AX + 一步 undo 
 open: harness-quote.md
 marker: "QALPHA"
 config:
+  keys:
+    "Cmd-j": "editor.select-all"
   harness:
     provider: mock
     fixture: "$fixtures/harness-mock-basic.json"
@@ -28,9 +30,11 @@ steps:
 
   - name: 键入卡后文本并核对 composer 子树顺序与负向 value
     do: typeInNode
-    target: { role: AXTextArea, name: "问点什么|CW-TEXT-B" }
+    target: { role: AXTextArea, name: ".*", nth: 1 }
     text: "CW-TEXT-B"
     expect:
+      - label: 注入后焦点仍在 composer 的 AXTextArea
+        ax: { focused: "AXTextArea" }
       - label: quote 在文本之前；编辑器里的 QALPHA 原文不参与 scoped 判序
         ax: { scope: { role: AXGroup, name: "问点什么" }, order: ["QALPHA", "CW-TEXT-B"] }
       - label: 卡片摘录不进入 composer 的 AXTextArea.value
@@ -39,28 +43,30 @@ steps:
 
   - name: 回编辑器重新建立选区
     do: clickEditor
-  - name: 第二行选区仍取合成摘录
+  - name: 移到第 4 行并选取 QBETA
     do: keys
-    keys: ["ctrl+shift+n"]
+    keys: ["ctrl+n", "ctrl+n", "ctrl+n", "ctrl+shift+n"]
   - name: 文末插入第二张卡
     do: click
     target: { role: AXButton, name: "摘录到对话" }
   - name: 键入第二段文字
     do: typeInNode
-    target: { role: AXTextArea, name: "CW-TEXT-B|CW-TEXT-C" }
+    target: { role: AXTextArea, name: ".*", nth: 1 }
     text: "CW-TEXT-C"
     expect:
+      - label: 第二段注入后焦点仍在 composer 的 AXTextArea
+        ax: { focused: "AXTextArea" }
       - label: 块序 = 卡 / 卡 / 文本 / 卡 / 文本
-        ax: { scope: { role: AXGroup, name: "问点什么" }, order: ["QALPHA", "QALPHA", "CW-TEXT-B", "QALPHA", "CW-TEXT-C"] }
+        ax: { scope: { role: AXGroup, name: "问点什么" }, order: ["QALPHA", "CW-TEXT-B", "QBETA", "CW-TEXT-C"] }
 
   - name: 全选折叠到文首再前进一个字符，准备行中插卡
     do: keys
-    keys: ["cmd+a", "left", "ctrl+f"]
+    keys: ["cmd+j", "left", "ctrl+f"]
   - name: 回编辑器建立摘录选区
     do: clickEditor
-  - name: 选中合成摘录
+  - name: 移到第 5 行并选取 QGAMMA
     do: keys
-    keys: ["ctrl+shift+n"]
+    keys: ["ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+shift+n"]
   - name: 行中插入第三张卡（拆行与卡片同一 history 步）
     do: click
     target: { role: AXButton, name: "摘录到对话" }
@@ -84,9 +90,16 @@ steps:
     do: key
     key: "cmd+z"
 
-  - name: ⌘A/⌘C 后读取外部剪贴板
+  - name: 复制前确认焦点与精确块序
+    do: settle
+    expect:
+      - label: 复制前焦点仍在 composer 的 AXTextArea
+        ax: { focused: "AXTextArea" }
+      - label: 复制前两段文字仍按原块序保留
+        ax: { scope: { role: AXGroup, name: "问点什么" }, order: ["QALPHA", "CW-TEXT-B", "QBETA", "CW-TEXT-C"] }
+  - name: ⌘J 全选 + ⌘C 后读取外部剪贴板
     do: keys
-    keys: ["cmd+a", "cmd+c"]
+    keys: ["cmd+j", "cmd+c"]
   - name: 外部剪贴板按平台归一后只含文本
     do: clipboardRead
     expect:

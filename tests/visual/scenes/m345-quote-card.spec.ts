@@ -201,7 +201,7 @@ test("点浮动钮：面板未开先开，卡片入 CM inline widget，焦点回
   const card = page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard");
   await expect(card).toHaveCount(1);
   await expect(card.locator(".lumir-hp-qc-bar")).toHaveCount(1);
-  await expect(card.locator(".lumir-hp-qc-ex")).toHaveText(QUOTED);
+  await expect(card.locator(".lumir-hp-qc-ex")).toHaveAttribute("data-excerpt", QUOTED);
   await expect(card.locator(".lumir-hp-qc-src")).toHaveText("harness-quote.md · 摘录卡片基线");
   await expect(page.locator(".lumir-hp-composer .cm-content")).toBeFocused();
   await expect(page.locator(".lumir-hp-composer .cm-line .lumir-hp-qcard")).toHaveCount(0);

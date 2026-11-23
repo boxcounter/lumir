@@ -59,7 +59,7 @@ test("Chromium CDP 真引擎组合：Backspace 不吃 committed 文本，取消/
   await expect(tray).toHaveCount(0);
   await page.keyboard.press("Meta+z");
   await expect(tray).toHaveCount(1);
-  await expect(tray.locator(".lumir-hp-qc-ex")).toHaveText(QUOTED);
+  await expect(tray.locator(".lumir-hp-qc-ex")).toHaveAttribute("data-excerpt", QUOTED);
   await expect.poll(async () => (await composerState(page)).doc).toBe("我");
   await page.locator(".lumir-hp-composer .cm-line").first().click();
   await compose("s");

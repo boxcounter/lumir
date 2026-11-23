@@ -184,7 +184,7 @@ export function scopedAxOrder(nodes, scope, markers) {
     if (node !== root && node.depth <= root.depth) break;
     subtree.push(node);
   }
-  const texts = subtree.map((node) => `${node.role} ${nodeName(node)}`.trim());
+  const texts = subtree.map((node) => `${node.role} ${nodeName(node)} ${node.help ?? ""}`.trim());
   let cursor = 0;
   const positions = [];
   for (const marker of markers) {

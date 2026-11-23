@@ -163,7 +163,7 @@ test("点钮：消息摘录卡入 composer（出处行「对话 · Agent」、×
   await expect(card).toHaveCount(1);
   await expect(card).toHaveClass(/lumir-hp-msgquote/); // 新块类（样式仍走 .lumir-hp-qcard 整族）
   await expect(card.locator(".lumir-hp-qc-bar")).toHaveCount(1);
-  await expect(card.locator(".lumir-hp-qc-ex")).toHaveText(assistantText);
+  await expect(card.locator(".lumir-hp-qc-ex")).toHaveAttribute("data-excerpt", assistantText);
   await expect(card.locator(".lumir-hp-qc-src")).toHaveText("对话 · Agent");
   await expect(card.locator(".lumir-hp-qc-x")).toHaveCount(1);
   // hover title：完整摘录 + 绝对时间（本地化短格式，含年份则证明来自 ts）。

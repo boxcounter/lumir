@@ -1995,6 +1995,9 @@
    灰阶，不消费 accent 蓝——change Non-goals 的 accent 中性化约束）+ 摘录截断（≤2 行）+
    等宽小字出处行（文档名 · 最近一级标题）+（composer 内）× 移除钮。composer 中是零长度
    block widget 的内容，卡片本身不可编辑、不可聚焦，只经 × 移除。 ───────────────────── */
+.lumir-hp-cwidget .lumir-hp-qc-ex::before {
+  content: attr(data-excerpt);
+}
 .lumir-hp-qcard {
   display: flex;
   align-items: stretch;

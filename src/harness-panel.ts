@@ -4417,6 +4417,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         badge?.replaceChildren(String(ordinal));
         badge?.setAttribute("aria-label", t("D447", { n: String(ordinal), name: attachment.card.card.name }));
       },
+      label: (attachments, ordinals) => attachments.map((attachment) => {
+        if (attachment.card.kind === "quote") return t("D374");
+        if (attachment.card.kind === "msgquote") return t("D444");
+        return t("D447", { n: String(ordinals.get(attachment.id) ?? 0), name: attachment.card.card.name });
+      }).join(" / "),
       prune: () => imageThumbCache.prune(),
     }),
     EditorView.contentAttributes.of({
@@ -4427,6 +4432,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     EditorView.updateListener.of((update) => {
       const cardsChanged = update.startState.field(composerAttachmentsField)
         !== update.state.field(composerAttachmentsField);
+      syncComposerAriaValue();
       if (cardsChanged) {
         refreshChip();
         if (update.startState.field(composerAttachmentsField).length !== update.state.field(composerAttachmentsField).length && !update.view.compositionStarted) {
@@ -4709,6 +4715,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     source.textContent = imageCardMetaText(card.name, card.width, card.height);
     main.append(thumb, source);
     el.append(main);
+    if (mode === "composer") {
+      el.setAttribute("role", "group");
+      el.setAttribute("aria-label", imageCardMetaText(card.name, card.width, card.height));
+    }
     // 恢复路径补记宽高（M449）：建模时无尺寸的卡片（快照从 wire 引用恢复，ImageCard
     // width/height 可选）在缩略图 <img> load 后读自然尺寸补进元信息行。只改这一行 DOM
     // 文本、不写回卡片模型：重渲时该 <img> 会重新 load 再补一次（缩略图 URL 缓存不含
@@ -4785,7 +4795,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     main.className = "lumir-hp-qc-main";
     const excerpt = document.createElement("div");
     excerpt.className = "lumir-hp-qc-ex";
-    excerpt.textContent = card.text;
+    if (mode === "composer") excerpt.dataset.excerpt = card.text;
+    else excerpt.textContent = card.text;
     const source = document.createElement("div");
     source.className = "lumir-hp-qc-src";
     // 派生读数接在出处行之后（同一行、同一档小字——不新增行，卡片几何零改动）。
@@ -4801,6 +4812,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     source.textContent = readouts.length === 0 ? sourceText : `${sourceText} · ${readouts.join(" · ")}`;
     main.append(excerpt, source);
     el.append(bar, main);
+    if (mode === "composer") {
+      el.setAttribute("role", "group");
+      el.setAttribute("aria-label", `${card.text} —— ${sourceText}`);
+    }
     el.title = msgCard ? messageQuoteHoverTitle(card) : cardHoverTitle(card);
     if (mode === "composer") {
       const remove = document.createElement("button");
@@ -4840,12 +4855,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return el;
   }
 
+  function syncComposerAriaValue(): void {
+    composerView.contentDOM.setAttribute("aria-valuetext", composerView.state.doc.toString());
+  }
+
   function updateEmptyClass(): void {
     composer.classList.toggle("is-empty", composerIsEmpty(composerView.state));
   }
 
   function resetComposer(content: Parameters<typeof createComposerState>[0] = { text: "", caret: 0, cards: [] }): void {
     composerView.setState(createComposerState(content, composerViewExtensions));
+    syncComposerAriaValue();
     updateEmptyClass();
     imageThumbCache.prune();
   }
@@ -10094,6 +10114,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   composer.addEventListener("compositionend", () => {
     imeGateState = imeGateCompositionEnd(imeGateState, Date.now());
     composerIme.compositionEnd(viewGeneration);
+  });
+  composer.addEventListener("copy", (event: ClipboardEvent) => {
+    if (event.clipboardData === null) return;
+    const main = composerView.state.selection.main;
+    event.preventDefault();
+    event.clipboardData.setData("text/plain", composerView.state.sliceDoc(main.from, main.to));
   });
   composer.addEventListener("paste", (event: ClipboardEvent) => {
     event.preventDefault();

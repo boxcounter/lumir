@@ -66,7 +66,7 @@ test("⌘A 后键入替换全文，undo 恢复，tray 附件逐字段不变", as
   await page.keyboard.type("X");
   await expect(content.locator(".cm-line")).toHaveText("X");
   await expect(card).toHaveCount(1);
-  await expect(card.locator(".lumir-hp-qc-ex")).toHaveText(QUOTED);
+  await expect(card.locator(".lumir-hp-qc-ex")).toHaveAttribute("data-excerpt", QUOTED);
   const cardInsideSelection = await page.evaluate(() => {
     const selection = window.getSelection()!;
     const card = document.querySelector(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard")!;

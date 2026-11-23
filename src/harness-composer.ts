@@ -324,6 +324,7 @@ export function composerImageOrdinals(state: EditorState): ReadonlyMap<number, n
 export interface ComposerInlineCardRenderer {
   create(attachment: PlacedAttachment, ordinal: number | null): HTMLElement;
   update?(element: HTMLElement, attachment: PlacedAttachment, ordinal: number | null): void;
+  label(attachments: readonly PlacedAttachment[], ordinals: ReadonlyMap<number, number>): string;
   prune?(): void;
 }
 
@@ -363,6 +364,8 @@ export class InlineCardsWidget extends WidgetType {
     const dom = document.createElement("div");
     dom.className = "lumir-hp-cwidget";
     dom.contentEditable = "false";
+    dom.setAttribute("role", "group");
+    dom.setAttribute("aria-label", this.renderer.label(this.attachments, this.ordinals));
     for (const attachment of this.attachments) {
       const element = this.renderer.create(attachment, this.ordinalOf(attachment));
       element.dataset.attachmentId = String(attachment.id);
@@ -373,6 +376,7 @@ export class InlineCardsWidget extends WidgetType {
 
   updateDOM(dom: HTMLElement, _view: EditorView, previous: this): boolean {
     if (!this.sameIdentity(previous)) return false;
+    dom.setAttribute("aria-label", this.renderer.label(this.attachments, this.ordinals));
     for (const attachment of this.attachments) {
       const element = dom.querySelector<HTMLElement>(`[data-attachment-id="${attachment.id}"]`);
       if (element === null) return false;
