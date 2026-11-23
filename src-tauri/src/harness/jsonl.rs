@@ -25,7 +25,7 @@ use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use serde::Serialize;
 
@@ -282,7 +282,8 @@ impl PersistenceTransitions {
             .push_back(health.clone());
     }
 
-    /// 队列中尚未交付的跃迁数（延迟重试的退出判据；测试也用它断言事件未被丢弃）。
+    /// 测试专用：队列中尚未交付的跃迁数（断言事件未被丢弃）。
+    #[cfg(test)]
     fn pending_len(&self) -> usize {
         self.0
             .lock()
@@ -382,11 +383,14 @@ impl PersistenceTransitions {
     }
 
     /// 启动一个延迟重试线程（单队列至多一个；`retry_scheduled` 已在锁内置位）。
+    ///
+    /// 线程只持有 `Weak<TransitionState>`：睡眠期间不阻止 Session / Writer 销毁后释放队列；
+    /// 每轮 wake 时 upgrade 一次、短暂持强引用完成一次 drain，再释放。upgrade 失败即退出。
     fn spawn_retry_thread(&self) {
-        let queue = self.clone();
+        let weak = Arc::downgrade(&self.0);
         let spawned = std::thread::Builder::new()
             .name("lumir-persistence-retry".into())
-            .spawn(move || queue.retry_loop());
+            .spawn(move || Self::retry_loop(weak));
         if let Err(e) = spawned {
             // 线程起不来（资源耗尽）：事件仍保留在队列；后续自然写入会再次尝试调度。
             eprintln!("lumir: persistence 事件重试线程启动失败：{e}");
@@ -397,30 +401,41 @@ impl PersistenceTransitions {
         }
     }
 
-    /// 有界延迟重试：每次 sleep 后尝试 drain 到空；永久 panic 时事件留在队首、退避继续，
-    /// 不忙转、不递归。队列空后释放 `retry_scheduled` 并退出。
-    fn retry_loop(&self) {
+    /// 有界延迟重试：每次 sleep 后 upgrade 弱引用，短暂持强引用尝试 drain 到空。
+    /// 永久 panic 时事件留在队首、退避继续，不忙转、不递归；队列空且无在途 drainer 时
+    /// （同一把锁判据）释放 `retry_scheduled` 并退出。Session / Writer 销毁后 upgrade 失败，
+    /// 线程立即退出，队列不被线程强持。
+    fn retry_loop(weak: Weak<Mutex<TransitionState>>) {
         let mut attempt: u32 = 0;
         loop {
             attempt = attempt.saturating_add(1);
             std::thread::sleep(retry_backoff(attempt));
-            if self.pending_len() == 0 {
-                self.finish_retry();
+            let Some(inner) = weak.upgrade() else {
+                return;
+            };
+            let queue = PersistenceTransitions(inner);
+            if queue.try_finish_retry() {
                 return;
             }
-            self.flush();
-            if self.pending_len() == 0 {
-                self.finish_retry();
+            queue.flush();
+            if queue.try_finish_retry() {
                 return;
             }
+            drop(queue);
         }
     }
 
-    fn finish_retry(&self) {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .retry_scheduled = false;
+    /// 退出判据：必须在**同一把锁**内同时确认队列空且没有别的 drainer 在途。
+    /// 另一 drainer 已 pop 唯一事件、正在 reporter 中时，pending 暂时为空但 draining=true；
+    /// 此时若清 `retry_scheduled` 退出，drainer panic 重排后就没有延迟接管者了。
+    fn try_finish_retry(&self) -> bool {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if state.pending.is_empty() && !state.draining {
+            state.retry_scheduled = false;
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -2194,6 +2209,94 @@ mod tests {
                 std::time::Instant::now() < deadline,
                 "延迟重试未在 5s 内交付（已收 {} 条）",
                 seen.lock().unwrap().len()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    /// 终审 P1：retry 退出必须同时看到「队列空」与「没有别的 drainer 在途」。若另一 drainer
+    /// 已 pop 走唯一事件、正在 reporter 中，retry 不得清 scheduled 退出；drainer panic 重排后
+    /// 仍须有延迟接管者。
+    #[test]
+    fn retry_exit_requires_empty_queue_and_no_active_drainer() {
+        let transitions =
+            PersistenceTransitions::with(Some(Arc::new(|_health: &PersistenceHealth| {})));
+        let degraded = PersistenceHealth {
+            state: PersistenceState::Degraded,
+            detail: "degraded-in-flight".into(),
+            ..Default::default()
+        };
+        transitions.push(&degraded);
+        {
+            let mut state = transitions.0.lock().unwrap();
+            assert!(state.pending.pop_front().is_some(), "模拟 drainer 已 pop");
+            state.draining = true;
+            state.retry_scheduled = true;
+        }
+        assert!(
+            !transitions.try_finish_retry(),
+            "另一 drainer 在途（pending 暂时为空）时 retry MUST NOT 退出"
+        );
+        assert!(
+            transitions.0.lock().unwrap().retry_scheduled,
+            "retry_scheduled 不得被误清"
+        );
+
+        // 模拟该 drainer 连续 panic 三次：事件重排回队首、draining 释放。
+        {
+            let mut state = transitions.0.lock().unwrap();
+            state.pending.push_front(degraded);
+            state.draining = false;
+        }
+        assert!(
+            !transitions.try_finish_retry(),
+            "drainer panic 重排后事件仍在队列，retry MUST NOT 退出"
+        );
+        assert!(
+            transitions.0.lock().unwrap().retry_scheduled,
+            "retry_scheduled 必须保持，等待下一轮接管"
+        );
+
+        // 模拟下一轮 drainer 成功交付：队列空且无 drainer 时才允许退出并清标记。
+        {
+            let mut state = transitions.0.lock().unwrap();
+            assert!(state.pending.pop_front().is_some());
+            state.draining = false;
+        }
+        assert!(
+            transitions.try_finish_retry(),
+            "队列空且无 drainer 时 retry 才能退出"
+        );
+        assert!(!transitions.0.lock().unwrap().retry_scheduled);
+    }
+
+    /// 终审 P2：永久 panic 时 retry 线程不得强持队列 Arc；销毁 Session/writer 的强引用后，
+    /// Weak 必须失效（线程下一轮升级失败退出），队列可释放。
+    #[test]
+    fn permanent_panic_retry_thread_holds_only_weak_and_releases_queue() {
+        let reporter: PersistenceReporter = Arc::new(|_health: &PersistenceHealth| {
+            panic!("permanent reporter panic for weak test");
+        });
+        let transitions = PersistenceTransitions::with(Some(reporter));
+        let weak = Arc::downgrade(&transitions.0);
+        let degraded = PersistenceHealth {
+            state: PersistenceState::Degraded,
+            detail: "degraded-weak".into(),
+            ..Default::default()
+        };
+        transitions.push(&degraded);
+        transitions.flush(); // 3 次立即 panic 后调度延迟线程
+        assert_eq!(transitions.pending_len(), 1, "事件仍在队列");
+
+        drop(transitions);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            if weak.upgrade().is_none() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "retry 线程仍强持队列 Arc（Weak 在销毁强引用后仍可 upgrade）"
             );
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
