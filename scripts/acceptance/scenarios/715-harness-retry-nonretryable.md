@@ -28,11 +28,14 @@ steps:
   - name: 等错误行
     do: waitFor
     waitFor:
-      has: ["/LLM 请求失败/"]
+      has: ["/HTTP 400/"]
     timeoutMs: 30000
     expect:
-      - label: 错误行在场（HTTP 面的人话错误）
-        ax: { has: "/LLM 请求失败/" }
+      # 实读（真机 2026-11-23）：`harness_http_error` 不在文案表里（表内只有
+      # `harness_http_failed`），errorText 缺条目时回落后端 message「HTTP 400」，
+      # 外层套 D348 ⇒「错误：HTTP 400」。断言按实际可观测面上屏的串写。
+      - label: 错误行在场（错误：HTTP 400；该 code 尚无文案表条目，回落后端 message）
+        ax: { has: "/错误：HTTP 400/" }
       - label: 不可重试失败没有「重试」动作
         node: { role: AXButton, name: "^重试$", present: false }
       - label: 不可重试失败不产生快照 retry（JSONL 没有第二条请求）

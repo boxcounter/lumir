@@ -85,8 +85,11 @@ steps:
     expect:
       - label: 批准后 B 恰好删除
         file: { path: retry-del-b.md, exists: false }
-      - label: 三对记录（首轮 + 失败请求 + 重试请求）
-        file: { path: "env:harness/sessions/*/*.jsonl", count: { pattern: '"kind":"llm_request"', exact: 3 } }
+      # 4 条是正确语义：① 首轮（tool_call A）→ ② 批准后携带 A 输出再往返（失败）→
+      # ③ 重试（tool_call B）→ ④ 批准后携带 B 输出再往返（最终回答）。批准后的新工具结果
+      # 本来就要再发一次 provider 请求，不是重复执行。
+      - label: 四对记录（首轮 + 失败请求 + 重试请求 + 批准 B 后的收尾请求）
+        file: { path: "env:harness/sessions/*/*.jsonl", count: { pattern: '"kind":"llm_request"', exact: 4 } }
       - shot: 03-两次删除完成
 ---
 

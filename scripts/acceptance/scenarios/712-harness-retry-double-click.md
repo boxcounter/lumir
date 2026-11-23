@@ -34,9 +34,18 @@ steps:
   - name: 第一次点重试
     do: click
     target: { role: AXButton, name: "^重试$" }
-  - name: 立刻再点一次（第一次仍在流式；第二次必须被禁用 / busy 挡住）
-    do: click
-    target: { role: AXButton, name: "^重试$" }
+  # 第二击**不做**：按钮点击后立即 disabled，AXPress 一个禁用节点必然报
+  # `target element is disabled (AXEnabled=false)`——那是装置层的动作失败，不是产品行为。
+  # 连点语义的可观测面改为「禁用标记在场 + 请求数只 +1」，见下一步与末尾计数。
+  - name: 断言动作已禁用（在途窗口内第二次点击不可能被受理）
+    do: waitFor
+    waitFor:
+      has: ["/AXButton \\(重试\\)[^\\n]*\\(disabled\\)/"]
+    timeoutMs: 5000
+    expect:
+      - label: 重试动作在第一次点击后立即禁用（AX 文本带 (disabled)）
+        ax: { has: '/AXButton \(重试\)[^\n]*\(disabled\)/' }
+      - shot: 01-第一次点击后动作禁用
   - name: 等重试成功
     do: waitFor
     waitFor:

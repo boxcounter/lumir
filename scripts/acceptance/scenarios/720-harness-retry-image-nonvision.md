@@ -54,11 +54,23 @@ steps:
   - name: 选 kimi（probe-novision，vision:false）
     do: click
     target: { name: "^kimi$" }
-  - name: 等 chip 读数翻到 kimi 档
-    do: waitFor
-    waitFor:
-      has: ["模型：probe-novision"]
+  # 实读（真机 2026-11-23）：probe-novision 声明 effort:false ⇒ `thinkSupported=false`，
+  # chip 的读屏名取 D390「当前模型不支持思考程度调节」——**不含 model 名**（model 名只在可见
+  # 文本里，WKWebView 不把它暴露成独立 AX 节点）。因此不能等「模型：probe-novision」，
+  # 用 config 写回（provider 已切到 kimi）作选择生效的正观测。
+  - name: 等 provider 写回 kimi（选择已生效）
+    do: waitForFile
+    waitForFile:
+      path: "env:config.json"
+      has: '"provider": "kimi"'
     timeoutMs: 15000
+    expect:
+      - label: 选择已写回 config（harness.provider = kimi）
+        file: { path: "env:config.json", has: '"provider": "kimi"' }
+  - name: Esc 关闭选择浮层
+    do: key
+    key: escape
+    gapMs: 200
   - name: 点重试（应被 vision 前置闸拒绝）
     do: click
     target: { role: AXButton, name: "^重试$" }

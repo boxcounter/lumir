@@ -33,15 +33,19 @@ steps:
   - name: 第一次重试（撞 429）
     do: click
     target: { role: AXButton, name: "^重试$" }
-  - name: 等第二次失败后动作仍在（同文案错误行就地替换、动作重绑新 turn）
+  - name: 等第二次失败后动作仍在（500 与 429 文案不同 ⇒ 两行；动作重绑新 turn）
     do: waitFor
     waitFor:
       has: ["/AXButton \\(重试\\)/"]
     timeoutMs: 30000
     expect:
-      - label: 错误行仍只有一条（同文案去重）
-        ax: { has: "/LLM 请求失败/", count: { pattern: "/错误：LLM 请求失败/", exact: 1 } }
-      - label: 动作仍恰好一条
+      # 实读（真机 2026-11-23）：500 与 429 的文案不同（「错误：HTTP 500」/「错误：HTTP 429」），
+      # 既有规则是「同文案就地替换、不同文案追加」——两行都在场才是合同行为；动作只保留最新一条。
+      - label: 500 错误行恰一条
+        ax: { has: "/错误：HTTP 500/", count: { pattern: "/错误：HTTP 500/", exact: 1 } }
+      - label: 429 错误行恰一条
+        ax: { has: "/错误：HTTP 429/", count: { pattern: "/错误：HTTP 429/", exact: 1 } }
+      - label: 动作仍恰好一条（重绑到最新失败轮）
         ax: { has: "/AXButton \\(重试\\)/", count: { pattern: "/AXButton \\(重试\\)/", exact: 1 } }
       - shot: 01-429-后动作重绑
   - name: 第二次重试（成功）

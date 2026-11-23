@@ -51,9 +51,11 @@ steps:
   - name: 切回 A
     do: click
     target: { any: "点击查看全部 vault" }
-  - name: 点 A（列表按 lastOpenedAt 倒序，A 在 B 之前；取第一行）
+  # 切到 B 之后 `mark_opened` 刷新了 B 的 last_opened_at，列表按最近打开倒序 ⇒ **B 排第一**。
+  # 旧写法 `nth: 0` 因此点到当前项 B（no-op），A 从未被切回。用负向前瞻精确选 A 那一行。
+  - name: 点 A（按显示名精确排除 B 行）
     do: click
-    target: { role: AXStaticText, any: "lumir-m102-acceptance", nth: 0 }
+    target: { role: AXStaticText, any: "lumir-m102-acceptance(?!-b)" }
   - name: 等 A 回来
     do: waitFor
     waitFor:
