@@ -117,8 +117,16 @@ export function createGotoLinePrompt(options: GotoLinePromptOptions): GotoLinePr
 
   function close(restoreFocus = true): void {
     if (!opened) return;
+    const focused = document.activeElement;
     dismiss();
-    if (restoreFocus) options.restoreFocus();
+    if (restoreFocus) {
+      options.restoreFocus();
+      return;
+    }
+    // 被动关闭（change focus-created-document-nov23）：焦点 MUST NOT 留在已收起的输入条里。
+    // 浏览器对 `hidden` 元素的焦点修复发生在下一帧，晚于创建链路的收尾判定（同 src/quick-open.ts
+    // 同一处的注释）。显式放回 `body`；用户已把焦点放到浮层之外时是空操作。
+    if (focused instanceof HTMLElement && popover.contains(focused)) focused.blur();
   }
 
   function confirm(): void {

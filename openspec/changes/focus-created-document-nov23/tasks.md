@@ -1,0 +1,149 @@
+# Tasks: focus-created-document-nov23
+
+> 施工前提：**F1 / F3 已按推荐批准（Alex 2026-11-23）；F2 修订已于 2026-11-23 追认通过
+> （Alex 原话「好，按这个规则处理」）。** 0.1 / 0.2 / 0.3 记录批准、落值与追认闸门；全部
+> 实现与验证项仍未勾，本 change 尚未进入实现。未勾项不删除，放弃的就地写理由。
+
+## 0. 节点 1 与红线
+
+- [x] 0.1 节点 1 **通过**：F1 / F3 按 Alex 2026-11-23「按推荐」批准；F2 修订经 Alex
+      2026-11-23「好，按这个规则处理」追认通过（记录见 `proposal.md` 节点状态块）
+- [x] 0.2 F1 / F3 批准值与 F2 修订值已落到 `proposal.md` / `design.md` /
+      `specs/file-tree/spec.md`；F2 的追认状态与送裁原文均已记录
+- [x] 0.3 **F2 追认闸门已通过**：Alex 原话「好，按这个规则处理」（2026-11-23）已抄进
+      `proposal.md` 节点状态与 F2 裁决行；实现项仍未勾
+- [x] 0.4 开工前过一遍 `REVIEW.md`，重点对照「断言等价于子串」「读不到当成空」「同一语义两处
+      真源」
+- [x] 0.5 **不改默认行为**：树点击、快速打开、wikilink 跟随、会话恢复不因本 change 改变焦点
+      语义；唯一新增是创建分支显式传入的 `passiveOverlayClose`（默认 `false`）。发现必须改默认
+      值时停下走影响面升级线
+- [x] 0.6 **不改快速打开的焦点交还**：成功打开后仍关闭输入面并把焦点交还编辑器（living spec
+      的既有条款）；只补公开 `close(restoreFocus?: boolean)` 签名与转发，默认 `true` 不变
+- [x] 0.7 **只用 `focusPreservingReadingPosition`**：MUST NOT 裸 `view.focus()`；不新增第二条
+      聚焦通路 / `EditorHandle` 方法
+
+## 1. 先红（旧实现上必须红）
+
+- [x] 1.1 新增 chromium 结构场景（`tests/visual/scenes/`，沿用现有 create-file 场景的桩与
+      harness）：
+      - 目录下新建 → 断言 `document.activeElement === view.contentDOM`；旧实现焦点在 `body`，必红
+      - `view.state.selection.main.head === firstBodyLineStart(view.state.doc)`；`scrollTop === 0`
+- [x] 1.2 新增「装载中焦点被移到仍在场的目标」负例：给 `fs_read_snapshot` 加延时桩（照
+      `tauri-stub.ts:122-125` / `:867-868` 的 `urlTitleDelayMs` 先例），装载途中点进 harness
+      composer，断言焦点仍在 composer、编辑器选区 / `scrollTop` 未变
+- [x] 1.3 新增「装载中打开 quick-open」负例：延时桩生效后发 `⌘P`；从提交起同时监听
+      `focusin` 与 `lumir:source-ready`（记录 `detail.path`）。**唯一分界 = 目标路径的
+      `lumir:source-ready`**（`detail.path === 创建路径`；该事件在 `reloadSession` 的装载
+      事务与 `normalizeInitialCaret()` 之后发出，见 `src/editor.ts:3274`）。断言：分界之前
+      **没有任何 `contentDOM` 获焦**；分界之后才允许出现创建链路的最终聚焦。`focusin` 记录
+      时间 / 目标 / 当时前台 path 供失败诊断；最终 `activeElement === contentDOM` 只作补充
+      判据。MUST NOT 用「旧文档标记消失 / 空文档文本」当分界
+- [x] 1.4 新增「装载中打开 goto-line」负例：延时桩生效后发 `⌥G`；同一分界（目标路径的
+      `lumir:source-ready`）与「分界前无 contentDOM 获焦」判据；最终 `activeElement` 只作补充
+- [ ] 1.5 若测试装配允许，给 quick-open / goto-line 的 `restoreFocus` 加 spy，断言创建链路的
+      被动关闭**没有调用**它；spy 只作补充，不替代 1.3 / 1.4 的事件序列
+      ——**未做，就地登记理由**：`restoreFocus` 是装配层注入的回调（`editor.focusPreservingRead
+      ingPosition`），页面侧不可观测；加 spy 要么在产品侧开测试钩子（与「不新增第二条聚焦通路」
+      的窄口径冲突），要么改注入面。1.3 / 1.4 的事件序列判据已直接判定同一可观察结果（分界前
+      零 `contentDOM` 获焦），且旧实现与「只保留 afterLoad passive」两轮反向验证都如实变红
+      （证据见 `.local/missions/focus-created-document-nov23/red-0*.log`）。
+- [x] 1.6 新增快速打开回归用例：打开 quick-open 并选中一个既有文件 → 浮层关闭后
+      `document.activeElement === contentDOM`；旧实现与新实现都必须绿（钉住 passive close
+      MUST NOT 波及默认路径）
+- [x] 1.7 新增反向用例：文件树点击打开既有文件后 `document.activeElement` 不是 `contentDOM`；
+      本用例 MUST NOT 断言快速打开「不聚焦」
+- [x] 1.8 负例的区分度先验：**只保留 `afterLoad` 那处 passive、临时去掉激活阶段的透传**，
+      确认 1.3 / 1.4 必红——激活阶段的默认 `close` 会在目标路径 `source-ready` 之前把焦点
+      交给 `contentDOM`，事件序列判据必须抓住这一拍；再临时去掉 2.1 的判定条件，确认 1.2
+      变红。两条反向验证都通过，才能证明判据不是在最终 `contentDOM` / DOM 文本上假绿
+
+## 2. 实现（`src/main.ts` 为主，覆盖完整激活链）
+
+- [x] 2.1 `submitInlineEdit` 的 `create-file` 分支：`await fsCreateFile` 之前捕获
+      `const claim = document.activeElement`
+- [x] 2.2 改为 `const opened = await openFile(created, openKind(created), "new", false,
+      undefined, { passiveOverlayClose: true })`
+- [x] 2.3 `openFile` / `loadSessionContent` 增加可选的 `passiveOverlayClose?: boolean`
+      （默认 `false`）并向下透传；其他调用方不传
+- [x] 2.4 `loadSessionContent` 把选项传给 `activateSessionInOwnerPane(session, options)` 与
+      `afterLoad(options)`
+- [x] 2.5 `activateSessionInOwnerPane(session, options?)` 把选项传给 `activatePane(paneId,
+      options)` 与 `tabs.activateTab(session, options)`
+- [x] 2.6 `activatePane(paneId, options?)` 把选项传给它的 `syncActiveDocument(options)`
+- [x] 2.7 `TabsHandle.activateTab(session, options?)` 增加可选参数，并把选项转发给它的
+      `syncActiveDocument` 注入；`src/main.ts` 里该注入改为接收并转发选项（默认 `false`）。
+      `tabs.activateTab` 内部还会调 `TabsDeps.activatePane()`；本链路里
+      `activateSessionInOwnerPane` 已先翻好 pane，该调用是 no-op。若实现发现它可能先执行并
+      触发默认 sync，须把 options 一并透传（默认 `false`）
+- [x] 2.8 `syncActiveDocument({ passiveOverlayClose = false } = {})`：
+      `gotoLine.close(!passiveOverlayClose)`、`quickOpen.close(!passiveOverlayClose)`；
+      默认分支逐字不变
+- [x] 2.9 `src/quick-open.ts`：公开接口 `QuickOpenHandle.close` 与返回包装改为
+      `close(restoreFocus?: boolean): void` 并转发；内部 `close(restoreFocus = true)` 不变
+- [x] 2.10 判定抽成纯函数（`shouldClaimFocus(active, claim)`：`body` / `null` / `claim` 为真），
+      便于单测；放在 `src/main.ts` 或就近纯逻辑模块
+- [x] 2.11 `opened === true` 且判定为真时调用 `editor.focusPreservingReadingPosition()`；否则
+      什么都不做
+- [x] 2.12 注释写明「新文档阅读位置在原点，本调用退化为只聚焦」、M280 口径、以及 passive close
+      只为创建链路生效、必须覆盖激活阶段与装载收尾两段同步点
+- [x] 2.13 确认目录行 / 根级 / 空 vault 三入口都走同一条链路（`rg "beginCreate|create-file"`），
+      不为任一入口另写聚焦
+- [x] 2.14 纯函数单测：`body` / `null` / `claim` 同节点 / 焦点在别处 / `claim` 已从 DOM 移除
+
+## 3. 焦点与几何矩阵（chromium）
+
+- [x] 3.1 入口矩阵：目录行 / 根级 / 空 vault「新建笔记」三入口各一例，焦点与 caret 断言一致
+- [ ] 3.2 文档形态矩阵：空文件、有 frontmatter 的文件、只有 frontmatter 的短文件——head 分别
+      为 0 / 第一条正文行行首 / 文档起点后的合法落点；`scrollTop = 0`
+      ——**只覆盖空文件（head = 0 / scrollTop = 0），就地登记理由**：本链路的文档恒为「新建的
+      空文件」（spec「新建文件 SHALL 为空文件」），frontmatter 形态在这条路径上不可能出现；
+      C3 对 frontmatter 的落点口径由既有的 cursor-visibility 场景覆盖，本 change 不改 caret。
+- [x] 3.3 键入落点：新建后直接键入标记串，断言编辑器正文出现该串、文件树与 `body` 不接收
+- [x] 3.4 失败分支：`openFile` 返回 `false`（未命名 dirty 守卫）时不聚焦、旧文档焦点不变
+- [x] 3.5 反向矩阵：文件树点击既有文件、新建子目录两种情形焦点逐值不变；快速打开单独按 1.6
+      的回归判据断言「交还编辑器」，MUST NOT 混进「不聚焦」矩阵
+- [x] 3.6 几何：聚焦前后标签栏、编辑器矩形与 `scrollTop` 不变（聚焦不得把视口滚走）
+- [x] 3.7 浮层级联：装载中打开 quick-open / goto-line 的两例（1.3 / 1.4）在 light / dark 各跑
+      一次；每次都核对焦点事件序列（激活阶段无 `contentDOM` 获焦），最终 `activeElement`
+      只作补充
+- [x] 3.8 回归默认路径：不传 `passiveOverlayClose` 的打开（树点击 / 快速打开）仍按原语义
+      关闭浮层并恢复焦点；用 1.6 的回归用例钉住
+
+## 4. 真机与既有场景回扫
+
+- [x] 4.1 扩展 `scripts/acceptance/scenarios/47c-create-and-delete.md`「新建文件并自动打开」步：
+      加 `ax: { focused: "AXTextArea" }`；随后键入标记串并断言 `editor: { has: ... }`
+- [x] 4.2 `rg "新建文件|新建笔记|beginCreate" scripts/acceptance/scenarios/` 回扫全部既有期望，
+      逐条确认没有「焦点留在文件树 / body」的相反断言；有则按本 change 改准
+- [x] 4.3 `rg "快速打开|quick-open" scripts/acceptance/scenarios/` 回扫既有焦点期望，确认
+      「快速打开后交还编辑器」没有被本 change 改坏
+- [x] 4.4 真机重跑 47c（删除 / 新建 / 撞名链路一起），证据落 `.local/acceptance/<批次>/`；用
+      绝对路径 `ls` 确认后再写进报告
+- [x] 4.5 真机不造「装载中焦点被抢」与「装载中打开浮层」时序（造不出稳定现场，已在 design
+      写明分工）；这两族只由 chromium 的事件序列判据覆盖
+
+## 5. 像素与门禁
+
+- [x] 5.1 本地跑 `scripts/gate.sh visual`；焦点变化不应改像素（光标是瞬态），出现差异先定位
+- [x] 5.2 如需新截图，只出候选落 `.local/reviews/ux-improvements/`（git 外）；`--update` 属
+      Alex 人肉裁决点
+- [x] 5.3 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过，记录 `Totals:` 原文
+- [x] 5.4 `bash scripts/docs-check.sh` 通过（含 archive-check 门禁模式、验收场景契约与覆盖表）
+- [x] 5.5 `scripts/gate.sh quick` 通过；照抄 `GATE RESULT` 原文行 + 退出码（SKIP 单列）
+- [x] 5.6 `scripts/gate.sh visual` 通过（动过 `tests/visual/scenes/**`，必须本地跑）
+
+## 6. 收尾
+
+- [x] 6.1 `tasks.md` 全部勾选，未勾项就地写放弃理由
+- [x] 6.2 实现后回改 `design.md` 的行号 / 符号名（若与最终代码不一致）
+- [ ] 6.3 实现 PR 合并时在 `docs/backlog.md` 的归档跟踪队列落一条本 change 记录（队列 76 行、
+      硬上限 80；先核可删的僵尸条目，不为压行数删活条目）
+      ——**未做（不变更范围）**：本 mission 只提交 mission 分支，不 merge / 不归档；这条属于
+      合并节点的动作，留给 tower 在合并时执行。
+- [ ] 6.4 交独立 reviewer；verdict 绑定当前 tip；归档前逐条核对节点 2 五要件
+      ——**未做（流程节点）**：独立评审由 tower 在 mission 分支 tip 上派发；worker 不自评。
+
+## 7. 信息卫生
+
+- [x] 7.1 视觉桩与真机场景只用合成 vault 名 / 文件名 / 正文
+- [x] 7.2 提交前对改动面做一次 text 级 grep 清扫；截图类证据只落 `.local/`（git 外）

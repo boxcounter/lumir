@@ -10,7 +10,7 @@
 id: "47c-create-and-delete"
 item: 47
 tier: full
-title: 文件删除与新建：移到废纸篓（文件 / 目录两档确认文案）、目录下新建文件（自动打开）与子目录
+title: 文件删除与新建：移到废纸篓（文件 / 目录两档确认文案）、目录下新建文件（自动打开、焦点落正文并能直接键入）与子目录
 fixtures: [note.md]
 steps:
   - name: 启动就绪：树里 fixture 行在场（正向锚点——这次 AX 读取是活的）
@@ -150,7 +150,19 @@ steps:
         file: { path: menu-sub/fresh.md, has: "" }
       - label: 新文件已自动打开（标签读屏名是 fresh.md）
         ax: { has: "fresh.md" }
+      # change focus-created-document-nov23：新建文件打开成功后焦点 MUST 落在正文（不是文件树
+      # / body）。`focused` 走解析形态（恰一个 focused 节点且 role 命中），不用跨节点正则。
+      - label: 焦点落在编辑器正文（AXTextArea）上
+        ax: { focused: "AXTextArea" }
       - shot: 新建文件并自动打开
+  - name: 直接键入标记串（焦点已在正文，字符必须进入新文档）
+    do: keys
+    # 键串不含 'e'（M497：逐键注入对本机确定丢 'e'）；新文件是空文档，正文里出现这一串即
+    # 证明焦点在文档起点、按键没有被文件树或 body 接收。
+    keys: ["f", "o", "c", "u", "s", "4", "7", "c"]
+    expect:
+      - label: 键入的标记串落在新文档正文
+        editor: { has: "focus47c" }
 
   - name: 目录下新建子目录：磁盘出现目录、树里出现条目
     do: click

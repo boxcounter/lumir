@@ -99,7 +99,8 @@ import type { TreeMenuAction, TreeMenuTarget } from "./tree-menu";
 // link-follow（解析缓存 + 链接跟随）、tabs（标签栏 DOM）、bindings-panel（键位查看面板）。
 import { createLinkFollow } from "./link-follow";
 import { createTabs } from "./tabs";
-import type { TabsHandle } from "./tabs";
+import type { DocumentSwitchOptions, TabsHandle } from "./tabs";
+import { shouldClaimFocus } from "./focus-claim";
 import { createBindingsPanel } from "./bindings-panel";
 import { createSettingsPanel } from "./settings-panel";
 import { WIDTH_HANDLE_LABEL, WIDTH_SAVE_FAILED_TEXT, createContentWidthDrag } from "./content-width";
@@ -476,11 +477,14 @@ function disposePaneHandle(handle: PaneHandle): void {
 }
 
 /** 活跃 pane 指针的唯一翻转点（焦点进入 / 标签条交互 / 跨 pane 激活共用）：翻完对齐
- *  一次表现层——modeline / 树高亮 / 大纲读的都是活跃 pane 的前台文档。 */
-function activatePane(paneId: PaneId): void {
+ *  一次表现层——modeline / 树高亮 / 大纲读的都是活跃 pane 的前台文档。
+ *
+ *  `options` 只在创建链路的激活链上非空（change focus-created-document-nov23），缺省 =
+ *  既有行为（见 `DocumentSwitchOptions`）。 */
+function activatePane(paneId: PaneId, options: DocumentSwitchOptions = {}): void {
   if (paneLayout.active().id === paneId) return;
   paneLayout.activate(paneId);
-  syncActiveDocument();
+  syncActiveDocument(options);
 }
 
 /** 按一个 EditorView 找到它所属 pane 并翻成活跃 pane（M317 2.3 的鼠标路径：事件只带视图，
@@ -551,12 +555,19 @@ function paneEntryOfSession(session: EditorSession): [PaneId, PaneAssembly] | un
   return undefined;
 }
 
-/** 在属主 pane 激活一个会话并把活跃 pane 翻过去（不移动标签的场景：会话恢复激活等）。 */
-function activateSessionInOwnerPane(session: EditorSession): void {
+/** 在属主 pane 激活一个会话并把活跃 pane 翻过去（不移动标签的场景：会话恢复激活等）。
+ *
+ *  `options` 沿创建链路的装载透传（change focus-created-document-nov23）：激活阶段的两个
+ *  同步点（`activatePane` / `tabs.activateTab` 的注入）都必须在同一拍上知道「浮层被动关闭」，
+ *  只改装载收尾挡不住这里的抢焦。 */
+function activateSessionInOwnerPane(
+  session: EditorSession,
+  options: DocumentSwitchOptions = {},
+): void {
   const entry = paneEntryOfSession(session);
   if (entry === undefined) return;
-  activatePane(entry[0]);
-  entry[1].tabs?.activateTab(session);
+  activatePane(entry[0], options);
+  entry[1].tabs?.activateTab(session, options);
 }
 
 /** 把一个会话**整体迁到**目标 pane（M317 tasks 4.1 / 4.2）：源实例摘除、目标实例接管。
@@ -683,14 +694,14 @@ function createPaneTabs(paneId: PaneId, handle: EditorHandle, stripEl: HTMLEleme
     isBackupFailed: (path) => save.isRecoveryFailure(path),
     invalidateResolve: () => linkFollow.invalidate(),
     showEditor: () => showEditor(),
-    syncActiveDocument: () => syncActiveDocument(),
+    syncActiveDocument: (options) => syncActiveDocument(options),
     // 「关闭全部标签」把标签全关完后没有标签可归还焦点：交给编辑器（M280 口径：聚焦不得把
     // 阅读位置拽回光标处，MUST NOT 裸 view.focus()）。
     focusEditor: () => handle.focusPreservingReadingPosition(),
     // 标签条交互（点标签 / 点关闭钮）先把这个 pane 翻成活跃 pane（M329，bug 1）。调用点在
     // tabs.ts 的交互漏斗里（它的 DOM 监听自己绑），**不是**在这里覆写对外方法——覆写挡不住
     // DOM 点击路径，那正是「点非活跃 pane 的标签不装载内容」的成因。
-    activatePane: () => activatePane(paneId),
+    activatePane: (options) => activatePane(paneId, options),
     // 树是下面 `let tree` 绑定的单例，赋值在 createPaneTabs 首次调用之后——闭包在动作
     // 发生时读，装配期不读，因此没有时序问题（与 M149 起就有的那条注释同款模式）。
     revealInTree: (path) => tree.revealPath(path),
@@ -2692,6 +2703,10 @@ async function submitInlineEdit(request: InlineEditRequest): Promise<void> {
 
   try {
     if (request.mode === "create-file") {
+      // 焦点判定（change focus-created-document-nov23）：`claim` 取在 `await` **之前**——此刻
+      // 焦点在内联输入框上（`submitting` 已置位，失焦不会取消提交）。装载期间用户若把焦点移
+      // 到仍在场的其它目标（树行 / composer / 编辑器），收尾判定据此放弃，不拽回。
+      const claim = document.activeElement;
       const created = await fsCreateFile(request.parentRel, request.name);
       tree.endInlineEdit(true);
       // 新建文件成功即自动打开（§3.5）：**不等 watcher 回响**——打开走读取链路，与树的
@@ -2699,7 +2714,21 @@ async function submitInlineEdit(request: InlineEditRequest): Promise<void> {
       // 「自己的标签」就是唯一的标签形态——预览机制已退场，但落点意图仍要显式写出来：
       // openFile 的默认值是 "current"，那是「就地替换前台文档」）。
       // md / 其余类型由 openKind 一处裁决。
-      void openFile(created, openKind(created), "new");
+      //
+      // `passiveOverlayClose` 只为这条创建链路生效（默认 false）：装载**激活阶段**的同步点
+      // 会把焦点交还「当前前台文档」，而那一刻前台已是新会话、正文还是旧的——被动关闭把
+      // 焦点留给下面的收尾判定。参数必须覆盖激活阶段与装载收尾两段同步点（openFile 内部
+      // 逐层透传），只改装载收尾挡不住那一拍。
+      const opened = await openFile(created, openKind(created), "new", false, undefined, {
+        passiveOverlayClose: true,
+      });
+      // 打开失败（dirty 守卫等）不聚焦——焦点不能交给一个没有打开成功的旧文档。判定为真
+      // 才交还焦点：`body` / `null` / 仍是提交时那个输入框 = 用户没有把焦点移到任何新目标。
+      // 走的必须是 M280 唯一合法的交还实现（`focusPreservingReadingPosition`，MUST NOT 裸
+      // `view.focus()`）；新文档的阅读位置本来就在原点，写回是空动作，等价于「只聚焦」。
+      if (opened && shouldClaimFocus(document.activeElement, claim, document.body)) {
+        activeEditor().focusPreservingReadingPosition();
+      }
       return;
     }
     await fsCreateDir(request.parentRel, request.name);
@@ -2747,17 +2776,22 @@ editor.onScroll(() => readingPositions.scrolled());
 
 /** 前台会话变化后把周边表现层**一次**对齐：正文基准路径、modeline（路径 + 右段派生信息）、
  *  后端 dirty 镜像、大纲指示段、文件树高亮、标签栏。这是「当前文档」在装配层的唯一同步点——
- *  别处的读点一律改为问 editor.activeSession()，不再各自存副本。 */
-function syncActiveDocument(): void {
+ *  别处的读点一律改为问 editor.activeSession()，不再各自存副本。
+ *
+ *  `passiveOverlayClose`（change focus-created-document-nov23）只由创建链路的装载传入：
+ *  为真时下面两处 `close()` 只收起浮层、不把焦点交还当前前台文档（默认行为逐字不变）。 */
+function syncActiveDocument({ passiveOverlayClose = false }: DocumentSwitchOptions = {}): void {
   const session = editor.activeSession();
   // 跳转到行的输入条**不跨会话**（M281）：落点行号只对打开时那份文档有意义，前台文档一换就
   // 收起且不跳转（切标签 / 被外部打开请求置换两条路径都汇到这里）。收起时把焦点交还编辑器
   //（用户接下来的按键应落在新文档上；`focusPreservingReadingPosition` 不改变阅读位置）。
-  gotoLine.close();
+  // 创建链路的装载传入 passiveOverlayClose 时改成被动关闭：装载**激活阶段**的前台已是新会话、
+  // 正文却还是旧的，此时交还焦点就是「在 openFile 返回前抢走用户焦点」，事后无法撤销。
+  gotoLine.close(!passiveOverlayClose);
   // 按路径快速打开同理（M655 的 spec「前台会话切换时收起」）：输入串指向的是切换前那一刻的
   // 上下文，切换后 MUST NOT 打开任何文件。成功打开那一次也走这里（会话确实换了）——浮层因此
   // 在打开成功时才收起，失败时保持打开、输入内容保留。
-  quickOpen.close();
+  quickOpen.close(!passiveOverlayClose);
   // resolve 的 from 基准不在这里同步：它由 link-follow.ts 的 resolveBase() 活读前台会话
   //（见那边的注释，那份副本曾在装载时序上造成一整批 wikilink 停在 pending）。
   syncDirtyIndicator();
@@ -2794,9 +2828,9 @@ function syncActiveDocument(): void {
 /** 装载完成后的表现层对齐（打开 / 重载共用）。
  *  解析缓存失效不在这里：它必须发生在装载**之前**（openFile 里 reloadSession 的前一句），
  *  否则会抹掉装载事务里刚发起的在途 resolve，mtime 到达后的重建会重复查询（M227）。 */
-function afterLoad(): void {
+function afterLoad(options: DocumentSwitchOptions = {}): void {
   showEditor();
-  syncActiveDocument();
+  syncActiveDocument(options);
 }
 
 /** 打开一张图片（M629，design §3.2）：命中已开的图片标签则前台化，否则在落点 pane 新建一个
@@ -2863,6 +2897,9 @@ async function openFile(
   intent: "new" | "current" = "current",
   quiet = false,
   targetPane?: number,
+  // 创建链路的装载口径（change focus-created-document-nov23）：只有 `submitInlineEdit` 的
+  // create-file 分支传 `{ passiveOverlayClose: true }`，其余调用方不传、行为逐字不变。
+  options: DocumentSwitchOptions = {},
 ): Promise<boolean> {
   // 壳态标签（vault 会话恢复建出来、内容还没装载，M283 的 3.1）：把内容填进**它自己**的
   // 标签，不新建标签（标签栏点击那条路径另有触发点，见 ensureActiveSessionLoaded）。
@@ -2898,7 +2935,7 @@ async function openFile(
     // 经 `withSessionLoad` 登记在途：装载里的 `tabs.activateTab` 会经同步点回调到
     // `ensureActiveSessionLoaded`，不登记就会为同一个文件并发发起第二次装载。
     return withSessionLoad(existing, () =>
-      loadSessionContent(() => existing, path, kind, quiet),
+      loadSessionContent(() => existing, path, kind, quiet, options),
     );
   }
   // 已经打开的文件一律切到既有标签：不重复开、也不重读（非 md 只读，重读只会把用户
@@ -2918,7 +2955,7 @@ async function openFile(
   }
   // 新开一个标签（"new"）或就地替换前台标签（"current"）：会话在快照读成之后才落点——
   // 读失败的请求不许留下一个多余的空标签。落点 = 活跃 pane 的标签条（已裁形态）。
-  return loadSessionContent(() => activeTabs().targetSessionFor(intent), path, kind, quiet);
+  return loadSessionContent(() => activeTabs().targetSessionFor(intent), path, kind, quiet, options);
 }
 
 // vault 外只读打开（M655，change quick-open-file-oct23 的 D2 倾向侧 / design §5.6）：
@@ -2992,6 +3029,9 @@ async function loadSessionContent(
   // 「文本装载器把一份空文本装进图片会话」这条路径因此不可能存在（design §1.2 的红线）。
   kind: Exclude<OpenKind, "image">,
   quiet: boolean,
+  // 创建链路的装载口径（change focus-created-document-nov23）：沿激活链与装载收尾两段
+  // 同步点原样透传；缺省 = 既有行为。
+  options: DocumentSwitchOptions = {},
 ): Promise<boolean> {
   const request = save.beginSwitch();
   if (kind === "binary") {
@@ -3017,7 +3057,7 @@ async function loadSessionContent(
     // 却没有它（无数据丢失，但状态机出格）。按失败收口：调用方（会话恢复）据此退化到下一个候选，
     // 用户看到的是一次正常的恢复。新标签路径（`tabs.targetSessionFor`）晚绑定，结构上不可能命中。
     if (!editor.sessions().includes(session)) return false;
-    activateSessionInOwnerPane(session); // 已在同一会话上时是 no-op
+    activateSessionInOwnerPane(session, options); // 已在同一会话上时是 no-op
     // 解析缓存整批失效必须在装载**之前**（save-controller.ts 外部重载路径的同序写法）：
     // 装饰层在 reloadSession 的装载事务里首次构建并发起 link_graph_resolve（在途），
     // 装完再清会把在途标记一并抹掉——随后 mtime 到达触发的 previewRefresh 重建时，
@@ -3037,7 +3077,7 @@ async function loadSessionContent(
     // M283 起它同样是**壳态标签首次成为前台**时恢复阅读位置的那一步（结果与今天一致，时间点
     // 从「装载完成时」后移到「首次成为前台时」——spec 已把这条写成可观察结果不变的边界）。
     readingPositions.restoreFor(path);
-    afterLoad();
+    afterLoad(options);
     return true;
   } catch (e) {
     if (!save.isCurrent(request)) return false;

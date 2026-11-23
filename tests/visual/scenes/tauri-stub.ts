@@ -127,6 +127,14 @@ export interface VaultFixture {
    */
   urlTitles?: Record<string, string | null>;
   urlTitleDelayMs?: number;
+  /**
+   * `fs_read_snapshot` 桩的按路径应答延迟（change focus-created-document-nov23）：键 = vault
+   * 相对路径，值 = 该路径读取的延迟毫秒数。用于造「装载在途」的现场——新建文件的装载链路
+   * 停在 `await fs_read_snapshot` 上，场景可在这段窗口里打开 quick-open / goto-line，或把焦点
+   * 移到仍在场的其它目标。照 `urlTitleDelayMs` 的先例（同一形态，不另造通道）。
+   * 未收录的路径不延迟；`0` 等价于未收录。
+   */
+  snapshotDelayMs?: Record<string, number>;
   failures?: Record<string, { code: string; message: string; params?: Record<string, unknown> }>;
   /** `vault_list` 桩：注册表内容（缺省按当前 fixture 派生**一条**「当前 vault」行——
    *  单 vault 下浮层仍要出现，见 change task 3.1）。 */
@@ -706,9 +714,13 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         (w.__remapCalls as Array<{ id?: string; path?: string }>).push({ id: args.id, path: args.path });
         return { id: args.id, path: args.path };
       },
-      fs_read_snapshot: (args) => {
+      fs_read_snapshot: async (args) => {
         const text = current?.files?.[args.path ?? ""];
         if (text === undefined) throw { code: "fs_not_found", message: `文件不存在：${args.path}` };
+        // 装载在途的唯一入口（change focus-created-document-nov23）：延时在**读到内容之后**，
+        // 因此「延迟结束」与真后端读完响应的时序同形（应答携带的是同一份内容）。
+        const delay = current?.snapshotDelayMs?.[args.path ?? ""] ?? 0;
+        if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
         return { content: text, revision: `fixture-revision-${text}` };
       },
       // 单文件 mtime（M218 A1 doc-meta「修改于」的数据源）：真后端读盘（取不到为 null 不报错），

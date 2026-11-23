@@ -472,8 +472,12 @@ export interface QuickOpenOptions {
 export interface QuickOpenHandle {
   /** 命令入口：已打开则收起，否则打开（未装载 vault 只给提示、不打开空浮层）。 */
   toggle(): void;
-  /** 收起（前台会话切换等被动路径调用；已收起时是空操作）。 */
-  close(): void;
+  /** 收起（前台会话切换等被动路径调用；已收起时是空操作）。
+   *
+   *  `restoreFocus` 缺省 `true` = 既有语义（关闭后把焦点交还编辑器）。false 用于「文档切换
+   *  被动关闭浮层」：焦点不交还当前前台文档，留给调用方的收尾判定（change
+   *  focus-created-document-nov23 的 `passiveOverlayClose`）。 */
+  close(restoreFocus?: boolean): void;
   isOpen(): boolean;
 }
 
@@ -671,8 +675,19 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
 
   function close(restoreFocus = true): void {
     if (!opened) return;
+    const focused = document.activeElement;
     dismiss();
-    if (restoreFocus) options.restoreFocus();
+    if (restoreFocus) {
+      options.restoreFocus();
+      return;
+    }
+    // 被动关闭（change focus-created-document-nov23）：焦点 MUST NOT 留在已收起的输入面里。
+    // 浏览器对 `hidden` 元素的焦点修复发生在**下一帧**（HTML 的 focusing fixup 走 update the
+    // rendering），晚于创建链路的收尾判定——那时 `activeElement` 还是这个已隐藏的 input，
+    // 判定会误以为「用户把焦点放在了别处」而放弃聚焦。因此这里显式把焦点放回 `body`，
+    // 接下来的去向由调用方决定。用户已把焦点放到浮层之外时（失焦 / 点外部关闭）这一步是
+    // 空操作，焦点仍归用户刚选的目标。
+    if (focused instanceof HTMLElement && popover.contains(focused)) focused.blur();
   }
 
   function setActive(index: number): void {
@@ -1174,8 +1189,8 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
       render();
       input.focus();
     },
-    close() {
-      close();
+    close(restoreFocus = true) {
+      close(restoreFocus);
     },
     isOpen: () => opened,
   };

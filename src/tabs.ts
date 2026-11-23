@@ -166,11 +166,21 @@ export async function closeEach(
   }
 }
 
+/** 表现层同步 / 标签激活的可选口径（change focus-created-document-nov23）。
+ *
+ *  `passiveOverlayClose` 为真时，这一拍上 `syncActiveDocument` 关闭 quick-open / goto-line
+ *  只收起浮层、**不把焦点交还当前前台文档**——焦点落回 `body`，交给创建链路的收尾判定
+ *  （新建文件装载完成后把焦点交给新文档）。默认 `false` = 既有行为逐字不变；唯一传 `true`
+ *  的是 `submitInlineEdit` 的 create-file 分支，且必须沿**完整激活链**透传（激活阶段与装载
+ *  收尾的每个同步点），只改装载收尾挡不住激活阶段那次抢焦。 */
+export interface DocumentSwitchOptions {
+  passiveOverlayClose?: boolean;
+}
+
 export interface TabsDeps {
   editor: EditorHandle;
   /** 标签栏容器（shell.tabStrip）。 */
-  mount: HTMLElement;
-  /** 右键菜单的挂点（app-shell 根）：标签栏自己是横向滚动容器（overflow-x: auto），
+  mount: HTMLElement;  /** 右键菜单的挂点（app-shell 根）：标签栏自己是横向滚动容器（overflow-x: auto），
    *  菜单挂进去会被裁掉——与文件树菜单同一条理由。 */
   overlayMount: HTMLElement;
   /** 提示出口（关标签确认用的是 sticky 提示）。第 4 个参数是「sticky 浮条被点掉、用户没有
@@ -193,8 +203,9 @@ export interface TabsDeps {
   invalidateResolve: () => void;
   /** 撤下「暂不支持预览」覆盖层（切换 / 关闭标签后）。 */
   showEditor: () => void;
-  /** 前台文档变化后的表现层一次对齐（装配层的 syncActiveDocument）。 */
-  syncActiveDocument: () => void;
+  /** 前台文档变化后的表现层一次对齐（装配层的 syncActiveDocument）。
+   *  `options` 由激活链透传（见 {@link DocumentSwitchOptions}），缺省 = 既有行为。 */
+  syncActiveDocument: (options?: DocumentSwitchOptions) => void;
   /** 把焦点交给这个 pane 的编辑器（装配层的 `handle.focusPreservingReadingPosition`，
    *  MUST NOT 裸 `view.focus()`——聚焦不得把阅读位置拽回光标处，见 `src/scroll-position-view.ts`）。
    *
@@ -218,7 +229,7 @@ export interface TabsDeps {
    *
    *  条款居所（living spec）：`openspec/specs/pane-layout/spec.md` 的「标签条交互的活跃 pane
    *  落点」。 */
-  activatePane: () => void;
+  activatePane: (options?: DocumentSwitchOptions) => void;
   /** 「在左栏中定位到此文件」（M300）：把这一个路径交给文件树的 `revealPath`。
    *  **注入而不是让本模块自己够到树**：树在装配层是 `let` 绑定的单例（赋值晚于 createTabs），
    *  而标签模块没有、也不该有树的句柄——与 `syncActiveDocument` 同一条接线模式（闭包在动作
@@ -233,8 +244,9 @@ export interface TabsDeps {
 export interface TabsHandle {
   /** 从会话列表**全量重建**标签栏（前台会话 / 会话集合变化后调用）。 */
   renderTabs(): void;
-  /** 切换前台会话（已是前台时只重绘标签栏）。 */
-  activateTab(session: EditorSession): void;
+  /** 切换前台会话（已是前台时只重绘标签栏）。`options` 沿创建链路的激活透传
+   *  （见 {@link DocumentSwitchOptions}）；缺省 = 既有行为。 */
+  activateTab(session: EditorSession, options?: DocumentSwitchOptions): void;
   /** 关标签：有未保存修改的先给三个出口确认。 */
   closeTab(session: EditorSession): Promise<void>;
   /** 按意图挑落点会话（只决定「落到哪个标签」，内容装载在 openFile 里做）：`"new"` = 新开
@@ -420,11 +432,14 @@ export function createTabs(deps: TabsDeps): TabsHandle {
     else if (rect.right > viewRight) mount.scrollLeft += rect.right - viewRight;
   }
 
-  function activateTab(session: EditorSession): void {
+  function activateTab(session: EditorSession, options?: DocumentSwitchOptions): void {
     // 先让所属 pane 成为活跃 pane（M329，bug 1）：同步点按活跃 pane 解析前台，少了这一步
     // 时「点非活跃 pane 的标签」不装载内容——本句是那条不变量的唯一落点，DOM 监听与对外
     // 方法（cycleTab / gotoCommands / saveThenClose）都走这里。
-    activatePane();
+    // 创建链路（focus-created-document-nov23）里所属 pane 已被 `activateSessionInOwnerPane`
+    // 先翻好，这一句因此是 no-op；仍把 options 透传，避免「将来某条路径先翻 pane 并触发默认
+    // 同步」时静默抢焦。
+    activatePane(options);
     if (session !== editor.activeSession()) {
       editor.activateSession(session);
       invalidateResolve(); // from 变了（多半是另一篇文档），按 from 键控的缓存整批失效
@@ -432,7 +447,7 @@ export function createTabs(deps: TabsDeps): TabsHandle {
     }
     // 已经是前台时也要重绘：调用方可能在本次调用前改过会话的可见属性（路径 / 未保存状态），
     // 标签栏必须跟着变。
-    syncActiveDocument();
+    syncActiveDocument(options);
   }
 
   /** 关标签：有未保存修改的先给三个出口确认（文案 D92 / D93）。
