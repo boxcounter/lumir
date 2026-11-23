@@ -855,3 +855,133 @@ test("权限规则段滚动条：隐藏档，溢出态下删除钮不被压住�
   expect(reading.webkitDisplay).toBe("none");
   expect(reading.offsetWidth - reading.clientWidth).toBe(0);
 });
+
+// ── 待批可见性（change fix-harness-approval-visibility-nov23 tasks 1.3）──────────────
+//
+// 阶段行新增「等待批准…」档：判据只读当前会话的待决批准集合，优先级 停止中 > 等待批准 >
+// 等待响应 / 生成中。三条判据：
+//   1. running + 待批 → 等待批准…；后续正文分片维持（集合未空）；决策后回落生成档；
+//   2. 无审批的对照组（正文分片 + 工具调用）始终读生成档，MUST NOT 误报；
+//   3. idle 遗留待批（旧快照 in_flight:false + pending_approvals）不落卡，发送新轮不复活。
+
+/** 待批快照桩：注册在 `stubHarnessComposer` 之后（init script 后注册的包在外层，先拿到
+ *  harness_state 调用）。`pending` 是快照的待决列表；`inFlight` 是相位读数。 */
+async function stubApprovalState(
+  page: Page,
+  state: { inFlight: boolean; pending?: Array<Record<string, unknown>> },
+): Promise<void> {
+  await page.addInitScript((options: typeof state) => {
+    const w = window as unknown as Record<string, any>;
+    const inner = w.__TAURI_INTERNALS__.invoke;
+    w.__approvalStateCalls = 0;
+    w.__approvals = [] as unknown[];
+    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
+      if (cmd === "harness_state") {
+        w.__approvalStateCalls += 1;
+        return JSON.stringify({
+          messages: [],
+          usage: { ctx_pct: 0, cache_pct_session: 0, has_usage: false },
+          pending_approvals: options.pending ?? [],
+          warn_ctx_pct: 85,
+          thinking: { level: "high", supported: true },
+          in_flight: options.inFlight,
+        });
+      }
+      if (cmd === "harness_approve") {
+        w.__approvals.push({ request_id: args.request_id, approved: args.approved });
+        return null;
+      }
+      return inner(cmd, args);
+    };
+  }, state);
+}
+
+function fireHarness(page: Page, payload: Record<string, unknown>): Promise<void> {
+  return page.evaluate(
+    (body) => (window as unknown as { __fireHarnessEvent: (p: unknown) => void }).__fireHarnessEvent(body),
+    payload,
+  );
+}
+
+/** 等进入快照真的落地（避免「发送早于快照」把待批重放装进新轮的竞态）。 */
+async function waitSnapshot(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => ((window as unknown as { __approvalStateCalls: number }).__approvalStateCalls ?? 0) >= 1,
+  );
+}
+
+test("阶段行待批档：running + 待批读「等待批准…」，决策后回落；无审批对照组不误报", async ({
+  page,
+}) => {
+  await stubTauri(page, VAULT);
+  await stubHarnessComposer(page);
+  await stubApprovalState(page, { inFlight: false, pending: [] });
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("第一段");
+  await page.locator(".lumir-hp-toggle").click();
+  const stage = page.locator(".lumir-hp-stage");
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await waitSnapshot(page);
+
+  // 无待批的对照组：发送 → 等待响应…；正文分片 → 生成中；工具调用不改变档位。
+  await page.locator(".lumir-hp-composer .cm-content").fill("这一轮先跑一段");
+  await page.locator(".lumir-hp-send").click();
+  await expect(stage).toHaveText("等待响应…");
+  await fireHarness(page, { type: "text_chunk", text: "先给一段正文分片。" });
+  await expect(stage).toHaveText("正在生成回复…");
+  await fireHarness(page, { type: "tool_call", name: "Read", status: "started", summary: "harness-note.md" });
+  await expect(stage).toHaveText("正在生成回复…");
+  // 标题栏同一份判据：段状态词在无待批时不可见（toggle 在分栏态被退让条款隐藏）。
+  await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
+
+  // 待批到达 → 独立成档；后续正文增量维持「等待批准…」（集合未空）。
+  await fireHarness(page, {
+    type: "approval_request",
+    id: "call_stage_1",
+    tool: "vault_patch",
+    diff: "--- a/harness-note.md\n+++ b/harness-note.md\n@@ -1 +1 @@\n-旧行\n+新行",
+  });
+  await expect(stage).toHaveText("等待批准…");
+  await expect(page.locator(".lumir-hp-seg-status")).toHaveText("等待批准");
+  await expect(page.locator(".lumir-hp-seg-status")).toBeVisible();
+  await fireHarness(page, { type: "text_chunk", text: "模型在闸后继续产出。" });
+  await expect(stage).toHaveText("等待批准…");
+
+  // 采纳 → 同一同步批次退出待批，回落到生成档。
+  await page.locator('button[data-act="approve"]').click();
+  await expect(stage).toHaveText("正在生成回复…");
+  await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
+  await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("处理中");
+});
+
+test("idle 遗留待批：不落卡、发送新轮不复活「等待批准」", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarnessComposer(page);
+  const staleDiff = "--- a/harness-note.md\n+++ b/harness-note.md\n@@ -1 +1 @@\n-旧行\n+新行";
+  await stubApprovalState(page, {
+    inFlight: false,
+    pending: [{ id: "call_stale", tool: "vault_patch", diff: staleDiff }],
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await waitSnapshot(page);
+
+  // 快照说不在途、却带待决列表：按陈旧项丢弃——不渲染可决策卡、不置待批状态。
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-approval")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
+  await expect(page.locator(".lumir-hp-stage")).toBeHidden();
+
+  // 发送新一轮：阶段行读等待响应，MUST NOT 继承旧待批。
+  await page.locator(".lumir-hp-composer .cm-content").fill("旧待批不得复活这一轮");
+  await page.locator(".lumir-hp-send").click();
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("等待响应…");
+  await fireHarness(page, { type: "text_chunk", text: "新轮的正文。" });
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("正在生成回复…");
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
+  await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("处理中");
+});

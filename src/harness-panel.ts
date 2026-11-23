@@ -1440,6 +1440,25 @@ export function reduceSendPhase(phase: SendPhase, event: SendEvent): SendPhase {
 }
 
 /**
+ * 阶段行文案键（change fix-harness-approval-visibility-nov23 design §3.2）：零 DOM 的纯选择器，
+ * 优先级 **停止中 > 等待批准 > 等待响应 / 生成中** 只在这里写一次。
+ *
+ * - 待批档只在 `running` 成立：`idle` + 待决集合是陈旧数据（旧快照缺在途读数 / 终态后迟到），
+ *   没有在途轮次可依附，MUST NOT 产出待批键；`stopping` 时用户已请求停止，先读 D400。
+ * - `pending` 只来自面板的 `hasPendingApprovals()`（`pendingApprovals.size > 0`），MUST NOT 由
+ *   事件种类、计时、文案或另一枚布尔推导。
+ */
+export function stageCopyKey(
+  phase: SendPhase,
+  pending: boolean,
+  stageWaiting: boolean,
+): "D400" | "D976" | "D381" | "D382" {
+  if (phase === "stopping") return "D400";
+  if (phase === "running" && pending) return "D976";
+  return stageWaiting ? "D381" : "D382";
+}
+
+/**
  * IME 组合期 Enter 拦截门（M361 2.3）：WKWebView 下「确认候选」那拍 Enter 的
  * keydown.isComposing 不可靠——WebKit 先派 compositionend 再派确认 keydown（isComposing
  * 已是 false），现行早退挡不住，发送被误触发。改用 compositionstart/end 自跟踪 + 双序防线：
@@ -3566,6 +3585,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   schev.setAttribute("aria-hidden", "true");
   schev.textContent = "▾"; // i18n-exempt: glyph（下指 chevron 图形，非文案）
   sessionButton.append(sname, schev);
+  // 待批状态词（change fix-harness-approval-visibility-nov23 design §6.1）：标题栏是**滚动区
+  // 之外**的审批信号——面板打开（分栏）时 toggle 钮按既有退让条款隐藏，段是此刻唯一在场且
+  // 可见的标题栏承载。`role="status"` 隐式 polite；与 toggle 的 aria-live **互斥可见**，
+  // 同一时刻只有一个 live 区域在场。文本与显隐都由 applyActivityBadge 一处写（与 toggle 同源、
+  // 同 D416 串）。非待批时 `[hidden]` 零像素、不占 flex 间距；TEXT 是信号本身，不加底色 / 边框。
+  const segStatus = document.createElement("span");
+  segStatus.className = "lumir-hp-seg-status";
+  segStatus.setAttribute("role", "status");
+  segStatus.hidden = true;
   const segNew = document.createElement("button");
   segNew.type = "button";
   segNew.className = "lumir-hp-seg-new";
@@ -3587,7 +3615,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   sessList.hidden = true;
   sessPop.append(sessList);
   sessionWrap.append(sessionButton, sessPop);
-  seg.append(sessionWrap, segNew);
+  // 位置合同（design §6.1）：会话名 → 状态词 → 加号钮。状态词 `flex: none`，让会话名链路先
+  // 收缩 / 省略（窄段下状态词与加号钮 MUST NOT 被段的 overflow 裁掉）。
+  seg.append(sessionWrap, segStatus, segNew);
   // 段进标题栏（toggle 钮之前；hidden 长驻，在场与否随 attach 状态翻）——装配层只管宽度
   //（applySplitRatio 把它当 harness pane 的标题栏槽设 flexGrow）。
   shell.titlebar.insertBefore(seg, toggleButton);
@@ -6020,6 +6050,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
     switch (event.type) {
       case "turn_started":
+        // 新一轮前清 stale（change fix-harness-approval-visibility-nov23 design §3.3）：上一相位
+        // 为空闲时，上一视图遗留的待决项不得随新一轮复活（覆盖「旧快照缺在途读数、带待决卡、
+        // 相位 idle」的反例）。清 stale 必须在闸门打开之前；已处于处理中的轮次（如重复的
+        // auto_turn_started）MUST NOT 清合法待批。
+        if (prev.phase === "idle" && hasPendingApprovals()) withdrawPendingApprovals("stale");
         turnOpen = true;
         midTakeover = false;
         break;
@@ -6099,39 +6134,67 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   /**
-   * 标题栏 toggle 钮的三态施加（change add-harness-activity-presence §3 / 任务 3.4）：
-   * 状态点、状态文本与悬停提示的**唯一写点**——`data-activity` 由这一个函数施加，别处只读它。
+   * 标题栏状态的**唯一写点**（change add-harness-activity-presence §3 / 任务 3.4；
+   * change fix-harness-approval-visibility-nov23 起同时写段状态词）：
+   * 状态点、toggle 状态文本与悬停提示、标题栏段状态词都由这一个函数施加，别处只读它。
    *
    * 三态 = 空闲 / 在途 / 有未读结果；未读再按终态种类分「回复」与「失败」两档形状
    * （形状承载语义、颜色只做增强，eink 因此自然成立）。相位优先：在途时即便有残留未读也
-   * 只报在途——用户此刻要看的是「还在跑」。
+   * 只报在途——用户此刻要看的是「还在跑」。运行中且有待决批准项时改读 D416「等待批准」
+   * （判据只来自 [`hasPendingApprovals`]，与阶段行同源）。
    *
-   * **三处承载、同一写入点**（真机 252 首跑的教训）：
-   * - `data-activity` → 状态点的形状（CSS 的唯一输入）；
+   * **承载**（真机 252 首跑的教训 + fix-harness-approval-visibility-nov23 design §3.1）：
+   * - `data-activity` → 状态点的形状（CSS 的唯一输入；待批是在途的一种，不新增第四态）；
    * - `activityStatus`（`aria-describedby` 指向的视觉隐藏文本）→ 读屏描述与
    *   `aria-live="polite"` 播报；
    * - `title`（悬停提示）→ **AX 通道上唯一读得到的那个**。WKWebView 把 `<button>` 当叶子
    *   节点，嵌在钮内的状态文本不进 AX 树；`aria-describedby` 只进 AXDescription，KimiCU 的
    *   dump 不打印（它打印的是 `help=`，来源就是 `title`）。因此状态同时写进悬停提示——对拿
-   *   鼠标的人也是唯一能看到的一句说明（6px 的点只有形状没有文字）。
+   *   鼠标的人也是唯一能看到的一句说明（6px 的点只有形状没有文字）；
+   * - `segStatus`（标题栏 harness 段内的可见状态词）→ 面板打开时 toggle 被退让条款隐藏，
+   *   段是滚动区外的唯一承载；与 toggle **互斥可见**，同一时刻只有一个 live 区域在场。
+   *   状态词只在待批键（D416）上显示，其余状态隐藏（`[hidden]` 零像素）。
+   *
+   * **幂等播报**：`activityStatus` / `segStatus` 写文本前先比较旧值，相同不写——同一待批集合
+   * 期间的重复投递 / 工具行更新 / 流式分片不得触发重复播报（文本值不变即不重播）。
    */
   function applyActivityBadge(): void {
     const state = currentActivity();
     toggleButton.dataset.activity = activityKind(state);
-    const key = activityStatusKey(state);
+    const key = activityStatusKey(state, hasPendingApprovals());
     const status = key === null ? "" : t(key);
-    activityStatus.textContent = status;
+    if (activityStatus.textContent !== status) activityStatus.textContent = status;
     // 空闲态悬停提示逐字等于 D327（既有口径逐字节不变）；有态时在同一句后追加状态词。
     toggleButton.title = status === "" ? t("D327") : `${t("D327")} · ${status}`;
+    // 段状态词复用同一状态词（D416 同一串，不另立同文键）：只有待批键可见。
+    const segWord = key === "D416" ? status : "";
+    if (segStatus.textContent !== segWord) segStatus.textContent = segWord;
+    const hideSeg = segWord === "";
+    if (segStatus.hidden !== hideSeg) segStatus.hidden = hideSeg;
   }
 
-  /** 阶段行施加（applySendPhase 的 running 分支调用）。stopping 相位第一时间换 D400
-   *  「正在停止…」——停止反馈的即时性由前端这半承担（后端收口前，状态不再停在
-   *  「等待响应 / 正在生成回复」的误读上，M374）；running 态维持两档：首个 chunk 前
-   *  「等待响应」，之后「正在生成回复」。 */
+  /** 待批判据的**唯一实现**：集合非空即待批。MUST NOT 在别处再写 `pendingApprovals.size > 0`，
+   *  也 MUST NOT 引入与集合并行的本地布尔标志（design §3.3）。 */
+  function hasPendingApprovals(): boolean {
+    return pendingApprovals.size > 0;
+  }
+
+  /** 待决集合变化后的唯一重施入口（design §3.3）：阶段行 + 标题栏两承载。相位空闲时阶段行
+   *  是隐藏的（`applySendPhase` 只在 running 时写过它），跳过；标题栏无条件重绘（idle 下按
+   *  未读档呈现，恰好覆盖终态撤卡后的收口）。 */
+  function refreshApprovalSignal(): void {
+    if (currentActivity().phase !== "idle") applyStage();
+    applyActivityBadge();
+  }
+
+  /** 阶段行施加（applySendPhase 的 running 分支调用）。文案键由纯选择器 [`stageCopyKey`] 决定
+   *  ——**停止中 > 等待批准 > 等待响应 / 生成中** 的优先级只在那一处写一次。待批档的文案值
+   *  是 D976「等待批准…」；`stopping` 第一时间换 D400「正在停止…」，停止反馈的即时性由前端
+   *  这半承担（后端收口前不再停在「等待响应 / 正在生成回复」的误读上，M374）。写 DOM 前比较
+   *  旧文本：同一待批集合期间的重复投递 / 工具行更新不产生新的 mutation。 */
   function applyStage(): void {
-    stageLine.textContent =
-      currentActivity().phase === "stopping" ? t("D400") : stageWaiting ? t("D381") : t("D382");
+    const text = t(stageCopyKey(currentActivity().phase, hasPendingApprovals(), stageWaiting));
+    if (stageLine.textContent !== text) stageLine.textContent = text;
   }
 
   sendButton.addEventListener("click", () => {
@@ -7363,6 +7426,42 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     });
   }
 
+  /**
+   * 终态统一撤回（change fix-harness-approval-visibility-nov23 design §3.3 / §4）：
+   * `done` / `error` / `aborted` 收尾时仍挂在集合里的批准项走这一个出口——撤卡、解壳回工具行、
+   * 按原因标注（aborted → D383「已停止」；done / error / stale → D977「未执行」）、清空集合、
+   * 使决策闭包失效（闭包只兑现 `pendingApprovals.delete`，集合清空后再点也返回假）、清
+   * done 抑制槽，最后重施一次状态。
+   *
+   * 这是 **MUST NOT 只隐藏状态词** 的落点：卡片元素整体移除、按钮不可点；行若仍是
+   * `is-running`（未翻面）就地翻 `is-fail` 并写标签；后端 Withdrawn 的失败摘要已先翻面的
+   * （aborted 正常路径）保持它自己的标签，不覆盖。
+   *
+   * `stale` 与 done / error 同标签：这一轮已经结束（或从未被后端承认），调用没有执行。
+   */
+  function withdrawPendingApprovals(reason: "aborted" | "unfinished" | "stale"): void {
+    if (!hasPendingApprovals()) return;
+    const labelKey = reason === "aborted" ? "D383" : "D977";
+    for (const pending of pendingApprovals.values()) {
+      pending.element.remove();
+      pending.wrap.replaceWith(pending.row);
+      pending.row.classList.remove("is-waiting");
+      if (pending.row.classList.contains("is-running")) {
+        pending.row.classList.replace("is-running", "is-fail");
+        pending.row.replaceChildren(
+          createToolIcon("fail"),
+          createToolText(pending.tool, pending.argsText, t(labelKey), pending.targets),
+        );
+      }
+      for (const block of [activeTools, ...sealedToolBlocks]) {
+        if (block !== null && block.running === pending.row) block.running = null;
+      }
+    }
+    pendingApprovals.clear();
+    settledAwaitingDone = null;
+    refreshApprovalSignal();
+  }
+
   /** 批准卡的两枚次级动作（change harness-permission-rules-oct23 design §5 / §6.1）。
    *  **唯一构建点**：transcript 卡片与任务区卡片共用同一段（禁止各写一份）。
    *
@@ -7421,6 +7520,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     /** 持久规则原文（同上；缺键 = 不渲染该按钮）。 */
     persistRule?: string | undefined;
   }): void {
+    // 陈旧守卫（change fix-harness-approval-visibility-nov23 design §2.1）：相位空闲时没有在途
+    // 轮次可依附——旧快照缺在途读数而带待决列表、或终态之后迟到的 live 请求，都按陈旧项丢弃：
+    // 不建流式泡 / 工具块、不落卡、不入集合（快照与 live 同一判据）。MUST NOT 在前端复活卡片。
+    if (currentActivity().phase === "idle") return;
+    // 重复投递幂等：同一 id 已在待决（重复事件）或已决策（快照比后端决策回包更早），
+    // MUST NOT 再挂第二张卡 / 再触发一次状态写入。
+    if (pendingApprovals.has(request.id) || decidedApprovals.has(request.id)) return;
     // 收敛单行生命周期（M406，原型 variant B）：批准卡不再独立挂 transcript 末尾，而是
     // 就地挂进该调用工具行的 .lumir-hp-pend 壳——同一行承载「运行中 → 等待批准 → 终态」
     // 全生命周期；其后的思考块 / 正文段按到达序追加在工具块之后，自然落在卡之后
@@ -7430,6 +7536,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const argsText = approvalArgsText(request);
     const pathTargets = approvalPathTargets(request);
     let row = block.running;
+    // 同块并发待批（delta spec「多个待批项逐个清算」）：`block.running` 仍是上一条待决行时，MUST NOT
+    // 复用它——复用会把上一条已挂的 `.lumir-hp-pend` 壳连同它自己的卡一起 replaceWith 掉，第一项
+    // 的卡在第二项到达时静默消失。已在待决壳里的行另起一行（追加在块尾），两条卡各自可决策。
+    if (row !== null && row.closest(".lumir-hp-pend") !== null) row = null;
     if (row !== null) {
       // started 行就地升级：截断摘要换成批准载荷全文 +「等待批准」尾注。
       startedArgs.delete(row);
@@ -7569,6 +7679,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     };
     pendingApprovals.set(request.id, pending);
     relabelApproval(pending);
+    // 卡片与状态同帧出现（design §3.4）：集合与卡都就位之后、内容增长之前重施一次。
+    refreshApprovalSignal();
 
     // 未决项不自动超时：唯一的出口是 Alex 点击 / ⌘Enter。决策幂等——重复触发不会向后端
     // 发第二次（pendingApprovals.delete 只兑现一次）；决策后同一行就地收敛为终态记录
@@ -7578,6 +7690,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       if (!pendingApprovals.delete(request.id)) return;
       const reasonText = reason.value.trim();
       settleApprovalRecord(pending, approved, reasonText === "" ? undefined : reasonText, Date.now());
+      // 决策后同一同步批次内退出待批（最后一项决策才退场；多项时集合仍非空，判据自然维持）。
+      refreshApprovalSignal();
       harnessApprove(
         request.id,
         approved,
@@ -8925,6 +9039,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         finalizeStreamingMessage();
         // 成功收尾：旧的失败动作失效（可重试失败只活在「最近一次失败仍是当前轮」时）。
         removeRetryActions();
+        // 收尾时仍挂在集合里的批准项统一撤回（标未执行）：终态后 MUST NOT 留下可点的卡；
+        // 撤回排在终态投影之前（先撤卡 / 清集合，再施加终态）。
+        withdrawPendingApprovals("unfinished");
         if (accounted !== null && prevActivity !== null) {
           projectActivity(vault, accounted, prevActivity);
         }
@@ -8959,26 +9076,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           follow.contentGrew(); // 分流表 #14：中断收口不拽视口
         }
         // 待决批准项随中断收回（design §5）：未决策的批准卡撤下、解壳回工具行——它们的
-        // 唯一出口（点击）已失效，后端那条通道已被 Withdrawn 关闭。正常路径下 Withdrawn
-        // 的 done（turn_aborted 失败摘要）已先把行翻面为 is-fail；没翻面的（事件缺口）
-        // 在这里补翻，不留永恒「等待批准」幻影行。
-        for (const pending of pendingApprovals.values()) {
-          pending.element.remove();
-          pending.wrap.replaceWith(pending.row);
-          pending.row.classList.remove("is-waiting");
-          if (pending.row.classList.contains("is-running")) {
-            pending.row.classList.replace("is-running", "is-fail");
-            pending.row.replaceChildren(
-              createToolIcon("fail"),
-              createToolText(pending.tool, pending.argsText, t("D383"), pending.targets),
-            );
-          }
-          for (const block of [activeTools, ...sealedToolBlocks]) {
-            if (block !== null && block.running === pending.row) block.running = null;
-          }
-        }
-        pendingApprovals.clear();
-        settledAwaitingDone = null;
+        // 唯一出口（点击）已失效，后端那条通道已被 Withdrawn 关闭。统一撤回函数负责标
+        // D383「已停止」、清集合、使决策闭包失效；正常路径下 Withdrawn 的 done（turn_aborted
+        // 失败摘要）已先把行翻面为 is-fail，没翻面的（事件缺口）在撤回落点补翻，不留永恒
+        // 「等待批准」幻影行。撤回排在终态投影之前（先撤卡 / 清集合，再施加终态）。
+        withdrawPendingApprovals("aborted");
         // `aborted` 不产生未读（D2：停止是用户自己按的，提醒他只是复述他刚做的事）。
         if (accounted !== null && prevActivity !== null) {
           projectActivity(vault, accounted, prevActivity);
@@ -8998,6 +9100,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         const hadBodyText = streamingText !== "" || chunkBuffer !== "";
         const el = finalizeStreamingMessage();
         if (el !== null && hadBodyText) attachIncompleteMark(el);
+        // 错误收尾同样撤回未决批准项（标未执行），再施加终态（同 done 的顺序）。
+        withdrawPendingApprovals("unfinished");
         if (accounted !== null && prevActivity !== null) {
           projectActivity(vault, accounted, prevActivity);
         }
@@ -9367,8 +9471,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     for (const raw of pendingList) {
       if (typeof raw !== "object" || raw === null) continue;
       const pending = raw as Record<string, unknown>;
-      if (typeof pending.id !== "string") continue;
-      // argv 是字符串数组（events.rs / PendingApprovalSnapshot 同型；M406 前按 string 读，
+      if (typeof pending.id !== "string") continue;      // argv 是字符串数组（events.rs / PendingApprovalSnapshot 同型；M406 前按 string 读，
       // 数组被整段丢弃）。宽容过滤非字符串元素；空数组按缺省处理。
       const argv = Array.isArray(pending.argv)
         ? pending.argv.filter((a): a is string => typeof a === "string")
@@ -9394,6 +9497,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         appendApproval(request);
       }
     }
+    // 待决列表重放结束后**无条件**重施一次（change fix-harness-approval-visibility-nov23
+    // design §3.3）：列表为空是幻影的主要出口（`appendApproval` 不会被调用）。它只重算现有
+    // 集合，不能删除 enter 快照已不含的旧 id——进入档的清理由构造空面 / `resetView` 的前置
+    // 不变量保证（`enter` 自身不清面）；对账档的清理由上面的 `clearTranscriptSurface` 保证。
+    refreshApprovalSignal();
     // 任务区读数（auto_wake / subrun_usage / 子运行待批项）随快照一并恢复。
     applyTaskReadings(state);
     applySessionName();
@@ -9493,6 +9601,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     imageThumbCache.prune();
     pendingApprovals.clear();
     decidedApprovals.clear();
+    // 清面（换会话 / 切 vault / 新会话 / 终态对账清面共用）：集合清空后重施一次，否则标题栏 /
+    // 阶段行可能停在上一视图的「等待批准」幻影上（相位随后的复位会再施加一次，幂等）。
+    refreshApprovalSignal();
     // 任务区是**会话**的视图：换会话即清空（终态 run 的「本次会话摘要」不跨会话）。
     subruns = [];
     // `acknowledgedRuns` 不随会话清空：run id 全局唯一，用户确认过的后台异常不应在切 vault /
@@ -9740,6 +9851,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     stageWaiting = true;
     // 乐观起点：store 捕获 before + 记录版本（`rollbackSend` 只撤销这一步，版本已变则 no-op）。
     const sendToken = sendVault === null ? null : beginSendActivity(sendVault);
+    // 发送 = 强制回底白名单动作。上面 `appendUserMessage` 的写底发生在 composer 清空与进度块
+    // 显隐**之前**（写底值按「卡片仍在输入区、进度块尚未出现」的旧几何算）；这里等相位投影
+    // 让进度块显隐落定后再回底一次（幂等）：写底值、回声基准与最终滚动上限一致，不留未贴底
+    // 窗口。MUST NOT 扩散到非白名单事件（批准卡 / 流式增量 / 工具行 / 通知 / 错误行 / 终态）。
+    follow.jumpToBottom();
     // 草稿归属在**发出时**定格：成功回执按这份 (vault, 编辑版本) 清，不按回执到达时的 store
     // 绑定（那时可能已经切了 vault、用户也可能已经在 composer 里继续输入）。
     const sendDraftVaultId = currentVaultId;

@@ -318,3 +318,182 @@ test("浮钮可访问名：en 档取英文串（语言切换后重取）", async
   await frames(page, 2);
   await expect(button).toHaveAttribute("aria-label", "New content, back to bottom");
 });
+
+// ── 待批可见性与发送最终几何（change fix-harness-approval-visibility-nov23 tasks 1.5 / 1.7）───
+//
+// 滚动合同不变：待批状态的出现 / 退场只改文案与显隐，不写滚动位、不强制回底；批准卡本身
+// 到达仍按「新内容」口径处理（脱离态点亮未读）。另判发送的最终几何：composer 清空与进度块
+// 显隐都在首次写底之后，发送处理必须在这些布局落定后再回底一次（同 task 读数，旧实现必红）。
+
+const APPROVAL_DIFF = [
+  "--- a/harness-scroll-note.md",
+  "+++ b/harness-scroll-note.md",
+  "@@ -1,2 +1,2 @@",
+  " 给面板一个上下文段落。",
+  "+APPROVAL-SCROLL-PROBE 新行。",
+].join("\n");
+
+/** transcript 消息体选区（与 m423 同一手法：selectionchange 驱动浮动钮）。 */
+async function selectTranscriptText(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const el = document.querySelector(".lumir-hp-msg-assistant .lumir-hp-body");
+    if (el === null) throw new Error("缺 assistant 消息体");
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const first = walker.nextNode();
+    if (first === null) throw new Error("消息体没有文本节点");
+    const range = document.createRange();
+    range.setStart(first, 0);
+    range.setEnd(first, Math.min(8, first.textContent?.length ?? 0));
+    const selection = window.getSelection();
+    if (selection === null) throw new Error("no selection");
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+  });
+}
+
+test("先上滚再待批：scrollTop ≤1px、未读点亮、标题栏信号在场；回底后仍待批", async ({ page }) => {
+  await openPanel(page);
+  await primeTranscript(page);
+  await wheelOverTranscript(page, -300);
+  let m = await readScroll(page);
+  expect(m.buttonHidden, "本步前提：已脱离底部").toBe(false);
+  expect(m.unread, "上滚本身不产生未读").toBe(false);
+  const anchored = m.scrollTop;
+
+  await fire(page, { type: "approval_request", id: "call_scroll_1", tool: "vault_patch", diff: APPROVAL_DIFF });
+  await frames(page, 2);
+  m = await readScroll(page);
+  expect(Math.abs(m.scrollTop - anchored), "待批到达不得写滚动位（±1px）").toBeLessThanOrEqual(1);
+  expect(m.unread, "批准卡是新内容 → 未读提示点亮").toBe(true);
+  expect(m.label ?? "", "浮钮可访问名含「有新内容」").toContain("有新内容");
+  await expect(page.locator(".lumir-hp-seg-status")).toHaveText("等待批准");
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("等待批准…");
+
+  // 回底：卡进入视口，状态仍在（回底不是决策）。
+  await page.locator(".lumir-hp-jumpbottom").click();
+  m = await readScroll(page);
+  expect(Math.abs(m.scrollTop - m.max)).toBeLessThanOrEqual(1);
+  await expect(page.locator(".lumir-hp-pend")).toBeVisible();
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("等待批准…");
+
+  // 采纳 → 同一同步批次退场，回落生成档。
+  await page.locator('button[data-act="approve"]').click();
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("正在生成回复…");
+  await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
+});
+
+test("待批已存在后上滚、期间无新内容：不点亮未读、不强制回底", async ({ page }) => {
+  await openPanel(page);
+  await primeTranscript(page);
+  await fire(page, { type: "approval_request", id: "call_scroll_2", tool: "vault_patch", diff: APPROVAL_DIFF });
+  await frames(page, 2);
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("等待批准…");
+
+  await wheelOverTranscript(page, -300);
+  const m = await readScroll(page);
+  expect(m.buttonHidden, "脱离态浮钮在场").toBe(false);
+  expect(m.unread, "待批状态本身不是新内容：不点亮未读").toBe(false);
+  await frames(page, 3);
+  const after = await readScroll(page);
+  expect(Math.abs(after.scrollTop - m.scrollTop), "无新内容时不被强制回底").toBeLessThanOrEqual(1);
+  await expect(page.locator(".lumir-hp-seg-status")).toHaveText("等待批准");
+});
+
+test("停止撤回：卡撤下、标已停止、状态退场（无「等待批准」幻影）", async ({ page }) => {
+  await openPanel(page);
+  await primeTranscript(page);
+  await fire(page, { type: "approval_request", id: "call_scroll_3", tool: "vault_patch", diff: APPROVAL_DIFF });
+  await frames(page, 2);
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(1);
+
+  await page.locator(".lumir-hp-send").click(); // running 相位 = 停止
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("正在停止…");
+  await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
+  await fire(page, { type: "aborted" });
+  await frames(page, 2);
+
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-stage")).toBeHidden();
+  await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("");
+  const failRow = page.locator(".lumir-hp-tool-row.is-fail").last();
+  await expect(failRow.locator(".lumir-hp-tool-out")).toContainText("已停止");
+});
+
+test("发送最终几何：引用卡与纯文本发送都在同一 task 内贴底（纯文本旧实现差 28px）", async ({ page }) => {
+  await openPanel(page);
+  await primeTranscript(page);
+  // 收一轮：发送钮回到「发送」态，正文可被摘录（流式消息也会 finalize）。
+  await fire(page, { type: "done" });
+  await frames(page, 3);
+  await expect(page.locator(".lumir-hp-send")).toHaveAttribute("aria-label", "发送");
+
+  await selectTranscriptText(page);
+  const quoteButton = page.locator(".lumir-hp-transcript > .quote-gesture-btn");
+  await expect(quoteButton).toBeVisible();
+  await quoteButton.click();
+  await expect(page.locator(".lumir-hp-composer-tray .lumir-hp-qcard")).toHaveCount(1);
+
+  // 同一个页面 task 内点击发送并立即读数：中间没有 rAF / 浏览器夹取的喘息窗口。
+  //
+  // 实现期实测（2026-11-24，修前源码）：引用卡路径本身**不产生正向缺口**——46px 的卡从
+  // composer 移除使 transcript 变高、上限变小，旧写底值被浏览器夹到新上限；随后 28px 的进度块
+  // 把上限加回来，滚动位仍在底。真正暴露缺陷的是 composer 高度不变的纯文本发送：进度块出现是
+  // 唯一的几何变化，旧写底值因此停在离新上限 28px 处（下一轮断言）。引用卡这一轮保留为
+  // 「卡片确实移除 / 进度块确实显示 / 发送后仍贴底」的回归guard。
+  const quoted = await page.evaluate(() => {
+    const send = document.querySelector<HTMLElement>(".lumir-hp-send");
+    if (send === null) throw new Error("缺发送钮");
+    send.click();
+    const transcript = document.querySelector<HTMLElement>(".lumir-hp-transcript");
+    const progress = document.querySelector<HTMLElement>(".lumir-hp-progress");
+    const sendAfter = document.querySelector<HTMLElement>(".lumir-hp-send");
+    return {
+      scrollTop: transcript?.scrollTop ?? -1,
+      max: Math.max(0, (transcript?.scrollHeight ?? 0) - (transcript?.clientHeight ?? 0)),
+      cards: document.querySelectorAll(".lumir-hp-composer-tray .lumir-hp-qcard").length,
+      progressHidden: progress?.hidden ?? true,
+      sendLabel: sendAfter?.getAttribute("aria-label") ?? "",
+    };
+  });
+  // 输入维度：卡片确实移除、进度块确实显示（否则「贴底」在空转）。
+  expect(quoted.cards, "引用卡已被发送取走").toBe(0);
+  expect(quoted.progressHidden, "进度块已显隐落定（进入 running）").toBe(false);
+  expect(quoted.sendLabel).toBe("停止");
+  expect(
+    Math.abs(quoted.scrollTop - quoted.max),
+    "引用卡发送完成时 scrollTop 必须等于最终滚动上限（±1px）",
+  ).toBeLessThanOrEqual(1);
+
+  // 纯文本第二轮：composer 清空不改变布局高度（无卡片），进度块出现是唯一的几何变化——
+  // 旧实现（首次写底在卡片移除 / 进度块显隐之前）在这里必然停在离上限 28px 处。
+  await fire(page, { type: "done" });
+  await frames(page, 3);
+  await page.locator(".lumir-hp-composer .cm-content").fill("纯文本发送的几何");
+  const plain = await page.evaluate(() => {
+    const send = document.querySelector<HTMLElement>(".lumir-hp-send");
+    if (send === null) throw new Error("缺发送钮");
+    send.click();
+    const transcript = document.querySelector<HTMLElement>(".lumir-hp-transcript");
+    const progress = document.querySelector<HTMLElement>(".lumir-hp-progress");
+    return {
+      scrollTop: transcript?.scrollTop ?? -1,
+      max: Math.max(0, (transcript?.scrollHeight ?? 0) - (transcript?.clientHeight ?? 0)),
+      progressHeight: progress?.offsetHeight ?? -1,
+      progressHidden: progress?.hidden ?? true,
+    };
+  });
+  expect(plain.progressHidden).toBe(false);
+  expect(plain.progressHeight, "进度块确实占位（区分度的输入维度）").toBeGreaterThan(10);
+  expect(
+    Math.abs(plain.scrollTop - plain.max),
+    "发送处理完成时 scrollTop 必须等于最终滚动上限（±1px；旧实现差 28px）",
+  ).toBeLessThanOrEqual(1);
+
+  // 两帧后仍贴底、浮钮不在场（回声基准已刷新，后续增量继续跟随）。
+  await frames(page, 2);
+  const after = await readScroll(page);
+  expect(after.buttonHidden, "发送后不出现回底钮").toBe(true);
+  expect(Math.abs(after.scrollTop - after.max)).toBeLessThanOrEqual(1);
+});

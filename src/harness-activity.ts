@@ -287,8 +287,19 @@ export function activityKind(state: ActivityState): ActivityKind {
   return "idle";
 }
 
-/** 三态的状态词（文案表 D870–D872；空闲不占条目）。标题栏钮与行标记共用同一份取值。 */
-export function activityStatusKey(state: ActivityState): "D870" | "D871" | "D872" | null {
+/**
+ * 三态的状态词（文案表 D870–D872；空闲不占条目）。标题栏钮与行标记共用同一份取值。
+ *
+ * `pendingApproval`（change fix-harness-approval-visibility-nov23 design §3.2）：**运行中**且有
+ * 待决批准项时改读 D416「等待批准」——与工具行待决尾注同一串，MUST NOT 为标题栏另立同文重复键。
+ * 只有 `running` 成立：`stopping` 已请求中断（先读「处理中」），`idle` 的待批是陈旧数据。
+ * 调用方传的必须是面板的待批判据（`hasPendingApprovals()`），本模块不持有集合。
+ */
+export function activityStatusKey(
+  state: ActivityState,
+  pendingApproval = false,
+): "D870" | "D871" | "D872" | "D416" | null {
+  if (state.phase === "running" && pendingApproval) return "D416";
   switch (activityKind(state)) {
     case "inflight":
       return "D870";

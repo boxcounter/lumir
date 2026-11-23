@@ -74,25 +74,39 @@ async function measureDiffRows(page: Page) {
 async function stubHarnessApproval(page: Page): Promise<void> {
   await page.addInitScript((diff: string) => {
     const w = window as unknown as Record<string, any>;
-    const invoke = w.__TAURI_INTERNALS__.invoke as (cmd: string, args: unknown) => unknown;
+    const internals = w.__TAURI_INTERNALS__;
+    const invoke = internals.invoke as (cmd: string, args: unknown) => unknown;
     w.__approvals = [] as unknown[];
-    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
+    w.__harnessEventHandlerIds = [] as number[];
+    internals.invoke = async (cmd: string, args: any) => {
       if (cmd === "harness_state") {
         const override = w.__pendingApprovalOverride as Record<string, unknown> | undefined;
+        // `__pendingApprovalList` 让用例把待决列表整体换掉（含空列表）；缺省仍是单张
+        // vault_patch 卡。`in_flight: true` 是待批呈现的前提（change
+        // fix-harness-approval-visibility-nov23：相位空闲时待决列表按陈旧项丢弃）。
+        const overrideList = w.__pendingApprovalList as unknown[] | undefined;
         return JSON.stringify({
           messages: [],
           usage: { ctx_pct: 0, cache_pct_session: 0 },
-          pending_approvals: [
-            override ?? { id: "call_p1", tool: "vault_patch", diff, argv: undefined },
-          ],
+          pending_approvals:
+            overrideList ?? [override ?? { id: "call_p1", tool: "vault_patch", diff, argv: undefined }],
           warn_ctx_pct: 85,
+          in_flight: true,
         });
       }
       if (cmd === "harness_approve") {
         w.__approvals.push({ request_id: args.request_id, approved: args.approved, reason: args.reason });
         return null;
       }
+      if (cmd === "plugin:event|listen" && args.event === "harness:event") {
+        w.__harnessEventHandlerIds.push(args.handler ?? 0);
+      }
       return invoke(cmd, args);
+    };
+    w.__fireHarnessEvent = (payload: unknown) => {
+      for (const id of w.__harnessEventHandlerIds) {
+        internals.runCallback(id, { event: "harness:event", id, payload });
+      }
     };
   }, DIFF);
 }
@@ -291,4 +305,97 @@ test("判定依据行：缺 reason 的旧载荷不出该行（不伪造依据）
   const { card, basis } = await openApprovalPanel(page);
   await expect(card.locator(".lumir-hp-approval-title")).toContainText("要修改这个文件吗？");
   await expect(basis).toHaveCount(0);
+});
+
+// ── 待批状态与多项清算（change fix-harness-approval-visibility-nov23 tasks 1.6）──────────────
+//
+// 既有桩的相位是 idle（M384 起快照没有 `in_flight`）：待批卡只剩「恢复的历史」这一种读法，
+// 与本 change 的「运行中等待批准」不是同一件事。本组用 `in_flight: true` 的独立形态（空待决
+// 列表起步、两项经 live 事件到达）判：
+//   1. 决策前**正断言**「等待批准…」真实在场（段状态词与 toggle 同源）；
+//   2. 多项逐个决策：第一项后仍待批，最后一项后才回落；
+//   3. 重复投递 / 流式分片期间状态文本没有新的 mutation（不重复播报）。
+
+async function fire(page: Page, payload: Record<string, unknown>): Promise<void> {
+  await page.evaluate(
+    (body) => (window as unknown as { __fireHarnessEvent: (p: unknown) => void }).__fireHarnessEvent(body),
+    payload,
+  );
+}
+
+test("待批状态：running 桩下正断言等待批准；两项逐个清算；不重复播报", async ({ page }) => {
+  // 空待决列表起步：两项都由 live 事件到达（同块并发待批）。
+  await page.addInitScript(() => {
+    (window as unknown as Record<string, unknown>).__pendingApprovalList = [];
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  const stage = page.locator(".lumir-hp-stage");
+  const segStatus = page.locator(".lumir-hp-seg-status");
+  const toggleStatus = page.locator(".lumir-hp-toggle-status");
+
+  // 进入快照在途、无待批：对照组（不得误报）。
+  await expect(stage).toHaveText("等待响应…");
+  await expect(segStatus).toBeHidden();
+  await expect(toggleStatus).toHaveText("处理中");
+
+  const request = (id: string) => ({ type: "approval_request", id, tool: "vault_patch", diff: DIFF });
+  await fire(page, request("call_multi_1"));
+  await expect(stage).toHaveText("等待批准…");
+  await expect(segStatus).toHaveText("等待批准");
+  await expect(toggleStatus).toHaveText("等待批准");
+  await expect(page.locator(".lumir-hp-toggle")).toHaveAttribute("title", "对话面板 · 等待批准");
+  await fire(page, request("call_multi_2"));
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(2);
+  await expect(page.locator('button[data-act="approve"]')).toHaveCount(2);
+
+  // 不重复播报：重复投递同一 id + 流式分片期间，三处状态文本零 mutation。
+  await page.evaluate(() => {
+    const targets = [
+      document.querySelector(".lumir-hp-stage"),
+      document.querySelector(".lumir-hp-toggle-status"),
+      document.querySelector(".lumir-hp-seg-status"),
+    ];
+    const win = window as unknown as { __statusMutations: number; __statusObserver: MutationObserver };
+    win.__statusMutations = 0;
+    const observer = new MutationObserver((records) => {
+      win.__statusMutations += records.length;
+    });
+    for (const target of targets) {
+      if (target === null) throw new Error("缺状态承载节点");
+      observer.observe(target, { childList: true, characterData: true, subtree: true });
+    }
+    win.__statusObserver = observer;
+  });
+  await fire(page, request("call_multi_1"));
+  await fire(page, { type: "text_chunk", text: "闸后流式分片。" });
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  await expect(page.locator(".lumir-hp-pend"), "重复投递不得落第二张卡").toHaveCount(2);
+  await expect(stage).toHaveText("等待批准…");
+  const mutations = await page.evaluate(
+    () => (window as unknown as { __statusMutations: number }).__statusMutations,
+  );
+  expect(mutations, "同一待批集合期间状态文本不得重复写入（aria-live 不重复播报）").toBe(0);
+
+  // 第一项决策：仍待批（集合非空），卡只剩一张。
+  await page.locator('button[data-act="approve"]').first().click();
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(1);
+  await expect(stage).toHaveText("等待批准…");
+  await expect(segStatus).toHaveText("等待批准");
+
+  // 最后一项决策：同一同步批次退场，回落到生成档（首个分片已到）。
+  await page.locator('button[data-act="approve"]').first().click();
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
+  await expect(stage).toHaveText("正在生成回复…");
+  await expect(segStatus).toBeHidden();
+  await expect(toggleStatus).toHaveText("处理中");
+  const approvals = await page.evaluate(
+    () => (window as unknown as { __approvals: unknown[] }).__approvals,
+  );
+  expect(approvals).toEqual([
+    { request_id: "call_multi_1", approved: true, reason: null },
+    { request_id: "call_multi_2", approved: true, reason: null },
+  ]);
 });

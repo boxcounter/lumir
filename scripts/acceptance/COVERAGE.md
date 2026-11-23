@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：275
-- 验收项（不同 item 编号）：244
-- 分档：core 30 / full 235 / bundle 5 / evidence 5（full 批 = 全部 275 个，含其余各档）
+- 场景：276
+- 验收项（不同 item 编号）：245
+- 分档：core 30 / full 236 / bundle 5 / evidence 5（full 批 = 全部 276 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -262,3 +262,4 @@
 | 721 | `721-harness-vault-unread` | 跨 vault 的活动记录：非当前 vault 的在途 / 未读在切换器行上可读，切过去但面板收起不清未读 | full |
 | 722 | `722-line-numbers-toggle` | 行号全局开关真机链路——默认 off 两模式都无 gutter（右键 oracle 拿不到）、⌘⇧N 与 modeline 指示钮同源切换、on 档两模式可复制、off + ⌥G 的临时 gutter 可复制、切换持久化与重启、后台标签切回已是新态、on → ⌥G → 切 off 的交叉态 | full |
 | 724 | `724-harness-session-order` | 会话清单按最后活动排序（每文件一行）：恢复不置顶、sidecar 不计入、compact 不沿链、缺时间回落、打开期间不重排 | full |
+| 725 | `725-harness-approval-visibility` | 待批可见性：脱离态下批准卡到达仍有标题栏信号与未读；回底决策后清算；停止撤回无幻影 | full |

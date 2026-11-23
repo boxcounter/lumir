@@ -1218,6 +1218,10 @@ const COPY_TABLE = {
   // D412/D413/D415 是批准卡问句与副句（问句分工见 D339 上方注释）；D416 是 gated
   // 工具行待决态的尾注；D417–D419 是会话删除（行内删除钮读屏名 / 行内确认句 / 确认钮）；
   // D420/D421 是 harness_delete_session 的两条错误（活跃会话拒删 / 删除 IO 失败）。
+  // **change fix-harness-approval-visibility-nov23 起**：D416 的消费点扩为三处——工具行待决
+  // 尾注（`appendApproval` / `relabelApproval`）+ 标题栏段状态词与 toggle 状态
+  // （`applyActivityBadge`，经 `activityStatusKey` 取同一个键）。同一串服务工具行与标题栏，
+  // MUST NOT 为标题栏另立同文重复键。
   // **M540 退场（编号停用、不复用，不随行留档）**：D414（命令类批准卡副句「批准后才会在
   // 终端运行，输出回到对话里」）整条删除——Alex 原话「去掉 ask for approve 的文案……
   // 因为不提供有价值的信息」；命令类批准卡因此无副句，写类副句 D413 不受影响。
@@ -2569,6 +2573,19 @@ const COPY_TABLE = {
     zh: "行号已切换，但写入配置失败，重启后将回到配置文件里的值（{reason}）",
     en: "Line numbers switched, but saving the config failed; after a restart it falls back to the value in the config file ({reason})",
   },
+  // D976–D977：待批可见性（change fix-harness-approval-visibility-nov23）。D976 是相位 running
+  // 且当前会话有待决批准项时的阶段行（消费点 `applyStage`，键由 `stageCopyKey` 选择；省略号
+  // 形态同 D381 族）；D977 是 done / error 收尾时统一撤回未决批准项后工具行就地标注的结果词
+  // （消费点 `withdrawPendingApprovals`；aborted 仍用 D383「已停止」，两者不混用）。
+  D976: {
+    zh: "等待批准…",
+    en: "Awaiting approval…",
+  },
+  D977: {
+    zh: "未执行",
+    en: "Not executed",
+  },
+
   // D899–D927：设置面板的**装载期配置诊断**（M865，M858 finding 的第三条信封
   // `ConfigDiagnostic{code, path, message}`）。消费点是 `src/settings-panel.ts` 的三处直出
   // message 的渲染口——`fillDiagnostics`、被忽略 provider 的条目诊断、模型行 notes（经

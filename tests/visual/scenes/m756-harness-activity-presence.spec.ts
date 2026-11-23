@@ -47,6 +47,8 @@ interface ActivityStubOptions {
   messages?: Array<{ role: string; text: string }>;
   /** 快照的呈现读；缺省 false（空闲）。 */
   inFlight?: boolean;
+  /** 快照的待决批准列表（change fix-harness-approval-visibility-nov23）；缺省空。 */
+  pendingApprovals?: Array<Record<string, unknown>>;
   /** `harness_send` 的拒绝形态（缺省成功）。 */
   sendReject?: { code: string; message: string } | null;
   /** cron 点击运行：`harness_cron_run` 成功 + 运行开始后 `harness_state` 换成 `cronMessages`。 */
@@ -71,6 +73,9 @@ async function stubHarnessActivity(page: Page, options: ActivityStubOptions = {}
     w.__harnessEventHandlerIds = [] as number[];
     w.__cronRunHandlerIds = [] as number[];
     w.__harnessStateCalls = 0;
+    // 待决列表是**调用时**读取的页面全局：测试可在快照往返之间换掉它（content 对账的
+    // 「非空 / 空列表」两档因此不必各起一套桩）。
+    w.__pendingApprovals = opts.pendingApprovals ?? [];
     let cronStarted = false;
     const snapshot = (messages: Array<{ role: string; text: string }>) =>
       JSON.stringify({
@@ -80,7 +85,7 @@ async function stubHarnessActivity(page: Page, options: ActivityStubOptions = {}
           ts: 1759912345,
         })),
         usage: { ctx_pct: 0, cache_pct_session: 0, has_usage: false },
-        pending_approvals: [],
+        pending_approvals: w.__pendingApprovals,
         warn_ctx_pct: 85,
         thinking: { level: "high", supported: true },
         in_flight: opts.inFlight ?? false,
@@ -601,4 +606,236 @@ test("跨 vault 往返：切回仍在途的 vault 恢复内容与停止态（不
   await expect(messages).toHaveCount(2);
   await expect(messages.filter({ hasText: "VLT-1 切走之前的提问" })).toHaveCount(1);
   await expect(page.locator(".lumir-hp-send")).toHaveAttribute("aria-label", "停止");
+});
+
+// ── 待批可见性（change fix-harness-approval-visibility-nov23 tasks 1.4）───────────────
+//
+// 标题栏两个**互斥可见**的承载（面板打开 → harness 段状态词；面板收起 → toggle 活动状态）
+// 共用同一份判据与同一串（D416），且覆盖三种进入快照形态与四条清算出口。判据：
+//   · enter in_flight:true + 非空列表 → 段状态词可见、toggle 同源、卡在 transcript；
+//   · enter in_flight:true + 空列表 → 无待批状态；
+//   · enter in_flight:false + 非空列表 → 无卡、无状态（陈旧）；
+//   · 面板开合是**本地保留**（attachTo 不拉快照），不是快照重建；
+//   · done / error / aborted 统一撤回（未执行 / 已停止），content 对账不复活；
+//   · 窄段 + 长会话名：状态词与加号钮都在段矩形内，会话名先收缩。
+
+const APPROVAL_DIFF = [
+  "--- a/activity-note.md",
+  "+++ b/activity-note.md",
+  "@@ -1,2 +1,2 @@",
+  " 第一段，给面板一个可开的文档。",
+  "+APPROVAL-PROBE 新行。",
+].join("\n");
+
+const PENDING_ONE = [{ id: "call_m756_a", tool: "vault_patch", diff: APPROVAL_DIFF }];
+
+async function openActivityPanel(page: Page): Promise<void> {
+  await page.goto("/");
+  await page.locator('.ft-row[title="activity-note.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("第一段");
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+}
+
+async function startLocalTurn(page: Page, text: string): Promise<void> {
+  await page.locator(".lumir-hp-composer .cm-content").fill(text);
+  await page.locator(".lumir-hp-send").click();
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("等待响应…");
+}
+
+test("进入快照带待批：toggle 与段状态词同源，面板开合是本地保留", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarnessActivity(page, { inFlight: true, pendingApprovals: PENDING_ONE });
+  await page.goto("/");
+  await page.locator('.ft-row[title="activity-note.md"]').click();
+  const toggle = page.locator(".lumir-hp-toggle");
+  const status = page.locator(".lumir-hp-toggle-status");
+  const segStatus = page.locator(".lumir-hp-seg-status");
+  const stage = page.locator(".lumir-hp-stage");
+
+  // 面板收起：toggle 是唯一可见承载，三个字段同源。
+  await expect(toggle).toHaveAttribute("data-activity", "inflight");
+  await expect(status).toHaveText("等待批准");
+  await expect(toggle).toHaveAttribute("title", "对话面板 · 等待批准");
+  await expect(segStatus).toBeHidden();
+
+  // 打开面板：toggle 被退让条款隐藏，段状态词接手（唯一在場的 live 区域）。
+  await toggle.click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await expect(toggle).toBeHidden();
+  await expect(segStatus).toBeVisible();
+  await expect(segStatus).toHaveText("等待批准");
+  await expect(segStatus).toHaveAttribute("role", "status");
+  await expect(stage).toHaveText("等待批准…");
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(1);
+
+  // 收起：段隐藏，toggle 仍读同一状态；重新打开保留（attachTo 不拉快照，本地状态）。
+  await page.keyboard.press("Meta+Shift+A");
+  await expect(page.locator(".lumir-harness")).toBeHidden();
+  await expect(segStatus).toBeHidden();
+  await expect(toggle).toBeVisible();
+  await expect(status).toHaveText("等待批准");
+  await expect(toggle).toHaveAttribute("title", "对话面板 · 等待批准");
+
+  await page.keyboard.press("Meta+Shift+A");
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await expect(segStatus).toBeVisible();
+  await expect(stage).toHaveText("等待批准…");
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(1);
+});
+
+test("进入快照在途但无待批：不出现待批状态（对照组）", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarnessActivity(page, { inFlight: true, pendingApprovals: [] });
+  await openActivityPanel(page);
+  const toggle = page.locator(".lumir-hp-toggle");
+  await expect(toggle).toHaveAttribute("data-activity", "inflight");
+  await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("处理中");
+  await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("等待响应…");
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
+});
+
+test("进入快照空闲但带待决列表：按陈旧丢弃，无卡无状态", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarnessActivity(page, { inFlight: false, pendingApprovals: PENDING_ONE });
+  await openActivityPanel(page);
+  const toggle = page.locator(".lumir-hp-toggle");
+  await expect(toggle).toHaveAttribute("data-activity", "idle");
+  await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("");
+  await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
+  await expect(page.locator(".lumir-hp-stage")).toBeHidden();
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-approval")).toHaveCount(0);
+});
+
+test("终态撤回：done / error 标未执行、aborted 标已停止，下一轮不复活", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarnessActivity(page, { inFlight: false, pendingApprovals: [] });
+  const cases = [
+    { terminal: { type: "done" }, label: "未执行" },
+    { terminal: { type: "error", code: "llm_upstream", message: "上游炸了" }, label: "未执行" },
+    { terminal: { type: "aborted" }, label: "已停止" },
+  ] as const;
+  for (const item of cases) {
+    await openActivityPanel(page);
+    await startLocalTurn(page, `待批后收尾：${item.label}`);
+    await fire(page, { type: "approval_request", id: `call_term_${item.label}`, tool: "vault_patch", diff: APPROVAL_DIFF });
+    await expect(page.locator(".lumir-hp-stage")).toHaveText("等待批准…");
+    await expect(page.locator(".lumir-hp-pend")).toHaveCount(1);
+
+    await fire(page, item.terminal);
+    // 卡片整体撤下（不是隐藏），工具行就地标结果词；四处状态零残留。
+    await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
+    await expect(page.locator(".lumir-hp-approval")).toHaveCount(0);
+    const failRow = page.locator(".lumir-hp-tool-row.is-fail").last();
+    await expect(failRow.locator(".lumir-hp-tool-out")).toContainText(item.label);
+    await expect(page.locator(".lumir-hp-stage")).toBeHidden();
+    await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
+    await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("");
+    await expect(page.locator(".lumir-hp-toggle")).toHaveAttribute("title", "对话面板");
+
+    // 下一轮：旧待批不复活（未执行 / 已停止的卡不回到 transcript）。
+    await startLocalTurn(page, `下一轮：${item.label}`);
+    await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
+    await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
+  }
+});
+
+test("content 对账不复活待批（非空 / 空列表 × 面板开 / 收）", async ({ page }) => {
+  // ① 中途接管（enter in_flight:true），终态后 content 快照仍返回非空列表：相位 idle 下不复活。
+  await stubTauri(page, VAULT);
+  await stubHarnessActivity(page, { inFlight: true, pendingApprovals: PENDING_ONE });
+  await openActivityPanel(page);
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(1);
+  const beforeTerminal = await page.evaluate(
+    () => (window as unknown as { __harnessStateCalls: number }).__harnessStateCalls,
+  );
+  await fire(page, { type: "done" });
+  await page.waitForFunction(
+    (before) =>
+      ((window as unknown as { __harnessStateCalls: number }).__harnessStateCalls ?? 0) > before,
+    beforeTerminal,
+  );
+  await expect(page.locator(".lumir-hp-send")).toHaveAttribute("aria-label", "发送");
+  await expect(page.locator(".lumir-hp-stage")).toBeHidden();
+  await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
+  await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("");
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-approval")).toHaveCount(0);
+
+  // ② 面板收起 + 空列表：同一口径（收起期间 done 产生未读，但绝不产生待批状态）。
+  await page.reload();
+  await page.locator('.ft-row[title="activity-note.md"]').click();
+  await page.evaluate(() => {
+    (window as unknown as { __pendingApprovals: unknown[] }).__pendingApprovals = [];
+  });
+  const beforeSecond = await page.evaluate(
+    () => (window as unknown as { __harnessStateCalls: number }).__harnessStateCalls,
+  );
+  await fire(page, { type: "done" });
+  await page.waitForFunction(
+    (before) =>
+      ((window as unknown as { __harnessStateCalls: number }).__harnessStateCalls ?? 0) > before,
+    beforeSecond,
+  );
+  await expect(page.locator(".lumir-hp-toggle")).toHaveAttribute("data-activity", "reply");
+  await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("有新的回复");
+  await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
+});
+
+test("窄段 + 长会话名：状态词与加号钮都在段内，会话名先收缩", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarnessActivity(page, { inFlight: true, pendingApprovals: PENDING_ONE });
+  await openActivityPanel(page);
+  // 后端标题上限 20 码点：取满并再加一段，确保宽于可分配空间。
+  await fire(page, { type: "title", title: "APPROVAL-VISIBILITY-长会话名称" });
+  const seg = page.locator(".lumir-hp-seg");
+  // 段宽 = 固定项之和以上、但不足以容纳长会话名（design §6.1 的测试宽度口径）。
+  await seg.evaluate((el) => {
+    const node = el as HTMLElement;
+    node.style.flex = "0 0 210px";
+    node.style.width = "210px";
+  });
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+
+  const measure = () =>
+    page.evaluate(() => {
+      const box = (selector: string) => {
+        const el = document.querySelector<HTMLElement>(selector);
+        if (el === null) throw new Error(`缺元素 ${selector}`);
+        const r = el.getBoundingClientRect();
+        return { left: r.left, right: r.right, width: r.width };
+      };
+      const name = document.querySelector<HTMLElement>(".lumir-hp-sname");
+      if (name === null) throw new Error("缺会话名");
+      return {
+        seg: box(".lumir-hp-seg"),
+        status: box(".lumir-hp-seg-status"),
+        plus: box(".lumir-hp-seg-new"),
+        sname: box(".lumir-hp-sname"),
+        snameClipped: name.scrollWidth > name.clientWidth,
+        snameTextOverflow: getComputedStyle(name).textOverflow,
+      };
+    });
+  const withPending = await measure();
+  expect(withPending.status.width, "状态词必须真的占位（否则本场景空转）").toBeGreaterThan(20);
+  expect(withPending.status.left).toBeGreaterThanOrEqual(withPending.seg.left);
+  expect(withPending.status.right).toBeLessThanOrEqual(withPending.seg.right + 0.5);
+  expect(withPending.plus.left).toBeGreaterThanOrEqual(withPending.seg.left);
+  expect(withPending.plus.right).toBeLessThanOrEqual(withPending.seg.right + 0.5);
+  expect(withPending.snameClipped, "长会话名确实被省略号截断").toBe(true);
+  expect(withPending.snameTextOverflow).toBe("ellipsis");
+
+  // 决策后退场：同一段宽下会话名拿回状态词让出的空间（确实变宽）。
+  await page.locator('button[data-act="approve"]').click();
+  await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  const withoutPending = await measure();
+  expect(withoutPending.status.width).toBe(0);
+  expect(withoutPending.sname.width, "无待批时会话名更宽（状态词退场后收回空间）").toBeGreaterThan(
+    withPending.sname.width,
+  );
+  expect(withoutPending.plus.right).toBeLessThanOrEqual(withoutPending.seg.right + 0.5);
 });

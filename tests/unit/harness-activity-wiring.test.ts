@@ -548,7 +548,7 @@ test("未读只有一个生产者：面板没有第二张按 vault 的表 / 第�
   assert.ok((writes[0].index ?? 0) >= PANEL_SOURCE.indexOf(BADGE), "写点必须在 applyActivityBadge 里");
   assert.match(BADGE, /activityStatus\.textContent/, "可访问状态文本与状态点同源施加");
   assert.match(BADGE, /activityKind\(state\)/, "三态取值走共用映射（与切换器行同源）");
-  assert.match(BADGE, /activityStatusKey\(state\)/, "状态词走共用映射（D870–D872）");
+  assert.match(BADGE, /activityStatusKey\(state, hasPendingApprovals\(\)\)/, "状态词走共用映射（D870–D872 / 待批 D416）");
   assert.match(BADGE, /currentActivity\(\)/, "三态读当前 vault 的记录");
   // 空闲态必须真的把文本清空（不残留上一次的状态描述）。
   assert.match(BADGE, /\?\s*""\s*:/, "空闲态的状态文本为空串");

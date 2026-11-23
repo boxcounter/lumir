@@ -167,6 +167,21 @@
 .lumir-hp-seg[hidden] {
   display: none;
 }
+/* 待批状态词（change fix-harness-approval-visibility-nov23 design §6.1）：标题栏是**滚动区
+   之外**的审批信号。面板打开（分栏）时 toggle 钮按既有退让条款隐藏，段是此刻唯一在场的承载。
+   文字取 --pending（三主题均有定义，eink 为黑），不新增底色 / 边框 / 阴影——文字本身就是信号。
+   flex:none：不参与收缩，窄段下让会话名先省略；[hidden] 零像素、不占 flex 间距（idle /
+   无待批时既有整页基线零漂移）。 */
+.lumir-hp-seg-status {
+  flex: none;
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  color: var(--pending);
+}
+.lumir-hp-seg-status[hidden] {
+  display: none;
+}
 /* 会话名钮 + 浮层的 wrapper（M351，finding 20261006-worker-hp4）：浮层挪出 <button>
    （WKWebView 把嵌套按钮当叶子、AX 不暴露浮层项）。M397 浮层改 `position: fixed` 后，wrapper
    **不再是浮层的定位包含块**——这里的 `position: relative` 只为与同族 wrapper（.lumir-hp-modelwrap）
@@ -174,15 +189,19 @@
    seg.hidden 连带隐藏浮层，且浮层 MUST NOT 放回 <button> 内。 */
 .lumir-hp-sessionwrap {
   position: relative;
-  flex: none;
+  /* 收缩链路（change fix-harness-approval-visibility-nov23 design §6.1）：窄段下让会话名先
+     收缩 / 省略，状态词与加号钮不被段的 overflow 裁掉。只改 .lumir-hp-sname 不够——父级
+     flex:none 仍不收缩，长会话名 + 状态词 + 加号会一起溢出。 */
+  flex: 0 1 auto;
   display: flex;
   min-width: 0;
 }
 /* 会话名下拉钮：26px 高的小标签形态（与标签条同构），名超长 ellipsis。 */
 .lumir-hp-session {
-  flex: none;
+  flex: 0 1 auto;
   display: flex;
   align-items: center;
+  min-width: 0;
   gap: var(--sp-2);
   max-width: 190px;
   height: 26px;
@@ -202,6 +221,7 @@
 }
 .lumir-hp-session .lumir-hp-sname {
   overflow: hidden;
+  min-width: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

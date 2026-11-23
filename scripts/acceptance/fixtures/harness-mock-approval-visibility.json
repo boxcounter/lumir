@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "AVIS-01 先给一段足够长的回答，让 transcript 真的可滚（脱离态的判据需要它）。\n\nAVIS-02 第二段。这里只放合成文本，不含任何真实 vault 内容。\n\nAVIS-03 第三段。\n\nAVIS-04 第四段。\n\nAVIS-05 第五段。\n\nAVIS-06 第六段。\n\nAVIS-07 第七段。\n\nAVIS-08 第八段。\n\nAVIS-09 第九段。\n\nAVIS-10 第十段。\n\nAVIS-11 第十一段。\n\nAVIS-12 第十二段。\n\nAVIS-13 第十三段。\n\nAVIS-14 第十四段。\n\nAVIS-15 第十五段。\n\nAVIS-16 第十六段。\n\nAVIS-17 第十七段。\n\nAVIS-18 第十八段。\n\nAVIS-19 第十九段。\n\nAVIS-20 第二十段。\n\nAVIS-END 回答结束。"
+    },
+    {
+      "text": "AVIS-PENDING-1 我准备改第一处。",
+      "delay_ms": 6000,
+      "tool_calls": [
+        {
+          "id": "call_avis_1",
+          "name": "vault_patch",
+          "arguments": "{\"path\":\"harness-note.md\",\"edits\":[{\"old_string\":\"HNL-ALPHA 第一行。\",\"new_string\":\"HNL-ALPHA 第一行（AVIS）。\"}]}"
+        }
+      ]
+    },
+    {
+      "text": "AVIS-PENDING-2 再准备改第二处。",
+      "tool_calls": [
+        {
+          "id": "call_avis_2",
+          "name": "vault_patch",
+          "arguments": "{\"path\":\"harness-note.md\",\"edits\":[{\"old_string\":\"HNL-BETA 第二行，等待 patch。\",\"new_string\":\"HNL-BETA 第二行（AVIS）。\"}]}"
+        }
+      ]
+    }
+  ]
+}
