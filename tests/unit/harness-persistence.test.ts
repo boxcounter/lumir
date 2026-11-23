@@ -294,13 +294,22 @@ test("接线：history sticky 显式开启原生键盘关闭面，旧 sticky 调
   );
   assert.ok(
     MAIN_SOURCE.includes(
-      'showToast(harnessPaneMount(), text, [], true, "neutral", undefined, options)',
+      'showToast(harnessPaneMount(), text, [], true, "neutral", undefined, {',
     ),
     "装配层把 options 透传给共享 sticky 实现",
   );
   assert.ok(MAIN_SOURCE.includes("options: ToastOptions = {}"), "options 缺省为空对象（旧调用零变化）");
   assert.ok(MAIN_SOURCE.includes('close.className = "toast-close"'), "原生关闭钮");
-  assert.ok(MAIN_SOURCE.includes('event.key !== "Escape"'), "关闭钮上的 Escape 路径");
+  assert.ok(
+    MAIN_SOURCE.includes("const disposition = escapeDisposition(event)"),
+    "Escape 准入必须复用 escapeDisposition（不得另写一套判据）",
+  );
+  assert.ok(
+    MAIN_SOURCE.includes("restoreToastFocus(activeBeforeToast, options.focusFallback)"),
+    "关闭后焦点回还到出现前的元素（失效时用 fallback）",
+  );
+  assert.ok(MAIN_SOURCE.includes("focusFallback: () =>"), "失效焦点回落到 composer");
+  assert.ok(!MAIN_SOURCE.includes('event.key !== "Escape"'), "不得保留旁路判据");
 });
 
 test("接线：横幅订阅同时重绘横幅与标签条；两段各自接 saveAllDirty / checkRecovery（U1 / U12）", () => {

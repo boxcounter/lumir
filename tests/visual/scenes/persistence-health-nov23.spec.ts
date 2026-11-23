@@ -933,6 +933,9 @@ test("V9 history sticky：不抢焦点；Tab 到原生关闭钮、Enter 关闭�
 
   // 焦点先放在 composer；sticky 出现时不得自动抢焦点（关闭钮只提供 Tab 路径）。
   await page.locator(".lumir-hp-composer").click();
+  await page.evaluate(() => {
+    (window as unknown as Record<string, unknown>).__focusBeforeSticky = document.activeElement;
+  });
   const focusedBefore = await page.evaluate(() => document.activeElement?.className ?? "");
   await fire(page, degradedGapUnwritten(43));
   await expect(note).toBeVisible();
@@ -946,6 +949,14 @@ test("V9 history sticky：不抢焦点；Tab 到原生关闭钮、Enter 关闭�
   expect(await tabToToastClose(page), "Tab 必须能到达 sticky 的关闭钮").toBe(true);
   await page.keyboard.press("Enter");
   await expect(toast).toHaveCount(0);
+  const focusAfterEnter = await page.evaluate(() => ({
+    same: document.activeElement ===
+      (window as unknown as Record<string, unknown>).__focusBeforeSticky,
+    isBody: document.activeElement === document.body,
+  }));
+  expect(focusAfterEnter.same, "Enter 关闭后焦点回到出现前的元素").toBe(true);
+  expect(focusAfterEnter.isBody, "关闭后焦点不得落到 body").toBe(false);
+  await expect(page.locator(".lumir-harness")).toBeVisible();
   // 关闭只移除本次提示：常驻警示块与 gap 文案仍在。
   await expect(note).toBeVisible();
   await expect(note).toContainText("此前部分记录也未能保存");
@@ -968,6 +979,9 @@ test("V10 history sticky：Escape 在关闭钮上关闭；不抢焦点；警示�
   const toast = page.locator(".lumir-toast[data-sticky-text]");
 
   await page.locator(".lumir-hp-composer").click();
+  await page.evaluate(() => {
+    (window as unknown as Record<string, unknown>).__focusBeforeSticky = document.activeElement;
+  });
   const focusedBefore = await page.evaluate(() => document.activeElement?.className ?? "");
   await fire(page, degradedGapUnwritten(43));
   await expect(toast).toBeVisible();
@@ -978,7 +992,139 @@ test("V10 history sticky：Escape 在关闭钮上关闭；不抢焦点；警示�
   expect(await tabToToastClose(page), "Tab 必须能到达 sticky 的关闭钮").toBe(true);
   await page.keyboard.press("Escape");
   await expect(toast).toHaveCount(0);
+  const focusAfterEscape = await page.evaluate(() => ({
+    same: document.activeElement ===
+      (window as unknown as Record<string, unknown>).__focusBeforeSticky,
+    isBody: document.activeElement === document.body,
+  }));
+  expect(focusAfterEscape.same, "Escape 关闭后焦点回到出现前的元素").toBe(true);
+  expect(focusAfterEscape.isBody, "关闭后焦点不得落到 body").toBe(false);
+  // 普通 Escape 只关 sticky；顶层 escapeRouter 因 defaultPrevented 让路，面板仍在。
+  await expect(page.locator(".lumir-harness")).toBeVisible();
   await expect(note).toBeVisible();
   await expect(note).toContainText("此前部分记录也未能保存");
   await expect(note).toContainText("现在退出，这段对话将无法恢复");
+});
+
+test("V11 history sticky：鼠标点关闭钮关闭后焦点回到出现前的元素，不落 body", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHealth(page, { sessionToken: 41 });
+  await openPanel(page);
+  const note = page.locator("[data-persistence-health]");
+  const toast = page.locator(".lumir-toast[data-sticky-text]");
+
+  await page.locator(".lumir-hp-composer").click();
+  await page.evaluate(() => {
+    (window as unknown as Record<string, unknown>).__focusBeforeSticky = document.activeElement;
+  });
+  await fire(page, degradedGapUnwritten(43));
+  await expect(toast).toBeVisible();
+  await page.locator(".toast-close").click();
+  await expect(toast).toHaveCount(0);
+  const focus = await page.evaluate(() => ({
+    same: document.activeElement ===
+      (window as unknown as Record<string, unknown>).__focusBeforeSticky,
+    isBody: document.activeElement === document.body,
+  }));
+  expect(focus.same, "鼠标关闭后焦点回到出现前的元素").toBe(true);
+  expect(focus.isBody, "鼠标关闭后焦点不得落到 body").toBe(false);
+  await expect(note).toBeVisible();
+  await expect(note).toContainText("此前部分记录也未能保存");
+});
+
+test("V12 history sticky：出现前焦点已失效时，关闭后回落到 composer（不落 body）", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHealth(page, { sessionToken: 41 });
+  await openPanel(page);
+  const note = page.locator("[data-persistence-health]");
+  const toast = page.locator(".lumir-toast[data-sticky-text]");
+
+  // 制造「出现前焦点已失效」：聚焦一个临时按钮后把它从 DOM 摘除，activeElement 回到 body。
+  await page.evaluate(() => {
+    const tmp = document.createElement("button");
+    tmp.id = "tmp-focus-before-sticky";
+    tmp.textContent = "tmp";
+    document.body.append(tmp);
+    tmp.focus();
+    tmp.remove();
+  });
+  expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+  await fire(page, degradedGapUnwritten(43));
+  await expect(toast).toBeVisible();
+  await page.locator(".toast-close").click();
+  await expect(toast).toHaveCount(0);
+  const focus = await page.evaluate(() => ({
+    isComposer: document.querySelector(".lumir-hp-composer")?.contains(document.activeElement) ?? false,
+    isBody: document.activeElement === document.body,
+  }));
+  expect(focus.isComposer, "前一个焦点失效时回落到 composer 区域").toBe(true);
+  expect(focus.isBody, "回落不得落到 body").toBe(false);
+  await expect(note).toBeVisible();
+});
+
+test("V13 history sticky：Escape 准入复用 escapeDisposition（组合期 / keyCode229 不关不消费；四修饰键只消费不关）", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHealth(page, { sessionToken: 41 });
+  await openPanel(page);
+  const note = page.locator("[data-persistence-health]");
+  const toast = page.locator(".lumir-toast[data-sticky-text]");
+
+  await fire(page, degradedGapUnwritten(43));
+  await expect(toast).toBeVisible();
+
+  const results = await page.evaluate(() => {
+    const close = document.querySelector(".toast-close") as HTMLElement;
+    close.focus();
+    const dispatch = (init: KeyboardEventInit, variant?: "isComposing" | "keyCode229") => {
+      const event = new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+        ...init,
+      });
+      if (variant === "isComposing") {
+        Object.defineProperty(event, "isComposing", { value: true });
+      }
+      if (variant === "keyCode229") {
+        Object.defineProperty(event, "keyCode", { value: 229 });
+      }
+      close.dispatchEvent(event);
+      const harness = document.querySelector(".lumir-harness") as HTMLElement | null;
+      return {
+        prevented: event.defaultPrevented,
+        visible: document.querySelector(".lumir-toast[data-sticky-text]") !== null,
+        panel: harness !== null && !harness.hidden,
+      };
+    };
+    return {
+      composing: dispatch({}, "isComposing"),
+      keyCode229: dispatch({}, "keyCode229"),
+      shift: dispatch({ shiftKey: true }),
+      meta: dispatch({ metaKey: true }),
+      ctrl: dispatch({ ctrlKey: true }),
+      alt: dispatch({ altKey: true }),
+    };
+  });
+
+  // 组合期 / keyCode 229：归输入法，不关闭、不消费（defaultPrevented 必须为 false）。
+  expect(results.composing.prevented, "组合期 Escape 不得被消费").toBe(false);
+  expect(results.composing.visible, "组合期 Escape 不得关闭 sticky").toBe(true);
+  expect(results.keyCode229.prevented, "keyCode 229 Escape 不得被消费").toBe(false);
+  expect(results.keyCode229.visible, "keyCode 229 Escape 不得关闭 sticky").toBe(true);
+  // 四修饰键：只消费默认行为（preventDefault），不关闭。
+  for (const key of ["shift", "meta", "ctrl", "alt"] as const) {
+    expect(results[key].prevented, `${key}+Escape 应只消费默认行为`).toBe(true);
+    expect(results[key].visible, `${key}+Escape 不得关闭 sticky`).toBe(true);
+    expect(results[key].panel, `${key}+Escape 不得连带关闭面板`).toBe(true);
+  }
+  await expect(toast).toBeVisible();
+  await expect(note).toBeVisible();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+
+  // 普通 Escape 仍只关 sticky：面板不连带关闭，常驻警示与 gap 保留。
+  await page.keyboard.press("Escape");
+  await expect(toast).toHaveCount(0);
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await expect(note).toBeVisible();
+  await expect(note).toContainText("此前部分记录也未能保存");
 });

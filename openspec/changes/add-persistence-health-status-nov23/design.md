@@ -278,9 +278,14 @@ save-controller 的 `failedPaths` 与独立的枚举失败条件。前端 MUST N
     警示块、MUST NOT 清除 `history_gap`、MUST NOT 被视为对未来失败的静音；新逻辑会话可以
     再次触发。
   - 无动作的 history sticky SHALL 提供**原生可聚焦关闭钮**（`button`，读屏名 D961）与
-    Escape 关闭路径：Tab 可达、Enter / Space 触发 click；MUST NOT 自动抢焦点。只有这条
-    sticky 显式开启关闭面，其他无动作 sticky 不传 `dismissible`，DOM / 行为零变化
-    （独立视觉复核 P2-2）。
+    Escape 关闭路径：Tab 可达、Enter / Space 触发 click；MUST NOT 自动抢焦点。Escape MUST
+    复用 `src/escape-router.ts` 的 `escapeDisposition()`（唯一准入，不得另写 `event.key`
+    判据）：组合期 / `keyCode=229` 不关、不消费；⇧/⌘/⌃/⌥+Escape 只 `preventDefault`、
+    不关；普通 Escape 关闭 sticky，且因 `defaultPrevented` 让顶层 `escapeRouter` 让路，
+    MUST NOT 连带关闭面板。关闭（Enter / Space / Escape / 点击）后 SHALL 把焦点归还到提示
+    出现前的有效元素；该元素失效时回落到 composer 区域（不落 `body`）。只有这条 sticky
+    显式开启关闭面，其他无动作 sticky 不传 `dismissible`，DOM / 行为零变化（独立视觉复核
+    P2-1 / P2-2）。
   - toast 归属仍在装配层（M423）：面板调用新增的 `stickyToast(text)` 出口，不自建浮条。
 - **新会话动作**：面板在动作完成后 MUST NOT 继续显示旧会话的警示块；实现可在 reset 路径立即
   清除当前会话健康（含 gap），下一次发送建立的新会话从空健康起算。

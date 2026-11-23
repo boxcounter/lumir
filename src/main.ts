@@ -147,7 +147,7 @@ import type { VaultListEntry } from "./bindings/VaultListEntry";
 import { extensionOf, codeLanguageOfPath, isEditablePath, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
 import { openSearch } from "./search";
 import { createHarnessPanel } from "./harness-panel";
-import { installEscapeRouter } from "./escape-router";
+import { escapeDisposition, installEscapeRouter } from "./escape-router";
 import type { HarnessBlockFullscreenPort } from "./harness-panel";
 import { openPathAtLine } from "./harness-path-link";
 import type { PathJumpPlan } from "./harness-path-link";
@@ -1729,6 +1729,8 @@ interface ToastOptions {
   dismissible?: boolean;
   /** 关闭钮的读屏名（dismissible 时给出；缺省回落到英文 Close）。 */
   dismissLabel?: string;
+  /** 关闭后若先前焦点已失效，回落的合理工作位置（不传则不移焦；旧调用零变化）。 */
+  focusFallback?: () => HTMLElement | null;
 }
 
 /** toast 的归属挂载元素（M420）：提示锚定到**发起它的 pane** 右下角，不跨 pane。
@@ -1764,6 +1766,20 @@ function toast(
   return showToast(toastOwnerMount(), text, actions, sticky, tone, onDismiss);
 }
 
+/** 关闭 sticky 后的焦点回还（独立视觉复核 P2-2）：优先先前焦点；失效（断开 / 不再渲染）
+ *  时用调用方给的合理工作位置；两者都没有时保持浏览器现状，不强行把焦点落到 `body`。 */
+function restoreToastFocus(
+  target: HTMLElement | null,
+  fallback?: () => HTMLElement | null,
+): void {
+  if (target !== null && target.isConnected && target.getClientRects().length > 0) {
+    target.focus();
+    return;
+  }
+  const next = fallback?.() ?? null;
+  if (next !== null && next.isConnected && next.getClientRects().length > 0) next.focus();
+}
+
 function showToast(
   owner: HTMLElement,
   text: string,
@@ -1788,6 +1804,21 @@ function showToast(
   }
   const el = document.createElement("div");
   el.className = "lumir-toast toast-surface";
+  // 焦点回还的基线必须在浮条插入 DOM 之前取：插入本身不改焦点，但关闭钮的 Tab / 点击会。
+  // 只对显式 dismissible 的 sticky 生效；普通 toast / 旧 sticky 的 activeBeforeToast 恒 null，
+  // dismiss 的清理动作与旧实现逐字节一致（独立视觉复核 P2-2）。
+  const activeBeforeToast =
+    options.dismissible &&
+    document.activeElement instanceof HTMLElement &&
+    document.activeElement !== document.body &&
+    document.activeElement !== document.documentElement
+      ? document.activeElement
+      : null;
+  const dismiss = (): void => {
+    el.remove();
+    onDismiss?.();
+    if (options.dismissible) restoreToastFocus(activeBeforeToast, options.focusFallback);
+  };
   if (tone === "success") {
     const check = document.createElement("span");
     check.className = "toast-check";
@@ -1828,24 +1859,28 @@ function showToast(
     close.addEventListener("click", (event) => {
       // 与动作钮同一条防冒泡：点击关闭钮不得再走浮条本体那条「点掉即关闭」的监听。
       event.stopPropagation();
-      el.remove();
-      onDismiss?.();
+      dismiss();
     });
     el.append(close);
-    // Escape：焦点在浮条内（关闭钮）时关闭；不劫持页面其他位置的 Escape。
+    // Escape：复用项目唯一准入 escapeDisposition（不能只看 event.key）——
+    //   组合期 / keyCode 229 = ignore（不关、不消费，交还输入法）；
+    //   ⇧/⌘/⌃/⌥+Escape = swallow（只 preventDefault，不关 sticky）；
+    //   普通 Escape = close（preventDefault 后关闭，顶层 escapeRouter 因 defaultPrevented 让路，
+    //   不会连带关闭 harness 面板）。
     el.addEventListener("keydown", (event) => {
-      if (event.key !== "Escape") return;
+      const disposition = escapeDisposition(event);
+      if (disposition === "ignore") return;
+      if (disposition === "swallow") {
+        event.preventDefault();
+        return;
+      }
       event.preventDefault();
-      el.remove();
-      onDismiss?.();
+      dismiss();
     });
   }
   if (sticky) {
     el.dataset.stickyText = text;
-    el.addEventListener("click", () => {
-      el.remove();
-      onDismiss?.();
-    });
+    el.addEventListener("click", () => dismiss());
   }
   // 归属挂载元素（M420）：发起 pane 的 `.editor-pane`（`position: relative` 提供包含块）。
   // 单 pane 时它几何上等价于旧的 `shell.editor`（零基线漂移）；分栏时提示收进各自的 pane。
@@ -3243,7 +3278,13 @@ const harnessPanel = createHarnessPanel({  shell,
   // 独立评审 P2-2：只有这一条无动作 sticky 需要键盘关闭路径，显式传 dismissible —— 其他
   // 无动作 sticky 不传 options，DOM / 行为保持零变化。
   stickyToast: (text, options) =>
-    void showToast(harnessPaneMount(), text, [], true, "neutral", undefined, options),
+    void showToast(harnessPaneMount(), text, [], true, "neutral", undefined, {
+      ...(options ?? {}),
+      // 关闭后前一个焦点已失效（例如新会话重建了原元素）时，回落到面板的 composer——
+      // 一个始终存在的合理工作位置，不把键盘用户丢到 body（独立视觉复核 P2-2）。
+      focusFallback: () =>
+        harnessPaneMount().querySelector<HTMLElement>(".lumir-hp-composer .cm-content"),
+    }),
   // 面板里的 vault 路径点击（change harness-path-link）：唯一打开链路 + **新标签**意图；带行号
   // 时落点走 editor.revealLine（与 TOC 同一算式），整个视口动作经转场窗口守 CL-2。行跳转的
   // plan 由 `jumpPlanFor` 提供——与快速打开**同一份**（M655 的 design §1.2：复核判据一旦分叉，
