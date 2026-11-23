@@ -164,8 +164,8 @@ test("fetchSnapshot：请求时记下 phaseEpoch，并把它交给 restoreSnapsh
   assert.match(FETCH, /const epoch = phaseEpoch/, "发起请求时必须记下当时的世代");
   assert.match(
     FETCH,
-    /restoreSnapshot\(json, mode, epoch\)/,
-    "响应必须带上请求时的世代（进入档只丢相位；只内容档整条丢弃）",
+    /restoreSnapshot\(json, mode, epoch, eventMark\)/,
+    "响应必须带上请求时的世代与 persistence 事件序号（进入档只丢相位；只内容档整条丢弃）",
   );
   assert.match(FETCH, /mode: "enter" \| "content" = "enter"/, "默认档位是进入（心跳 / 挂载 / 切 vault）");
 });

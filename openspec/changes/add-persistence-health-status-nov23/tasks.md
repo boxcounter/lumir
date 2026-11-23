@@ -187,19 +187,29 @@
   - 后绿：同批测试全绿；`green-p1p3-p2p5-visual.log` 9/9。
   - PartialFail sink 改为**真实写入前缀字节**；新增 R7b 首行部分写 → 前缀 + 重试
     `session_open` 同行的坏行形态断言（不再只返回 `partial:true`）。
-- Rust 后绿：`cargo test --lib` **1053 passed / 1 ignored**（含 R1–R10 + 锁外发送 + R7b）。
-- 前端后绿：`pnpm test` **1802 passed**（含 U1–U13、请求世代双向交错、保存成功后旧备份迟到失败不回标、会话归属）。
+- 第二轮复审 P1（drain 顺序 / 快照 token 准入）：
+  - 先红：`red-p1-flush-order.log`（阻塞 reporter 双线程发送顺序 `["B","A"]`）、
+    `red-p1-snapshot-stale.log`（V8 空会话快照后到，告警被清）。
+  - 后绿：`green-p1-snapshot-stale.log` 10/10；Rust 顺序测试绿。
+  - `PersistenceTransitions::flush` 改为**单 drainer 持续 drain 到空**；快照准入同时看
+    请求时事件序号 + session token，空会话 / 旧 token 快照丢弃并重读一次；
+    `restoreSnapshot` 与轻量快照共用同一入口。
+- Rust 后绿：`cargo test --lib` **1054 passed / 1 ignored**（含 R1–R10 + 锁外发送 +
+  drain 顺序 + R7b）。
+- 前端后绿：`pnpm test` **1804 passed**（含 U1–U13、请求世代双向交错、保存成功后旧备份
+  迟到失败不回标、会话归属、快照 token 准入）。
 - 视觉：`tests/visual/scenes/persistence-health-nov23.spec.ts` 6 条结构断言全绿；未新建 / 未更新
   任何像素基线（degraded 与横幅形态的像素基线属 Alex 人肉过目的 `--update` 裁决点）。
 - 真机：评审修复后 `node scripts/acceptance/run.mjs 709` 单轮 **6/6 PASS**
-  （`acceptance-709-postfix.log` 107.5s；最终 tip 复跑 `acceptance-709-final-tip2.log`
-  102.9s 与 `acceptance-709-final-tip3.log` 102.7s，均 6/6）。
+  （`acceptance-709-postfix.log` 107.5s；`acceptance-709-final-tip2.log` 102.9s；
+  `acceptance-709-final-tip3.log` 102.7s；第二轮复审修复后 `acceptance-709-r3.log` 112.5s，
+  均 6/6）。
   证据目录 `.local/acceptance/2026-11-23-persistence-health/`（`red-head/` 是 HEAD 原码上
   709b 的红灯副本）。A7（harness 正面写失败）真机不可达，由 R1–R10 + 视觉桩承担（见 709
   场景正文）。
 - 门禁（照抄原文）：
-  - `gate-quick-fix3.log`：`GATE RESULT: 13/13 PASS（SKIP 0）`，gate.sh 退出码 0
-    （最终代码；`gate-quick-fix2.log` 同结果）。
+  - `gate-quick-r3.log`：`GATE RESULT: 13/13 PASS（SKIP 0）`，gate.sh 退出码 0
+    （第二轮复审修复后的最终代码；`gate-quick-fix3.log` 同结果）。
   - `gate-visual-final2.log`：`GATE RESULT: 14/15 PASS（SKIP 0）`，gate.sh 退出码 1；
     唯一 FAIL 是 `visual-regression`（`1171 passed / 41 failed / 1 skipped`，13.7m）。
     41 条失败与 HEAD 原码逐条相同，40/41 实际截图 byte-identical、m303 实际图仅差 6 像素

@@ -13,6 +13,7 @@ import { readFileSync } from "node:fs";
 import {
   persistenceEventAdmitted,
   persistenceSessionTokenOf,
+  persistenceSnapshotAdmitted,
   persistenceStickyDue,
   persistenceText,
   persistenceViewOf,
@@ -166,7 +167,9 @@ test("接线：事件分支与快照路径走同一份解析（U4 / U6）", () =
     "persistence 事件必须经同一份宽容解析落到状态行",
   );
   assert.ok(
-    PANEL_SOURCE.includes("applyPersistenceSnapshot(state.session_token, state.persistence)"),
+    PANEL_SOURCE.includes(
+      "applyPersistenceSnapshot(state.session_token, state.persistence, eventMarkAtRequest)",
+    ),
     "快照恢复 / 重载 / 切回 vault 必须按 persistence 键 + 逻辑会话 token 重建",
   );
 });
@@ -286,4 +289,38 @@ test("persistenceEventAdmitted：旧后端放行、已退役丢弃、新会话�
   assert.equal(persistenceEventAdmitted(42, 42, retired), true);
   assert.equal(persistenceEventAdmitted(43, 42, retired), true);
   assert.equal(persistenceEventAdmitted(40, 42, retired), false);
+});
+
+
+test("persistenceSnapshotAdmitted：空会话 / 旧 token 快照不得覆盖已接纳的新 token", () => {
+  const retired = new Set([41]);
+  // 空会话快照（token 0 / 缺失）只有在当前也没有 token 时才能落地。
+  assert.equal(persistenceSnapshotAdmitted(null, null, retired), true);
+  assert.equal(persistenceSnapshotAdmitted(null, 43, retired), false);
+  // 已退役 / 更旧 token：丢弃。
+  assert.equal(persistenceSnapshotAdmitted(41, null, retired), false);
+  assert.equal(persistenceSnapshotAdmitted(42, 43, retired), false);
+  // 同一 token / 更新的 token：快照权威。
+  assert.equal(persistenceSnapshotAdmitted(43, 43, retired), true);
+  assert.equal(persistenceSnapshotAdmitted(44, 43, retired), true);
+  assert.equal(persistenceSnapshotAdmitted(42, null, retired), true);
+});
+
+test("接线：轻量快照与 restoreSnapshot 共用带事件序号的准入，陈旧快照丢弃重读一次", () => {
+  assert.ok(
+    PANEL_SOURCE.includes(
+      "applyPersistenceSnapshot(state.session_token, state.persistence, eventMarkAtRequest)",
+    ),
+    "restoreSnapshot 必须与轻量快照共用同一准入入口（带请求时事件序号）",
+  );
+  assert.match(
+    PANEL_SOURCE,
+    /function fetchSnapshot\([\s\S]*?const eventMark = persistenceEventRevision;[\s\S]*?restoreSnapshot\(json, mode, epoch, eventMark\)/,
+    "完整快照请求必须捕获请求时的事件序号",
+  );
+  assert.match(
+    PANEL_SOURCE,
+    /if \(!applied && !retry\) \{[\s\S]*?fetchPersistenceSnapshot\(true\)/,
+    "陈旧轻量快照必须丢弃并重读一次",
+  );
 });

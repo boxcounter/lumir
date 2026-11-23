@@ -3419,6 +3419,20 @@ export function persistenceEventAdmitted(
   return token >= current;
 }
 
+/** 快照准入（复审 P1）：空会话快照（token `null`）只能在当前也没有 token 时落地；
+ *  已退役或更旧的 token 快照不得覆盖已接纳的新 token。快照是地板，但**不能把更新的
+ *  事件状态盖回旧值**——必要时由调用方丢弃并重读。 */
+export function persistenceSnapshotAdmitted(
+  token: number | null,
+  current: number | null,
+  retired: ReadonlySet<number>,
+): boolean {
+  if (token === null) return current === null;
+  if (retired.has(token)) return false;
+  if (current === null) return true;
+  return token >= current;
+}
+
 export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const { shell, editor } = deps;
 
@@ -3800,24 +3814,48 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     deps.stickyToast(t("D955"));
   }
 
-  /** 应用一次完整快照的 persistence 读数（快照是重置 / 恢复 / 切回 vault 时的地板）。 */
-  function applyPersistenceSnapshot(rawToken: unknown, rawPersistence: unknown): void {
+  /** 应用一次完整快照的 persistence 读数（快照是重置 / 恢复 / 切回 vault 时的地板）。
+   *
+   *  两道准入：
+   *  1. `eventMarkAtRequest` 必须仍是当前事件序号——请求期间若有新事件到达，快照可能
+   *     比事件旧（同一 token 也会发生），MUST NOT 覆盖；
+   *  2. token 新旧准入：空会话 / 已退役 / 更旧 token 的快照不得清掉已接纳的新 token。
+   *  返回是否落地；调用方可在 false 时丢弃并重读。 */
+  function applyPersistenceSnapshot(
+    rawToken: unknown,
+    rawPersistence: unknown,
+    eventMarkAtRequest: number,
+  ): boolean {
+    if (eventMarkAtRequest !== persistenceEventRevision) return false;
     const token = persistenceSessionTokenOf(rawToken);
-    // 快照是权威：即使该 token 曾被本地标成作废（例如切回同一会话），也以快照为准。
+    if (!persistenceSnapshotAdmitted(token, persistenceSessionToken, retiredPersistenceTokens)) {
+      return false;
+    }
+    // 快照是权威：该 token 若曾被本地标成作废（例如切回同一会话），以快照为准。
     if (token !== null) retiredPersistenceTokens.delete(token);
     persistenceSessionToken = token;
     applyPersistence(persistenceViewOf(rawPersistence));
+    return true;
   }
 
-  /** 只取 persistence 的完整快照（新会话 / 从历史恢复后的地板；不重放消息 / 不改相位）。 */
-  function fetchPersistenceSnapshot(): void {
+  /** 只取 persistence 的完整快照（新会话 / 从历史恢复后的地板；不重放消息 / 不改相位）。
+   *  陈旧快照丢弃后重读一次（复审 P1：空会话快照晚于新 token 事件到达的现场）。 */
+  function fetchPersistenceSnapshot(retry = false): void {
     const seq = ++persistenceSnapshotSeq;
+    const eventMark = persistenceEventRevision;
     void harnessState()
       .then((json) => {
         if (seq !== persistenceSnapshotSeq) return;
         const state = parseSnapshot(json);
         if (state === null) return;
-        applyPersistenceSnapshot(state.session_token, state.persistence);
+        const applied = applyPersistenceSnapshot(
+          state.session_token,
+          state.persistence,
+          eventMark,
+        );
+        if (!applied && !retry) {
+          window.setTimeout(() => fetchPersistenceSnapshot(true), 0);
+        }
       })
       .catch(() => {});
   }
@@ -4039,6 +4077,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const retiredPersistenceTokens = new Set<number>();
   /** 只取 persistence 的轻量快照请求世代（重置 / 恢复后的完整快照为地板）。 */
   let persistenceSnapshotSeq = 0;
+  /** 已接纳的 persistence 事件序号：快照请求在结束后若发现期间有新事件，说明快照可能
+   *  比事件旧（同一 token 也会发生），丢弃该快照的 persistence 部分。 */
+  let persistenceEventRevision = 0;
   let streamingEl: HTMLElement | null = null;
   /** 本轮完整正文源（全部文本段的拼接）——复制源用；分段渲染不改变它。 */
   let streamingText = "";
@@ -8375,6 +8416,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           return;
         }
         if (token !== null) persistenceSessionToken = token;
+        persistenceEventRevision += 1;
         applyPersistence(persistenceViewOf(event));
         return;
       }
@@ -8857,7 +8899,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    * 与闸门，消息 / usage 等照旧应用）；**只内容档整条丢弃**（清面 + 重放会清掉请求之后乐观上屏
    * 的新消息）。
    */
-  function restoreSnapshot(json: string, mode: "enter" | "content", epochAtRequest: number): void {
+  function restoreSnapshot(
+    json: string,
+    mode: "enter" | "content",
+    epochAtRequest: number,
+    eventMarkAtRequest: number,
+  ): void {
     const state = parseSnapshot(json);
     if (state === null) return;
     // 相位回填只属于进入档位（tasks 2.1 / 2.3）：对账快照（`content`）连 `in_flight` 都不读。
@@ -8899,7 +8946,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
     // 留存健康（change add-persistence-health-status-nov23）：快照是重挂载 / 重载 / 切回
     // vault 时的地板。缺键按旧后端宽容（`persistenceViewOf` 的缺省）。
-    applyPersistenceSnapshot(state.session_token, state.persistence);
+    applyPersistenceSnapshot(state.session_token, state.persistence, eventMarkAtRequest);
     // 会话标题（change add-session-auto-naming，design D11）：`title` 缺键 = 无标题 ⇒ 回落
     // 首条用户消息口径（不伪造）。快照是恢复 / 切 vault 回来时标题的唯一来源。
     sessionTitle =
@@ -8970,9 +9017,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   function fetchSnapshot(mode: "enter" | "content" = "enter"): void {
     const seq = (snapshotSeq += 1);
     const epoch = phaseEpoch;
+    const eventMark = persistenceEventRevision;
     void harnessState()
       .then((json) => {
-        if (seq === snapshotSeq) restoreSnapshot(json, mode, epoch);
+        if (seq === snapshotSeq) restoreSnapshot(json, mode, epoch, eventMark);
       })
       .catch(() => {});
   }

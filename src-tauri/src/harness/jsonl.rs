@@ -245,6 +245,8 @@ pub(crate) struct PersistenceTransitions(Arc<Mutex<TransitionState>>);
 struct TransitionState {
     reporter: Option<PersistenceReporter>,
     pending: Vec<PersistenceHealth>,
+    /// 是否已有 drainer 在发送：同一队列只允许一个发送者（复审 P1：并发 drain 会乱序）。
+    draining: bool,
 }
 
 impl PersistenceTransitions {
@@ -252,6 +254,7 @@ impl PersistenceTransitions {
         Self(Arc::new(Mutex::new(TransitionState {
             reporter,
             pending: Vec::new(),
+            draining: false,
         })))
     }
 
@@ -265,15 +268,47 @@ impl PersistenceTransitions {
     }
 
     /// 在锁域外发出全部待发跃迁（调用方保证不持有 Session / Writer 锁）。
+    ///
+    /// **同一队列只有一个 drainer**，且它持续 drain 到队列为空：两个线程并发 flush 时，
+    /// 第二个直接返回，第一个在每次发送后重新取队列，因此事件发送顺序严格等于入队顺序
+    /// （复审 P1：mem::take 后各自锁外发送会让旧快照晚于新快照到达）。锁只用于入队与
+    /// `draining` 标记，emit 始终在锁外。
     pub(crate) fn flush(&self) {
-        let (reporter, pending) = {
+        {
             let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-            (state.reporter.clone(), std::mem::take(&mut state.pending))
-        };
-        if let Some(reporter) = reporter {
-            for health in pending {
-                reporter(&health);
+            if state.draining || state.pending.is_empty() {
+                return;
             }
+            state.draining = true;
+        }
+        let _panic_guard = DrainPanicGuard(self);
+        loop {
+            let (reporter, pending) = {
+                let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+                if state.pending.is_empty() {
+                    // 与「取空」在同一把锁里落标记：producer 不可能在空检查与标记之间入队。
+                    state.draining = false;
+                    return;
+                }
+                (state.reporter.clone(), std::mem::take(&mut state.pending))
+            };
+            if let Some(reporter) = reporter {
+                for health in pending {
+                    reporter(&health);
+                }
+            }
+        }
+    }
+}
+
+/// 发送者 panic 时复位 `draining`（避免队列永久停在「有 drainer」状态）；正常返回由
+/// `flush` 在锁内自行落 false。
+struct DrainPanicGuard<'a>(&'a PersistenceTransitions);
+
+impl Drop for DrainPanicGuard<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.0 .0.lock().unwrap_or_else(|e| e.into_inner()).draining = false;
         }
     }
 }
@@ -1731,5 +1766,57 @@ mod tests {
         assert_eq!(recovered["state"], serde_json::json!("ok"));
         assert_eq!(recovered["history_gap"]["present"], serde_json::json!(true));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 复审 P1：同一队列只能有一个 drain 发送者，且必须持续 drain 到空——否则旧快照可能
+    /// 在两个线程的 take/emit 交错中最后到达。阻塞 reporter 让「A 已取出、尚未发送」的窗口
+    /// 确定出现；B 的 flush 必须不抢先发送，A 恢复后按队列顺序发 A、B。
+    #[test]
+    fn transition_flush_is_single_drainer_and_preserves_order() {
+        use std::sync::Barrier;
+
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let reporter_seen = seen.clone();
+        let reporter_entered = entered.clone();
+        let reporter_release = release.clone();
+        let reporter: PersistenceReporter = Arc::new(move |health: &PersistenceHealth| {
+            if health.detail == "A" {
+                reporter_entered.wait();
+                reporter_release.wait();
+            }
+            reporter_seen.lock().unwrap().push(health.detail.clone());
+        });
+        let transitions = PersistenceTransitions::with(Some(reporter));
+        let a = PersistenceHealth {
+            detail: "A".into(),
+            ..Default::default()
+        };
+        let b = PersistenceHealth {
+            detail: "B".into(),
+            ..Default::default()
+        };
+
+        transitions.push(&a);
+        let first = {
+            let queue = transitions.clone();
+            std::thread::spawn(move || queue.flush())
+        };
+        entered.wait(); // A 已进入 reporter，但尚未记录 / 返回
+        transitions.push(&b);
+        let second = {
+            let queue = transitions.clone();
+            std::thread::spawn(move || queue.flush())
+        };
+        second.join().unwrap(); // 第二个 flush 不得成为第二个 drainer
+        release.wait(); // 放行 A
+        first.join().unwrap();
+
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec!["A".to_string(), "B".to_string()],
+            "事件发送顺序必须与跃迁入队顺序一致（旧 A 不得晚于新 B 发出）"
+        );
     }
 }

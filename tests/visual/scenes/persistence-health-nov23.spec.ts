@@ -38,6 +38,9 @@ interface HarnessStubOptions {
   sessions?: Array<{ session_id: string; first_user_text: string; ts: number }>;
   /** `harness_resume_session` 挂起到页面调用 `__resolveResume()`。 */
   deferResume?: boolean;
+  /** 新会话成功后的 `harness_state` 全部挂起，直到页面调用 `__resolveNewSessionStates()`；
+   *  用于构造「空会话快照回包晚于新 token 事件」的现场（复审 P1）。 */
+  deferNewSessionSnapshots?: boolean;
   /** `recovery_backup` 是否失败（写失败子条件）。 */
   backupFails?: boolean;
   /** `recovery_list` 是否失败（枚举失败子条件）。 */
@@ -57,8 +60,37 @@ async function stubHealth(page: Page, options: HarnessStubOptions = {}): Promise
     w.__resolveResume = null;
     w.__afterResume = false;
     w.__afterNewSession = false;
+    w.__deferNewSessionStates = false;
+    w.__newSessionStateResolvers = [];
+    w.__resolveNewSessionStates = () => {
+      w.__deferNewSessionStates = false;
+      const empty = JSON.stringify({
+        vault: opts.root,
+        session_token: 0,
+        messages: [],
+        usage: { ctx_pct: 0, cache_pct_session: 0 },
+        pending_approvals: [],
+        warn_ctx_pct: 85,
+        persistence: {
+          state: "ok",
+          since_ts: 0,
+          severity: null,
+          detail: "",
+          history_written: false,
+          history_gap: { present: false, since_ts: 0, detail: "" },
+        },
+      });
+      const resolvers = w.__newSessionStateResolvers as Array<(value: string) => void>;
+      w.__newSessionStateResolvers = [];
+      for (const resolve of resolvers) resolve(empty);
+    };
     internals.invoke = async (cmd: string, args: any) => {
       if (cmd === "harness_state") {
+        if (w.__deferNewSessionStates) {
+          return new Promise((resolve: (value: string) => void) => {
+            w.__newSessionStateResolvers.push(resolve);
+          });
+        }
         const persistence =
           (w.__afterResume && opts.resumePersistence) ||
           (w.__afterNewSession && opts.afterNewSession?.persistence) ||
@@ -114,6 +146,7 @@ async function stubHealth(page: Page, options: HarnessStubOptions = {}): Promise
       }
       if (cmd === "harness_new_session") {
         w.__afterNewSession = true;
+        if (opts.deferNewSessionSnapshots) w.__deferNewSessionStates = true;
         return null;
       }
       if (cmd === "harness_send" || cmd === "harness_abort") return null;
@@ -403,5 +436,36 @@ test("V7 新会话后旧会话的迟到事件不复活告警；新会话自己�
   // 新会话自己的事件（token 43）照常显示。
   await fire(page, degradedGap(43));
   await expect(note).toBeVisible();
+  await expect(note).toContainText("写入仍在失败");
+});
+
+test("V8 空会话快照晚于新 token 事件：旧快照不得清掉已接纳的新会话告警", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHealth(page, {
+    sessionToken: 41,
+    deferNewSessionSnapshots: true,
+  });
+  await openPanel(page);
+  const note = page.locator("[data-persistence-health]");
+
+  await page.locator(".lumir-hp-seg-new").click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as Record<string, any>).__newSessionStateResolvers.length,
+      ),
+    )
+    .toBeGreaterThan(0);
+
+  // 新会话自己的 token 43 写失败事件先到：状态行正确显示。
+  await fire(page, degradedGap(43));
+  await expect(note).toBeVisible();
+
+  // 请求时后端还是空会话（token 0）的快照后到：MUST NOT 覆盖已接纳的 token 43。
+  await page.evaluate(() => {
+    const w = window as unknown as Record<string, any>;
+    w.__resolveNewSessionStates();
+  });
+  await expect(note).toBeVisible({ timeout: 5000 });
   await expect(note).toContainText("写入仍在失败");
 });
