@@ -3408,6 +3408,11 @@ async function handleCronRun(payload: CronRunPayload): Promise<void> {
   // null = 忙时未切屏（不动渲染面），失败回滚也必须跟着跳过（无条件 reloadSession 会
   // resetView 掉在途轮次的流式渲染）。
   let adopted: { targetVault: string; viewToken: number } | null = null;
+  // **发起视图**（失败提示的归属）与 `adopted` 解耦：`adopted` 只决定「要不要回滚乐观切屏」，
+  // 不兼任提示身份。忙时 `beginCronRun` 返回 null（不 adopt），请求照常发出——此时若用户切到
+  // B 才失败，提示 MUST NOT 落到 B（r2 评审 P1-1）。捕获点在 `beginCronRun` 之后：它内部的
+  // `resetView` 会推进世代，忙时早退、世代不变，两种情形都取到「这次动作所属的那一代」。
+  let origin: { targetVault: string; viewToken: number } | null = null;
   try {
     await ensureCronVault(payload.vault);
     if (slot === "interactive") {
@@ -3417,7 +3422,11 @@ async function handleCronRun(payload: CronRunPayload): Promise<void> {
       // 把先到的正文分片当「已结束轮次的迟到产出」丢掉（面板停在空占位就是这个形态）。
       const targetVault = loadedRoot ?? payload.vault;
       const viewToken = harnessPanel.beginCronRun(payload.prompt);
+      origin = { targetVault, viewToken: harnessPanel.viewToken() };
       adopted = viewToken === null ? null : { targetVault, viewToken };
+    } else {
+      // 无人值守 / 定时：不切屏、不 adopt，但失败提示同样归属「发起时的视图」。
+      origin = { targetVault: loadedRoot ?? payload.vault, viewToken: harnessPanel.viewToken() };
     }
     await invoke("harness_cron_run", {
       payload: {
@@ -3441,11 +3450,11 @@ async function handleCronRun(payload: CronRunPayload): Promise<void> {
     // 只在**本次确实切了屏**时回滚：忙时（交互轮次在途）面板原样未动，回滚反而会清掉流式泡。
     // **先判**发起视图是否仍当前，再回滚（回滚会推进视图世代，顺序反了会把「同一视图里的失败」
     // 也判成「已切走」而吞掉提示）。提示只在发起视图仍是当前视图时落地（独立评审 P1-1a：A 的
-    // 失败提示 MUST NOT 写进用户已经切到的 B——toast 锚的是当前 pane）。未切屏
-    // （adopted === null）时失败发生在用户当前所在的视图（dirty 拦截 / 忙），提示照常给。
+    // 失败提示 MUST NOT 写进用户已经切到的 B——toast 锚的是当前 pane）。`origin === null` =
+    // `ensureCronVault` 就失败（还没切过 vault）：失败发生在用户当前所在的视图，提示照常给。
     const originCurrent =
-      adopted === null ||
-      (harnessPanel.isViewCurrent(adopted.viewToken) && loadedRoot === adopted.targetVault);
+      origin === null ||
+      (harnessPanel.isViewCurrent(origin.viewToken) && loadedRoot === origin.targetVault);
     if (adopted !== null) harnessPanel.reloadSession(adopted);
     void invoke("cron_run_result", {
       run_id: payload.origin.run_id,

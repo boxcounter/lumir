@@ -344,6 +344,41 @@ test("F5/F9：busy 拒绝不本地收口；第一次重试的后续分片与 don
   await expect(page.locator(".lumir-hp-send")).toHaveAttribute("aria-label", "发送");
 });
 
+test("F5（busy 窗口）：拒绝后快照未回时的真实分片仍上屏；快照返回后相位恢复、旧动作不复活", async ({
+  page,
+}) => {
+  await stubTauri(page, VAULT);
+  await stubRetry(page, {
+    messages: [{ role: "user", text: "旧问题" }],
+    reject: { code: "harness_busy", message: "对话正在处理中（桩）" },
+    // busy 的真实含义：另一轮仍在流式运行（权威读数 in_flight=true，failed 已消费）。
+    stateAfterReject: { inFlight: true, retry: null },
+  });
+  await page.goto("/");
+  await openPanel(page);
+  await fire(page, {
+    type: "error",
+    code: "harness_network_failed",
+    message: "断",
+    retry: { turn: 8 },
+  });
+  // 轻量快照挂起：拒绝之后、权威读数回来之前的窗口保持打开。
+  await holdNextSnapshots(page);
+  await page.locator(".lumir-hp-retry-btn").click();
+  // 拒绝已落地（它同步抛出，错误行在），快照仍挂起。
+  await expect(
+    page.locator(".lumir-hp-error").filter({ hasText: "重试未能发出" }),
+  ).toHaveCount(1);
+  // 窗口内的真实分片 MUST 继续上屏（busy 拒绝不得本地 idle / 关闸——living spec 的 retry 条款）。
+  await fire(page, { type: "text_chunk", text: "BUSY-WINDOW-CHUNK" });
+  await expect(page.locator(".lumir-hp-transcript")).toContainText("BUSY-WINDOW-CHUNK");
+  // 权威快照返回：相位按 in_flight 恢复（仍 running），已失效的动作不得复活。
+  await releaseHeldSnapshots(page);
+  await expect(page.locator(".lumir-hp-send")).toHaveAttribute("aria-label", "停止");
+  await expect(page.locator(".lumir-hp-retry-btn")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-retry-row")).toHaveCount(0);
+});
+
 test("F11：线程启动失败 → 轻量快照 retry 仍在，动作重建且拒绝错误行不被清掉", async ({
   page,
 }) => {

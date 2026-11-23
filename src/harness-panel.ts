@@ -7118,21 +7118,21 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       })
       .catch((e: unknown) => {
         retryInFlight = false;
-        // **先撤销重试时 vault 的乐观起点**（在视图世代守卫之前）。这遵守 retry change 的
-        // 「拒绝不按语义强制 idle」合同：恢复的是点击前的记录本身，不是「拒绝 ⇒ idle」；
-        // 期间若已有真实事件推进记录（auto_turn_started / 终态），版本门会挡住这次回滚。
-        const restored =
-          retryVault !== null && retryToken !== null
-            ? activity.rollbackSend(retryVault, retryToken)
-            : false;
-        if (restored && retryVault !== null && retryVault === currentVault) {
-          turnOpen = activity.of(retryVault).phase !== "idle";
-          midTakeover = false;
-          renderActivity();
+        // **活动回滚与轮次闸门分离**（r2 评审 P1-2）。当前视图里拒绝**不改活动记录、不动闸门**：
+        // busy 的真实含义往往是另一轮仍在流式运行，本地收口会把相位伪造成 idle、关掉闸门，
+        // 快照返回前的真实分片被丢且不会复活——living spec 的 retry 条款明令「busy 拒绝不得
+        // 本地 idle / 关闸，后续分片必须继续上屏」。相位由随后的轻量快照（`in_flight`）权威恢复。
+        //
+        // 非当前（换了 vault 或视图世代已变）**没有权威读数可读**（`harness_state` 只服务当前
+        // vault）：乐观起点留着会让 A 永久停在「处理中」，因此只按发起 vault 撤销它——不碰 B 的
+        // DOM / 闸门，也不写错误行 / 请快照（那些都属于当前视图）。
+        const stale = retryVault !== currentVault || viewGeneration !== generation;
+        if (stale) {
+          if (retryVault !== null && retryToken !== null) {
+            activity.rollbackSend(retryVault, retryToken);
+          }
+          return;
         }
-        // 视图世代守卫：换代之后到达的旧拒绝回包属于上一段会话——错误行与轻量快照都跳过
-        //（快照只服务当前 vault，对 A 也取不到权威读数；A 的收口靠切回时的进入快照）。
-        if (viewGeneration !== generation) return;
         const code = errorCodeOf(e);
         const reason =
           code === "harness_image_unsupported" ? t("D965") : errorText(e);

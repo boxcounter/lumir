@@ -634,6 +634,86 @@ test("cron 发起失败（未切走）：提示照常落地（守卫 MUST NOT �
     .toBeGreaterThan(toastsBefore.length);
 });
 
+test("cron 忙时未 adopt（A→B→reject）：A 的失败提示不写进 B", async ({ page }) => {
+  await stubTauri(page, A_FIXTURE);
+  await stubRace(page, {
+    holdSend: [0],
+    cronReject: { at: 0, envelope: { code: "harness_busy", message: "对话正在处理中" } },
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="a-note.md"]').click();
+
+  // A 已在途（面板打开、相位 running）⇒ `beginCronRun` 忙时返回 null（不 adopt）。
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await page.locator(".lumir-hp-composer .cm-content").fill("A 的在途轮次");
+  await page.locator(".lumir-hp-send").click();
+  await expect(toggle(page)).toHaveAttribute("data-activity", "inflight");
+
+  await page.evaluate(
+    (payload) =>
+      (window as unknown as { __fireCronRun: (p: unknown) => void }).__fireCronRun(payload),
+    {
+      origin: { kind: "cron", task: "acc-activity", run_id: "run-activity-busy" },
+      session_target: { kind: "interactive" },
+      tool_policy: { allow: [] },
+      budget: { max_rounds: 8, max_tokens: 0 },
+      approval_policy: { kind: "interactive" },
+      background: false,
+      trigger: "manual",
+      vault: A_ROOT,
+      prompt: "CRON-A 忙时发起",
+      session: "new",
+      session_id: null,
+      model: null,
+    },
+  );
+  // 未 adopt ⇒ 请求照常发出（挂起）。切到 B 之后拒绝才回来。
+  await switchTo(page, "act-b", "lumir-activity-b");
+  const toastsBefore = await toastTexts(page);
+  await release(page, "cron", "reject", null);
+  await page.waitForTimeout(300);
+  // 发起视图（A）已不是当前视图 ⇒ 提示 MUST NOT 出现（`adopted` 只决定回滚，不决定提示身份）。
+  expect(await toastTexts(page)).toEqual(toastsBefore);
+});
+
+test("cron 忙时未 adopt（未切走）：提示照常落地", async ({ page }) => {
+  await stubTauri(page, A_FIXTURE);
+  await stubRace(page, {
+    holdSend: [0],
+    cronReject: { at: 0, envelope: { code: "harness_busy", message: "对话正在处理中" } },
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="a-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await page.locator(".lumir-hp-composer .cm-content").fill("A 的在途轮次");
+  await page.locator(".lumir-hp-send").click();
+  await expect(toggle(page)).toHaveAttribute("data-activity", "inflight");
+  const toastsBefore = await toastTexts(page);
+  await page.evaluate(
+    (payload) =>
+      (window as unknown as { __fireCronRun: (p: unknown) => void }).__fireCronRun(payload),
+    {
+      origin: { kind: "cron", task: "acc-activity", run_id: "run-activity-busy-2" },
+      session_target: { kind: "interactive" },
+      tool_policy: { allow: [] },
+      budget: { max_rounds: 8, max_tokens: 0 },
+      approval_policy: { kind: "interactive" },
+      background: false,
+      trigger: "manual",
+      vault: A_ROOT,
+      prompt: "CRON-A 忙时发起（未切走）",
+      session: "new",
+      session_id: null,
+      model: null,
+    },
+  );
+  await release(page, "cron", "reject", null);
+  await expect
+    .poll(async () => (await toastTexts(page)).length, { timeout: 5000 })
+    .toBeGreaterThan(toastsBefore.length);
+});
+
 test("cron 通知恢复被拒跨 vault：A 的失败提示不写进 B，也不重绘 B", async ({ page }) => {
   await stubTauri(page, A_FIXTURE);
   await stubRace(page, {

@@ -393,16 +393,28 @@ test("停止：发送钮的点击路由读当前 vault 的记录（不读局部�
   assert.match(PANEL_SOURCE, /if \(currentActivity\(\)\.phase === "idle"\) send\(\);/, "发送路由按记录判相位");
 });
 
-test("重试拒绝：按点击时 vault 撤销乐观起点，且回滚排在视图世代守卫之前", () => {
+test("重试拒绝：当前视图不本地收口/不关闸；非当前才按发起 vault 撤销乐观起点", () => {
   assert.match(BEGIN_RETRY, /const retryVault = currentVault;/, "点击时定格 vault");
   assert.match(BEGIN_RETRY, /beginSendActivity\(retryVault\)/, "乐观起点走同一条 beginSend 令牌通道");
-  assert.match(BEGIN_RETRY, /activity\.rollbackSend\(retryVault, retryToken\)/, "拒绝先撤销自己的乐观起点");
+  assert.match(
+    BEGIN_RETRY,
+    /const stale = retryVault !== currentVault \|\| viewGeneration !== generation;/,
+    "先判定是否已经不在发起视图",
+  );
+  // 当前视图：busy 的真实分片要继续上屏 ⇒ 拒绝路径 MUST NOT 写轮次闸门 / 重绘视图。
+  assertNoMatch(BEGIN_RETRY, /turnOpen\s*=/, "拒绝路径不得改轮次闸门（busy 的分片会被闸门丢弃）");
+  assertNoMatch(BEGIN_RETRY, /midTakeover\s*=/, "拒绝路径不得改接管标志");
+  assertNoMatch(BEGIN_RETRY, /renderActivity\(/, "当前视图的相位由权威快照恢复，拒绝路径不重绘");
+  // 非当前：只按发起 vault 撤销乐观起点，然后早退（不写 B 的错误行、不请 B 的快照）。
+  assert.match(
+    BEGIN_RETRY,
+    /if \(stale\) \{\s*if \(retryVault !== null && retryToken !== null\) \{\s*activity\.rollbackSend\(retryVault, retryToken\);/,
+    "非当前按发起 vault 回滚",
+  );
+  const stale = BEGIN_RETRY.indexOf("if (stale)");
   const rollback = BEGIN_RETRY.indexOf("activity.rollbackSend(retryVault, retryToken)");
-  const guard = BEGIN_RETRY.indexOf("viewGeneration !== generation");
-  assert.notEqual(rollback, -1, "必须有回滚");
-  assert.notEqual(guard, -1, "视图世代守卫仍在");
-  assert.ok(rollback < guard, "回滚 MUST 排在视图世代守卫之前（切走后 A 不得残留假在途）");
-  assert.match(BEGIN_RETRY, /if \(restored && retryVault !== null && retryVault === currentVault\)/, "只有撤销生效且仍是当前视图时才动本视图闸门");
+  const append = BEGIN_RETRY.indexOf("appendError(");
+  assert.ok(stale !== -1 && rollback > stale && append > rollback, "回滚在 stale 分支内、早于错误行");
 });
 
 test("自动回合：auto_turn_started 记账后投影（闸门先开，首段分片不被丢弃）", () => {
@@ -483,6 +495,14 @@ test("cron 回滚 / cron 通知：显式 { targetVault, viewToken }，内部不�
   assert.match(CRON_HANDLER, /const viewToken = harnessPanel\.beginCronRun/, "令牌取自 beginCronRun 的返回值（resetView 之后那一代）");
   assert.match(CRON_HANDLER, /harnessPanel\.reloadSession\(adopted\)/, "失败回滚带上 { targetVault, viewToken }");
   assert.match(CRON_HANDLER, /if \(originCurrent\) void showToast\(/, "发起失败提示只在发起视图仍当前时落地");
+  // 发起视图与 adopted 解耦（r2 评审 P1-1）：忙时 beginCronRun 返回 null 也要捕获。
+  assert.match(
+    CRON_HANDLER,
+    /origin = \{ targetVault, viewToken: harnessPanel\.viewToken\(\) \};/,
+    "发起视图在 beginCronRun 之后独立捕获（忙时也要）",
+  );
+  assert.match(CRON_HANDLER, /origin === null \|\|/, "提示身份用 origin");
+  assertNoMatch(CRON_HANDLER, /adopted === null \|\|/, "adopted 只决定回滚，不得兼任提示身份");
   assert.match(
     CRON_OPEN,
     /target = \{ targetVault: loadedRoot \?\? payload\.vault, viewToken: harnessPanel\.viewToken\(\) \};/,

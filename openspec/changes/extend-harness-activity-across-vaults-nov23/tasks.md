@@ -25,7 +25,8 @@
   - 恢复回包跨 vault：**独立**场景（会话浮层选历史会话 → `harness_resume_session` deferred → 切 B → resolve），不复用 cron 通知用例（r1 评审判定两者不是同一份实现：`resumeSession` 在面板内、cron 通知在装配层）。
   - 重试拒绝跨 vault：独立场景两条（A 不残留假在途 / 期间已有真实终态时版本门阻止回滚），按点击时 vault + `beginSend` 令牌收口。
   - cron 两条失败路径：除快照计数外，还断言 **toast 集合不新增**（A 的失败提示不写进 B）与 **toggle 属性零写入**（目标非当前时不渲染 B 的 DOM）；另有一条「未切走时提示照常落地」的守卫（防过度抑制）。
-  - r1 评审（needs-changes）后补：`enter_snapshot` 被拒不得推进回滚版本（公开 store 次序用例）、`beginRetry` 按点击时 vault 回滚（两条视觉场景）、切换器的当前项变化 / 语言切换刷新（两条单测）。回滚收口把相位先收回 idle 后，终态是 idle → idle——**终态一律推进相位世代**（`projectActivity`），否则旧快照会复活已失效的重试动作（`harness-turn-retry-nov23` F5）。
+  - r1 评审（needs-changes）后补：`enter_snapshot` 被拒不得推进回滚版本（公开 store 次序用例）、`beginRetry` 跨 vault 的两条视觉场景（A 不残留假在途 / 期间真实终态 ⇒ 版本门）、切换器的当前项变化 / 语言切换刷新（两条单测）。回滚收口把相位先收回 idle 后，终态是 idle → idle——**终态一律推进相位世代**（`projectActivity`），否则旧快照会复活已失效的重试动作（`harness-turn-retry-nov23` F5）。
+  - r2 复审后补：cron 忙时（`beginCronRun` 返回 null、不 adopt）也要在调用前独立捕获发起视图（`origin`）——两条用例（A→B→reject 零 toast / 未切走照常）；`beginRetry` 的**活动回滚与轮次闸门分离**——当前视图拒绝不碰记录 / 闸门 / DOM（`harness-turn-retry-nov23` 新增「busy 窗口：挂起轻量快照 → 拒绝 → 分片上屏 → 快照返回恢复相位、旧动作不复活」）。
 - [x] 1.2b 新增 webview 重载 / app 重启区分测试：未读均不回放；重载后当前 vault 的在途由进入快照恢复、非当前 vault 无标记直到后续事件。
   - 模型层：`enter_snapshot` 只回填相位、不动未读；store 是纯内存、无持久化 API（`harness-vault-activity.test.ts`）。
   - 装配层：切 vault 后由 `fetchSnapshot` 的 `in_flight` 回填；跨 vault 只靠事件——`tests/visual/scenes/m756-harness-activity-presence.spec.ts` 的往返用例与 `harness-vault-activity.spec.ts` 的显示门用例覆盖。**真机**的「webview 重载」不在本批（套件不重启 webview）：由模型层 + 装配层两层证据承担，已在完工报告登记为覆盖边界。
@@ -115,7 +116,7 @@
 - [x] 8.1 `PATH="$HOME/.nvm/versions/node/v22.22.2/bin:$PATH" npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（由 `gate.sh quick` 的 `openspec-validate` 项执行：`GATE PASS openspec-validate`）
 - [x] 8.2 `bash scripts/docs-check.sh` 通过（`gate.sh quick` 的 `docs-check` 项 PASS）；另跑 `node scripts/openspec-archive-check.mjs --change extend-harness-activity-across-vaults-nov23` → PASS（2 份 delta / 1 条 MODIFIED / 42 段无静默丢段 / 归档队列对账通过）
 - [x] 8.3 `scripts/gate.sh quick` 通过：`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0（`unit-tests` 1847 条）
-- [x] 8.4 `scripts/gate.sh visual` 通过：`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0；`visual-regression` 900s / **1255 passed**（含两个新场景、needs-changes 修复后的重试场景与整页 / 元素像素层；r1 评审修复轮在最终源码上复跑）
+- [x] 8.4 `scripts/gate.sh visual` 通过：`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0；`visual-regression` **1258 passed**（含两个新场景、r1 / r2 评审修复后的重试与 cron 忙时场景、整页 / 元素像素层）
 - [x] 8.5 真机场景 PASS（252 / 253 / 721，见 6.5/6.6）；**未动标题栏内元素的事件监听**（toggle 钮的 DOM / 监听一字未改，只改了它的三态取值与 title 写入路径），按 REVIEW.md「标题栏 mousedown」条的触发条件不需要跑场景 39
 - [x] 8.6 视觉基线**未更新**（`git status tests/visual/baselines` 无改动；行标记是结构断言 + 空闲态零像素，不需要新基线）
 
