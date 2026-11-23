@@ -109,9 +109,10 @@
 
 ## 节点 2（归档前材料已齐；merge / archive 待执行）
 
-> 状态：五要件已满足，**本 change 尚未 merge、未 archive**。实现 PR 合并时由 tower 在
-> `docs/backlog.md` 的归档跟踪队列落唯一一条条目（任务 6.8），随后执行归档；归档后在本块
-> 追加归档提交 hash、包装器输出与 `--archived` PASS 读数。
+> 状态：**已归档**（2026-11-23）。实现已合并推送，归档提交 `bd595ee3`；包装器输出
+> `Totals: + 0, ~ 1, - 0, → 0`，归档后修链 0 处（4 篇 Markdown / 4 条相对链接），相对链接门禁 PASS；
+> `node scripts/openspec-archive-check.mjs --archived restore-default-caret-width-nov23` PASS
+> （1 条 MODIFIED / 10 段；人工恢复 0 段，声明认领 0 段）。
 
 ### 要件 1 — 方案已批准
 
@@ -132,8 +133,7 @@
 
 ### 要件 3 — tasks 完成或有放弃理由
 
-- `tasks.md` 39/40 勾选。唯一未勾项 6.8（合并时在 `docs/backlog.md` 落归档队列条目）已就地
-  写明理由「合并时由 tower 执行」，属合并时动作而非实现缺口。
+- `tasks.md` 40/40 勾选。合并时的归档队列条目已落并在归档后清空；独立评审 clean/merge，归档提交与 `--archived` 审计结果见上方状态块。
 - 6.9（独立评审 + 五要件对账）已随本次材料补勾。
 
 ### 要件 4 — 门禁与真机证据通过
