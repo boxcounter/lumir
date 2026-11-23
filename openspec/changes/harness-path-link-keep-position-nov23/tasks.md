@@ -135,29 +135,27 @@
 
 ## 6. 像素与门禁
 
-- [ ] 6.1 本地跑 `scripts/gate.sh visual`；闪烁不应出现在任何基线里，出现差异先定位
-      - 本任务约束不跑全量 gate（主会话串行做）。已跑相关 chromium 场景 60/60 PASS
-        （新场景 + m632 + harness-navigation-nov21 + m149-tabs + tab-menu），本 change 不新增
-        截图断言、未改基线
+- [x] 6.1 本地跑 `scripts/gate.sh visual`；闪烁不应出现在任何基线里，出现差异先定位
+      - 主会话完整视觉 `GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0；未改基线
 - [x] 6.2 如需新截图，只出候选落 `.local/reviews/ux-improvements/`（git 外）；`--update` 属
       Alex 人肉裁决点
 - [x] 6.3 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过，记录 `Totals:` 原文
 - [x] 6.4 `bash scripts/docs-check.sh` 通过（含 archive-check 门禁模式、验收场景契约与覆盖表）
-- [ ] 6.5 `scripts/gate.sh quick` 通过；照抄 `GATE RESULT` 原文行 + 退出码（SKIP 单列）
-      - 本任务约束不跑全量 gate（主会话串行做）。已单独跑 tsc（根 / 视觉 / 单测）+ 全量单测
-        1866/1866 PASS + openspec validate + docs-check
-- [ ] 6.6 `scripts/gate.sh visual` 通过（动过 `src/style.css` 与 `tests/visual/**`，必须本地跑）
-      - 由主会话串行执行；worker 侧已完成相关场景复跑（见 6.1 注）
+- [x] 6.5 `scripts/gate.sh quick` 通过；照抄 `GATE RESULT` 原文行 + 退出码（SKIP 单列）
+      - rebase 后 `GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0
+- [x] 6.6 `scripts/gate.sh visual` 通过（动过 `src/style.css` 与 `tests/visual/**`，必须本地跑）
+      - `GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0
 
 ## 7. 收尾
 
 - [x] 7.1 `tasks.md` 全部勾选，未勾项就地写放弃理由
 - [x] 7.2 实现后回改 `design.md` 的行号 / 符号名（若与最终代码不一致）
-- [ ] 7.3 实现 PR 合并时在 `docs/backlog.md` 的归档跟踪队列落一条本 change 记录（队列 76 行、
+- [x] 7.3 实现 PR 合并时在 `docs/backlog.md` 的归档跟踪队列落一条本 change 记录（队列 76 行、
       硬上限 80；先核可删的僵尸条目，不为压行数删活条目）
-      - 属合并时动作，本分支只到「可评审」；由 tower 在合并 / 归档批次执行
-- [ ] 7.4 交独立 reviewer；verdict 绑定当前 tip；归档前逐条核对节点 2 五要件
-      - 属 tower 的评审与归档流程，不在 worker 收尾内
+      - 已落入归档跟踪队列，归档时移除
+- [x] 7.4 交独立 reviewer；verdict 绑定当前 tip；归档前逐条核对节点 2 五要件
+      - r3 clean / merge 绑定 `2b669b21e3f5ea2d446178812723d7a9a7b3fdc4`；rebase 后 tip
+        `49fca425`，`git range-diff` 三个补丁均为 `=`，五要件已核对
 
 ## 8. 信息卫生
 
@@ -189,6 +187,7 @@
   用可打印 `do: keys`，composer 的 AX 身份名从占位读屏名变成值，回读判「目标消失」。修法：
   正则改单反斜杠；焦点证明改「预置 focusproof + ⌃H 删一个字符」；切回文档后加 `waitFor`。
   修后真机 221 PASS（证据 `.local/acceptance/2026-11-24-harness-path-link-r2/`）。
-- **未跑 / 未覆盖（如实登记）**：全量 `gate.sh quick` / `visual` 与真实 WKWebView 的手感 /
-  像素层——按任务约束留给主会话串行；「闪烁中收 pane」的视觉现场在当前布局不可达
-  （见 4.10 注），由单测钉 `dispose()`。
+- **主会话收口**：完整 quick `GATE RESULT: 13/13 PASS（SKIP 0）`、完整视觉
+  `GATE RESULT: 15/15 PASS（SKIP 0）`；rebase 后真机 221 PASS（26.9s，证据
+  `.local/acceptance/2026-11-24-harness-path-link-rebased/`）。「闪烁中收 pane」的视觉现场在
+  当前布局不可达（见 4.10 注），由单测钉 `dispose()`；手感仍归 Alex。

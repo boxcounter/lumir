@@ -8,9 +8,10 @@
 >
 > - **节点 1 已批准**（Alex 2026-11-23，回话「按推荐」；本批三项一次覆盖）。L1–L4 逐条落值见
 >   下方裁决点表，批准值与推荐值一致。
-> - `tasks.md` 只勾「节点 1 已批准 / 批准值已落制品」两项；全部实现与验证项未勾，本 change
->   尚未进入实现。
-> - 本 change 只到提案层：living spec 的改动以 delta 留在本目录，归档时并入，不提前改写。
+> - **实现与节点 2 材料已备（2026-11-24）**：实现已落地并 rebase 到 master `ede07e84`，当前 tip
+>   `49fca425`；`git range-diff` 证明与独立评审 tip `2b669b21` 的三个补丁逐一相同。独立评审 r3
+>   clean / merge；真机 221 PASS（26.9s）；quick `GATE RESULT: 13/13 PASS（SKIP 0）`；完整视觉
+>   `GATE RESULT: 15/15 PASS（SKIP 0）`。living spec 仍由归档包装器并入，不提前改写。
 > - **评审返修（2026-11-23）**：独立评审 needs-changes 四项已修——① 工具卡片 `offset` 统一为
 >   「滚动落行、不产生正文行高亮、只闪标签」（保留既有禁令）；② 正文 / 卡片路径按钮加按钮级
 >   `mousedown.preventDefault()`，焦点留在 composer；③ `TabsHandle.dispose()` 接入
