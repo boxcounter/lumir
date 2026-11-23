@@ -4,9 +4,9 @@
 > `harness` 的「面板收起与跨 vault 的活动在场」条，本 capability MUST NOT 另写一份状态机或第二张表。
 > 机制与取舍见 [design.md](../../design.md)，裁决留痕见 [proposal.md](../../proposal.md)。
 >
-> **D2 分支**：本 delta 按 D2 推荐值（三态）起草。若节点 1 裁定只做未读两档，归档前 MUST 删除本文件中
-> 「在途」条款、在途场景与 `inflight` 形状，并同步删除 `harness` 条中「标题栏钮与切换器行复用三态形状」
-> 的在途引用（行只保留 reply / failure）；不得让 spec 与裁决值分叉。
+> **D2 裁定值**：三态（在途 / 未读回复 / 未读失败），2026-11-23 节点 1 按推荐值批准（Alex 原话
+> 「三项推荐。」）。本 delta 与 `harness` 条中的「三态同源」表述即为批准口径；「只做未读两档」的
+> 退路不再适用，实现期若需缩减须重走节点 1。
 
 ## ADDED Requirements
 

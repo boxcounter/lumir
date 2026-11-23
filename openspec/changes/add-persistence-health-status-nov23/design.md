@@ -3,7 +3,8 @@
 - Change ID: `add-persistence-health-status-nov23`
 - 日期: 2026-11-23
 - 角色: Alex Lee（方向准入、节点 1 裁决），AI agent（起草）
-- 状态：**提案期设计**，节点 1 未批；V1–V7 的推荐值待裁。
+- 状态：**节点 1 已通过**（2026-11-23，Alex 原话「三项推荐。」）；V1–V7 全部按推荐值生效，
+  本文件是实现依据。
 
 ## 1. 目标
 
@@ -364,7 +365,7 @@ failedPaths: Map<path, { at: number, code: "recovery_write_failed" }>
   「（未保存）」同族）；**不改可见像素**、不加图标、不改标签宽度。
 - 装配层在失败集合变化时触发一次标签重绘（`renderTabs` 已是全量重建，无增量 diff）。
 
-### 5.5 枚举失败（V5 推荐纳入）
+### 5.5 枚举失败（V5 已纳入）
 
 - `checkRecovery()` 的 `recovery_list` 失败不再 `return`：进入「无法检查残留备份」子条件，
   与写失败共用同一条横幅。
@@ -373,9 +374,8 @@ failedPaths: Map<path, { at: number, code: "recovery_write_failed" }>
 - **独立保留**：该子条件不写入 `failedPaths`；保存成功 / `failedPaths` 清空 MUST NOT 撤下它；
   反之，重新检查成功 MUST NOT 清除写失败子条件。
 - 该条件不影响标签后缀。
-- 若 V5 被拒绝：保持静默并记为已知边界，其余设计不变。
 
-### 5.6 一处语义修正（与设计输入不同，需 Alex 知悉）
+### 5.6 一处语义修正（已随节点 1 批准生效）
 
 设计输入的场景 A3 写「全部保存后横幅仍保留（备份仍失败）」。按 §5.2 的清空条件，这条不
 成立：保存成功后该路径不再需要备份，继续留横幅等于「没有风险却在报警」。本 design 采用与

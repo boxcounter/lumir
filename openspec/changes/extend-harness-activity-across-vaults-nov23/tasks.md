@@ -1,13 +1,17 @@
 # Tasks: extend-harness-activity-across-vaults-nov23
 
-> 施工前提：**节点 1 通过后才开工**。本 change 目前只有方向批准；D1–D6 未裁前 MUST NOT 动生产代码。
-> 勾选状态在实现期维护；未勾项不删除，放弃的就地写理由。
+> 施工前提：**节点 1 已通过**（2026-11-23，Alex 原话「三项推荐。」）。D1–D6 全部按推荐值生效
+> （D2 = 三态），可进入实现。实现期若范围 / 行为需求变化，停下更新 proposal 并重走节点 1，不静默扩
+> scope。勾选状态在实现期维护；未勾项不删除，放弃的就地写理由。
 
 ## 0. 前置与红线
 
-- [ ] 0.1 节点 1 通过：Alex 对 D1–D6 给出裁决（或「按倾向」），并把结论抄进 `proposal.md` 的节点状态块
-- [ ] 0.2 确认 D2 的取值范围（三态 / 只未读两档）；若裁两档，同步删除 spec / design / tasks 中的在途条款、在途场景与 `inflight` 形状，只保留 reply / failure，不保留「三态」措辞
-- [ ] 0.3 确认「切换窗口内到达的终态按不在屏幕上保守记未读」这条边界（proposal 末尾的追认项）
+- [x] 0.1 节点 1 通过：2026-11-23 Alex 原话「三项推荐。」= D1–D6 全部按推荐值批准；结论已抄进
+      `proposal.md` 的节点状态块
+- [x] 0.2 D2 取值已确定：**三态（含 `inflight`）**；「只做未读两档」的退路不再适用，spec / design /
+      tasks 不保留在途条款的分叉表述
+- [x] 0.3 「切换窗口内到达的终态按不在屏幕上保守记未读」这条边界随提案整体获批（2026-11-23，
+      未单列裁决点）；实现按此口径，不另立退路
 - [ ] 0.4 开工前过一遍 `REVIEW.md`，逐条对照本 change 的改动面（尤其「同一语义两处真源」「断言等价于子串」「读不到当成空」）
 - [ ] 0.5 不新增后端命令 / 事件类型 / 快照字段；若实现中发现必须动 Rust，停下走影响面升级线，不静默扩 scope
 
@@ -56,7 +60,7 @@
 - [ ] 4.5 不实现通用 `retain`、不按 `vault_list` 的注册表原 `path` 做周期性清理；无行记录 MAY 留到重载，且不产生可见标记
 - [ ] 4.6 `handleCronOpenSession` 在 `harness_resume_session` 前捕获 `payload.vault` 与 `viewGeneration`，resolve 后用 `reloadSessionView({ targetVault, viewToken })`；全仓确认无 `vaultChanged("", null)` 残留
 
-## 5. 切换器与样式（D2 可选但推荐）
+## 5. 切换器与样式（D2 已定：三态）
 
 - [ ] 5.1 `src/vault-switcher.ts` deps 增加 `activityOf(path)` 与 `subscribeActivity(listener)`；装配层注入
 - [ ] 5.2 `renderRow`：仅 `available && !current` 且有状态时插入 `span.vault-row-activity`（无文本、`aria-hidden`、`data-activity`）；状态词写进 `el.title`；空闲 / 当前行不设 title、不建节点
@@ -64,7 +68,7 @@
 - [ ] 5.4 `src/style.css` 行标记三态：6×6、`var(--r-pill)`、在途空心环 / 回复实心点 / 失败实心点 + 外环；`margin-left: auto`、`pointer-events: none`；复用既有 token，不新增颜色；有态时名称省略号最多提前 12px，若 Alex 不接受该收缩，备选放摘要次行右端（裁点见 design §11.2）
 - [ ] 5.5 三主题 / eink：eink 靠形状，在途描边提实；不加动画、不加过渡
 - [ ] 5.6 结构断言：标记矩形在切换钮矩形内、与移除钮不相交；`.vault-list` 滚动条档位不变
-- [ ] 5.7 行级测试全绿（1.3 转绿）；若 D2 裁定只做两档，同步删除 `inflight` 分支、在途场景与相关 spec 条款（行只保留 reply / failure），不保留三态措辞
+- [ ] 5.7 行级测试全绿（1.3 转绿）；行只按三态实现（D2 已定，2026-11-23），不保留「两档」分支
 
 ## 6. 验收场景（真机矩阵）
 
@@ -87,7 +91,8 @@
 
 - [ ] 7.1 `specs/harness/spec.md` 的 MODIFIED 块保持「整条复制 living 再改」；实现期若需再改条款，仍按整块更新，不删段
 - [ ] 7.2 `specs/vault-workspace/spec.md` 的 ADDED 块与实现逐条对账：三态、当前行不显示、空闲零像素、title 格式、浮层内更新、旧拼写 fail-closed
-- [ ] 7.3 `proposal.md` 的节点状态块在获得节点 1 后更新（抄 Alex 原话与日期）；实现期范围变化重新走节点 1，不静默扩 scope
+- [x] 7.3 `proposal.md` 的节点状态块已在获得节点 1 后更新：2026-11-23 原话「三项推荐。」与 D1–D6
+      按推荐值生效；实现期范围变化仍重新走节点 1，不静默扩 scope
 - [ ] 7.4 design.md 的行号 / API 名在实现后回改一次（若与最终符号不一致），避免下次误引
 - [ ] 7.5 复用 D870–D872 时同步更新 `文案-Copy.md` 的消费点说明（行标记也消费同一状态词，不新增 key），并核对 zh/en 双档文案表
 - [ ] 7.6 若实现期发现新的已知边界（如行宽收缩的替代形态），补进 design §15 与 spec 的已知边界，不口头流传

@@ -1,13 +1,13 @@
 # Tasks: add-persistence-health-status-nov23
 
-> 本 change 当前处于**提案期**：第 1–2 组由本次起草 mission 完成；第 3 组是节点 1；第 4 组起
-> 在节点 1 批准后推进。未完成项保持未勾选。V1–V7 的推荐值见 `proposal.md`，获批前不得按
-> 推荐值开工。
+> 节点 1 已通过（2026-11-23，Alex 原话「三项推荐。」）：V1–V7 全部按推荐值生效，第 4 组起
+> 可按本清单推进。未完成项保持未勾选。实现期若范围 / 行为需求发生变化，停下更新 `proposal.md`
+> 并重走节点 1，不静默扩 scope。
 
 ## 1. 制品（提案期）
 
-- [x] 1.1 `proposal.md`：为什么改、改什么、不做什么；V1–V7 裁决点与推荐值；明确「方向准入
-      不等于节点 1 批准」；评审 r1 修订记录
+- [x] 1.1 `proposal.md`：为什么改、改什么、不做什么；V1–V7 裁决点与推荐值；节点状态块
+      （现为节点 1 结论：原话与日期）；评审 r1 修订记录
 - [x] 1.2 `design.md`：现状证据、两维状态机（当前写健康 + `history_gap` latch）、severity /
       gap 触发、事件 / 快照形状、首行与部分写边界、双面 UI、备选、先红后绿验收矩阵、已知边界
 - [x] 1.3 `tasks.md`：本文件
@@ -31,12 +31,13 @@
       docs-check，git 外）；整份 change 复制到
       `.local/reviews/harness-proposals/add-persistence-health-status-nov23/` 供 Alex 打开
 
-## 3. 节点 1（Alex 裁决，硬门禁）
+## 3. 节点 1（Alex 裁决，硬门禁）—— 已通过（2026-11-23）
 
-- [ ] 3.1 Alex 对 V1–V7 逐条裁决（接受推荐值或改值）；若裁决改变两条告警面的存在与否、
-      `history_gap` 的展示契约或部分写合同，重新送节点 1
-- [ ] 3.2 按裁决更新 `proposal.md` / `design.md` 的默认值与文案，不静默改 scope
-- [ ] 3.3 节点 1 通过后由 tower 立项；本组未勾前 MUST NOT 开始第 4 组
+- [x] 3.1 Alex 对 V1–V7 逐条裁决：2026-11-23 原话「三项推荐。」（本批三项提案一次答复）
+      = V1–V7 全部按推荐值批准，无改值、无否决项
+- [x] 3.2 按裁决回填 `proposal.md` / `design.md`：状态块抄原话与日期、裁决表改为「按推荐值
+      生效」、删去「若 V5 被拒绝」等退路表述；推荐值无改动 ⇒ 默认值与文案零变更
+- [x] 3.3 节点 1 已通过 ⇒ 第 4 组起可推进；立项由 tower 执行，不在本 change 的制品面
 
 ## 4. 先红（实现前先写断言并记录红灯）
 
@@ -114,7 +115,7 @@
       两段可同时在场）；`hidden` 时零占位
 - [ ] 7.5 `src/tabs.ts`：受影响路径的 `aria-label` / `title` 追加「（备份失败）」后缀；
       可见像素不变；失败集合变化时触发 `renderTabs`
-- [ ] 7.6 V5（若采纳）：`checkRecovery` 的 `recovery_list` 失败进入枚举失败子条件，
+- [ ] 7.6 V5（已纳入）：`checkRecovery` 的 `recovery_list` 失败进入枚举失败子条件，
       带「重新检查」动作；成功只清该子条件（U12）
 - [ ] 7.7 诊断：`recovery_write_failed` / `recovery_list_failed` 失败落日志（已有事件名可复用，
       不新增事件则不动 bindings）
