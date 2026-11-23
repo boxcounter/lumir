@@ -133,7 +133,7 @@
   （`failures` 通道）后不回滚 + toast；桩重载配置后按 `ui.line_numbers` 生效；非法值与旧键
   warning 在 console。双 pane 的临时 gutter 归属按 design §10.7 的现状记录（广播到全部 pane），
   不写成本 change 的判据
-- [ ] 6.4 指示钮视觉：三主题（light / dark / eink）形态、eink 描边、520px 窄窗右段不溢出且
+- [x] 6.4 指示钮视觉：三主题（light / dark / eink）形态、eink 描边、520px 窄窗右段不溢出且
   主题 / 语言钮不被吃掉；`hidden` 初态在施加前不显示；`on` / `off` 两种读数下钮等宽、右段
   其它元素（meta / 版本号 / 主题 / 语言）rect 逐值不变（切换不是布局事件）；**同批更新
   `tests/visual/scenes/modeline.spec.ts`**：右段文本断言补 `.modeline-line-numbers` = `off`，
@@ -151,7 +151,7 @@
   `always` 这里会红」）——默认改 `off` 后该判据两端都为假，会抛「模式判据不成立」。逐处改成
   与行号无关的模式信号（或给该场景显式 `line_numbers: "on"` 并说明这是为判据服务的构造），
   `markdown-parser.spec.ts:113` 的 code 模式 gutter 断言同批处理
-- [ ] 6.9 基线复核面（不预先缩成 m281 / code）：① `modeline.spec.ts` 的右段文本断言与
+- [x] 6.9 基线复核面（不预先缩成 m281 / code）：① `modeline.spec.ts` 的右段文本断言与
   `modeline-bar.png` 元素基线（行号钮在 `off` 下也常驻，元素基线必变）；②
   `titlebar-identity.spec.ts:212` 的右段整体文本正则（`.modeline-right` 的全文本断言只有这一处；
   现行只匹配前缀，新钮加入后会继续绿但不再证明注释所称的完整拼接）——改为含行号钮的完整拼接
@@ -222,25 +222,25 @@
 
 - [x] 9.1 `pnpm test` 全绿（含新增 / 改写的单测）
 - [x] 9.2 根 `pnpm exec tsc --noEmit` 与 `tests/visual` 的 tsc 全绿
-- [ ] 9.3 `scripts/gate.sh quick` 全绿（bindings-drift 按「先 `git add` 重导出产物」的预期
-  口径处理）
-- [ ] 9.4 `scripts/gate.sh visual` 全绿（动过 `src/style.css` / `src/preview/**` /
+- [x] 9.3 `scripts/gate.sh quick` 全绿（bindings-drift 按「先 `git add` 重导出产物」的预期
+  口径处理）——`GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0
+- [x] 9.4 `scripts/gate.sh visual` 全绿（动过 `src/style.css` / `src/preview/**` /
   `tests/visual/scenes/**`，像素层必须本地跑；CI 绿不代表像素层没回归）
 - [x] 9.5 `bash scripts/docs-check.sh` 全绿
 - [x] 9.6 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 全绿
-- [ ] 9.7 门禁输出按 `GATE RESULT` 原文行记录（SKIP 单列，不并进 PASS 数）；日志落主仓
-  `.local/reviews/ux-improvements/line-numbers-<档>.log`，写入前 `ls` 复核路径存在
+- [x] 9.7 门禁输出按 `GATE RESULT` 原文行记录（SKIP 单列，不并进 PASS 数）；日志落主仓
+  `.local/missions/global-line-numbers-nov23/`——quick `13/13 PASS（SKIP 0）`；批准基线后完整视觉
+  `15/15 PASS（SKIP 0）`、1302 passed / 1 skipped；路径已复核存在
 
 ## 10. 归档放行（实现 PR 合并时执行）
 
-- [ ] 10.1 `docs/backlog.md` 的归档跟踪队列落一条本 change 条目（tasks 全勾时 docs-check 的
+- [x] 10.1 `docs/backlog.md` 的归档跟踪队列落一条本 change 条目（tasks 全勾时 docs-check 的
   归档队列判据要求有且仅有一条；当前文件 76 行、硬上限 80，只加一行）
-- [ ] 10.2 改名通道的机器门禁**只查结构**：`node scripts/openspec-archive-check.mjs` 判 REMOVED
+- [x] 10.2 改名通道的机器门禁**只查结构**：`node scripts/openspec-archive-check.mjs` 判 REMOVED
   旧条存在、ADDED 不与 living 同名，**不比较旧块与新块的正文 / 场景**（对本 change 的口径就是
   `0 条 MODIFIED / 对比 0 段`）；它的 PASS 不得当作「无静默丢合同」的证据。按 `carryover.md`
   的 A / B 两节（13 个正文段落 + 20 个场景）逐项核对承接，结论写进评审记录
-- [ ] 10.3 独立 reviewer 判 `clean / merge` 且绑定当前 tip；verdict 里 MUST 含 `carryover.md`
-  的逐项签字（A.1 / A.2 / B.1 / B.2 四项 + 结论）；tasks 全勾或就地写明放弃理由
-- [ ] 10.4 要求的门禁与真机证据齐（9.x + 7.7）；节点 2 五要件逐条写进 `proposal.md` 的
-  节点 2 块；命中例外类别（价值 / 行为裁决、审美手感、影响面升级、评审异常、证据缺口）则
-  送 Alex
+- [x] 10.3 独立 reviewer 判 `clean / merge` 且绑定当前 tip；verdict 里 MUST 含 `carryover.md`
+  的逐项签字（A.1 / A.2 / B.1 / B.2 四项 + 结论）——r3 clean / merge 绑定 `08c90d17`，四项签通过
+- [x] 10.4 要求的门禁与真机证据齐（9.x + 7.7）；节点 2 五要件逐条写进 `proposal.md` 的
+  节点 2 块；无证据缺口

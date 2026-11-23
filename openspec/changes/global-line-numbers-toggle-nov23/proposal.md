@@ -27,6 +27,12 @@
 > 测试矩阵补两个交叉态、搜索框 / composer 快捷键与真机交叉态；carryover 改为 12 个新增场景、
 > B-P4 补「gutter 档位 → 行号开关」、A.2 标明 rect 断言移至新 P3 与 tasks 4.7 / 6.2。复跑
 > `validate --all --strict` 与 `docs-check` 全绿。
+>
+> 节点 2（归档放行）：最终 tip `08c90d17`。独立评审 r3 **clean / merge**，carryover
+> A.1 / A.2 / B.1 / B.2 全通过；真机 56 / 707 / 722 **3/3 PASS**；quick
+> `GATE RESULT: 13/13 PASS（SKIP 0）`；批准基线后完整视觉 `GATE RESULT: 15/15 PASS（SKIP 0）`
+> （1302 passed / 1 skipped）。Alex 批准 modeline 候选，仅重截一张基线且与候选 SHA-256 一致。
+> archive-check 与五要件在合并前复核，无证据缺口。
 
 ## Why
 
