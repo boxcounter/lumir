@@ -15,9 +15,10 @@
 >   已移到 composer、文件树行或编辑器等仍在场目标，仍严格不抢。
 > - **实现已落地**（mission 分支 `feat/focus-created-document-nov23`，实现提交 `8d746878`，
 >   验证制品返修提交 `df1658d8`；覆盖读数见本块下方「实现与验证状态」）。代码本体、测试与验收
->   场景均已提交；本 change 尚未 merge / 归档，living spec 的改动仍以 delta 留在本目录。
+>   场景均已提交；实现已合并并推送至 master（`57c64851`）。本次提交执行归档，living spec
+>   的改动已由归档包装器并入。
 > - **节点 2 材料已备**（2026-11-23，五要件齐）：最终独立评审 **clean / merge** 绑定 tip
->   `df1658d8`；merge 与归档**待执行**（未发生）。五要件逐条读数见文末「节点 2」块。
+>   `df1658d8`；merge 已完成，归档提交与归档后审计在本次收尾执行。五要件逐条读数见文末「节点 2」块。
 > - **实现与验证状态（2026-11-23，返修后）**
 >   - 代码：`src/focus-claim.ts`（新，判定纯函数）、`src/main.ts`（create 分支 `claim` + await
 >     + 判定 + `focusPreservingReadingPosition`；`passiveOverlayClose` 沿完整激活链透传）、

@@ -171,11 +171,9 @@
 
 - [x] 6.1 `tasks.md` 全部勾选，未勾项就地写放弃理由
 - [x] 6.2 实现后回改 `design.md` 的行号 / 符号名（若与最终代码不一致）
-- [ ] 6.3 实现 PR 合并时在 `docs/backlog.md` 的归档跟踪队列落一条本 change 记录（队列 76 行、
+- [x] 6.3 实现 PR 合并时在 `docs/backlog.md` 的归档跟踪队列落一条本 change 记录（队列 76 行、
       硬上限 80；先核可删的僵尸条目，不为压行数删活条目）
-      ——**部分完成，剩 merge 时序动作**：队列条目已随节点 2 材料落（`docs/backlog.md` 归档跟踪
-      队列，加行后 77 行 / 上限 80，`grep -c` = 1）；本 mission 不 merge，这条的「合并时」动作
-      留给 tower 在 merge 时执行（条目已就位，无需再补）。
+      ——队列条目已随节点 2 材料落，并在本次归档提交中移除。
 - [x] 6.4 交独立 reviewer；verdict 绑定当前 tip；归档前逐条核对节点 2 五要件
       ——本轮两轮评审：r1 判 needs-changes（代码本体无阻塞，阻塞在验证制品）绑定 `8d746878`，
       verdict `/Users/boxcounter/.kimi-code/sessions/wd_lumir_97a6261b51e9/session_fb5487b7-c3d6-4a95-8717-2dde1e8c3acc/agents/main/tasks/agent-k7ptmn91/output.log`；
