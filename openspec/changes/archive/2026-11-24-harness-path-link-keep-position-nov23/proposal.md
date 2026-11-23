@@ -13,6 +13,9 @@
 >   clean / merge；真机 221 PASS（26.9s）；quick `GATE RESULT: 13/13 PASS（SKIP 0）`；完整视觉
 >   `GATE RESULT: 15/15 PASS（SKIP 0）`。实现与节点 2 材料已合并推送至 master（`9dc8518a`）；
 >   本次提交执行归档，living spec 已由归档包装器并入。
+> - **归档完成（2026-11-24）**：归档提交 `4904a582`；包装器 `Totals: + 1, ~ 1, - 0, → 0`，修链
+>   0 处，674 条相对链接 PASS。`--archived` 审计 PASS（1 条 MODIFIED，对比 58 段；人工恢复 0 段，
+>   声明认领 0 段）；归档队列条目已移除。
 > - **评审返修（2026-11-23）**：独立评审 needs-changes 四项已修——① 工具卡片 `offset` 统一为
 >   「滚动落行、不产生正文行高亮、只闪标签」（保留既有禁令）；② 正文 / 卡片路径按钮加按钮级
 >   `mousedown.preventDefault()`，焦点留在 composer；③ `TabsHandle.dispose()` 接入
