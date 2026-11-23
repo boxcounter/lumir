@@ -113,6 +113,9 @@
   `Ctrl-;`）与解绑各一条
 - [x] 5.10 `src/bindings-panel.ts` 不改：命令经 `NON_TAB_GLOBAL_COMMAND_IDS` 自动进「全局」组；
   跑 `tests/unit/bindings-panel.test.ts` 确认零兜底组、且该命令恰一行
+  - 同批同步 `tests/visual/scenes/m133-describe-bindings.spec.ts` 的「全局」档计数：新命令使该组
+    多一行，NON_TAB_GLOBAL 22 → 23、合计 34 → 35（「35 条命令 · 2 组」）。这是计数的预期变化，
+    产品与分组逻辑零改动；完整视觉复跑时该条因此先红，改计数后 15/15 PASS。
 
 ## 6. 测试（单测 / 视觉 / 桩）
 

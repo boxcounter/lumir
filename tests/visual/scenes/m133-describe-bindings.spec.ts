@@ -313,9 +313,10 @@ test("作用域筛选：单选、即时、计数分母随筛选变化", async ({
   await openPanel(page);
 
   await page.locator(".lumir-bindings-scope-button", { hasText: "全局" }).click();
-  // NON_TAB_GLOBAL 22（新增 app.settings-open）+ TAB 12。
-  await expect(rows(page)).toHaveCount(34);
-  await expect(page.locator(".lumir-bindings-count")).toHaveText("34 条命令 · 2 组");
+  // NON_TAB_GLOBAL 23（app.settings-open 与 change global-line-numbers-toggle-nov23 的
+  // view.toggle-line-numbers）+ TAB 12。
+  await expect(rows(page)).toHaveCount(35);
+  await expect(page.locator(".lumir-bindings-count")).toHaveText("35 条命令 · 2 组");
   for (const badge of await page.locator(".lumir-bindings-scope-badge").allTextContents()) {
     expect(badge).toBe("全局");
   }
