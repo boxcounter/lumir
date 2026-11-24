@@ -1155,45 +1155,65 @@ test("语言重绘零布局测量：真实切换只换文案，identity / phase 
     const progressEl = el.querySelector(".lumir-hp-progress");
     const bar = el.querySelector(".lumir-hp-bar-fill");
     if (progressEl === null || bar === null) throw new Error("尾行探针目标不在场");
-    (window as unknown as Record<string, unknown>).__relabelProbe = {
-      count: 0,
+    const w = window as unknown as Record<string, any>;
+    w.__relabelProbe = { count: 0 };
+    w.__relabelSync = {
+      count: -1,
+      stageText: "",
       node: progressEl,
-      phase: (progressEl as HTMLElement).dataset.phase,
-      scrollTop: el.scrollTop,
-      animation: getComputedStyle(bar).animationName,
+      sameNode: false,
+      phaseBefore: (progressEl as HTMLElement).dataset.phase,
+      phaseAfter: "",
+      scrollTopBefore: el.scrollTop,
+      scrollTopAfter: -1,
+      animationBefore: getComputedStyle(bar).animationName,
+      animationAfter: "",
     };
     Object.defineProperty(el, "scrollHeight", {
       configurable: true,
       get() {
-        const probe = (window as unknown as { __relabelProbe: { count: number } }).__relabelProbe;
-        probe.count += 1;
+        w.__relabelProbe.count += 1;
         return getter.call(this);
       },
     });
+    const isLanguageCycle = (event: KeyboardEvent) =>
+      event.key.toLowerCase() === "l" && event.shiftKey && (event.metaKey || event.ctrlKey);
+    const capture = (event: KeyboardEvent) => {
+      if (isLanguageCycle(event)) w.__relabelProbe.count = 0;
+    };
+    const bubble = (event: KeyboardEvent) => {
+      if (!isLanguageCycle(event)) return;
+      const current = el.querySelector(".lumir-hp-progress")!;
+      // Keymap 已在本窗口的前置监听里同步完成语言重绘；此读数先于 ResizeObserver / rAF。
+      Object.assign(w.__relabelSync, {
+        count: w.__relabelProbe.count,
+        stageText: current.querySelector(".lumir-hp-stage")!.textContent,
+        sameNode: w.__relabelSync.node === current,
+        phaseAfter: (current as HTMLElement).dataset.phase,
+        scrollTopAfter: el.scrollTop,
+        animationAfter: getComputedStyle(current.querySelector(".lumir-hp-bar-fill")!).animationName,
+      });
+    };
+    window.addEventListener("keydown", capture, true);
+    window.addEventListener("keydown", bubble);
+    w.__relabelCleanup = () => {
+      window.removeEventListener("keydown", capture, true);
+      window.removeEventListener("keydown", bubble);
+    };
   });
 
   await page.locator(".lumir-hp-composer .cm-content").click();
   await page.keyboard.press("Meta+Shift+L");
   await expect(page.locator(".lumir-hp-stage")).toHaveText("Waiting for a response…");
   const after = await transcript.evaluate((el) => {
-    const probe = (window as unknown as {
-      __relabelProbe: { count: number; node: Element; phase: string; scrollTop: number; animation: string };
-    }).__relabelProbe;
-    const progressEl = el.querySelector(".lumir-hp-progress")!;
-    const result = {
-      count: probe.count,
-      sameNode: probe.node === progressEl,
-      phaseBefore: probe.phase,
-      phaseAfter: (progressEl as HTMLElement).dataset.phase,
-      scrollTopBefore: probe.scrollTop,
-      scrollTopAfter: el.scrollTop,
-      animationBefore: probe.animation,
-      animationAfter: getComputedStyle(el.querySelector(".lumir-hp-bar-fill")!).animationName,
-    };
+    const w = window as unknown as Record<string, any>;
+    if (w.__relabelSync.count < 0) throw new Error("未捕获语言切换的同步重绘终点");
     Reflect.deleteProperty(el, "scrollHeight");
-    return result;
+    w.__relabelCleanup();
+    return w.__relabelSync;
   });
-  expect(after.count, "语言重绘不得读取 transcript.scrollHeight").toBe(0);
+  expect(after.count, "同一 keydown 任务内的语言重绘不得读取 transcript.scrollHeight").toBe(0);
+  expect(after.stageText).toBe("Waiting for a response…");
   expect(after.sameNode).toBe(true);
   expect(after.phaseAfter).toBe(after.phaseBefore);
   expect(after.scrollTopAfter).toBe(after.scrollTopBefore);
