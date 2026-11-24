@@ -26,16 +26,18 @@ widget 的 `mousedown` 在调用 `enterReplacedSource` 之前按以下顺序分�
 | 非主键 | 直接返回 | 不变 |
 | 主键 + Meta | 直接返回；MUST NOT `preventDefault`、dispatch 选区、显露或聚焦 | 冒泡到 `view.dom` 的既有链接跟随；命中后由原路径 `preventDefault` 并打开 / toast |
 | 主键 + Ctrl | 直接返回；同样不得先执行编辑入口任何副作用 | 不交编辑入口，也不新增应用内激活；让回 macOS 系统次级点击与 CM 原生边界落点 |
+| 主键 + Shift / Alt | 直接返回；同样不得先执行编辑入口任何副作用，尤其不得 collapse 既有选区 | 保留既有原生手势与选区结果；Shift-click 不得被改成空光标 |
 | 无修饰主键 + 可编辑 | 调 `enterReplacedSource` | 显露并精确落点 |
 | 无修饰主键 + `readOnly` | 直接返回 | 不进入、不改选区、不强行聚焦 |
 
-Meta / Ctrl 都不能先经 `enterReplacedSource` 再「补救」。`src/link-follow.ts` 的现状是 Meta 才激活链接，Ctrl 不激活；本 change 不把 Ctrl 改成跳转，也不复制这份分流。
+Meta / Ctrl / Shift / Alt 都不能先经 `enterReplacedSource` 再「补救」。`src/link-follow.ts` 的现状是 Meta 才激活链接，Ctrl 不激活；本 change 不把 Ctrl 改成跳转，也不复制这份分流。Shift / Alt 不新增产品动作，只保证不进入新编辑 helper，保留既有原生手势与选区结果。
 
 真实 visual 断言必须按 resolved / ambiguous / unresolved × Meta / Ctrl 建矩阵：
 
 - Meta + resolved / ambiguous：打开所选目标（ambiguous 仍取既有 `chosen`）；原视图在导航前不得产生编辑入口的 `select.pointer`、源码显露或聚焦，原选区保持到既有打开链接管。
 - Meta + unresolved：停留原文并出现既有 toast；手势前后 `EditorState.selection`、焦点和 replace widget 完全一致，文档不变。
 - Ctrl + 三态：不跳转、无新 toast；没有编辑入口 dispatch / 显露。选区与焦点按未接入口时的原生路径逐值断言（包括既有的边界落点），不能只写「无操作」而放过静默改选区。
+- Shift / Alt：先建立位于 span 外的既有非空选区（正向 / 反向各一组），再点击 widget；`EditorState.selection` 的 anchor / head 必须与原选区逐值相同，replace widget、焦点与文档不变，无跳转 / toast。Shift-click 若被 helper 折叠为空光标必须判红。
 - 每格记录原始视图的选区、widget 数量和焦点；导航格在原视图销毁前取证，不能用目标文件的新视图状态冒充「未落地」。
 
 ## 3. 点击编辑与拖选是两次手势
@@ -81,14 +83,14 @@ C6 的列表输入分布全部保留，并新增下表 wikilink 维度。这样�
 | 解析状态 | 无 resolver · pending · resolved · ambiguous · unresolved · pending 延迟后转三态 | 状态迁移不夺回编辑态；无 resolver / pending 原文不消失 |
 | 会话 | 可编辑 · `readOnly` | 只读点击不进入、不改选区、不写文档 |
 | 键盘入口 | 从左 `→` / `⌃F` · 从右 `←` / `⌃B` · 对应 Shift 扩选 | 首次内部落点即显露；之后逐字素；反向对称 |
-| 修饰键 | 三态 × Meta / Ctrl，另加无修饰与只读对照 | 按本文 §2 逐项断言选区、显露、焦点、跳转 / toast；编辑入口不得先副作用 |
+| 修饰键 | 三态 × Meta / Ctrl · Shift / Alt × 正向 / 反向既有非空选区 · 无修饰与只读对照 | 按本文 §2 逐项断言选区、显露、焦点、跳转 / toast；Shift / Alt 的 anchor / head 不得改变，编辑入口不得先副作用 |
 | 指针手势 | 点击左 / 中 / 右 · 首次 drag · 第二次部分 / 完整 alias · target-only · 正反向 | 首次 drag 只进入；第二次真实拖选精确且不外扩；编辑器持焦 |
 | span 形态 | `[[target]]` · `[[target|alias]]` · `[[target#heading]]` · CJK · 组合字符 · emoji ZWJ | 完整原文显露；字素步长不拆分组合序列 |
 | 编辑操作 | 插入 · Backspace / Delete · 替换选区 · 一次 undo · ⌘S | 文档精确等于显式源码模型；undo 单步复原；落盘等于 `EditorState.doc` |
 | 文档上下文 | 普通段落 · 表格单 cell · callout · inline code · fenced code · frontmatter | 合法上下文按合同显露；排除上下文不误装饰、不触发候选或编辑入口 |
 | 离开方式 | 反向移出 · 点击他处 · 切换标签后返回 | 离开后才恢复三态；返回时按当前选区重新判定 |
 
-所有「只移动 / 点击 / 拖选 / 解析完成」路径断言 `EditorState.doc` 与磁盘逐字节不变；只有明确编辑操作允许变化。测试必须先让旧实现至少在「键盘内部落点仍隐藏」「点击中部落在外部」「pending → resolved 遮回源码」三格判红，再让「Meta 先进入编辑」「首次 drag 假称可选 alias」两个错误实现分别判红。
+所有「只移动 / 点击 / 拖选 / 解析完成」路径断言 `EditorState.doc` 与磁盘逐字节不变；只有明确编辑操作允许变化。测试必须先让旧实现至少在「键盘内部落点仍隐藏」「点击中部落在外部」「pending → resolved 遮回源码」三格判红，再让「Meta 先进入编辑」「Shift / Alt 进入 helper 并 collapse 原选区」「首次 drag 假称可选 alias」三类错误实现分别判红。
 
 ## 7. 旧合同、场景与注释必须改准的位置
 

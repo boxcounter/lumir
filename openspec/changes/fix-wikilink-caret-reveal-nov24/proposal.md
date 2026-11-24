@@ -6,7 +6,7 @@
 - 关联 change：[`add-wikilink-suggestion-nov24`](../add-wikilink-suggestion-nov24/proposal.md)。两者可同批完成节点 1 评审，但无行为或归档硬依赖；按真实文件冲突排程，分别独立验收与归档。
 
 > 评审记录
-> 节点 1：待 Alex 裁决。独立评审 r1 为 needs-changes；本稿已闭合修饰键分流与真实拖选手势问题，等待 r2。推荐方案已完整写入 design 与 spec delta，未获批准前不进入实现。
+> 节点 1：待 Alex 裁决。独立评审 r2 仅余 Shift / Alt 入口缺口；本稿已补全四类修饰键在进入前让开及原选区保留测试，等待 r3。推荐方案已完整写入 design 与 spec delta，未获批准前不进入实现。
 
 ## Why
 
@@ -17,7 +17,7 @@
 ## What Changes
 
 - 普通 `[[…]]` 复用 `touchesSource`：光标或选区触及源码 span 时撤下 replace、显露完整原文；移开后恢复三态渲染。进入后允许逐字素移动与编辑，不把整条链接作为一个原子步。
-- 普通 wikilink widget 仅在**无修饰主键**入口复用 `enterReplacedSource`。Meta / Ctrl 在 helper 之前直接让开：Meta 由既有 view-dom 链接跟随处理，Ctrl 交回既有系统次级点击路径；二者均不得先执行编辑入口的 `preventDefault`、选区 dispatch、显露或聚焦。
+- 普通 wikilink widget 仅在**无修饰主键**入口复用 `enterReplacedSource`。Meta / Ctrl / Shift / Alt 都在 helper 之前直接让开，不得先执行编辑入口的 `preventDefault`、选区 dispatch、显露或聚焦：Meta 由既有 view-dom 链接跟随处理，Ctrl 交回既有系统次级点击路径；Shift / Alt 保留既有选区与原生手势结果，尤其 Shift-click 不得被折叠为空光标。
 - 指针编辑采用明确的两次手势：第一次无修饰 click 或 drag 只进入源码，第一次 drag 不承诺产生选区；第二次在已显露源码上拖选 target / alias，选区严格等于用户拖出的源码范围，不外扩定界符。`EditorState.readOnly` 时不进入。
 - pending 原本就显示源码；pending → resolved / ambiguous / unresolved 的异步完成不得重新遮住正在编辑的 span。无 resolver 的降级显示与 Rust 解析、跳转、歧义和未创建语义不变。
 - 修订 `editor-caret` C6：只有没有显露判据的隐藏 inline 区间才按方向钳到可见边界；有显露判据的区间必须允许内部落点与逐字素编辑。
