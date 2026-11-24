@@ -3,8 +3,8 @@
 // 为什么单独一个模块（REVIEW.md 「同一语义两处真源」条）：`s 开头` 这类语义一旦在两处各写一份，就会漂移成
 // 「大纲是子串、vault 是前缀」。规则本体在 `openspec/specs/toc-outline` 的两条 ADDED requirement
 // （「浮层输入筛选的匹配语义」与「浮层输入筛选的交互（输入框、焦点与退出）」），`vault-workspace`
-// 引用它们；**实现也只有这一份**——两个浮层 import 同一个 `isMatch` / `filterIndices`，以及同一组
-// 文案常量。
+// 引用它们；匹配与文案的真源都归本模块——列表输入框使用 `isMatch` / `filterIndices`，候选索引复用
+// `foldCase` 与同一子串包含语义。
 //
 // 本模块是纯逻辑：零 DOM、零 CodeMirror、零 IPC，可被 tests/unit 直接 import（那一层的分工见
 // tests/unit/README.md）。DOM 与焦点迁移留在两处浮层自己那一层。
