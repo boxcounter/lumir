@@ -1,7 +1,7 @@
 # Proposal: Skill 显式选择与模型自主调用的混合方案
 
 - Change ID: `add-harness-skill-slash-invocation-nov23`
-- 日期: 2026-11-24（r3，改为混合调用方案）
+- 日期: 2026-11-24（r3.1，按独立评审统一发现期 / 执行期读取边界）
 - 角色: Alex Lee（评审 / 裁决），AI agent（起草）
 
 > **节点状态（先读这一段）**
@@ -39,14 +39,30 @@ Lumir 采用混合模型，但显式入口沿用本 change 已设计的「候选
 | 事实 | 位置 |
 |---|---|
 | 双根发现 `~/.agents/skills` + `<vault>/.agents/skills`，vault 同名覆盖 user；名字即目录名，没有字符 grammar 限制 | `src-tauri/src/harness/context.rs:331-371` |
-| `SkillEntry { name, description, dir }`；description 从 SKILL.md frontmatter 读取 | `context.rs:320-326`、`:373-399` |
-| Skill 索引在会话建立 / 新会话 / 压缩时装配一次，是会话快照 | `context.rs:15-20`、`:258-276` |
-| `skill_load` 按名读取，支持 Skill 目录内文件；有根内校验与 200KB 上限 | `src-tauri/src/harness/tools.rs:1211-1291` |
+| `SkillEntry { name, description, dir }`；`discover_skills` 当前会对每个 Skill 执行 `fs::read_to_string(SKILL.md)`，把整份文件读入内存后只提取 description | `context.rs:320-326`、`:354-356`、`:373-399` |
+| Skill 索引在会话建立 / 新会话 / 压缩时装配一次，是会话快照；发现期读取发生在调用权限判定之前 | `context.rs:15-20`、`:258-276` |
+| `skill_load` 在调用执行期按名读取，支持 Skill 目录内文件；有根内校验与 200KB 上限 | `src-tauri/src/harness/tools.rs:1211-1291` |
 | 回合开始时重新发现 Skill，供工具执行使用 | `src-tauri/src/harness/turn.rs:602-614` |
 | `skill_load` 属读类，三档默认放行；用户 deny 仍优先 | `src-tauri/src/harness/permissions.rs:107-113` |
 | 发送契约只有 `parts_json` + `context_json`；用户消息 text part 是 composer 原文 | `src-tauri/src/harness.rs:1631-1645`；`src/harness-composer.ts:185-196` |
 | 本地字段 `lumir_label` 只活在留存 / 装配面，wire 前剥离，面板投影忽略 | `attachments.rs:300-340`、`:409-433` |
 | 重试回放 `input`；恢复灌回最后一条 `llm_request.messages`；压缩以摘要开新逻辑会话 | `harness.rs:388-437`、`:658-729`；`harness/session.rs:1123` |
+
+## 读取阶段的统一口径
+
+本提案严格区分两个阶段，所有「不读」保证只约束第二阶段：
+
+1. **发现期元数据读取**：`discover_skills` 为装配索引与解析策略，当前可能把整份 SKILL.md 读入内存，
+   但只把文本用于元数据解析（description 保持现有 frontmatter / 无 frontmatter 首行兜底，另加本 change
+   的两个策略字段），不把正文作为调用结果投递。它发生在权限与入口策略判定之前，是现有索引行为的一部分；
+   不得虚称零 IO，也不得把 200KB 执行期上限倒推成发现期上限。
+2. **调用执行期正文加载**：显式注入或模型 `skill_load` 在权限与入口策略放行后，调用共享正文加载器，
+   把正文投递到用户消息 part 或工具结果。权限 deny、禁自动、禁手动或非法元数据时，保证的是
+   **共享正文加载器未被调用**，且 `input` / `llm_request.messages` / provider wire / 工具结果等输出面
+   无正文；不是追溯否认发现期已经发生的文件读取。
+
+发现期只读取 frontmatter、避免整文件读入可作为后续优化，但必须单独保持索引与错误行为兼容；本 change
+不暗中承诺或夹带这项优化。
 
 ## What Changes
 
@@ -89,11 +105,11 @@ user-invocable: false
 | 两者分别设为上述禁用值 | 禁止 | 禁止 | 完整关闭两个入口的显式组合 |
 
 - 字段只接受不带引号的布尔字面量 `true` / `false`。字段缺失才使用默认值；非法值是 Skill 元数据错误，
-  两个入口均 fail closed（不读取正文），以 `skill_invocation_invalid` 明确报告，不得默默按默认放开。
+  两个入口均 fail closed（不调用执行期正文加载器），以 `skill_invocation_invalid` 明确报告，不得默默按默认放开。
 - 索引继续列出所有已发现 Skill；非默认策略或非法元数据在索引项上标注。候选只列允许用户调用的条目。
-- 模型对禁自动条目调用 `skill_load` 时返回 `skill_model_invocation_disabled`，不读取任何 Skill 文件；
-  用户显式选择不受这个模型入口策略影响。
-- 已选引用在发送时遇到 `user-invocable: false`，不读取、不注入，给出
+- 模型对禁自动条目调用 `skill_load` 时返回 `skill_model_invocation_disabled`，不调用执行期正文加载器，
+  工具结果无正文；用户显式选择不受这个模型入口策略影响。
+- 已选引用在发送时遇到 `user-invocable: false`，不调用执行期正文加载器、不注入，给出
   `skill_user_invocation_disabled` 的非阻断提示；模型自主入口不受影响。
 
 **字段主口径只有以上两个。**它们借用 Claude Code 的拼写，但在 Lumir 中按本条定义实现；本提案不声称
@@ -112,8 +128,9 @@ user-invocable: false
 
 - `harness_send` 增加必填 `skills_json`，只携带当前消息的引用，按位置排序、同名去重。
 - 后端在当回合 `discover_skills` 后解析名字，以 `skill_load` + 名字 +
-  `{"name": <name>}` 调现行权限判定，再检查用户入口策略；只有权限 `Allow` 且入口允许才读取。
-- 读取复用 `skill_load` 的根内校验、200KB 上限与错误语义，不复制第二套文件读取逻辑。
+  `{"name": <name>}` 调现行权限判定，再检查用户入口策略；只有权限 `Allow` 且入口允许才调用执行期
+  正文加载器。此前的发现期元数据读取按既有索引路径照常发生。
+- 执行期加载复用 `skill_load` 的根内校验、200KB 上限与错误语义，不复制第二套正文读取逻辑。
 - 正文以 `[已加载 Skill：<名字>]` 开头，作为带 `lumir_skill` 本地标记的独立 `input_text` part 追加到
   用户消息。provider wire 前剥离本地标记、保留正文；面板与自动命名素材跳过该 part。
 - 未知、超限、读取失败、不合 grammar 的名字跳过且不阻断；结构非法的 `skills_json` 是内部契约错误，
@@ -130,7 +147,8 @@ user-invocable: false
 ### 6. 权限与调用方式正交
 
 - 用户显式与模型自主两条路径在允许调用后，都以相同工具名、名字和参数经过现行权限判定；同一 deny
-  规则对两者同效，非 `Allow` 均不读取全文、不注入或回送正文。
+  规则对两者同效，非 `Allow` 均不调用执行期正文加载器、不注入或回送正文。发现期元数据读取不属于
+  这次正文加载，不受该断言追溯否认。
 - 显式选择不是授权动作，不改变权限档、不跳过批准闸、不预批准 Skill 内容引发的 `cli_run`。
 - 两个 invocation 字段是入口策略，不是 allow / deny 权限规则，也不替代权限判定。部署 Skill 即便只能
   显式调用，其后续危险命令仍按现行规则处理。
@@ -157,7 +175,7 @@ user-invocable: false
 | 部署等禁止模型自动 | `disable-model-invocation: true`，同时仍允许用户显式调用 |
 | 背景知识禁止用户手动 | `user-invocable: false`，同时仍允许模型自动调用 |
 | 普通路径不误判 | 没有显式选择引用就没有显式注入；`/tmp` 仍是普通文本 |
-| 权限一致 | 两入口复用同一权限判定与读取实现，deny 不读、不注入 / 不回送 |
+| 权限一致 | 两入口复用同一权限判定与执行期正文加载器，deny 时加载器未调用、不注入 / 不回送；发现期元数据读取照常 |
 | 历史可重试、可恢复 | 显式正文活在既有留存；自动工具结果沿用既有留存；均不另建第二事实源 |
 
 ## 裁决点（节点 1）
@@ -172,6 +190,8 @@ r2 的 A1–A6 不再分别送裁：候选、refs、200KB、deny 不注入、普
 ## Non-goals
 
 - 不做文本 token 即调用，不新增 `@` / `$` 等第二套显式语法，不做技能卡片 / 原子块。
+- 不承诺发现期零 IO，不在本 change 把发现期读取改成只读 frontmatter；该优化如后续立项，必须单独证明
+  索引内容与错误行为不变。
 - 不支持 `allow_implicit_invocation` 或两个主字段的别名、嵌套写法、兼容映射。
 - 不把两个 frontmatter 字段宣称为 Agent Skills 标准字段，不引入完整 YAML 解析器。
 - 不削弱默认 Skill 的索引注入与模型自主 `skill_load`，不增加发送前全量 Skill 预读。
@@ -199,9 +219,10 @@ r2 的 A1–A6 不再分别送裁：候选、refs、200KB、deny 不注入、普
 |---|---|
 | 混合方案被实现成自动能力回退 | 默认 Skill 的索引 / `skill_load` 回归测试；既有场景 77 逐条保留；策略只拦被显式禁用的入口 |
 | 两个字段被做成权限旁路 | 两入口共享权限判定与读取函数；三档 × tool / 名字 deny × 两入口测试 |
-| 禁自动只改提示，模型仍能读到全文 | 模型 `skill_load` 执行层强制返回策略错误，不读取文件；不只依赖提示约束 |
-| 禁手动只藏候选，旧 ref 仍能注入 | 后端发送时重新检查 `user-invocable`，旧 ref 与伪造元数据都不能绕过 |
-| 字段写错后意外开放部署 Skill | 非 `true` / `false` 一律元数据错误并 fail closed，不套用缺省开放值 |
+| 禁自动只改提示，模型仍能读到全文 | 模型 `skill_load` 执行层强制返回策略错误，正文加载器未调用且工具结果无正文；不只依赖提示约束 |
+| 禁手动只藏候选，旧 ref 仍能注入 | 后端发送时重新检查 `user-invocable`，旧 ref 与伪造元数据都不能调用正文加载器或注入 |
+| 字段写错后意外开放部署 Skill | 非 `true` / `false` 一律元数据错误并 fail closed，不套用缺省开放值，不调用正文加载器 |
+| 用文件系统零读取证明 deny，掩盖发现期已读 | 反例先断言发现期已取得 description / 策略，再断言正文加载器未调用及各输出面无正文；不统计或声称全路径零 IO |
 | 路径 / 历史 token 被误当显式调用 | 后端只消费当前消息 refs 生成的 `skills_json`，不扫描文本 |
 | 留存膨胀 / 上下文预算 | 沿用每 Skill 200KB 上限与既有压缩；正文随历史重复的 token 成本明确接受，不承诺任意规模可用 |
 | 策略变更被误认为擦除历史 | 规格明确只约束新调用，恢复与旧 JSONL 原样保留 |

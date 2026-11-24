@@ -1,7 +1,7 @@
 # Design: Skill 显式选择与模型自主调用的混合方案
 
 - Change ID: `add-harness-skill-slash-invocation-nov23`
-- 日期: 2026-11-24（r3）
+- 日期: 2026-11-24（r3.1，统一发现期 / 执行期读取边界）
 - 状态: **待节点 1 批准 H1**；本文件不构成施工依据
 - 读者: Alex（裁决面）、实现 agent（施工依据）、reviewer（判据面）
 
@@ -26,7 +26,7 @@
 | 事实 | 位置 |
 |---|---|
 | `discover_skills` 双根发现、vault 覆盖 user、按名字升序；名字无 grammar 限制 | `src-tauri/src/harness/context.rs:331-371` |
-| `SkillEntry { name, description, dir }`；frontmatter 当前只读取 description | `context.rs:320-326`、`:373-399` |
+| `SkillEntry { name, description, dir }`；发现期当前用 `fs::read_to_string` 读入整份 SKILL.md，再只提取 description | `context.rs:320-326`、`:354-356`、`:373-399` |
 | 索引在会话建立 / 新会话 / 压缩时装配一次 | `context.rs:15-20`、`:258-276` |
 | `skill_load` 的名称 / 路径校验、200KB 上限、读取与错误回执 | `src-tauri/src/harness/tools.rs:1211-1291` |
 | 回合开始重新发现 Skill，并交给 `ToolContext` | `src-tauri/src/harness/turn.rs:602-614` |
@@ -41,6 +41,19 @@
 | `⌃N` / `⌃P` 行移动；单行末尾可原地不动 | `src/keys.ts:634-635`；`harness-composer.ts:376-391` |
 | 草稿 v2 / v1 转换 | `src/quote-card.ts:326-410` |
 | Escape 层栈与浮层摆放 | `src/escape-router.ts:102-146`；`src/overlay-placement.ts:121` |
+
+### 2.1 两阶段读取定义（全文档统一术语）
+
+| 阶段 | 时机与用途 | 正文是否投递 | 拒绝路径保证 |
+|---|---|---|---|
+| **发现期元数据读取** | `discover_skills` 为索引和策略发现读取 SKILL.md；当前实现是 `fs::read_to_string` 整份读入，再只做元数据解析（description 保持 frontmatter / 无 frontmatter 首行兜底，另加 invocation 字段） | 正文不作为调用结果投递；只有元数据进入索引 / catalog / 回合快照 | 发生在权限与策略判定之前，不得声称零 IO 或被后续 deny 追溯取消 |
+| **调用执行期正文加载** | 显式注入或模型 `skill_load` 在权限、策略放行后调用共享正文加载器 | 显式进入用户消息 part；自动进入工具结果 | deny / 禁自动 / 禁手动 / 非法元数据时，加载器调用计数为零，所有输出面无正文 |
+
+- 本 design 中「加载器未调用」「不注入 / 不回送正文」是拒绝路径的完整安全判据；不再单独使用「不读取
+  任何 Skill 文件」或「文件系统读取次数为零」。
+- 200KB 上限属于执行期正文加载器，不能据此暗示发现期只读前 200KB 或只读 frontmatter。
+- 发现期只读 frontmatter 是可选后续优化，不属于本 change；不得借本 change 暗中改变索引内容、快照时机或
+  读取错误口径。
 
 ## 3. 混合语义与不变量
 
@@ -60,7 +73,7 @@
 | H1 | 没有当前消息 ref，就没有显式注入；后端 MUST NOT 从文本解析技能名 |
 | H2 | 默认 Skill 的索引与模型 `skill_load` 能力不削弱；策略只拦被配置禁止的入口 |
 | H3 | 用户与模型策略独立；禁自动不拦显式，禁手动不拦自动 |
-| H4 | 两入口在实际读取前都经过同一 `skill_load` 权限判定，随后共用同一读取实现 |
+| H4 | 两入口在执行期正文加载前都经过同一 `skill_load` 权限判定，随后共用同一加载器；发现期元数据读取不在此断言内 |
 | H5 | ref 与文本同源；切片不逐字节等于 `/名字`、左边界失效或越界时 ref 失效 |
 | H6 | 策略只约束新调用；历史请求、工具结果和旧 JSONL 不按当前策略重写 |
 
@@ -103,7 +116,8 @@ user-invocable: false
 - 字段缺失才取缺省。字段重复、带引号、`yes` / `no`、大小写变体、非布尔值均视为非法调用元数据，
   不得猜测作者意图。
 - 非法时该 Skill 的 `invocation_valid = false`，两个入口都 fail closed；模型调用返回
-  `skill_invocation_invalid`，显式发送不注入并给同码非阻断提示，均不得读取正文。
+  `skill_invocation_invalid`，显式发送给同码非阻断提示。两入口的执行期正文加载器均未被调用，
+  显式 `input` / `llm_request.messages` / provider wire 与自动工具结果均无正文。
 - 元数据解析与策略判断只在 `context.rs` 形成一份内部表示；候选、索引、自动工具与显式加载不得各自
   重写字段解释（REVIEW.md「同一语义两处真源」条）。
 
@@ -215,22 +229,25 @@ catalog 按 vault 缓存最新成功清单：新 `/` 强制刷新；关闭候选
 
 ### 8.1 共享顺序
 
-两个入口都按以下语义解析实际读取：
+两个入口都按以下语义解析执行期正文加载：
 
 ```
-发现 / 名称校验
+发现期元数据读取（当前可整份读入 SKILL.md；只用于元数据解析，不投递正文）
+  → 名称校验
   → 以 skill_load + name + {"name": name} 调现行权限 decide
   → 检查当前入口的 invocation_valid / invocation policy
-  → 共用根内路径校验 + 200KB 上限 + 文件读取
+  → 调用共享执行期正文加载器（根内路径校验 + 200KB 上限 + 文件读取）
   → 按入口投递正文
 ```
 
-- 权限先于策略，保持现有 deny 优先级；两入口的任何非 `Allow` 都不读取。
+- 权限先于策略，保持现有 deny 优先级；两入口的任何非 `Allow` 都不调用执行期正文加载器。该断言不追溯
+  否认第一步已经完成的发现期元数据读取。
 - 模型入口的策略错误作为 `skill_load` 工具错误回送；显式入口的策略错误为非阻断 tool 行，均不伪装成
-  `skill_not_found`。
-- 自动入口可读取 `file` 参数指定的 Skill 目录内文件；禁自动 / 非法时不得读取 SKILL.md 或其他文件。
-  显式入口只确定性加载 SKILL.md，不新增 `file` 参数。
-- 把 `skill_load` 的名称解析、路径 / 大小校验和读取抽成共享内部函数；不得复制出第二套 200KB 或防逃逸逻辑。
+  `skill_not_found`，且正文加载器未调用、对应输出面无正文。
+- 自动入口可通过 `file` 参数加载 Skill 目录内文件；禁自动 / 非法时不得调用正文加载器加载 SKILL.md 或
+  其他文件。显式入口只确定性加载 SKILL.md，不新增 `file` 参数。
+- 把 `skill_load` 的名称解析、路径 / 大小校验和执行期正文读取抽成共享内部函数；不得复制出第二套 200KB
+  或防逃逸逻辑。测试给这个共享加载器加调用计数，不给发现期文件系统读取加零计数断言。
 
 ### 8.2 发送契约
 
@@ -254,9 +271,10 @@ catalog 按 vault 缓存最新成功清单：新 `/` 强制刷新；关闭候选
 ```
 
 - 先 `apply_context_section`，再按名字数组顺序追加 part；同名只注入一次。
-- 权限 deny：不读、不注入，发送照常；非阻断 tool 行 `skill_load` + `permission_denied` + 命中规则原文。
-- 策略禁用 / 非法：不读、不注入，发送照常；分别报告 `skill_user_invocation_disabled` /
-  `skill_invocation_invalid`。
+- 权限 deny：执行期正文加载器未调用、不注入，发送照常；非阻断 tool 行 `skill_load` +
+  `permission_denied` + 命中规则原文；`input` / `llm_request.messages` / provider wire 无正文。
+- 策略禁用 / 非法：执行期正文加载器未调用、不注入，发送照常；分别报告
+  `skill_user_invocation_disabled` / `skill_invocation_invalid`，上述输出面同样无正文。
 - `lumir_skill` 只活留存 / 装配面。`expand_image_refs` 在无图片早退之前无条件剥离本地字段、保留正文；
   无图片时仍不解析或创建附件目录。三个 client 的 wire body 都需断言。
 
@@ -264,8 +282,9 @@ catalog 按 vault 缓存最新成功清单：新 `/` 强制刷新；关闭候选
 
 - 默认 Skill 的索引内容、工具定义、`skill_load` 参数、工具结果信封与循环顺序不改。
 - 模型对 `disable-model-invocation: true` 的条目调用时，权限通过后返回
-  `skill_model_invocation_disabled`；不读取任何文件。该错误可提示模型请用户显式选择，但不能由模型自己
-  改成显式注入。
+  `skill_model_invocation_disabled`；执行期正文加载器未调用，SKILL.md 与其他目录内文件均无正文进入
+  工具结果。该错误可提示模型请用户显式选择，但不能由模型自己改成显式注入。发现期仍可按现状读取
+  SKILL.md 以取得索引与策略元数据。
 - `user-invocable: false` 不改变索引与自动工具调用；背景知识仍按 description 由模型按需取得。
 - 回合开始发现的策略快照供本回合工具使用；系统提示索引仍是会话快照。会话中途策略变化可出现索引标记
   与当回合执行结果不同，执行层以当回合发现为准，不为消除差异重装配 system。
@@ -305,7 +324,8 @@ catalog 按 vault 缓存最新成功清单：新 `/` 强制刷新；关闭候选
 ## 12. 权限与安全
 
 - 不改 `permissions.rs` 的档位、工具分类、规则优先级或缓存。
-- 两入口都以 `skill_load` + 名字 + 同参数判定；tool 级与名字模式 deny 在三档下均不读取。
+- 两入口都以 `skill_load` + 名字 + 同参数判定；tool 级与名字模式 deny 在三档下均不调用执行期正文
+  加载器，显式 `input` / `llm_request.messages` / provider wire 与自动工具结果均无正文。
 - 显式选择不是授权；Skill 内容引发的 `cli_run` 按现行档位、规则、命令分类与缓存执行。`full_access`
   对普通写命令自动放行，危险命令仍短路；不得写成「任一档都请求批准」。
 - invocation policy 是入口治理，不是新权限档，也不能被用来放宽 allow / deny。
@@ -326,7 +346,8 @@ catalog 按 vault 缓存最新成功清单：新 `/` 强制刷新；关闭候选
 
 - 键入路径只做 O(token 长度) 边界判断与 O(refs) 映射，不读文件、不扫全文。
 - 新 `/` 与草稿装载的 catalog 请求异步，不阻塞键入；chip 只为可视范围 refs 建 decoration。
-- 显式读取只在发送路径执行，每个名字沿用 ≤200KB；自动路径仍按需读取，不做全量预读。
+- 执行期显式加载只在发送路径执行，每个名字沿用 ≤200KB；自动路径仍按需加载，不做全量正文预注入。
+  发现期仍按现有索引 / 回合快照节奏读取元数据，当前实现可能整份读入，本 change 不宣称这部分零 IO。
 - 显式正文进入历史后随请求重复；多技能成本与压缩边界按 §10 明示，不新增隐藏截断。
 
 ## 15. 判据映射
@@ -334,9 +355,10 @@ catalog 按 vault 缓存最新成功清单：新 `/` 强制刷新；关闭候选
 | 层 | 用例 | 断言 |
 |---|---|---|
 | Rust 单测 | 默认双入口 | 缺字段时 user / model 均允许；默认索引无策略标记；原有自主 `skill_load` 结果不变 |
-| Rust 单测 | 策略矩阵 | 禁自动：显式可注入、模型调用策略错误且不读；禁手动：候选过滤、自动可读、显式不注入 |
-| Rust 单测 | 非法元数据 | 重复 / 引号 / yes / 大小写变体均 `skill_invocation_invalid`；两入口 fail closed、不读正文 |
-| Rust 单测 | 两入口权限 | 三档 × tool / 名字 deny × 显式 / 自动：不读全文；显式 `input` / request / wire 无正文 |
+| Rust 单测 | 策略矩阵 | 禁自动：显式可注入、模型调用策略错误且执行期加载器未调用 / 工具结果无正文；禁手动：候选过滤、自动可加载、显式加载器未调用且不注入 |
+| Rust 单测 | 非法元数据 | 重复 / 引号 / yes / 大小写变体均 `skill_invocation_invalid`；两入口执行期加载器未调用，各输出面无正文 |
+| Rust 单测 | 两入口权限 | 三档 × tool / 名字 deny × 显式 / 自动：执行期加载器未调用；显式 `input` / request / wire 与自动工具结果无正文 |
+| Rust 单测 | 发现期已读后的 deny 反例 | 先发现并成功解析 description / 策略（证明文件已读），再 deny；执行期加载器计数为零，显式 input / request / wire 与自动工具结果无唯一正文 marker；不得断言文件系统零读取 |
 | Rust 单测 | 显式注入 | 选中 → 带 `lumir_skill` part；未知 / 超限 / 读失败 / 不合 grammar 跳过；重复去重 |
 | Rust 单测 | wire / 投影 | 三 client 无 `lumir_skill` 字段且正文在；无图片也剥离；live / 恢复 / 命名素材无正文 |
 | Rust 单测 | 重试 / 恢复 / 压缩 | 显式 part 原样在，预加载计数不增；自动旧工具结果不被策略重写；压缩不重新显式注入 |
@@ -349,7 +371,7 @@ catalog 按 vault 缓存最新成功清单：新 `/` 强制刷新；关闭候选
 | 真机 | 普通路径 | `/tmp` 行首 / 空格后 / 列表项 + Enter 无显式注入，候选不抢键 |
 | 真机 | 混合调用 | 默认 Skill 可显式注入且既有自动场景通过；禁自动只能显式；禁手动只能自动 |
 | 真机 | 历史 | 恢复后显式正文仍不上屏；旧自动工具结果仍在；策略变更不回写旧 JSONL |
-| 真机 | 权限 / 键位 / 草稿 | deny 两入口不读；IME / ⌃N/P 无回归；草稿往返后按当前策略执行 |
+| 真机 | 权限 / 键位 / 草稿 | deny 两入口执行期加载器未调用、输出面无正文；IME / ⌃N/P 无回归；草稿往返后按当前策略执行 |
 
 ## 16. 已知边界（接受清单）
 
@@ -364,6 +386,8 @@ catalog 按 vault 缓存最新成功清单：新 `/` 强制刷新；关闭候选
 9. 结构非法 `skills_json` 拒绝发送；未知名字、策略禁用、权限 deny 均不阻断用户消息。
 10. 同轮显式与自动重复加载不去重，避免为省 token 改动自动工具语义。
 11. dev flavour 不隔离 `HOME` 时真实用户 Skill 可能出现；验收只断言合成名，不断言清单总数。
+12. 发现期当前会整份读入 SKILL.md 解析元数据，且发生在权限 / 策略判定前；拒绝路径只保证执行期
+    正文加载器未调用与输出面无正文。发现期只读 frontmatter 留作后续独立优化，不在本 change 承诺。
 
 ## 17. 信息卫生
 

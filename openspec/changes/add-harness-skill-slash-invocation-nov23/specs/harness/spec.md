@@ -14,6 +14,15 @@
 由后端确定性加载 SKILL.md 全文；模型自主入口 SHALL 保留既有「索引（name + description）→ 模型按相关性
 判断 → `skill_load` → 工具结果」链路。任一入口 MUST NOT 以削弱另一入口的默认能力为实现前提。
 
+**两阶段读取边界**：系统 SHALL 区分发现期元数据读取与调用执行期正文加载。发现期为装配索引与解析策略，
+当前实现可能通过 `fs::read_to_string` 把整份 SKILL.md 读入内存，但只把文本用于元数据解析（description
+保持现有 frontmatter / 无 frontmatter 首行兜底，另加 invocation 字段），不把正文作为调用结果投递；该读取
+发生在权限与入口策略判定之前，属于既有索引行为，MUST NOT 被虚称为零 IO。200KB 上限 SHALL 只约束执行期正文
+加载，MUST NOT 被用来暗示发现期只读 frontmatter 或只读前 200KB。调用执行期正文加载 SHALL 在权限与策略
+放行后调用共享正文加载器，把正文投递到用户消息 part 或工具结果。权限 deny、禁自动、禁手动或非法元数据
+时的拒绝保证 SHALL 是执行期正文加载器未被调用且各输出面无正文，MUST NOT 被表述为发现期也未读取任何
+Skill 文件。发现期只读 frontmatter 的优化不在本 change 内，后续优化 MUST NOT 改变索引行为。
+
 **默认与分控**：每个 Skill 缺省 SHALL 同时允许用户显式选择与模型自主调用。SKILL.md frontmatter SHALL
 支持且只支持以下两个 Lumir 调用策略字段：`disable-model-invocation`（缺省 `false`，为 `true` 时禁止模型
 自主调用但保留用户显式调用）与 `user-invocable`（缺省 `true`，为 `false` 时禁止用户显式调用但保留模型
@@ -23,7 +32,8 @@ SHALL 仍是 Skill 名字的唯一来源。
 
 字段 SHALL 只接受不带引号的布尔字面量 `true` / `false`；只有字段缺失才使用缺省值。重复字段、带引号、
 `yes` / `no`、大小写变体或其他非布尔值 SHALL 被视为非法调用元数据，两个入口均 MUST fail closed，以
-`skill_invocation_invalid` 明确报告且 MUST NOT 读取正文；未知 frontmatter 字段 SHALL 按现状忽略。
+`skill_invocation_invalid` 明确报告，MUST NOT 调用执行期正文加载器，且各输出面 MUST 无正文；未知
+frontmatter 字段 SHALL 按现状忽略。
 vault-wide 同名覆盖 user-wide 时，名字、正文来源与策略 SHALL 作为同一发现项整体覆盖。
 
 **发现面投影**：系统提示索引 SHALL 继续列出所有已发现 Skill；默认项的索引文本 SHALL 保持不变，非默认
@@ -66,22 +76,24 @@ SHALL 先按引用重现 chip，不依赖 catalog 成功。
 **显式发送与确定性加载**：发送时前端 SHALL 只提交当前新消息引用，作为 `harness_send` 必填参数
 `skills_json`。后端 SHALL 在回合开始时按当回合发现结果解析名字，先以 `skill_load` + 技能名 +
 `{"name": <name>}` 调现行权限判定，再检查用户入口策略；只有权限 `Allow`、元数据合法且允许用户调用时
-才读取。对可读取的名字，系统 SHALL 沿用既有根内路径校验与 200KB 上限读取 SKILL.md 全文，作为独立
-`input_text` part 追加到该用户消息末尾；part SHALL 带本地标记 `lumir_skill`，正文以
-`[已加载 Skill：<名字>]` 开头。显式与自动入口 SHALL 共用同一读取实现，MUST NOT 复制第二套路径、大小
-或读取逻辑。
+才调用执行期正文加载器。对可加载的名字，系统 SHALL 沿用既有根内路径校验与 200KB 上限加载 SKILL.md
+全文，作为独立 `input_text` part 追加到该用户消息末尾；part SHALL 带本地标记 `lumir_skill`，正文以
+`[已加载 Skill：<名字>]` 开头。显式与自动入口 SHALL 共用同一执行期正文加载器，MUST NOT 复制第二套路径、
+大小或读取逻辑。
 
-权限 `Deny`（或任何非 `Allow`）MUST NOT 读取或注入正文；禁手动 SHALL 以
-`skill_user_invocation_disabled` 非阻断报告且不读不注入；非法元数据 SHALL 以
-`skill_invocation_invalid` 非阻断报告且不读不注入。三者均 MUST NOT 伪装成未知名字，用户消息 SHALL 照常
-发送。未知 / 超限 / 读取失败 / 不合 grammar 的名字 SHALL 跳过且不阻断；`skills_json` 结构非法（非数组 /
-非字符串元素 / 坏 JSON）SHALL 以明确错误拒绝发送，不建会话、不入队。
+权限 `Deny`（或任何非 `Allow`）MUST NOT 调用执行期正文加载器或注入正文；禁手动 SHALL 以
+`skill_user_invocation_disabled` 非阻断报告，非法元数据 SHALL 以 `skill_invocation_invalid` 非阻断报告，
+两者同样 MUST NOT 调用执行期正文加载器或注入。三种拒绝路径的 `input` / `llm_request.messages` /
+provider wire MUST 无正文，且 MUST NOT 伪装成未知名字；用户消息 SHALL 照常发送。未知 / 超限 / 读取失败 /
+不合 grammar 的名字 SHALL 跳过且不阻断；`skills_json` 结构非法（非数组 / 非字符串元素 / 坏 JSON）SHALL
+以明确错误拒绝发送，不建会话、不入队。
 
 **自动入口策略执行**：默认 Skill 的索引、工具定义、`skill_load` 参数、工具结果与循环顺序 SHALL 不变。
 模型对 `disable-model-invocation: true` 的条目调用 `skill_load` 时，系统 SHALL 在现行权限判定后返回
-`skill_model_invocation_disabled`，且 MUST NOT 读取 SKILL.md 或该 Skill 目录内其他文件；该策略 MUST NOT
-阻止用户显式加载。`user-invocable: false` MUST NOT 改变模型自主读取。索引策略提示 SHALL 由执行层策略闸
-兜底，MUST NOT 只依赖模型自觉遵守提示。
+`skill_model_invocation_disabled`，MUST NOT 调用执行期正文加载器，且 SKILL.md 与该 Skill 目录内其他文件
+均无正文进入工具结果；发现期元数据读取仍按既有索引路径发生。该策略 MUST NOT 阻止用户显式加载。
+`user-invocable: false` MUST NOT 改变模型自主加载。索引策略提示 SHALL 由执行层策略闸兜底，MUST NOT 只
+依赖模型自觉遵守提示。
 
 **留存与投影**：显式技能 part SHALL 进入会话 `input` 与 `llm_request.messages`，供重试与恢复原样回放；
 本地标记 MUST 在 provider wire 前剥离且保留正文，剥离 MUST 发生在无图片早退之前。面板投影与自动命名
@@ -96,7 +108,9 @@ MUST NOT 被本 change 改写。
 MUST NOT 承诺任意数量 / 任意大小的 Skill 都能进入模型上下文。
 
 **权限**：两个入口 SHALL 以同一工具名、技能名和参数经过现行权限判定；同一 tool 级或名字模式 deny 对
-显式与自动调用同效，任何非 `Allow` 均不读取全文。显式选择 MUST NOT 改变权限档、跳过批准闸或预批准
+显式与自动调用同效，任何非 `Allow` 均不调用执行期正文加载器，显式 `input` / `llm_request.messages` /
+provider wire 与自动工具结果均无正文。发现期已完成的元数据读取不属于该执行期断言。显式选择 MUST NOT
+改变权限档、跳过批准闸或预批准
 Skill 内容引发的 `cli_run`；invocation policy MUST NOT 替代或放宽权限规则。`skill_load` 的读类默认放行
 不变，后续 `cli_run` SHALL 沿用现行档位、规则、命令分类与缓存。
 
@@ -153,8 +167,8 @@ Skill 内容引发的 `cli_run`；invocation policy MUST NOT 替代或放宽权�
 
 - **WHEN** `acc-deploy` 声明 `disable-model-invocation: true`，模型调用 `skill_load("acc-deploy")`；
   随后用户从候选显式选择该 Skill 并发送
-- **THEN** 模型调用返回 `skill_model_invocation_disabled`，SKILL.md 与目录内其他文件均不被读取；
-  用户显式路径在权限放行时正常注入 SKILL.md 全文
+- **THEN** 发现期已取得索引与策略元数据；模型调用返回 `skill_model_invocation_disabled`，执行期正文
+  加载器未被调用，SKILL.md 与目录内其他文件均无正文进入工具结果；用户显式路径在权限放行时正常注入全文
 
 #### Scenario: 禁手动但允许自动
 
@@ -165,14 +179,15 @@ Skill 内容引发的 `cli_run`；invocation policy MUST NOT 替代或放宽权�
 #### Scenario: 旧引用不能绕过禁手动
 
 - **WHEN** 一个引用创建后，对应 Skill 改为 `user-invocable: false`，用户恢复草稿并发送
-- **THEN** chip 呈禁用态；后端不读取、不注入，给出 `skill_user_invocation_disabled` 非阻断提示；
-  模型自主入口仍可用
+- **THEN** chip 呈禁用态；后端不调用执行期正文加载器、不注入，`input` / `llm_request.messages` /
+  provider wire 无正文，并给出 `skill_user_invocation_disabled` 非阻断提示；模型自主入口仍可用
 
 #### Scenario: 非法调用元数据 fail closed
 
 - **WHEN** 一个 Skill 的调用策略字段重复、带引号、写为 `yes` 或其他非 `true` / `false` 值
-- **THEN** 两个入口均返回 / 报告 `skill_invocation_invalid`，不读取正文；系统不得按字段缺失的默认开放值
-  处理；未知 frontmatter 字段不产生该错误
+- **THEN** 发现期已解析出非法状态；两个入口均返回 / 报告 `skill_invocation_invalid`，执行期正文加载器
+  未被调用，显式 `input` / `llm_request.messages` / provider wire 与自动工具结果均无正文；系统不得按字段
+  缺失的默认开放值处理；未知 frontmatter 字段不产生该错误
 
 #### Scenario: 自动入口默认行为不削弱
 
@@ -182,10 +197,12 @@ Skill 内容引发的 `cli_run`；invocation policy MUST NOT 替代或放宽权�
 
 #### Scenario: 权限判定对两个入口一致
 
-- **WHEN** 配置 `deny = ["skill_load"]` 或 `deny = ["skill_load(<name>)"]`，在任一权限档分别经显式选择与
-  模型自主调用加载同一 Skill
-- **THEN** 两个入口均不读取全文；显式路径不注入且 `input` / `llm_request.messages` / provider wire 无正文，
-  自动路径无正文工具结果；同一命中规则原文按各入口既有错误面报告
+- **WHEN** 含唯一正文 marker 的 SKILL.md 已在发现期被成功读取并解析出 description / 策略后，配置
+  `deny = ["skill_load"]` 或 `deny = ["skill_load(<name>)"]`，在任一权限档分别经显式选择与模型自主调用
+  加载同一 Skill
+- **THEN** 两个入口的执行期正文加载器均未被调用；显式路径不注入且 `input` / `llm_request.messages` /
+  provider wire 无 marker，自动工具结果无 marker；同一命中规则原文按各入口既有错误面报告；
+  不得用文件系统零读取作为该拒绝路径的判据
 
 #### Scenario: 显式选择不改变后续命令权限
 

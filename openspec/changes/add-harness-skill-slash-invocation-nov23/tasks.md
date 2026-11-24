@@ -17,24 +17,33 @@
 - [ ] 0.7 开工当天复核 design §2 的行号锚点；漂了就先改 design 再施工
 - [ ] 0.8 若实现期发现需要重写既有自动工具历史、在重试 / 恢复时重新执行显式注入，或为字段增加兼容别名，
       停下上报；这些都超出 H1 的批准范围
+- [ ] 0.9 读取边界：发现期可按现状整份读入 SKILL.md 解析元数据，发生在权限 / 策略前；拒绝路径只承诺
+      执行期正文加载器未调用与各输出面无正文。不得写「任何 Skill 文件零读取」断言，不在本 change 夹带
+      发现期只读 frontmatter 优化
 
 ## 1. 先红（测试先行，旧实现上必须红）
 
 - [ ] 1.1 Rust 单测：frontmatter 缺省双入口开放；`disable-model-invocation: true` 只禁模型；
       `user-invocable: false` 只禁用户；两种禁用组合双入口均禁；vault 覆盖时策略随整项覆盖
 - [ ] 1.2 Rust 单测：非法元数据（重复字段、带引号、`yes` / `no`、大小写变体、非布尔值）均
-      `skill_invocation_invalid`，两个入口 fail closed，全文读取计数为零；未知字段仍忽略
+      `skill_invocation_invalid`，两个入口 fail closed，执行期正文加载器调用计数为零且各输出面无正文；
+      未知字段仍忽略。不得用发现期文件系统读取计数为零作判据
 - [ ] 1.3 Rust 单测：自动入口保留——默认 Skill 的索引条目、工具定义与 `skill_load` 正文 / 错误回执不变；
-      禁自动条目返回 `skill_model_invocation_disabled` 且 SKILL.md 与其他目录内文件都不读；
-      禁手动条目的自动读取仍成功
+      禁自动条目返回 `skill_model_invocation_disabled`，执行期正文加载器未调用且 SKILL.md 与其他目录内
+      文件均无正文进入工具结果；禁手动条目的自动加载仍成功
 - [ ] 1.4 Rust 单测：显式 `skills_json` 注入（选中 → input 多一个带 `lumir_skill` 的 part、段头 + 正文；
       未知 / 超限 / 读失败 / 不合 grammar 跳过；重复去重；结构非法拒绝发送）
 - [ ] 1.5 Rust 单测：显式入口策略——禁自动仍可显式注入；禁手动返回非阻断
-      `skill_user_invocation_disabled` 且不读不注入；非法元数据同 fail closed；旧 ref / 伪造名字不能绕过
+      `skill_user_invocation_disabled`，执行期正文加载器未调用且不注入；非法元数据同 fail closed；
+      旧 ref / 伪造名字不能绕过
 - [ ] 1.6 Rust 单测：两入口权限矩阵——tool 级 `deny = ["skill_load"]` 与名字模式
       `deny = ["skill_load(<name>)"]`，分别在 `read_only` / `vault_write` / `full_access` 三档、
-      显式 / 自动两入口下：不读取全文；显式的 `input` / `llm_request.messages` / provider wire 无正文；
-      自动无正文工具结果；同配置未命中 deny 的名字正常加载
+      显式 / 自动两入口下：执行期正文加载器调用计数为零；显式的 `input` / `llm_request.messages` /
+      provider wire 无正文；自动工具结果无正文；同配置未命中 deny 的名字正常加载
+- [ ] 1.6a Rust 反例：fixture 的 SKILL.md 含唯一 body marker。先运行 `discover_skills` 并断言 description /
+      策略已成功解析，证明发现期读取已发生；再分别施加 deny、禁自动、禁手动、非法元数据。断言执行期
+      正文加载器未调用，显式 `input` / `llm_request.messages` / provider wire 与自动工具结果均无 marker。
+      不得断言或暗示发现期零 IO，不得用删除目录 / 整文件不可读冒充这个反例
 - [ ] 1.7 Rust 单测：wire 剥离（三个 client 的 wire body 不含 `lumir_skill`，正文仍在；无图片、
       仅用户文本 + 技能 part 也剥离，且不解析附件目录）
 - [ ] 1.8 Rust 单测：投影与命名素材（`panel_text_of_content` / 恢复面板 / `turn_user_text` /
@@ -62,21 +71,23 @@
 ## 2. Rust：元数据、两入口、留存与投影
 
 - [ ] 2.1 `SkillEntry` 增加 `source` 与单一内部 `SkillInvocation` 表示；在一次双根遍历里解析，
-      vault 同名覆盖整项；frontmatter 解析只有一处，不引入 YAML 依赖
+      vault 同名覆盖整项；frontmatter 解析只有一处，不引入 YAML 依赖。发现期沿用当前可能整份读入
+      SKILL.md 的实现，只消费元数据，不虚称零 IO 或改变索引行为
 - [ ] 2.2 实现两个字段的缺省 / 布尔校验 / 非法 fail closed；未知字段忽略；索引只为非默认 / 非法项追加标记，
       默认索引文本不变
 - [ ] 2.3 新增 `SkillSummary {name,description,source,user_invocable,model_invocable,invocation_valid}`（ts-rs
       导出，无 dir）与 `harness_skills_list`；复用 `discover_skills`，只按 `/` grammar 过滤 DTO
-- [ ] 2.4 自动 `skill_load` 在现有权限判定后检查模型入口策略；禁自动 / 非法返回明确错误且不读取任何
-      Skill 文件；默认与禁手动条目走原读取路径
-- [ ] 2.5 抽取共享读取函数，统一名称解析、根内路径校验、200KB 上限与读取错误；显式和自动 MUST 共用，
-      不复制第二套实现
+- [ ] 2.4 自动 `skill_load` 在现有权限判定后检查模型入口策略；禁自动 / 非法返回明确错误，执行期正文
+      加载器未调用且工具结果无正文；默认与禁手动条目走原加载路径
+- [ ] 2.5 抽取共享执行期正文加载器，统一名称解析、根内路径校验、200KB 上限与读取错误；显式和自动 MUST
+      共用，不复制第二套实现。拒绝路径测试给该加载器加调用计数，不给发现期文件系统读取加零计数断言
 - [ ] 2.6 `harness_send` 增加必填 `skills_json`；结构非法 → `harness_skills_invalid` 不建会话不入队；
       不合 grammar 防御性丢弃；唯一前端调用点同步，不做旧前端兼容层
 - [ ] 2.7 `TurnInput::User` 携带名字数组（子运行 / cron / 测试构造点显式空数组）；回合发现后、入队前，
       先过同一 `skill_load` 权限判定，再检查用户入口策略，仅 Allow + 可用户调用 + 合法时读取
 - [ ] 2.8 显式注入顺序：`apply_context_section` 后按名字数组追加 part；同名一次；段头常量单点；
-      deny / 禁手动 / 非法分别给明确非阻断反馈，不伪装未知名字，不读不注入
+      deny / 禁手动 / 非法分别给明确非阻断反馈，不伪装未知名字，执行期正文加载器未调用，且
+      `input` / `llm_request.messages` / provider wire 无正文
 - [ ] 2.9 `expand_image_refs` 在无图片早退前无条件剥掉 `lumir_skill`、保留正文；三 client + 无图片单测
 - [ ] 2.10 `panel_text_of_content` 与 `title::item_text` 跳过显式技能 part；恢复面板与命名素材共用判据；
       自动工具结果投影不改
@@ -138,12 +149,15 @@
   3. **显式确定性加载**：选择 `tmp-acc` 与 `acc-skill-abc` 后发送；首个 `llm_request.messages` 有标记与
      正文，AX 无正文；手打完整名字不选择则无显式注入
   4. **默认自动能力不削弱**：既有场景 77 逐条通过；默认 Skill 的索引与自动工具结果保持原形态
-  5. **禁自动**：`acc-deploy` 索引有仅用户调用标记；mock 发起自动 `skill_load` 得到策略错误且无正文；
-     用户显式选择后正文正常注入
-  6. **禁手动**：`acc-background` 不出现在候选；mock 自动 `skill_load` 有正文；构造旧 ref 发送不注入并给
-     非阻断策略反馈
-  7. **非法元数据**：`acc-invalid` 两入口均 `skill_invocation_invalid`，不读不注入
-  8. **权限一致**：对同一 Skill 分别走显式 / 自动并命中 deny；两者都无正文，显式 wire / input 亦无正文
+  5. **禁自动**：`acc-deploy` 先经发现取得索引与仅用户调用标记；mock 发起自动 `skill_load` 得到策略错误，
+     执行期正文加载器未调用且工具结果无正文；用户显式选择后正文正常注入
+  6. **禁手动**：`acc-background` 先经发现取得策略，不出现在候选；mock 自动 `skill_load` 有正文；构造旧 ref
+     发送时执行期正文加载器未调用、不注入并给非阻断策略反馈
+  7. **非法元数据**：`acc-invalid` 先经发现解析出非法状态，两入口均 `skill_invocation_invalid`，执行期正文
+     加载器未调用，显式 `input` / `llm_request.messages` / provider wire 与自动工具结果均无正文
+  8. **权限一致**：先证明发现期 description 已取得，再对同一 Skill 分别走显式 / 自动并命中 deny；两者执行期
+     正文加载器均未调用，显式 `input` / `llm_request.messages` / provider wire 与自动工具结果均无正文；
+     不断言发现期文件系统零读取
   9. **恢复与策略变化**：恢复含显式 part / 自动工具结果的会话，AX 与 JSONL 投影不变；改为禁自动后旧历史
      仍在，只有新自动调用被拦
   10. **键位 / IME / 草稿**：⌃N/P 三态不消费；组合期不弹不吞 Enter；切 vault 草稿往返后 refs 恢复并按
