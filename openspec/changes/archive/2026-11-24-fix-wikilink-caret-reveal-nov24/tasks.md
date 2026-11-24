@@ -23,7 +23,7 @@
 - [x] 3.2 在 wikilink-caret-reveal.spec 增加三态 × Meta / Ctrl 真实矩阵：逐格记录原视图选区、widget、焦点、跳转 / toast；unresolved Meta 明确断言选区与焦点不变。另以 span 外的正向 / 反向非空选区跑 Shift-Click / Alt-Click，断言不进入、不显露，anchor / head 与原选区逐值相同，Shift 不 collapse。
 - [x] 3.3 用 `page.mouse` 增加首次 drag 与第二次源码拖选矩阵：部分 / 完整 alias、target-only、正反向，断言定界符不隐式并入且文档不变。
 - [x] 3.4 为 visual resolver 桩增加可控延迟，覆盖 pending → resolved / ambiguous / unresolved 的连续编辑。
-- [ ] 3.5 新增或更新真机验收场景，覆盖 WKWebView 下键盘 / 指针进入、修饰键旧语义、只读不进入与文档字节不变；精确 caret 与拖选断言留在 visual。
+- [x] 3.5 新增或更新真机验收场景，覆盖 WKWebView 下键盘 / 指针进入、修饰键旧语义、只读不进入与文档字节不变；精确 caret 与拖选断言留在 visual。真机 865 已覆盖可装配的键盘 / 指针 / 修饰键与字节路径；真实 `EditorState.readOnly` 由 visual fixture 验收，vault 外只读会话不注入 resolver，真机没有「只读 + 三态 widget」装配路径，故不另造该组合的伪覆盖场景。
 
 ## 4. 验证与归档
 
