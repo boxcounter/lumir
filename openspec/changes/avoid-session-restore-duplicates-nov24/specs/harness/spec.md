@@ -16,7 +16,7 @@
 
 列举 MUST NOT 写 JSONL、MUST NOT 创建文件、MUST NOT 迁移、MUST NOT 改变文件 mtime。同名但无谱系关系的会话 MUST NOT 合并，各占一行，行时间格承担区分。自动压缩文件只标 `opened_from=compact`、没有 `restored_from`，MUST NOT 被当作任何文件的续写链：它按自身活动时间 / 创建时刻独立落位，MUST NOT 继承源文件的活动时间。
 
-查看历史会话 SHALL 与列举同一纪律：MUST NOT 创建目录、临时文件、JSONL 或任何 sidecar，MUST NOT 改动源文件字节与 mtime；查看 MAY 在内存中分配恢复身份（session id / token），但该身份 MUST NOT 产生任何持久化副作用。所点文件就是当前活跃会话的已发布文件时，系统 SHALL 直接返回 `switched=false`（不 fork、不新增文件、不重放 transcript；busy 下也成功）。同一份未激活恢复被重复点击时，系统 SHALL 复用查看阶段已分配的 session id 与持久化 token，MUST NOT 重新铸 id、MUST NOT 重新读源、MUST NOT 重复重建 transcript 或通知。
+查看历史会话 SHALL 与列举同一纪律：MUST NOT 创建目录、临时文件、JSONL 或任何 sidecar，MUST NOT 改动源文件字节与 mtime；查看 MAY 在内存中分配恢复身份（session id / token），但该身份 MUST NOT 产生任何持久化副作用。所点文件就是当前活跃会话的已发布文件时，系统 SHALL 直接返回 `switched=false`（不 fork、不新增文件、不重放 transcript；busy 下也成功）。同一份未发布的 pending 恢复被重复点击时（无论 `activated=false` 还是 `activated=true`），系统 SHALL 复用查看阶段已分配的 session id 与持久化 token，MUST NOT 重新铸 id、MUST NOT 重新读源、MUST NOT 重复重建 transcript 或通知。
 
 查看另一份历史会话（A→B→A）SHALL 只替换内存投影，零新增文件；未发送即退出不留下任何新文件，重启后 MUST NOT 自动复活空恢复文件。待发布恢复（无论是否已激活）MUST NOT 出现在会话清单里：清单行身份是一份文件，没有发布就没有行。
 

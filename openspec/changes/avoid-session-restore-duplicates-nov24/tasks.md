@@ -46,9 +46,11 @@
       若已激活且未发布，先尝试一次发布，失败则拒绝切换并保留会话与缓冲。判据 MUST NOT 用
       「批次为空」。
 - [ ] 2.5 cron 打开会话入口回归：当前文件直切仍只打开 / 刷新面板，不 fork。
-- [ ] 2.6 统一未发布批次守卫：在 `resume_session`、`new_session` / `reset_session`、
-      `begin_compacted_session` / `Session::rotate` 三处共用同一判定与同一错误码
-      `harness_persistence_unpublished`；被拒操作不清健康、不写 `pending_open=reset`。
+- [ ] 2.6 统一未发布批次守卫：`resume_session`、`new_session` / `reset_session`、
+      `begin_compacted_session` / `Session::rotate` 三处共用同一 `activated` / 未发布判定与
+      同一发布尝试；错误出口分流：resume / new_session 返回 `harness_persistence_unpublished`，
+      compact 返回内部「跳过压缩」结果、MUST NOT 返回该错误码；被拒操作不清健康、
+      不写 `pending_open=reset`。
 - [ ] 2.7 前端错误路径：新会话被拒显示可见错误、不清视图 / composer / 健康；compact 被拒
       不产生用户侧错误，对话继续。
 - [ ] 2.8 compact 跳过的收尾：阈值路径保留未压缩 input / system / writer、完成本轮、健康告警
