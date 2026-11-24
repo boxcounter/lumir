@@ -37,7 +37,7 @@ steps:
 
   - name: 拖选 assistant 消息正文里的一段文字（transcript 静态文本无 AX bbox，用窗口局部坐标真实拖选）→ 浮动「摘录到对话」钮应浮现
     do: drag
-    target: { x: 900, y: 130 }
+    target: { x: 760, y: 170 }
     dx: 120
     dy: 0
     selection: "/AXButton \\(摘录到对话\\)/"
@@ -75,7 +75,7 @@ steps:
 
   - name: 重新摘一次（确认移除不破坏手势），再写问题并发送
     do: drag
-    target: { x: 900, y: 130 }
+    target: { x: 760, y: 170 }
     dx: 120
     dy: 0
     selection: "/AXButton \\(摘录到对话\\)/"
@@ -86,8 +86,13 @@ steps:
       - label: 卡片再次入 composer
         ax: { has: "对话 · Agent" }
   - name: 在卡片后的问题段落里写问题（插入后光标落卡片下一行）
+    # composer inline cards（master 已合并）后，卡片是 composer 内的 widget：AXTextArea 的
+    # label 仍是占位句「问点什么…」，旧的 tray 形态才会把卡片出处「Agent」读成 AX 名。
+    # 按 typeInNode 的硬口径并联「占位名 | 本轮注入文本」（M779）：注入前命中占位句，注入后
+    # 命中 value。卡片在 widget 里、插入后 composer 已聚焦，type_text 追加到文档末尾 = 卡片
+    # 之后；动作内部 N→N+1 回读继续证明文本真的落在 composer。
     do: typeInNode
-    target: { role: AXTextArea, name: "Agent|why" }
+    target: { role: AXTextArea, name: "问点什么|why" }
     text: "why"
   - name: 发送
     do: key
@@ -159,6 +164,10 @@ steps:
 - **坐标不是 bbox，是固定布局的常量**：本轮取证窗口固定 1200×800、harness pane 固定比分、
   fixture 固定；坐标漂了会以「浮动钮不在场」当场判红（不会静默选中别处通过——后面还有出处行
   「对话 · Agent」与 wire 里 `role="assistant"` 两条内容判据兜底）。
+- **坐标随排版重标定**：2026-11-24 的消息排版把 assistant 正文移到窗口局部 y≈170；旧
+  `(900,130) → (1020,130)` 落在两条消息之间的空白。现取 `(760,170) → (880,170)`，起终点都在
+  同一 assistant 正文行内。改 fixture、窗口尺寸或消息排版后 MUST 按本轮截图重取，不得把空白
+  拖选反复重试归因成产品选择器失效；`selection` 正观测仍在每次拖选后独立判定。
 - **浮动钮的落点钳制（M531）**：本场景的拖选落点在 transcript 顶部锚定的正文行上，钮的候选落点
   远在可视区内——`geom` 那条只作**不变式**（钮在视口内且尺寸未坏）。有区分度的现场：编辑器那颗钮
   由场景 160 判（选区越出挂载容器），transcript 那颗的纵向钳制由 chromium 视觉场景
