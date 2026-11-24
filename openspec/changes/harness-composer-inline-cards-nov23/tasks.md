@@ -157,10 +157,11 @@
 - [x] 6.2 应用内 copy event：读取 `DataTransfer`，逐字节等于选区文本；不含卡片摘录 / `×` / `@` /
       占位 / 哨兵；空选区写入 `""`，不复制整段；`clipboardData === null` 保留原生回退；composer
       视觉文本由 data 属性 + CSS pseudo 保留，实际 AX value 只含文档、摘录只读一次、动作名保留
-- [ ] 6.3 真机外部剪贴板：`⌘A` → `⌘C` → 外部粘贴，按平台归一后（统一行尾、去一个尾换行）比较，
+- [x] 6.3 真机外部剪贴板：`⌘A` → `⌘C` → 外部粘贴，按平台归一后（统一行尾、去一个尾换行）比较，
       **不得**写「逐字节」；另负向断言无卡片摘录 / `×` / `@` / 占位 / 哨兵（场景 723 已落；真机归主会话）
-- [ ] 6.4 真机：Backspace / Delete 紧邻卡片只删文本，卡片数量与数据不变；删除行界后
-      `composerBlocks` 顺序不变（场景 723 已落；真机归主会话）
+      ——最终 rebase tip 真机 723 PASS，外部剪贴板只含两段文本
+- [x] 6.4 真机：Backspace / Delete 紧邻卡片只删文本，卡片数量与数据不变；删除行界后
+      `composerBlocks` 顺序不变（场景 723 已落；真机归主会话）——最终真机 723 PASS
 - [x] 6.5 若真机发现 CM 原生选区删除按 DOM 形状走：按 `state.selection` 显式 dispatch 兜底；
       判据是删除后 doc 逐字节等于按选区计算的期望（Chromium 红测命中并已修绿；真机复核归主会话）
 
@@ -206,8 +207,9 @@
       选择器改 `.cm-content .lumir-hp-cwidget .lumir-hp-qcard` 一族，断言强度不降
 - [x] 7.6 `node scripts/acceptance/coverage.mjs` 重新生成 `COVERAGE.md`；
       `coverage.mjs --check` 与 `run.mjs --check` 通过
-- [ ] 7.7 真机跑新场景 + 受影响场景，证据落 `.local/acceptance/<批次>/`（git 外）；FAIL 逐条
-      定位，不把偶发超窗当产品缺陷、不静默重跑（本任务不启动 Lumir；主会话串行执行）
+- [x] 7.7 真机跑新场景 + 受影响场景，证据落 `.local/acceptance/<批次>/`（git 外）；FAIL 逐条
+      定位，不把偶发超窗当产品缺陷、不静默重跑——最终 rebase tip 八组 8/8 PASS（185.5s），证据
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-24-composer-inline-cards-rebased/`
 - [x] 7.8 证据目录用绝对路径 `ls` 一遍再写进报告（REVIEW.md「证据只在终端跑过」条）
 
 ## 8. 视觉（结构 → 像素 → 基线）
@@ -215,12 +217,15 @@
 - [x] 8.1 结构断言（chromium，CI 层）：卡片在 `.cm-content` 内、位于两段文字之间（**行首
       anchor 与行中 anchor 两种形态都要覆盖**）；tray 零命中；占位符不压卡；`@` / `×` / 徽标
       在位；选区高亮不覆盖卡片；行中 anchor 不产生 doc 换行
-- [ ] 8.2 本地像素对比：跑 `scripts/gate.sh visual`，产出候选截图到
-      `.local/reviews/ux-improvements/composer-visual-candidate/`；并排列出现行基线的每一处差异（已产行首 / 行中候选，未跑全量 visual；完整对比归主会话）
-- [ ] 8.3 **候选截图先送 Alex 过目**；未批不得 `--update`；批准后更新基线并复跑 `visual`，
-      按 AGENTS.md「视觉门禁卫生」核对该元素出现过的整页基线时间戳（候选已备，待 Alex 过目；本任务未更新基线）
-- [ ] 8.4 三主题 + eink 目检；滚动条归「细条」档（`.lumir-hp-composer` 已在
-      `tests/unit/scrollbar-registry.test.ts` 登记，新增容器须先归挡）（未新增 overflow 容器；三主题目检归主会话完整 visual / Alex）
+- [x] 8.2 本地像素对比：跑 `scripts/gate.sh visual`，产出候选截图到
+      `.local/reviews/ux-improvements/composer-visual-candidate/`；并排列出现行基线的每一处差异
+      ——完整视觉 `GATE RESULT: 15/15 PASS（SKIP 0）`，现有基线零差异、零更新
+- [x] 8.3 **候选截图先送 Alex 过目**；未批不得 `--update`；批准后更新基线并复跑 `visual`，
+      按 AGENTS.md「视觉门禁卫生」核对该元素出现过的整页基线时间戳——Alex 2026-11-24 批准两项
+      候选并明确「composer 无需重截」，最终完整视觉已复跑通过
+- [x] 8.4 三主题 + eink 目检；滚动条归「细条」档（`.lumir-hp-composer` 已在
+      `tests/unit/scrollbar-registry.test.ts` 登记，新增容器须先归挡）——light / dark / eink 行首
+      与行中候选经 Alex 过目，无新增 overflow 容器
 - [x] 8.5 手感 / 审美项（滚动节奏、点击跳回、`×` 反馈）只留截图与真机证据，标「归 Alex」，
       不进机器判据
 
@@ -230,11 +235,12 @@
       原文；日志 `.local/reviews/ux-improvements/composer-validate.log`
 - [x] 9.2 `bash scripts/docs-check.sh` 通过（含 MODIFIED 对账、归档队列、backlog、场景契约）；
       日志 `.local/reviews/ux-improvements/composer-docs-check.log`
-- [ ] 9.3 `scripts/gate.sh quick` 通过：照抄 `GATE RESULT` 原文行 + 退出码（SKIP 单列）；日志
-      `.local/reviews/ux-improvements/composer-quick.log`（按分工未跑，主会话串行执行）
-- [ ] 9.4 `scripts/gate.sh visual` 通过（动过 `src/style.css` / `src/harness-panel.css`，必须
-      本地跑像素层）；日志 `.local/reviews/ux-improvements/composer-visual.log`（按分工未跑，主会话串行执行；像素基线未动）
-- [ ] 9.5 真机证据与 7.7 同目录；报告里给绝对路径（真机归主会话）
+- [x] 9.3 `scripts/gate.sh quick` 通过：照抄 `GATE RESULT` 原文行 + 退出码（SKIP 单列）
+      ——完整视觉内 quick 层全部 PASS；最终结果 `GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0
+- [x] 9.4 `scripts/gate.sh visual` 通过（动过 `src/style.css` / `src/harness-panel.css`，必须
+      本地跑像素层）——`GATE RESULT: 15/15 PASS（SKIP 0）`，日志
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/composer-inline-cards-nov23/gate-visual-final.log`
+- [x] 9.5 真机证据与 7.7 同目录；报告里给绝对路径（真机归主会话）
 - [x] 9.6 更新 `openspec/changes/harness-composer-inline-cards-nov23/specs/harness/spec.md` 的
       口径与实现一致（实现期发现 delta 需改时，先改 proposal / design 并重走节点 1，不静默扩
       scope）
@@ -247,15 +253,19 @@
 
 ## 10. 性能
 
-- [ ] 10.1 跑既有 perf 套件：`node scripts/perf/keypress-to-paint.mjs`（或该套件当前入口），
-      记录读数与对照合同 `<16ms`；证据落 `.local/perf/` 或 `.local/reviews/ux-improvements/`（主会话串行执行）
+- [x] 10.1 跑既有 perf 套件：`node scripts/perf/keypress-to-paint.mjs`（或该套件当前入口），
+      记录读数与对照合同 `<16ms`——median 9.60ms、p95 17.60ms、max 31.50ms（n=50），证据
+      `.local/missions/composer-inline-cards-nov23/perf-keypress.log` 与 worktree `.local/perf/`
 - [x] 10.2 卡片在场连续输入 **200 字**：记录键入总耗时 / 帧时间，确认无长帧；脚本与原始读数
       落 `.local/reviews/ux-improvements/composer-perf-200chars.log`
 - [x] 10.3 **widget DOM 身份复用**：200 字过程中卡片 DOM 节点引用不变（`eq` 命中、不重建），
       用 DOM / 单测断言；证据与 10.2 同目录
 - [x] 10.4 **图片读回不重复**：键入期间 `harnessReadImage` 调用计数不增加（缓存命中 + `eq`），
       用注入的计数桩断言；证据与 10.2 同目录
-- [ ] 10.5 常驻内存对照项目 `<200MB`（如本 change 触及内存面）；浏览器读数不得冒充整个 Tauri app（主会话按真机 perf 口径测量）
+- [x] 10.5 常驻内存对照项目 `<200MB`（如本 change 触及内存面）；浏览器读数不得冒充整个 Tauri app
+      ——真实 release app + 3 个 WebKit helper：master 262.64MB、composer 267.75MB，均超 250MB 门禁且
+      composer 高 5.1MB，未宣称通过。Alex 2026-11-24 明确「允许 composer 内存例外」，允许按功能证据
+      合并归档，发布说明保留本地内存未达标与内存专项。证据 `perf-memory.log` / `perf-master-memory.log`
 
 ## 11. 信息卫生
 
@@ -269,6 +279,7 @@
 - [x] 12.1 `tasks.md` 全部勾选；未勾项就地写放弃理由（不删任务项、不留空勾）
 - [x] 12.2 `proposal.md` 节点状态块按实情更新（**不得把待批写成已批**）
 - [x] 12.3 `docs/backlog.md` 归档跟踪队列落一条本 change 记录（五要件齐待归档 / 命中例外待裁）
-- [ ] 12.4 交独立 reviewer；verdict 绑定当前 tip（主会话在提交后安排）
+- [x] 12.4 交独立 reviewer；verdict 绑定当前 tip——r4 clean / merge 绑定
+      `2ec927d8fed756e511a0e59168c3984d9b8d22aa`
 - [ ] 12.5 归档前逐条核对节点 2 五要件；归档走 `node scripts/openspec-archive.mjs <change-id>`，
-      归档提交后跑 `--archived` 审计至 PASS（待真机、完整 visual、候选裁决与独立 reviewer，主会话执行）
+      归档提交后跑 `--archived` 审计至 PASS（archive-check 已 PASS，性能读数收口后执行归档）
