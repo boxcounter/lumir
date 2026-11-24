@@ -2,24 +2,22 @@
 
 > 本文件写实现合同与取舍，不是实现记录。行号是起草时（2026-11-23）的读数，实现时以符号为准。
 > 节点状态见 [proposal.md](proposal.md)：节点 1 已批准——Alex 2026-11-24 回复「同意。」，D1–D6 按
-> 推荐值生效。审批前序已归档，排版前序仍未归档；实现仍受该前置门禁与排版基线批准约束。
+> 推荐值生效。两个前序均已归档且审计 PASS，排版基线已获 Alex 批准落盘；本次实现提交不归档。
 
 ## 0. 前置门禁（硬）
 
 三项 change 的顺序固定为 `fix-harness-approval-visibility-nov23` →
 `refine-harness-typography-nov23` → 本 change。本 change **必须最后落**：
 
-1. **两个前序都已归档**：`fix-harness-approval-visibility-nov23` 已归档并 `--archived` PASS（归档
-   提交 `12a21a97`，审计记录 `ab6ef4ad`，合并 `bae7b47f`）；`refine-harness-typography-nov23` 仍
-   未归档。任一前序未归档、或 `node scripts/openspec-archive-check.mjs --archived <change-id>` 未
-   PASS 之前，本 change 不得进入实现、不得归档。
-2. **排版新基线已批准落盘**：`refine-harness-typography-nov23` 的候选视觉基线须经 Alex 逐张过目并
-   批准落盘；未批准前本 change 不得施工，也不得把候选图当正式基线。
-3. **delta 以两前序归档后的 living 为基线**：审批归档后的 living「进度呈现」已**整块重抄**进本
-   change 的 delta——24 个 living scenario 全部逐条保留，另加 19 个尾行 / 排版承接 scenario；排版
-   前序归档后仍须复核该 requirement 未被改写并再次整块对账。MUST NOT 以当前 living 为基线直接改，
-   MUST NOT 在未复核的情况下直接归档，否则归档时整块替换会抹掉审批前序新增的终态撤回 / idle stale /
-   enter 前置 / 清算矩阵 / 发送最终几何等条款，以及排版 change 的阅读密度 / token 条款。
+1. **两个前序都已归档**：`fix-harness-approval-visibility-nov23` 与
+   `refine-harness-typography-nov23` 均已归档，开工已分别复跑
+   `node scripts/openspec-archive-check.mjs --archived <change-id>` 并 PASS。
+2. **排版新基线已批准落盘**：`refine-harness-typography-nov23` 的 20 张候选视觉基线已经 Alex 逐张
+   过目、批准并落盘；本 change 的 running 候选仍需独立过目，不得当正式基线。
+3. **delta 以两前序归档后的 living 为基线**：living「进度呈现」已**整块重抄**进本 change 的
+   delta——24 个 living scenario 全部逐条保留，另加 19 个尾行 / 排版承接 scenario。MUST NOT 只写
+   改动段，MUST NOT 在未复核的情况下直接归档，否则归档时整块替换会抹掉审批前序新增的终态撤回 /
+   idle stale / enter 前置 / 清算矩阵 / 发送最终几何等条款，以及排版 change 的阅读密度 / token 条款。
 4. **承接排版几何**：阶段行取 `--text-2`；transcript gap 16px，尾行 4px 净间距用
    `calc(var(--sp-2) - var(--sp-8))`；空态绝对定位四边 `top/right/left: var(--sp-8);
    bottom: var(--sp-6)`，并继承 13px/1.58、`--text-2`、24px padding。MUST NOT 恢复排版前的阶段色、
@@ -31,33 +29,37 @@
 7. 集成测试：尾行在 transcript 内时，`enter_snapshot(in_flight=true) + pending` 读「等待批准…」
    且标题栏信号仍在；脱离态下待批到达时标题栏信号仍在、`scrollTop` 不变。
 
-## 1. 事实底座（实现前必须成立，逐条可核）
+## 1. 施工前事实底座（基线 `16216a1f`，逐条可核）
 
 F7 / F8 / F15 的样式读数按 `refine-harness-typography-nov23` 归档后的施工基线写；排版前的旧值不是
-本 change 的合同起点。
+本 change 的合同起点。位置列只写稳定符号，避免实现后的行号漂移把历史事实误读成当前形态。
 
-| # | 事实 | 位置 |
+| # | 施工前事实 | 基线符号 |
 |---|---|---|
-| F1 | 进度 DOM = `.lumir-hp-progress`（阶段行 + 3px 条形），空闲时 `hidden` | `src/harness-panel.ts:3706-3718` |
-| F2 | 进度挂在 transcript 视口**之外**、composer 之上 | `src/harness-panel.ts:3927` |
-| F3 | 显隐只由相位翻一位：`progress.hidden = !running` | `src/harness-panel.ts:5893-5905` |
-| F4 | 阶段文案三档：D381 / D382 / D400；语言切换经 `applyStage` 重取 | `src/harness-panel.ts:5992-5999` |
-| F5 | 只有首个 `text_chunk` 把 `stageWaiting` 翻假；`reasoning_chunk` / `tool_call` 先到时不翻（缺陷） | `src/harness-panel.ts:8498-8503`、`:8516`、`:8536` |
-| F6 | 流式泡在首个 reasoning / tool / text 分片时才创建（等待期无宿主） | `src/harness-panel.ts:7606-7614` |
-| F7 | transcript 是 `overflow-y:auto` 的 flex 列；施工基线取排版归档后的 gap 16px（`--sp-8`）与 `16px 16px 12px` 外侧 padding | `src/harness-panel.css` 的 `.lumir-hp-transcript`；`refine-harness-typography-nov23` |
-| F8 | 进度块当前自带左右 padding（补 transcript 之外的留白），移入 transcript 后必须去掉，避免与容器 padding 叠加 | `src/harness-panel.css` 的 `.lumir-hp-progress` |
-| F9 | 条形 3px、`margin-bottom: --sp-2`；eink 下明度双档脉冲 | `src/harness-panel.css:1798-1838` |
-| F10 | 空态判据用 `transcript.childElementCount` | `src/harness-panel.ts:6044-6049` |
-| F11 | 跟滚控制器：`contentGrew` / `contentReplaced` / `viewportChanged` / `reset`；detached 零写入；未读基线取 `scrollHeight` | `src/harness-scroll-lock.ts:118-237` |
-| F12 | 终态分支：`done` 定稿后派发终态；`aborted` 先补「已停止」标记、后派发终态；`error` 先派发终态、后追加错误行 | `src/harness-panel.ts:8729-8828` |
-| F13 | 中途接管：`enter_snapshot` 置 `midTakeover`，但未把 `stageWaiting` 置假；`resetView` 会把它置真 | `src/harness-panel.ts:5932-5936`、`:9373` |
-| F14 | 快照重建经 `clearTranscriptSurface()` 清空 transcript（尾行节点会被一并移除） | `src/harness-panel.ts:9319-9361` |
-| F15 | 排版归档后空态 `.lumir-hp-empty` 仍靠 flex 内容盒的剩余空间居中（13px/1.58、`--text-2`、24px padding）——尾行占位后提示会移动 | `src/harness-panel.css` 的 `.lumir-hp-empty`；`refine-harness-typography-nov23` |
-| F16 | 顶层 `transcript.append` 有 12 处直接写入，含 compact 标记、孤儿工具块、快照 assistant | `src/harness-panel.ts:6046/6139/6252/6863/6887/6964/7612/8429/8465/8478/8768/8910` |
-| F17 | `compact` 事件在 `done` 前调用 `appendCompactMarker`，此刻进度可能仍可见 | `src/harness-panel.ts:8582-8589` |
+| F1 | 进度 DOM = `.lumir-hp-progress`（阶段行 + 3px 条形），空闲时 `hidden` | `progress` / `stageLine` / `barTrack` |
+| F2 | 进度挂在 transcript 视口**之外**、composer 之上 | `panel.append(transcriptViewport, progress, …)` |
+| F3 | 显隐只由相位翻一位：`progress.hidden = !running` | `applySendPhase` |
+| F4 | 阶段文案三档：D381 / D382 / D400；语言切换经 `applyStage` 重取 | `stageCopyKey` / `applyStage` |
+| F5 | 只有首个 `text_chunk` 把 `stageWaiting` 翻假；`reasoning_chunk` / `tool_call` 先到时不翻（缺陷） | `handleEvent` 的三个分片分支 |
+| F6 | 流式泡在首个 reasoning / tool / text 分片时才创建（等待期无宿主） | `ensureStreamingMessage` |
+| F7 | transcript 是 `overflow-y:auto` 的 flex 列；施工基线取排版归档后的 gap 16px（`--sp-8`）与 `16px 16px 12px` 外侧 padding | `.lumir-hp-transcript` |
+| F8 | 进度块当前自带左右 padding（补 transcript 之外的留白），移入 transcript 后必须去掉，避免与容器 padding 叠加 | `.lumir-hp-progress` |
+| F9 | 条形 3px、`margin-bottom: --sp-2`；eink 下明度双档脉冲 | `.lumir-hp-bar[-fill]` |
+| F10 | 空态判据用 `transcript.childElementCount` | `syncEmptyHint` |
+| F11 | 跟滚控制器：`contentGrew` / `contentReplaced` / `viewportChanged` / `reset`；detached 零写入；未读基线取 `scrollHeight` | `createFollowController` |
+| F12 | 终态分支：`done` 定稿后派发终态；`aborted` 先补「已停止」标记、后派发终态；`error` 先派发终态、后追加错误行 | `handleEvent` 的 `done` / `aborted` / `error` |
+| F13 | 中途接管：`enter_snapshot` 置 `midTakeover`，但未把 `stageWaiting` 置假；`resetView` 会把它置真 | `projectActivity` / `resetView` |
+| F14 | 快照重建经 `clearTranscriptSurface()` 清空 transcript（尾行节点会被一并移除） | `clearTranscriptSurface` |
+| F15 | 排版归档后空态 `.lumir-hp-empty` 仍靠 flex 内容盒的剩余空间居中（13px/1.58、`--text-2`、24px padding）——尾行占位后提示会移动 | `.lumir-hp-empty` |
+| F16 | 顶层 `transcript.append` 有 12 处直接写入，含 compact 标记、孤儿工具块、快照 assistant | 各顶层渲染函数 |
+| F17 | `compact` 事件在 `done` 前调用 `appendCompactMarker`，此刻进度可能仍可见 | `appendCompactMarker` |
 
 结论：尾行方案不需要新事件、不需要后端配合；需要新增三个机制——「布局变化」与「新内容」在跟滚
 模型里的区分、transcript 顶层追加的唯一入口 + 运行时兜底、空态几何与 flex 剩余空间解耦。
+
+最终实现符号为 `progressTailView`（纯模型）、`applySendPhase`（相位 / 尾行布局）、`applyStage`
+（文案）、`markAssistantOutputStarted`、`appendTranscriptNode` + `ensureTailLast` +
+`transcriptTailObserver`、`transcriptHasContent` 与 `FollowController.layoutMutated`。
 
 ## 2. 结论与不变量
 
@@ -164,14 +166,15 @@ eink 只改 `width` / `animation`，不改高度。
 - `applyStage()`：阶段文案的唯一 DOM 写点。调用方包括 `applySendPhase`、首个有效产出推进
   （`markAssistantOutputStarted()`）、审批前置的 `refreshApprovalSignal()` 重施与语言重绘
   （`onRelabel`）。它只写阶段行文本，MUST NOT 改显隐、位置、`data-phase` 或条形形态，
-  MUST NOT 触发置尾、贴底或布局测量。
+  MUST NOT 触发置尾、贴底或布局测量。语言重绘还需重取按钮文案，因此最终接线允许
+  `applySendPhase(renderedPhase, /* relabelOnly */ true)`：只执行步骤 1 与步骤 5，明确跳过步骤 2–4。
 
 文案优先级（`applyStage`）：
 
 ```
 stopping → D400
 approval（running + pendingApprovals 非空）→ 等待批准…
-midTakeover → 新句（D3 批准后取号）
+midTakeover → D983「正在继续本轮…」
 stageWaiting → D381
 否则 → D382
 ```
@@ -183,7 +186,8 @@ stageWaiting → D381
 - 工具循环期没有单独档位（D4）：`stageWaiting` 已为假，读 D382。
 
 文案重施路径（首个有效产出、审批集合变化、语言切换）只换文本，不重跑 `applySendPhase` 的步骤
-1–4；不得为复用 `applyStage` 而额外调用 `applySendPhase`，也不得因此额外置尾、贴底或测量布局。
+2–4；不得因此额外置尾、贴底或测量布局。按钮语言重取只允许走上述 `relabelOnly` 短路，不得形成第二处
+按钮状态写点。
 
 ### 4.3 终止次序
 
@@ -224,8 +228,8 @@ function appendTranscriptNode(node: Node): void {
 `childList` MutationObserver（观察 transcript，`subtree: false`）：
 
 - 回调只做 `ensureTailLast()`；
-- 守卫：`progress.hidden`（空闲 / 非处理中）→ 直接返回；`transcript.lastElementChild === progress`
-  → 直接返回（防观察器自己移动造成的循环）；
+- 守卫：本批没有顶层 `addedNodes`（例如 `replaceChildren()` 清空）→ 直接返回；`progress.hidden`
+  （空闲 / 非处理中）→ 直接返回；`transcript.lastElementChild === progress` → 直接返回（防循环）；
 - 观察器是**兜底**：现有 12 处顶层 append（compact 标记、孤儿工具块、快照 assistant、通知、错误、
   批准卡等）与未来新增路径都被覆盖，**不需要在 design 里维护调用点清单**；
 - 正常路径仍走 helper（同步序正确）；绕过路径由观察器在微任务里纠正，相关 DOM 断言等一帧再判；
@@ -392,8 +396,7 @@ padding，未改居中方式）；尾行一占位，剩余空间变小，提示�
    抓不到这个整体位移。仅空态 + 尾行的极矮视口下二者可能接近，属已知边界。
 5. **停止冻结的观感**：冻结后条形停在 40% 基准位，可能被读成「进度卡在 40%」。这是刻意的
    「非推进」信号；若 Alex 真机觉得像故障，备选是停止态整条淡出只留文字（需另裁）。
-6. **中途接管句的取号**：D3 批准后取 deck 下一个未占用号；实现前复核末位，避免与并行 change
-   撞号。
+6. **中途接管句的取号**：D3 批准后取 deck 下一个未占用号；实现前复核末位为 D982，实际取 D983。
 7. **快照重建期**：`clearTranscriptSurface` 会移除尾行；重建完成到下一次 `applySendPhase` 之间
    若有短暂空窗，尾行不在场——快照重建本身是同步批次，窗口在一帧内，不构成可见闪烁。
 8. **粘性多行内容**：尾行是 flex 子项，若将来有子项设 `order > 1`，尾行不再最后；本 change 在

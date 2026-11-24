@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "subrun_span": 1,
+  "responses": [
+    {
+      "text": "PT-BG-START 后台任务已发起。",
+      "tool_calls": [
+        {
+          "id": "call_pt_bg",
+          "name": "task",
+          "arguments": "{\"agent\":\"research\",\"prompt\":\"合成后台任务\",\"description\":\"合成后台任务\",\"background\":true}"
+        }
+      ]
+    },
+    {
+      "text": "PT-BG-CHILD 后台任务完成。",
+      "delay_ms": 6000
+    },
+    {
+      "text": "PT-AUTO-PARENT-01 第一段，用于建立可滚内容。\n\nPT-AUTO-PARENT-02 第二段。\n\nPT-AUTO-PARENT-03 第三段。\n\nPT-AUTO-PARENT-04 第四段。\n\nPT-AUTO-PARENT-05 第五段。\n\nPT-AUTO-PARENT-06 第六段。\n\nPT-AUTO-PARENT-07 第七段。\n\nPT-AUTO-PARENT-08 第八段。\n\nPT-AUTO-PARENT-09 第九段。\n\nPT-AUTO-PARENT-10 第十段。\n\nPT-AUTO-PARENT-11 第十一段。\n\nPT-AUTO-PARENT-12 第十二段。\n\nPT-AUTO-PARENT-END 父回合完成。"
+    },
+    {
+      "text": "PT-AUTO-END 自动回合正文完成。",
+      "delay_ms": 12000
+    },
+    {
+      "delay_ms": 5000,
+      "tool_calls": [
+        {
+          "id": "call_pt_tool",
+          "name": "vault_read",
+          "arguments": "{\"path\":\"harness-note.md\"}"
+        }
+      ]
+    },
+    {
+      "text": "PT-TOOL-END 工具先行轮次完成。"
+    },
+    {
+      "text": "PT-APPROVAL-START 准备一处需要批准的修改。",
+      "delay_ms": 5000,
+      "tool_calls": [
+        {
+          "id": "call_pt_approval",
+          "name": "vault_patch",
+          "arguments": "{\"path\":\"harness-note.md\",\"edits\":[{\"old_string\":\"HNL-ALPHA 第一行。\",\"new_string\":\"HNL-ALPHA 第一行（PT）。\"}]}"
+        }
+      ]
+    },
+    {
+      "text": "PT-APPROVAL-END 批准后的轮次完成。"
+    },
+    {
+      "text": "PT-STOP-A 第一片已到达。PT-STOP-B 第二片不应在停止后出现。",
+      "chunks": ["PT-STOP-A 第一片已到达。", "PT-STOP-B 第二片不应在停止后出现。"],
+      "chunk_delay_ms": 9000
+    },
+    {
+      "text": "PT-TAKEOVER-A 切走前的第一片。PT-TAKEOVER-B 第二片。PT-TAKEOVER-C 接管后的最后一片。",
+      "chunks": ["PT-TAKEOVER-A 切走前的第一片。", "PT-TAKEOVER-B 第二片。", "PT-TAKEOVER-C 接管后的最后一片。"],
+      "chunk_delay_ms": 10000
+    }
+  ]
+}

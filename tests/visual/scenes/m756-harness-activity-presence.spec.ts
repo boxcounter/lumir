@@ -645,7 +645,11 @@ async function startLocalTurn(page: Page, text: string): Promise<void> {
 
 test("进入快照带待批：toggle 与段状态词同源，面板开合是本地保留", async ({ page }) => {
   await stubTauri(page, VAULT);
-  await stubHarnessActivity(page, { inFlight: true, pendingApprovals: PENDING_ONE });
+  await stubHarnessActivity(page, {
+    inFlight: true,
+    pendingApprovals: PENDING_ONE,
+    messages: [{ role: "assistant", text: "接管前已经产生的快照正文。" }],
+  });
   await page.goto("/");
   await page.locator('.ft-row[title="activity-note.md"]').click();
   const toggle = page.locator(".lumir-hp-toggle");
@@ -667,7 +671,12 @@ test("进入快照带待批：toggle 与段状态词同源，面板开合是本�
   await expect(segStatus).toHaveText("等待批准");
   await expect(segStatus).toHaveAttribute("role", "status");
   await expect(stage).toHaveText("等待批准…");
+  await expect(stage).not.toHaveText("正在继续本轮…");
   await expect(page.locator(".lumir-hp-pend")).toHaveCount(1);
+  expect(await page.locator(".lumir-hp-progress").evaluate((el) => ({
+    inTranscript: el.parentElement?.classList.contains("lumir-hp-transcript") ?? false,
+    isLast: el.parentElement?.lastElementChild === el,
+  }))).toEqual({ inTranscript: true, isLast: true });
 
   // 收起：段隐藏，toggle 仍读同一状态；重新打开保留（attachTo 不拉快照，本地状态）。
   await page.keyboard.press("Meta+Shift+A");
@@ -686,14 +695,21 @@ test("进入快照带待批：toggle 与段状态词同源，面板开合是本�
 
 test("进入快照在途但无待批：不出现待批状态（对照组）", async ({ page }) => {
   await stubTauri(page, VAULT);
-  await stubHarnessActivity(page, { inFlight: true, pendingApprovals: [] });
+  await stubHarnessActivity(page, {
+    inFlight: true,
+    pendingApprovals: [],
+    messages: [{ role: "assistant", text: "接管前已经产生的快照正文。" }],
+  });
   await openActivityPanel(page);
   const toggle = page.locator(".lumir-hp-toggle");
   await expect(toggle).toHaveAttribute("data-activity", "inflight");
   await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("处理中");
   await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
-  await expect(page.locator(".lumir-hp-stage")).toHaveText("等待响应…");
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("正在继续本轮…");
+  await expect(page.locator(".lumir-hp-stage")).not.toHaveText("等待响应…");
   await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-msg-assistant")).toContainText("接管前已经产生的快照正文。");
+  expect(await page.locator(".lumir-hp-progress").evaluate((el) => el.parentElement?.lastElementChild === el)).toBe(true);
 });
 
 test("进入快照空闲但带待决列表：按陈旧丢弃，无卡无状态", async ({ page }) => {
@@ -806,7 +822,7 @@ test("content 对账 · 非空列表 + 面板收：未读回复在场，重开�
 
 test("content 对账 · 空列表 + 面板开：终态后无待批状态", async ({ page }) => {
   await openContentCell(page, { open: true, pending: [] });
-  await expect(page.locator(".lumir-hp-stage")).toHaveText("等待响应…");
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("正在继续本轮…");
   await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
   await fireTerminalAndWaitSnapshot(page);
   await expect(page.locator(".lumir-hp-send")).toHaveAttribute("aria-label", "发送");

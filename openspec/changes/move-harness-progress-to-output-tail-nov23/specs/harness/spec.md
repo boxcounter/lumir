@@ -4,14 +4,12 @@
 > 的整条正文复制再改（`openspec archive` 对 MODIFIED 是整块替换，少抄的段落会在归档时静默消失）。
 > 机制与取舍见 [design.md](../../design.md)，裁决留痕见 [proposal.md](../../proposal.md)。
 >
-> **基线与有序链**：`fix-harness-approval-visibility-nov23` 已归档并 `--archived` 审计 PASS
-> （归档提交 `12a21a97`，审计记录 `ab6ef4ad`，合并 `bae7b47f`）；`refine-harness-typography-nov23`
-> 仍未归档。本 delta 已按审批归档后的 living「进度呈现」**整块重抄**——全部审批 scenario 逐条保留
+> **基线与有序链**：`fix-harness-approval-visibility-nov23` 与
+> `refine-harness-typography-nov23` 均已归档并 `--archived` 审计 PASS，排版新基线已获 Alex 批准落盘。
+> 本 delta 以两个前序归档后的 living「进度呈现」为基线**整块重抄**——全部 24 个既有 scenario 逐条保留
 > （待批分档、标题栏信号、清算矩阵、终态撤回、idle stale、enter 前置、发送最终几何、窄段与重复
-> 播报等），再叠加已评审通过的尾行位置与排版承接改动。排版前序归档后仍须复核该 requirement 未被
-> 改写并再次整块对账；在其归档且 `--archived` PASS、新视觉基线经 Alex 批准落盘之前，本 change
-> 不得实现 / 归档。本 change 活跃期 MUST NOT 提前改写 living spec；本草案不得在未复核的情况下直接
-> 归档。
+> 播报、语言与主题等），再叠加已评审通过的 19 个尾行 / 排版承接 scenario。本 change 活跃期 MUST NOT
+> 提前改写 living spec；归档前仍须按同一基线复核，MUST NOT 在未复核的情况下直接归档。
 
 ## MODIFIED Requirements
 
@@ -136,7 +134,7 @@
 #### Scenario: 快照不带待批
 
 - **WHEN** 进入快照报在途，但待决批准列表为空
-- **THEN** 阶段行按既有档位（等待响应 / 生成中）呈现；标题栏读「处理中」；MUST NOT 出现待批状态
+- **THEN** 阶段行读「正在继续本轮…」，MUST NOT 先闪「等待响应…」；标题栏读「处理中」；MUST NOT 出现待批状态
 
 #### Scenario: 视图复位不串会话
 

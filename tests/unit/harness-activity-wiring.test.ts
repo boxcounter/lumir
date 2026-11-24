@@ -157,12 +157,12 @@ test("相位写入：applySendPhase 只落 DOM（函数体里不得回写相位�
 
 test("相位写入：除 renderActivity 外没有第二处调 applySendPhase 做跃迁", () => {
   // 允许的两类：renderActivity 内的 `applySendPhase(state.phase)`，以及 applyLabels 的
-  // 重取文案（同一相位重绘 DOM，不是跃迁）。其余调用点都算第二写入口。
-  const calls = [...PANEL_SOURCE.matchAll(/applySendPhase\((?!state\.phase\)|renderedPhase\)|next:)/g)];
+  // `applySendPhase(renderedPhase, true)`（只重取按钮与阶段文案，不是跃迁）。其余都算第二写入口。
+  const calls = [...PANEL_SOURCE.matchAll(/applySendPhase\((?!state\.phase\)|renderedPhase(?:, true)?\)|next:)/g)];
   assert.deepEqual(
     calls.map((m) => m.index),
     [],
-    "只允许 renderActivity(state.phase) 与 applyLabels(renderedPhase) 两处",
+    "只允许 renderActivity(state.phase) 与 applyLabels(renderedPhase, true) 两处",
   );
   assert.match(RENDER, /applySendPhase\(state\.phase\)/, "唯一跃迁落 DOM 点在 renderActivity");
 });

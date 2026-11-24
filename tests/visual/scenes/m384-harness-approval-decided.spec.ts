@@ -339,8 +339,8 @@ test("待批状态：running 桩下正断言等待批准；两项逐个清算；
   const segStatus = page.locator(".lumir-hp-seg-status");
   const toggleStatus = page.locator(".lumir-hp-toggle-status");
 
-  // 进入快照在途、无待批：对照组（不得误报）。
-  await expect(stage).toHaveText("等待响应…");
+  // 进入快照在途、无待批：对照组（不得误报；中途接管读 D983）。
+  await expect(stage).toHaveText("正在继续本轮…");
   await expect(segStatus).toBeHidden();
   await expect(toggleStatus).toHaveText("处理中");
 
@@ -388,10 +388,10 @@ test("待批状态：running 桩下正断言等待批准；两项逐个清算；
   await expect(stage).toHaveText("等待批准…");
   await expect(segStatus).toHaveText("等待批准");
 
-  // 最后一项决策：同一同步批次退场，回落到生成档（首个分片已到）。
+  // 最后一项决策：同一同步批次退场，回到无待批的接管档（midTakeover 优先于生成档）。
   await page.locator('button[data-act="approve"]').first().click();
   await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
-  await expect(stage).toHaveText("正在生成回复…");
+  await expect(stage).toHaveText("正在继续本轮…");
   await expect(segStatus).toBeHidden();
   await expect(toggleStatus).toHaveText("处理中");
   const approvals = await page.evaluate(
@@ -423,7 +423,7 @@ async function openEmptyRunningPanel(page: Page): Promise<void> {
   await page.locator('.ft-row[title="harness-note.md"]').click();
   await page.locator(".lumir-hp-toggle").click();
   await expect(page.locator(".lumir-harness")).toBeVisible();
-  await expect(page.locator(".lumir-hp-stage")).toHaveText("等待响应…");
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("正在继续本轮…");
 }
 
 /** 先发 live started（带 call_id），再发批准请求（id 是独立的 ap-N）。 */

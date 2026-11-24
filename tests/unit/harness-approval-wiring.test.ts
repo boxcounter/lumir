@@ -85,9 +85,10 @@ test("单一判据：pendingApprovals.size > 0 只在 hasPendingApprovals 里出
 test("单一判据：applyStage / applyActivityBadge / 新一轮清 stale 都只读 hasPendingApprovals()", () => {
   assert.match(
     STAGE,
-    /stageCopyKey\(currentActivity\(\)\.phase, hasPendingApprovals\(\), stageWaiting\)/,
-    "阶段行只能从纯选择器取键（函数里不再写第二份优先级分支）",
+    /progressTailView\(\{[\s\S]*phase: currentActivity\(\)\.phase,[\s\S]*pending: hasPendingApprovals\(\),[\s\S]*stageWaiting,[\s\S]*midTakeover,[\s\S]*\}\)/,
+    "阶段行只能从纯模型取键（函数里不再写第二份优先级分支）",
   );
+  assert.match(STAGE, /const text = t\(view\.copyKey\)/, "唯一 DOM 文本来自模型返回的文案键");
   assertNoMatch(STAGE, /\? t\("D400"\)/, "旧的三元优先级分支必须删除");
   assertNoMatch(STAGE, /pendingApprovals\.(size|has)/, "阶段行不得自己读集合");
   assert.match(

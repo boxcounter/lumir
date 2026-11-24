@@ -1013,3 +1013,170 @@ test("idle 遗留待批：不落卡、发送新轮不复活「等待批准」", 
   await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
   await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("处理中");
 });
+
+// ── 输出尾行（change move-harness-progress-to-output-tail-nov23）─────────────────
+
+async function openProgressTailPanel(page: Page): Promise<void> {
+  await stubTauri(page, VAULT);
+  await stubHarnessComposer(page);
+  await stubApprovalState(page, { inFlight: false, pending: [] });
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("第一段");
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await waitSnapshot(page);
+}
+
+for (const item of [
+  { name: "工具调用", event: { type: "tool_call", name: "Read", status: "started", summary: "harness-note.md" }, proof: ".lumir-hp-tool-row" },
+  { name: "思考分片", event: { type: "reasoning_chunk", index: 0, text: "先思考，再决定如何回答。" }, proof: ".lumir-hp-think" },
+] as const) {
+  test(`尾行首个有效产出：只发${item.name}、全程无 text_chunk 也离开等待`, async ({ page }) => {
+    await openProgressTailPanel(page);
+    await page.locator(".lumir-hp-composer .cm-content").fill(`${item.name}先行`);
+    await page.locator(".lumir-hp-send").click();
+    await expect(page.locator(".lumir-hp-stage")).toHaveText("等待响应…");
+    await fireHarness(page, item.event);
+    await expect(page.locator(".lumir-hp-stage")).toHaveText("正在生成回复…");
+    await expect(page.locator(item.proof)).toHaveCount(1);
+  });
+}
+
+test("尾行结构：transcript 末位 / 节点与几何恒定 / 顶层追加兜底 / 停止冻结 / 终态先离场", async ({ page }) => {
+  await openProgressTailPanel(page);
+  await page.locator(".lumir-hp-composer .cm-content").fill("尾行结构与几何");
+  await page.locator(".lumir-hp-send").click();
+  const progress = page.locator(".lumir-hp-progress");
+  const transcript = page.locator(".lumir-hp-transcript");
+  await expect(progress).toBeVisible();
+
+  const waiting = await progress.evaluate((el) => {
+    const transcriptEl = el.parentElement;
+    const previous = el.previousElementSibling;
+    const rect = el.getBoundingClientRect();
+    const previousRect = previous?.getBoundingClientRect();
+    (window as unknown as Record<string, unknown>).__progressTailNode = el;
+    return {
+      parentClass: transcriptEl?.className ?? "",
+      isLast: transcriptEl?.lastElementChild === el,
+      order: getComputedStyle(el).order,
+      padding: getComputedStyle(el).padding,
+      marginTop: getComputedStyle(el).marginTop,
+      height: rect.height,
+      gap: previousRect === undefined ? Number.NaN : rect.top - previousRect.bottom,
+    };
+  });
+  expect(waiting.parentClass).toContain("lumir-hp-transcript");
+  expect(waiting.isLast).toBe(true);
+  expect(waiting.order).toBe("1");
+  expect(waiting.padding).toBe("0px");
+  expect(waiting.marginTop).toBe("-12px");
+  expect(waiting.gap).toBeGreaterThanOrEqual(3);
+  expect(waiting.gap).toBeLessThanOrEqual(5);
+
+  await fireHarness(page, { type: "text_chunk", text: "正文到达后尾行仍在末尾。" });
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("正在生成回复…");
+  const generating = await progress.evaluate((el) => {
+    const previous = el.previousElementSibling;
+    const rect = el.getBoundingClientRect();
+    const previousRect = previous?.getBoundingClientRect();
+    return {
+      sameNode: (window as unknown as Record<string, unknown>).__progressTailNode === el,
+      isLast: el.parentElement?.lastElementChild === el,
+      height: rect.height,
+      gap: previousRect === undefined ? Number.NaN : rect.top - previousRect.bottom,
+    };
+  });
+  expect(generating.sameNode).toBe(true);
+  expect(generating.isLast).toBe(true);
+  expect(generating.height).toBe(waiting.height);
+  expect(generating.gap).toBeGreaterThanOrEqual(3);
+  expect(generating.gap).toBeLessThanOrEqual(5);
+
+  await fireHarness(page, { type: "compact", summary: "合成压缩摘要" });
+  await expect.poll(() => progress.evaluate((el) => el.parentElement?.lastElementChild === el)).toBe(true);
+  await transcript.locator(":scope > .lumir-hp-compact").evaluate((el) => el.remove());
+  await transcript.evaluate((el) => {
+    const stray = document.createElement("div");
+    stray.className = "lumir-hp-notice";
+    stray.textContent = "绕过 helper 的顶层追加";
+    el.append(stray);
+  });
+  await expect.poll(() => progress.evaluate((el) => el.parentElement?.lastElementChild === el)).toBe(true);
+  await transcript.evaluate((el) => {
+    for (const child of Array.from(el.children)) {
+      if (child.textContent === "绕过 helper 的顶层追加") child.remove();
+    }
+  });
+
+  await page.locator(".lumir-hp-send").click();
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("正在停止…");
+  await expect(progress).toHaveAttribute("data-phase", "stopping");
+  expect(await page.locator(".lumir-hp-bar-fill").evaluate((el) => getComputedStyle(el).animationName)).toBe("none");
+  expect(await progress.evaluate((el) => el.getBoundingClientRect().height)).toBe(waiting.height);
+  await page.locator(".modeline-theme").click();
+  await page.locator(".modeline-theme").click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "eink");
+  const einkBar = await page.locator(".lumir-hp-bar-fill").evaluate((el) => ({
+    animation: getComputedStyle(el).animationName,
+    width: el.getBoundingClientRect().width,
+    trackWidth: el.parentElement!.getBoundingClientRect().width,
+  }));
+  expect(einkBar.animation).toBe("none");
+  expect(einkBar.width).toBe(einkBar.trackWidth);
+
+  await fireHarness(page, { type: "aborted" });
+  await expect(progress).toBeHidden();
+  const stoppedTail = transcript.locator(":scope > :not(.lumir-hp-progress):not(.lumir-hp-empty)").last();
+  await expect(stoppedTail).toContainText("已停止");
+
+  await page.locator(".lumir-hp-composer .cm-content").fill("错误终态次序");
+  await page.locator(".lumir-hp-send").click();
+  await fireHarness(page, { type: "error", code: "llm_upstream", message: "合成上游错误" });
+  await expect(progress).toBeHidden();
+  await expect(transcript.locator(":scope > .lumir-hp-error").last()).toBeVisible();
+  await expect(transcript.locator(":scope > :not(.lumir-hp-progress):not(.lumir-hp-empty)").last()).toHaveClass(/lumir-hp-error/);
+});
+
+// 施工前由排版归档后的实现实测回填；不得按印象改这个对账基准。
+const PRE_CHANGE_IDLE_CENTER = { cx: 959.75, cy: 338 };
+
+test("空态尾行：提示不被误撤且中心不随显隐移动，idle 与排版后施工前中心一致", async ({ page }) => {
+  await openProgressTailPanel(page);
+  const empty = page.locator(".lumir-hp-empty");
+  const transcript = page.locator(".lumir-hp-transcript");
+  const center = () => empty.evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    return { cx: rect.left + rect.width / 2, cy: rect.top + rect.height / 2, top: rect.top };
+  });
+  const idle = await center();
+  expect(Math.abs(idle.cx - PRE_CHANGE_IDLE_CENTER.cx)).toBeLessThanOrEqual(1);
+  expect(Math.abs(idle.cy - PRE_CHANGE_IDLE_CENTER.cy)).toBeLessThanOrEqual(1);
+
+  await fireHarness(page, { type: "auto_turn_started" });
+  const progress = page.locator(".lumir-hp-progress");
+  await expect(progress).toBeVisible();
+  await expect(empty).toBeVisible();
+  const running = await center();
+  expect(Math.abs(running.top - idle.top)).toBeLessThanOrEqual(1);
+  const positive = await progress.evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    const viewport = el.parentElement!.getBoundingClientRect();
+    return { height: rect.height, top: rect.top, bottom: rect.bottom, viewportTop: viewport.top, viewportBottom: viewport.bottom };
+  });
+  expect(positive.height).toBeGreaterThan(0);
+  expect(positive.top).toBeGreaterThanOrEqual(positive.viewportTop - 1);
+  expect(positive.bottom).toBeLessThanOrEqual(positive.viewportBottom + 1);
+  const emptyStyle = await empty.evaluate((el) => {
+    const style = getComputedStyle(el);
+    return { position: style.position, top: style.top, right: style.right, bottom: style.bottom, left: style.left, fontSize: style.fontSize, lineHeight: style.lineHeight, padding: style.padding };
+  });
+  expect(emptyStyle).toEqual({ position: "absolute", top: "16px", right: "16px", bottom: "12px", left: "16px", fontSize: "13px", lineHeight: "20.54px", padding: "24px" });
+
+  await fireHarness(page, { type: "done" });
+  await expect(progress).toBeHidden();
+  await expect(empty).toBeVisible();
+  expect(Math.abs((await center()).top - idle.top)).toBeLessThanOrEqual(1);
+  expect(await transcript.evaluate((el) => el.scrollHeight)).toBeGreaterThan(0);
+});

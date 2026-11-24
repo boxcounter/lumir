@@ -518,7 +518,15 @@
   opacity: 1;
 }
 .lumir-hp-empty {
-  margin: auto;
+  position: absolute;
+  top: var(--sp-8);
+  right: var(--sp-8);
+  bottom: var(--sp-6);
+  left: var(--sp-8);
+  display: grid;
+  place-items: center;
+  margin: 0;
+  pointer-events: none;
   padding: var(--sp-10);
   color: var(--text-2);
   font-size: calc(var(--fs-ui) * var(--lumir-hp-scale, 1));
@@ -1811,7 +1819,10 @@
 /* 不定态进度条 + 阶段指示（M347）：只在处理中态可见（hidden 随相位翻）。
    无百分比——本轮剩余工作量前端不知道。 */
 .lumir-hp-progress {
-  padding: 0 var(--sp-4);
+  /* transcript 子项默认 order 0，输出尾行 order 1 是唯一例外。 */
+  order: 1;
+  margin-top: calc(var(--sp-2) - var(--sp-8));
+  padding: 0;
 }
 .lumir-hp-progress[hidden] {
   display: none;
@@ -1820,10 +1831,13 @@
   margin-bottom: 4px;
   font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .lumir-hp-bar {
   height: 3px;
-  margin-bottom: var(--sp-2);
+  margin-bottom: 0;
   border-radius: 2px;
   background: var(--border-soft);
   overflow: hidden;
@@ -1834,6 +1848,9 @@
   border-radius: 2px;
   background: var(--accent);
   animation: lumir-hp-bar-slide 1.1s var(--ease-standard) infinite;
+}
+.lumir-hp-progress[data-phase="stopping"] .lumir-hp-bar-fill {
+  animation: none;
 }
 @keyframes lumir-hp-bar-slide {
   0% {
@@ -1848,6 +1865,9 @@
 :root[data-theme="eink"] .lumir-hp-bar-fill {
   width: 100%;
   animation: lumir-hp-bar-pulse 1.4s steps(2, jump-none) infinite;
+}
+:root[data-theme="eink"] .lumir-hp-progress[data-phase="stopping"] .lumir-hp-bar-fill {
+  animation: none;
 }
 @keyframes lumir-hp-bar-pulse {
   0%,
