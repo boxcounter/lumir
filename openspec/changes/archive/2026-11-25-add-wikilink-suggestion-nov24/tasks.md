@@ -1,6 +1,6 @@
 # Tasks: add-wikilink-suggestion-nov24
 
-> 节点 1 已通过（r2 clean / ready-for-Alex；Alex「采纳。wikilink 按推荐。」）。`openspec/specs/**` 活跃期只读；规格变更只写本 change 的 delta。与 `fix-wikilink-caret-reveal-nov24` 按真实文件冲突排程，分别独立验收与归档；本次提交实现与测试，不归档。
+> 节点 1 已通过（r2 clean / ready-for-Alex；Alex「采纳。wikilink 按推荐。」）。`openspec/specs/**` 活跃期只读；规格变更只写本 change 的 delta。与 `fix-wikilink-caret-reveal-nov24` 按真实文件冲突排程，分别独立验收与归档；实现与测试提交不包含归档，节点 2 与归档记录见 proposal。
 
 ## 1. 纯逻辑与合同测试
 
@@ -34,5 +34,8 @@
 ## 实施验证记录（不归档）
 
 - 修前红：新增 Node 测试因 `src/link-suggest.ts` 不存在而失败；新增 visual 11/11 FAIL（候选未实现，IME 229 被旧 Enter 路径消费）。Rust 真实解析矩阵 1/1 PASS，用于冻结完整路径插入语义。
-- 修后绿：r2 最终相关 unit 32/32 PASS；`wikilink-suggestion.spec.ts` 28/28 PASS，覆盖键鼠、IME、特殊路径、三主题、证书失效与源文档不变。完整 quick `GATE RESULT: 13/13 PASS（SKIP 0）`；完整 visual 门禁通过（视觉回归 1462 passed / 1 skipped），未更新基线。
-- 真机场景 `866-wikilink-suggestion-nov24` 已新增并 `CHECK PASS`，覆盖表 287 场景一致；2026-11-25 真实 WKWebView 最终 1/1 场景 PASS、24 条断言、0 失败（24.5s），证据 `.local/acceptance/2026-11-25-wikilink-suggestion-r2/`。接受复核只固定 opener，允许查询内 caret 移动，索引与唯一解析证书不变。
+- 修后绿：最终相关前端 unit 32/32 PASS；`wikilink-suggestion.spec.ts` 28/28 PASS，覆盖键鼠、IME、特殊路径、三主题、证书失效与源文档不变。完整 quick `GATE RESULT: 13/13 PASS（SKIP 0）`（含前端单测 / tsc 与 Rust fmt / clippy / test）；r2 完整 visual `GATE RESULT: 15/15 PASS（SKIP 0）`（视觉回归 1462 passed / 1 skipped），未更新基线。归档前 `--change` 对账、`validate --all --strict` 与 `docs-check` 均 PASS。
+- IME 与生命周期：两个独立信号 `isComposing` / `keyCode=229` × Enter / ↑ / ↓ / ⌃N / ⌃P 共 10 例，活动行、文档与 `defaultPrevented` 均不变；切标签、切 vault、锚点滚出关闭及视口下缘上翻均有 visual 断言。删除全链路 229 防护后 5 个 229 用例判红，恢复后 28/28。
+- compositionend 与计数探针：DOM 已为 `[[Alpha` 而 EditorState 仍为 `[[` 时，pending flush 前 `dispatch=0`、`replaceChildren=0`；合法手工 flush 后立即断言 `dispatch=1`，最终 query 的 `replaceChildren=1`，不以 MutationObserver 回调数代替刷新数。同步 dispatch 反向变异为期望 0 / 实际 1，提前 render 为期望 0 / 实际 1，settle 双重 render 为期望 1 / 实际 2，均如实判红并恢复。
+- 真机场景 `866-wikilink-suggestion-nov24` 已新增并 `CHECK PASS`，覆盖表 287 场景一致；2026-11-25 真实 WKWebView 最终 1/1 场景 PASS、24 条断言、0 失败（24.5s），证据 `.local/acceptance/2026-11-25-wikilink-suggestion-r2/`。接受复核只固定 opener 的 `queryFrom`，允许查询内 caret 移动，按当前 `[queryFrom, head)` 替换并保留后缀，索引与唯一解析证书不变。
+- 独立评审：agent-377 r3 clean / merge，无 findings，绑定 `e46a04fa9bba55acd914429c615174051abede6f`；r3 仅测试探针与文档增量，无生产代码改动，不重复启动真机。

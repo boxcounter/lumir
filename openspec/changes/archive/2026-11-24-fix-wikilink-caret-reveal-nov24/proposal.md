@@ -3,7 +3,7 @@
 - Change ID: `fix-wikilink-caret-reveal-nov24`
 - 日期: 2026-11-24
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
-- 关联 change：[`add-wikilink-suggestion-nov24`](../../add-wikilink-suggestion-nov24/proposal.md)。两者可同批完成节点 1 评审，但无行为或归档硬依赖；按真实文件冲突排程，分别独立验收与归档。
+- 关联 change：[`add-wikilink-suggestion-nov24`](../2026-11-25-add-wikilink-suggestion-nov24/proposal.md)。两者可同批完成节点 1 评审，但无行为或归档硬依赖；按真实文件冲突排程，分别独立验收与归档。
 
 > 评审记录
 > 节点 1：独立评审 r3 clean / ready-for-Alex；Alex 于 2026-11-24 裁决「采纳。wikilink 按推荐。」推荐方案已完整写入 design 与 spec delta。
