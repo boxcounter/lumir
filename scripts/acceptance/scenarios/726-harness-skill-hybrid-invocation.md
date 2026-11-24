@@ -103,10 +103,10 @@ steps:
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-DEFAULT-BODY" }
       - label: 路径 Skill 正文进入 input/request
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-TMP-BODY" }
-      - label: 禁手动旧 ref 不注入并给专用错误
-        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "skill_user_invocation_disabled" }
-      - label: 非法旧 ref 不注入并给专用错误
-        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "skill_invocation_invalid" }
+      - label: 禁手动拒绝只上 live 工具行，不另造模型上下文
+        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", not: "skill_user_invocation_disabled" }
+      - label: 非法拒绝只上 live 工具行，不另造模型上下文
+        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", not: "skill_invocation_invalid" }
       - label: deny 的显式正文未注入
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", not: "ACC-DENY-BODY" }
       - label: 禁手动正文未进入显式回合
@@ -118,9 +118,23 @@ steps:
       - label: 显式正文不上屏
         ax: { not: "ACC-TMP-BODY" }
 
+  - name: 展开显式回合工具组，核对禁手动与非法的 live 非阻断工具行
+    do: click
+    target: { role: AXButton, name: "个工具调用 · 全部完成" }
+    expect:
+      - label: 禁手动工具行对应 acc-background
+        ax: { has: '/skill_load\s*acc-background/' }
+      - label: 禁手动工具行给出专用错误
+        ax: { has: "/error · skill_user_invocation_disabled/" }
+      - label: 非法工具行对应 acc-invalid
+        ax: { has: '/skill_load\s*acc-invalid/' }
+      - label: 非法工具行给出专用错误
+        ax: { has: "/error · skill_invocation_invalid/" }
+
   - name: 自动入口逐项调用（普通文本，不生成 refs）
-    do: keys
-    keys: ["a", "u", "t", "o"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|auto" }
+    text: "auto"
   - name: 发送自动回合
     do: key
     key: enter
@@ -145,8 +159,9 @@ steps:
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", not: "ACC-DENY-BODY" }
 
   - name: 行首普通 /tmp（候选可出现但被动态 Enter 不选）
-    do: keys
-    keys: ["/", "t", "m", "p"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|/tmp" }
+    text: "/tmp"
   - name: 直接 Enter 发送普通路径
     do: key
     key: enter
@@ -158,9 +173,10 @@ steps:
       - label: /tmp 用户消息只有原文，没有 lumir_skill part
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: '/"role":"user","content":\[\{"type":"input_text","text":"/tmp"\}\]/' }
 
-  - name: 键入 /acc-d 并 ↓ 进入选择态（无 e 字符，避开已知按键丢弃族）
-    do: keys
-    keys: ["/", "a", "c", "c", "-", "d"]
+  - name: 键入 /acc-d 并 ↓ 进入选择态（保留下方向键与 Enter 的真实候选选择）
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|/acc-d" }
+    text: "/acc-d"
   - name: 选择 acc-deploy
     do: key
     key: down
@@ -235,8 +251,9 @@ steps:
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
   - name: 策略变更后发起新的自动调用
-    do: keys
-    keys: ["a", "u", "t", "o", "2"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|auto2" }
+    text: "auto2"
   - name: 发送新自动调用
     do: key
     key: enter
