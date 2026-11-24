@@ -3,7 +3,7 @@ import { StateEffect, type EditorState, type Extension } from "@codemirror/state
 import { EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import { cancelCompositionSettle, scheduleCompositionSettle } from "./composition-settle";
 import { registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
-import { FILTER_LABEL, NO_MATCH_TEXT, filterIndices, foldCase } from "./list-filter";
+import { FILTER_LABEL, NO_MATCH_TEXT, foldCase, isFoldedMatch } from "./list-filter";
 import {
   applyOverlayPlacement,
   measureOverlayNaturalWidth,
@@ -106,13 +106,16 @@ function fileName(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1);
 }
 
-function stemOf(path: string): string {
-  return fileName(path).slice(0, -3);
-}
-
 function representable(path: string): boolean {
   if (path === "" || path.trim() !== path || /[|#[\]\r\n]/.test(path)) return false;
-  return path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
+  let segmentFrom = 0;
+  for (let index = 0; index <= path.length; index += 1) {
+    if (index !== path.length && path[index] !== "/") continue;
+    const length = index - segmentFrom;
+    if (length === 0 || (length === 1 && path[segmentFrom] === ".") || (length === 2 && path[segmentFrom] === "." && path[segmentFrom + 1] === ".")) return false;
+    segmentFrom = index + 1;
+  }
+  return true;
 }
 
 export function acceptTargetForPath(paths: readonly string[], selected: string): string | null {
@@ -124,33 +127,48 @@ export function acceptTargetForPath(paths: readonly string[], selected: string):
   return selected;
 }
 
+interface IndexedLinkPath {
+  readonly path: string;
+  readonly foldedPath: string;
+}
+
 export function buildLinkSuggestions(paths: readonly string[], query: string): LinkSuggestion[] {
-  const unique: string[] = [];
+  const unique: IndexedLinkPath[] = [];
   const seen = new Set<string>();
   for (const path of paths) {
-    if (!isMarkdown(path) || !representable(path) || seen.has(path)) continue;
+    if (seen.has(path)) continue;
     seen.add(path);
-    unique.push(path);
+    const foldedPath = foldCase(path);
+    if (foldedPath.endsWith(".md") && representable(path)) unique.push({ path, foldedPath });
   }
-  const matching = query === "" ? unique.map((_, index) => index) : filterIndices(unique, query);
+  const foldedQuery = foldCase(query);
   const buckets: number[][] = [[], [], [], []];
-  if (query !== "") {
-    const foldedQuery = foldCase(query);
-    const substring = new Set(matching);
-    for (const index of matching) {
-      const path = unique[index] as string;
-      const stem = stemOf(path);
+  for (let index = 0; index < unique.length; index += 1) {
+    const item = unique[index] as IndexedLinkPath;
+    if (query === "") buckets[0].push(index);
+    else if (!isFoldedMatch(item.foldedPath, foldedQuery)) continue;
+    else {
+      const stem = fileName(item.path).slice(0, -3);
+      const foldedStem = foldCase(stem);
       if (stem === query) buckets[0].push(index);
-      else if (foldCase(stem) === foldedQuery) buckets[1].push(index);
-      else if (foldCase(stem).startsWith(foldedQuery)) buckets[2].push(index);
-      else if (substring.has(index)) buckets[3].push(index);
+      else if (foldedStem === foldedQuery) buckets[1].push(index);
+      else if (foldedStem.startsWith(foldedQuery)) buckets[2].push(index);
+      else buckets[3].push(index);
     }
-  } else {
-    buckets[0].push(...matching);
   }
+  let rootFileNames: Map<string, number> | null = null;
   return buckets.flat().slice(0, 100).map((index) => {
-    const path = unique[index] as string;
-    return { path, target: acceptTargetForPath(paths, path) };
+    const path = (unique[index] as IndexedLinkPath).path;
+    if (path.includes("/")) return { path, target: path };
+    if (rootFileNames === null) {
+      rootFileNames = new Map<string, number>();
+      for (const candidate of seen) {
+        if (!isMarkdown(candidate)) continue;
+        const name = fileName(candidate);
+        rootFileNames.set(name, (rootFileNames.get(name) ?? 0) + 1);
+      }
+    }
+    return { path, target: rootFileNames.get(path) === 1 ? path : null };
   });
 }
 

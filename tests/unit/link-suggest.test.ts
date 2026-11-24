@@ -168,6 +168,11 @@ test("根文件只有完整文件名精确同名才拒绝，folded 变体不过�
   assert.equal(acceptTargetForPath(["a/Note.md", "b/note.md"], "b/note.md"), "b/note.md");
 });
 
+test("过滤索引保留精确重复与不可表示同名路径的接受证书边界", () => {
+  assert.deepEqual(buildLinkSuggestions(["foo.md", "foo.md"], "foo.md"), [{ path: "foo.md", target: "foo.md" }]);
+  assert.deepEqual(buildLinkSuggestions(["foo.md", "dir//foo.md"], "foo.md"), [{ path: "foo.md", target: null }]);
+});
+
 test("接受前重读索引：路径消失、扩展名全集变化或根文件变歧义都使证书失效", () => {
   const initial = ["note.md", "dir/other.md"];
   assert.equal(acceptTargetForPath(initial, "note.md"), "note.md");

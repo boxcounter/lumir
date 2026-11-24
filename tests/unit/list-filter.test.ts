@@ -16,6 +16,7 @@ import {
   createListFilter,
   filterIndices,
   foldCase,
+  isFoldedMatch,
   isMatch,
 } from "../../src/list-filter.ts";
 
@@ -35,6 +36,8 @@ test("匹配：子串包含（不是前缀），大小写折叠，顺序不重�
   assert.equal(isMatch("Notes", "NOTES"), true);
   assert.equal(isMatch("Notes", "es"), true);
   assert.equal(isMatch("Notes", "x"), false);
+  assert.equal(isFoldedMatch(foldCase("Notes"), foldCase("NOTES")), true);
+  assert.equal(isFoldedMatch(foldCase("Notes"), "x"), false);
 
   // 结果集是**源下标**且升序 = 源顺序（MUST NOT 重排）
   assert.deepEqual(filterIndices(TITLES, "小节"), [1, 2, 3, 4]);
