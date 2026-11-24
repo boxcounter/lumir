@@ -4,10 +4,10 @@
 - 日期: 2026-11-23
 - 角色: Alex Lee（评审 / 裁决），AI agent（起草）
 
-> 节点状态：产品 CSS、Chromium 场景与真机截图说明已实现，§8.1 七张、§8.2 九张及空态候选已采齐；
-> 图片卡 badge 已恢复可见，m440 / m454 差异已证实仅为已批准外层间距导致的自然可用宽变化。
-> m347 ctxpop 仍有未解决像素差，不得转为新基线；完整视觉终态、真机复跑与 Alex 基线批准均未完成，
-> change 尚未归档。
+> 节点状态：已 rebase 到 `origin/master@dd33d1fc`（含 hybrid Skill），产品 CSS、Chromium 场景与
+> 真机截图说明已实现。图片卡 badge 已恢复可见；m440 / m454 的 24px 外层宽差与 8 个 glyph 色像素分别记录。
+> m347 的 19 像素已证明来自 chip、composer 聚焦框与 placeholder 的背景透入，浮层隔离图逐字节一致，
+> 改列额外基线裁决项而非产品阻塞。最终视觉复跑、真机复跑与 Alex 基线批准仍未完成，change 尚未归档。
 > 节点 1（提案评审）：**已批准**——Alex 2026-11-24 回复「批准」，采用 `refined-rows-720` 及
 > D1–D7 推荐值。候选像素基线生成后仍须 Alex 逐张过目；未获明确批准前 MUST NOT 执行
 > `--update` / `--update-snapshots`，也不得把候选图转成正式基线。

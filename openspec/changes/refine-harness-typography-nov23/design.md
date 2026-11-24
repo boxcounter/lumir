@@ -263,17 +263,33 @@ Alex 逐张过目；批准后才允许统一 `--update`。禁止零碎更新和�
 ### 8.3 不应变化的相邻基线
 
 - `m303…/titlebar-with-harness-toggle-chromium-darwin.png`：标题栏不在作用域。
-- `m347-harness-composer…/m347-ctxpop-cache-metrics-chromium-darwin.png`：浮层排版不变。
+- `m347-harness-composer…/m347-ctxpop-cache-metrics-chromium-darwin.png`：浮层自身排版不变；底层画面
+  透入元素截图的已定位差异改列 §8.4，不把浮层误写成回归。
 - `m345-quote-card…/m345-quote-gesture-button-chromium-darwin.png`、`m423-message-excerpt…/` 两张：
   手势钮和引用卡自有字号 / 行高，行为与元素外观不变。
-- `m440-harness-image-card…/` 四张与 `m454-composer-image-mention…/` 两张：图片卡字号、缩略图和卡片
-  padding 不变；若出现差异先查继承泄漏，不直接接受为新基线。
+- `m440-harness-image-card…/` 的 composer / error / broken 三张与 `m454-composer-image-mention…/` 的
+  composer 一张：图片卡字号、缩略图和卡片 padding 不变；transcript 两张的实际差异改列 §8.4。
 - `persistence-health-nov23…/` 三张 `*-warning-block-*.png` 与 `recovery-banner-element-*.png`：警示块 /
   横幅元素本身不改，只有其所在整页允许变化。
 - 其他不含 Harness 的编辑器、文档预览、设置与 chrome 基线全部不应变化。
 
 实施后须核对所有受影响整页基线的时间戳；删除 / 移动元素不在本提案内，因此不得以“容差通过”替代逐张
-核对。若实际差异超出 §8.1 / §8.2，先回写清单并送 Alex，不机械扩大更新面。
+核对。实际差异必须收敛到 §8.1 / §8.2 / §8.4，出现第四类差异时继续修，不送裁接受。
+
+### 8.4 实施确认的额外差异（3 张，仍须 Alex 批准）
+
+完整实际差异集合为 §8.1 七张、§8.2 九张和本节三张，另附空态 / 运行态证据图；没有其他允许失败的
+基线。以下变化均已定位，但证据不等于批准，仍不得机械更新正式基线。
+
+| 基线 | 已确认机制与独立证据 |
+|---|---|
+| `m347-harness-composer…/m347-ctxpop-cache-metrics-chromium-darwin.png` | 19 个 pixelmatch 差异来自 chip 文本、composer `focus-within` accent 边与 placeholder，随 Locator 圆角 / 阴影截图透入，不在浮层三行文字内。透明化底层及伪元素后 base / current 为 0，isolated PNG SHA-256 均为 `9399b7c988b8eb7154681d2fd59d2115b6fd79554a36e0c5da70b4c1c50ba39c`。证据 `review-r1.md` §1 与 `ctxpop-r1/` |
+| `m440-harness-image-card…/m440-image-card-transcript-chromium-darwin.png` | 卡片宽 446.5→422.5px，净少 24px = transcript 外侧合计增加 16px + 气泡水平 padding 合计增加 8px；卡片自身 13px/19.5px 与 `4px 8px 4px 6px` padding 不变。glyph 色修复与宽度分开记录 |
+| `m454-composer-image-mention…/m454-image-card-transcript-numbered-chromium-darwin.png` | 同一 24px 外层宽机制；另有 8 个 glyph pixelmatch 差异，全强度像素由 `rgb(169,167,155)` 改为有效 `--content-bg` 的 `rgb(253,253,252)`，属于恢复可见编号的修复，不属于外层宽度或未解释泄漏 |
+
+m440 / m454 的共同文字区在宽度对齐后为 0 pixelmatch 差异；8 个 glyph 色像素不得并入 24px 宽度解释。
+证据：`review-r1.md` §3、`review-r1-card-widths.log`、`review-r1-card-glyph-pixels.log` 与
+`candidates/outer-width/`。
 
 ## 9. 非目标与退路
 
