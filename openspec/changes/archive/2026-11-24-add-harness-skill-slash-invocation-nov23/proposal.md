@@ -287,3 +287,18 @@ r2 的 A1–A6 不再分别送裁：候选、refs、200KB、deny 不注入、普
 
 **放行方式：机器 + 独立评审放行（本节五要件）。**没有未决价值 / 行为裁决、审美基线更新、影响面升级、
 评审异常或证据缺口；真实模型 dogfood 与原生 IME 人工手感不是本 change 声明的机器验收替代品。
+
+### 归档执行与事后审计（2026-11-24）
+
+- 归档前 `--change`：`PASS（扫过 1 份 delta，2 条 MODIFIED，对比 35 段，无静默丢段；归档队列 0 项已完成 change 均有唯一条目）`，日志
+  `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/skill-hybrid-nov24/archive-pre-change.log`。
+- 归档前 `validate --all --strict`：`Totals: 39 passed, 0 failed (39 items)`；`docs-check.sh` PASS；
+  `COVERAGE PASS（278 个场景 / 247 个 item，与 COVERAGE.md 一致）`；`git diff --check` 通过。
+  对应日志为 `archive-pre-validate.log`、`archive-pre-docs-check.log`、`archive-pre-coverage.log`。
+- 包装器归档提交：`b08e1e56520f7a44a62b3afec253c322d50d1f46`。实际输出：harness `+ 1, ~ 2, - 0, → 0`，
+  `Specs updated successfully`；`Task status: 86/91 tasks`（其余 5 项均有上述就地理由）；归档后修链 0 处
+  （扫过 4 篇 Markdown / 2 条相对链接），`openspec-links` 校验 690 条相对链接 PASS。
+  执行日志：`/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/skill-hybrid-nov24/archive-run.log`。
+- 归档提交后强制审计：`openspec-archive-check: PASS（2 条 MODIFIED，对比 35 段；人工恢复 0 段，声明认领 0 段）`，
+  时间 2026-11-24T13:47:53+08:00；日志
+  `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/skill-hybrid-nov24/archive-archived-audit.log`。

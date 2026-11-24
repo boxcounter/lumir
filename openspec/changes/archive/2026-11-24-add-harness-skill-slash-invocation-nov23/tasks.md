@@ -237,6 +237,7 @@
       r3 clean/merge、无 P1/P2，绑定产品 tip `27df529bc4f86fe5b2b806cd27614c95417ec198`；
       其后仅 test-only 场景 / fixture 提交，最终 tip `32e795f70275aced4b2f4842daf4d93f6399bd46`；
       评审 `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/skill-hybrid-final-r3.md`
-- [ ] 11.5 节点 2 五要件齐后归档；归档提交后 `--archived` 审计至 PASS
-      未勾原因：归档时执行；五要件与证据已记入 proposal 节点 2，归档提交后补实际 hash、包装器输出与审计读数，
-      未取得 `--archived` PASS 前不宣称完成。
+- [x] 11.5 节点 2 五要件齐后归档；归档提交后 `--archived` 审计至 PASS
+      归档提交 `b08e1e56520f7a44a62b3afec253c322d50d1f46`；包装器修链 0 处、links PASS；
+      `--archived` PASS（2 条 MODIFIED、35 段、0 人工恢复，2026-11-24T13:47:53+08:00），
+      证据见 proposal「归档执行与事后审计」及 `archive-archived-audit.log`
