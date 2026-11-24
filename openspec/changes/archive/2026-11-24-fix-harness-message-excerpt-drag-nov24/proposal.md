@@ -50,3 +50,10 @@
    - `node scripts/openspec-archive-check.mjs --change fix-harness-message-excerpt-drag-nov24`：`PASS（扫过 1 份 delta，0 条 MODIFIED，对比 0 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目）`。
    - `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`：40 passed / 0 failed。
    - `bash scripts/docs-check.sh`：PASS（含归档队列唯一、backlog 80/80、链接 699 条、验收契约与自测）；`git diff --check` 退出码 0。
+
+### 归档后记录
+
+- 归档提交：`48caacf8a94d64eeb519395e7fdb55c829fd47cd`（`docs(openspec): archive message excerpt drag fix`）。
+- `node scripts/openspec-archive.mjs fix-harness-message-excerpt-drag-nov24`：`harness: update`，`+ 1 added`；归档到 `openspec/changes/archive/2026-11-24-fix-harness-message-excerpt-drag-nov24/`。
+- 包装器 `归档后修链 0 处`（扫过 3 篇 Markdown / 0 条相对链接），`openspec-links: PASS（校验 699 条相对链接，全部可达）`。
+- `node scripts/openspec-archive-check.mjs --archived fix-harness-message-excerpt-drag-nov24`：**PASS**（0 条 MODIFIED，对比 0 段；人工恢复 0 段，声明认领 0 段），时间 2026-11-24T22:51:25+0800。
