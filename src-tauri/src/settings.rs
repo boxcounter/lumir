@@ -1269,7 +1269,8 @@ const PROVIDER_REVISION_KEYS: [&str; 6] = [
 ];
 
 /// 设置面 revision（design §6.2）：sha256 over 规范化后的设置面键集合。覆盖 provider 条目、
-/// active、四个开关、两个命名目标的 provider **与** model（面板可编辑、删除也会清它们）；
+/// active、五个开关（前四个 `harness.*`，第五个 `editor.prefill_note_name`）、两个命名目标的
+/// provider **与** model（面板可编辑、删除也会清它们）；
 /// `Missing` 按空对象算、`Invalid` 不给 revision（调用方不计算）。
 fn revision_of(value: &Value) -> String {
     let harness = raw_harness(value);

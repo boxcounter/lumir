@@ -157,8 +157,11 @@ steps:
     expect:
       - label: 磁盘出现 default-name-sub/probe.md
         file: { path: default-name-sub/probe.md, exists: true }
+      # has 是子串：空串对任意内容恒真（REVIEW.md「断言等价于子串」条）。空文件判据必须用
+      # exact 整篇逐字比较；非空内容的反向验证见 scripts/acceptance/lib/execute.test.mjs 的
+      # 「空串只匹配真正的空文件」用例。
       - label: 新建的是空文件
-        file: { path: default-name-sub/probe.md, has: "" }
+        file: { path: default-name-sub/probe.md, exact: "" }
       - label: 焦点落在正文（创建链的既有口径）
         ax: { focused: "AXTextArea" }
   - name: 直接键入标记串（焦点已在正文）
@@ -237,8 +240,9 @@ steps:
         ax: { has: /已存在同名条目/ }
       - label: 编辑态仍保留（MUST NOT 静默改名后创建）
         ax: { has: '/AXTextField = "probe" /' }
+      # 同上：未被覆盖 = 整篇仍为空，必须 exact；撞名后写入任意正文时这条会红。
       - label: 既有 probe.md 未被覆盖（仍是空文件）
-        file: { path: default-name-sub/probe.md, has: "" }
+        file: { path: default-name-sub/probe.md, exact: "" }
   - name: Escape 收尾
     do: key
     key: "escape"
@@ -289,8 +293,9 @@ teardown:
   新建的 `default-name-sub` 落在视口上方（r1 AX 读数 @207,-929），右键的**真实指针坐标**不可达，
   首跑因此在第一个右键动作上 FAIL、后续 teardown 连锁红。修法是 test-only：在第一次右键前
   `do: scroll`（`wheel: true` 真实 CGEvent 滚轮，`dy` 正数 = 向上滚，M669 标定）把目录段带回
-  视口；**没有放宽任何产品断言**。r2 真机 1/1 PASS，证据
-  `.local/acceptance/2026-11-24-default-note-name-r2/`。
+  视口；**没有放宽任何产品断言**。r2 真机 1/1 PASS；把两处空文件判据改为 `file.exact: ""`
+  后 r3 真机 1/1 PASS（41 断言，`0 字符逐字一致`），证据
+  `.local/acceptance/2026-11-24-default-note-name-r3/`。
 - **全选状态本身读不到**：WKWebView 的 AX 不暴露 input 的 selection range。本场景用「键入后
   输入框恰为键入值、且不含默认名」作区分性判据——若实现只把 caret 放在末尾，值会是
   `未命名笔记probe`，两条断言同时红。

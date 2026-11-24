@@ -525,8 +525,9 @@ patch，MUST NOT 用打开时的旧快照整份覆盖。
 - `harness.permission_mode` → 权限 chip 切换（`src/harness-panel.ts` 的 `selectPermissionMode`）；
 - `harness.permissions.allow` → 批准卡的「以后都允许」写规则、权限浮层的规则删除（`harness.rs:1787` / `:1816`）；
 - `cron.tasks` → **交互会话里的 agent 调度工具**注册 / 删除任务（§1.8.1；`cron.rs:1160` / `:1228`）；
-- **设置面板整笔 patch** → provider 增删改、`harness.provider`、四个自动化开关（`auto_compact` /
-  `session_naming.enabled` / `attachment_naming.enabled` / `subagents.enabled`）、两个命名目标的
+- **设置面板整笔 patch** → provider 增删改、`harness.provider`、五个自动化开关（`auto_compact` /
+  `session_naming.enabled` / `attachment_naming.enabled` / `subagents.enabled` /
+  `editor.prefill_note_name`）、两个命名目标的
   `provider` / `model`。删除 provider 时同一笔完成替代目标重定向（`harness.provider` 改写或删键、
   两个命名目标改指或删键）与对应 model 覆盖清除，中途任一校验失败时文件逐字节不变。
 

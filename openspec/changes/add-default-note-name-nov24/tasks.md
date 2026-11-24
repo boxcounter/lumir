@@ -23,7 +23,7 @@
 ## 3. 设置面板与装配
 
 - [x] 3.1 `copy-data.ts` + `文案-Copy.md`：默认名（zh `未命名笔记` / en `Untitled note`）与
-      第五行的标题 / 说明 / 生效时机；同步更新 D789「四个开关是 harness.*」的表述。
+      第五行的标题 / 说明 / 生效时机；同步更新 D789 与自动化节元数据（含页级还原说明）的表述。
 - [x] 3.2 `settings-panel.ts`：`AutomationKey` / `AUTOMATION_KEYS` / `FLAG_KEYS` /
       `automationCopy` 增第五项；`onApplied(snapshot)` 回调；单测覆盖 patch Set / Reset 与
       pageReset。
@@ -52,7 +52,8 @@
       `node scripts/acceptance/coverage.mjs --check`、`node scripts/acceptance/run.mjs --check`、
       以及 gate 内的 tsc / 语法静态项全部通过。
 - [x] 5.4 提交实现（不含归档）；真机场景 728 在真机窗口执行，证据落 `.local/acceptance/`。
-      r2：`2026-11-24-default-note-name-r2`，**1/1 PASS**（启动 3.5s / 就绪 1.8s / 场景 24.1s；
-      off 空占位、on 预填全选、键入替换、Enter 正文焦点、Escape、撞名递增、自定义撞名、配置
-      持久化全部 PASS）。r1 的失败是场景可见性问题（目录段在视口上方），修法为 test-only
-      `do: scroll`，未改产品代码与断言。
+      r3：`2026-11-24-default-note-name-r3`，**1/1 PASS / 41 断言**（启动 5.5s / 就绪 2.5s /
+      场景 24.0s；off 空占位、on 预填全选、键入替换、Enter 正文焦点、Escape、撞名递增、自定义
+      撞名、配置持久化全部 PASS；两处空文件判据为 `file.exact: ""`，steps.md 写明
+      `0 字符逐字一致`）。r2 先在 test-only `do: scroll` 修可见性后 PASS；r1 的失败是场景
+      可见性问题（目录段在视口上方），未改产品代码与断言。
