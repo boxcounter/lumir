@@ -13,6 +13,10 @@
 >   活动；**B5 = A 档**（只做读路径；「点开零写盘」不纳入本期）；**B6 = M392 另立**
 >   （本 change 不做 M392 同批收口，不删 backlog 条目）。
 > - 批准值若再被改，实现中途先更新本文件与 spec delta，不静默改口径。
+> - **节点 2 材料已备（2026-11-24）**：独立评审 r2 clean / merge 绑定 `7fd5d382`；最终真机 724
+>   79 断言 PASS（33.7s），106 / 108 / 124 / 165 全 PASS；完整视觉
+>   `GATE RESULT: 15/15 PASS（SKIP 0）`，基线未更新；archive-check 1 条 MODIFIED / 19 段 PASS。
+>   旧实现的真机预跑红（tasks 1.5）未执行，以 Rust 先红与最终真机正证替代，未伪称覆盖。
 > - living spec 的改动仍以 delta 形式留在本 change 目录内，归档时并入，不提前改写。
 
 ## Why

@@ -42,8 +42,8 @@
       结构断言：行时间格文本来自最后活动时间而不是创建时间（构造创建早、活动晚的桩）
 - [ ] 1.5 新的真机场景骨架先落（5.1 的步骤表），旧实现跑出预期红：预置「A 创建早 / 活动晚、
       B 创建晚 / 活动早」→ 旧实现 B 在前；恢复后新行凭新 id 越过活动更晚的 C
-      ——**未做**：本批任务口径不跑真机；场景已落
-      `scripts/acceptance/scenarios/724-harness-session-order.md`（`--check` PASS），旧实现红跑留待真机批
+      ——**未按原步骤执行**：旧实现的真机预跑红未执行；以 Rust 实现回退先红（13 处字段缺失）
+      和最终真机 724 的 79 条正向断言替代，节点 2 已如实登记，不伪称旧真机红覆盖
 
 ## 2. 后端（`src-tauri/src/harness.rs`、`src-tauri/src/harness/session.rs`）
 
@@ -81,9 +81,8 @@
 ## 4. 视觉与结构
 
 - [x] 4.1 m662 结构断言全绿（1.4 转绿）：行时间格读数、同名两行、长名截断不变
-- [ ] 4.2 本地跑 `scripts/gate.sh visual`：行宽 / 行高 / 时间格布局零漂移；若有像素差异先定位，
-      不机械 `--update`——**未跑全量**（本批任务口径不跑全量 gate）；已单跑
-      `scripts/visual/run.sh --grep m662`（结构断言，见 4.1）
+- [x] 4.2 本地跑 `scripts/gate.sh visual`：行宽 / 行高 / 时间格布局零漂移；若有像素差异先定位，
+      不机械 `--update`——`GATE RESULT: 15/15 PASS（SKIP 0）`，基线未更新
 - [x] 4.3 如需新截图，只出候选落 `.local/reviews/ux-improvements/`（git 外），基线更新是人肉
       裁决点——本期无新截图、基线未动
 
@@ -141,14 +140,11 @@
       归档队列、backlog、验收套件契约）；另跑
       `node scripts/openspec-archive-check.mjs --change rank-harness-sessions-by-last-activity-nov23`
       并记录 PASS
-- [ ] 7.3 `scripts/gate.sh quick` 通过（含 cargo test、bindings-drift、tsc、单测、docs-check、
-      openspec validate）；照抄 `GATE RESULT` 原文行 + 退出码（SKIP 单列）——**未跑全量 quick**
-      （任务口径不跑全量 gate）。等价组件已逐项单跑：`cargo test --lib harness::` 428 passed、
-      `cargo test --test session_recording` 37 passed、`pnpm test` 1867 passed、`tsc --noEmit` 干净、
-      `docs-check.sh` PASS、`openspec validate --all --strict` 37/37
-- [ ] 7.4 `scripts/gate.sh visual` 通过（动过 `tests/visual/scenes/**`，必须本地跑）
-      ——**未跑全量**；单跑 `scripts/visual/run.sh --grep m662` 3 passed（端口走
-      `LUMIR_VISUAL_PORT=4174`，4173 被在途任务占用）
+- [x] 7.3 `scripts/gate.sh quick` 通过（含 cargo test、bindings-drift、tsc、单测、docs-check、
+      openspec validate）；照抄 `GATE RESULT` 原文行 + 退出码（SKIP 单列）——完整视觉内 quick 层
+      全部 PASS，最终 `GATE RESULT: 15/15 PASS（SKIP 0）`
+- [x] 7.4 `scripts/gate.sh visual` 通过（动过 `tests/visual/scenes/**`，必须本地跑）
+      ——`GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0
 - [x] 7.5 真机场景 PASS；证据指针可 `ls`——724 PASS（33.7s）；106 / 108 / 124 / 165 PASS
 - [x] 7.6 视觉基线未更新；如确需 `--update`，先送 Alex 过目
 
@@ -165,8 +161,8 @@
       ——未勾项均为「本批任务口径不跑真机 / 不跑全量 gate」，理由已就地写明
 - [x] 9.2 在 `docs/backlog.md` 的归档跟踪队列落一条本 change 记录（五要件齐待归档 / 命中例外待裁）；
       不删 M392 条目
-- [ ] 9.3 交独立 reviewer；评审判断层不降档；verdict 绑定当前 tip
-      ——已评审 `65dcfd2e`（needs-changes：P1-1 / P1-2 / P2-1，均已修复并真机 PASS）；
-      新 tip 需复审，由 tower 在批次收尾执行
+- [x] 9.3 交独立 reviewer；评审判断层不降档；verdict 绑定当前 tip
+      ——r2 clean / merge 绑定 `7fd5d3824fbda345b387b7d59b6706ac155706e5`；格式化提交 `04590fc5`
+      仅 cargo fmt，无行为变化
 - [ ] 9.4 归档前逐条核对节点 2 五要件；归档走 `node scripts/openspec-archive.mjs <change-id>`，
       归档提交后跑 `--archived` 审计至 PASS——由 tower 在批次收尾执行
