@@ -123,4 +123,15 @@ token v1 收敛时 `--bg` 一族被「替换、不留别名」地删除（`src/s
 
 ### 归档后
 
-（归档提交与 `--archived` 读数在归档提交完成后补记。）
+- **归档提交**：`a1978439`（归档目录 + 并入后的 living spec 一起提交）。
+- **包装器实际输出**：`Change 'fix-skill-menu-opaque-background-nov24' archived as
+  '2026-11-24-fix-skill-menu-opaque-background-nov24'.`；`harness: update`（+1 added）、
+  `ui-design-system: update`（+1 added），`Totals: + 2, ~ 0, - 0, → 0`——不是纯目录移动。
+- **修链读数**：`归档后修链 4 处（扫过 5 篇 Markdown / 6 条相对链接）`，全部在 `design.md`：
+  `../../../docs/process/rendering-defect-contract-first.md → ../../../../docs/process/…`、
+  `../../specs/ui-design-system/spec.md → ../../../specs/ui-design-system/spec.md`、
+  `../../../docs/specs/design-tokens-v1.md → ../../../../docs/specs/design-tokens-v1.md`、
+  `../../../scripts/acceptance/scenarios/726-harness-skill-hybrid-invocation.md → ../../../../scripts/acceptance/…`；
+  包装器自跑 `openspec-links: PASS（校验 696 条相对链接，全部可达）`。
+- **`--archived` 审计**：`PASS（…：0 条 MODIFIED，对比 0 段；人工恢复 0 段，声明认领 0 段）`，
+  跑于 2026-11-24T20:57:17+0800。
