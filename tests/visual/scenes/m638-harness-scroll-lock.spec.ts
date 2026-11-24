@@ -433,7 +433,7 @@ test("发送最终几何：引用卡与纯文本发送都在同一 task 内贴�
   const quoteButton = page.locator(".lumir-hp-transcript > .quote-gesture-btn");
   await expect(quoteButton).toBeVisible();
   await quoteButton.click();
-  await expect(page.locator(".lumir-hp-composer-tray .lumir-hp-qcard")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget .lumir-hp-qcard")).toHaveCount(1);
 
   // 同一个页面 task 内点击发送并立即读数：中间没有 rAF / 浏览器夹取的喘息窗口。
   //
@@ -452,7 +452,7 @@ test("发送最终几何：引用卡与纯文本发送都在同一 task 内贴�
     return {
       scrollTop: transcript?.scrollTop ?? -1,
       max: Math.max(0, (transcript?.scrollHeight ?? 0) - (transcript?.clientHeight ?? 0)),
-      cards: document.querySelectorAll(".lumir-hp-composer-tray .lumir-hp-qcard").length,
+      cards: document.querySelectorAll(".lumir-hp-composer .cm-content .lumir-hp-cwidget .lumir-hp-qcard").length,
       progressHidden: progress?.hidden ?? true,
       sendLabel: sendAfter?.getAttribute("aria-label") ?? "",
     };
