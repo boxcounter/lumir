@@ -2447,6 +2447,14 @@ function finalizedUpTo(source: string): number {
  * argsText = 批准载荷的关键参数全文（终态行沿用同一份，不再退回截断摘要）。 */
 interface PendingApproval {
   id: string;
+  /** 该调用在 live `tool_call started` 事件里的模型调用身份（后端 `call_id`）。
+   *  批准请求自己的 id 是 `park_approval` 生成的 `ap-N`，**不等于** call_id；live 路径靠
+   *  「批准卡升级的就是那条 started 行」把两者关联起来（不改后端协议）。快照恢复的待批没有
+   *  这个值（`PendingApprovalSnapshot` 不带 call_id），决策后走同名 + 调用顺序 FIFO 兜底。 */
+  callId?: string | undefined;
+  /** 待批项的到达序（`appendApproval` 分配）：快照兜底按**到达顺序**配对 done，而不是按
+   *  用户决策顺序（决策可乱序，后端执行仍按调用序）。 */
+  arrivalSeq: number;
   tool: string;
   diff?: string | undefined;
   argv?: string[] | undefined;
@@ -4234,6 +4242,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   let chunkBuffer = "";
   let flushScheduled = false;
   const pendingApprovals = new Map<string, PendingApproval>();
+  /** 待批项的到达序（单调；只在 appendApproval 分配）。 */
+  let approvalArrivalSeq = 0;
   /** 已决策批准项的记录视图（M384）：决策后卡片收敛为终态记录，但记录里的结果词 / 相对
    *  时间 / 详情摘要随语言与 30s 时钟重绘——保留重渲所需的字段引用（与 PendingApproval
    *  的 relabel 口径同：交互中的 UI 跟语言走，已上屏正文不改写）。 */
@@ -6054,7 +6064,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 为空闲时，上一视图遗留的待决项不得随新一轮复活（覆盖「旧快照缺在途读数、带待决卡、
         // 相位 idle」的反例）。清 stale 必须在闸门打开之前；已处于处理中的轮次（如重复的
         // auto_turn_started）MUST NOT 清合法待批。
-        if (prev.phase === "idle" && hasPendingApprovals()) withdrawPendingApprovals("stale");
+        if (prev.phase === "idle") withdrawPendingApprovals("stale");
         turnOpen = true;
         midTakeover = false;
         break;
@@ -6526,23 +6536,50 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  恢复路径没有 started 行，故没有条目。 */
   const startedArgs = new WeakMap<HTMLElement, string>();
 
+  /** live `started` 行的模型调用身份（`tool_call.call_id`）。批准请求的 id 是后端
+   *  `park_approval` 生成的 `ap-N`，与工具 done 携带的 call_id 不是同一身份；批准卡就地
+   *  升级 started 行时从这里取出真实 call_id，交给决策后的 done 精确配对。 */
+  const startedCallIds = new WeakMap<HTMLElement, string>();
+
   /** 已决策待收 done 的调用（M406 单行生命周期 → change fix-harness-approval-visibility-nov23
-   *  P1：**按调用身份配对**）。决策把 running 行就地收敛为终态行，同一调用的 done 事件随后
-   *  到达时不再建行（同一调用两份留痕正是本批收敛要消的形态）。
+   *  P1 / r2：**按真实调用身份配对**）。决策把 running 行就地收敛为终态行，同一调用的 done
+   *  事件随后到达时不再建行（同一调用两份留痕正是本批收敛要消的形态）。
    *
-   *  键 = 批准请求 id（后端 `approval_request.id` 就是该工具的 `call_id`，turn.rs 的
-   *  `"id": call.call_id`）。MUST NOT 退回「单槽 + 工具名」：同块多待批、逐项决策时后一项会
-   *  覆盖前一项，先到的 done 按名消费错槽（同名时把 A 的失败贴到 B 行），后到的 done 找不到槽
-   *  就新建一条工具行。`consumed` 让重复 done 幂等（读到已消费即 no-op，不建第二行）；
-   *  无 `call_id` 的旧事件才退回同名未消费项 FIFO。批准了但执行失败（失败形状摘要）时把失败
-   *  文本追加为该行尾注并翻失败态——决策词（已采纳）保留，执行结果如实补记。 */
+   *  身份链（r2 复审核实 Rust 真源）：批准请求 id 是 `park_approval` 生成的 `ap-N`，
+   *  **不等于**工具 done 携带的模型 `call_id`；两者之间没有协议字段，唯一现成关联是事件序
+   *  ——同一 `handle_call` 先发 `tool_call started`（带 call_id）再发 `approval_request`，
+   *  批准卡升级的就是那条 started 行（`startedCallIds`）。live 路径因此拿得到精确 call_id；
+   *  快照恢复的待批没有 started 行（`PendingApprovalSnapshot` 不带 call_id），决策后只能按
+   *  工具名 + 调用顺序 FIFO 兜底（同名反序 done 无法区分身份，归属可能与执行顺序相反——
+   *  该路径的明确限制，MUST NOT 假装精确）。
+   *
+   *  MUST NOT 退回「单槽 + 工具名」：同块多待批、逐项决策时后一项会覆盖前一项，先到的 done
+   *  按名消费错槽（同名时把 A 的失败贴到 B 行），后到的 done 找不到槽就新建一条工具行。
+   *  `consumed` 让有 call_id 的重复 done 幂等（读到已消费即 no-op，不建第二行、不消费下一项）；
+   *  快照 FIFO 项第一次被 done 认领后升级 call_id，重复同 id done 同样幂等。无 call_id 的旧
+   *  事件只有 FIFO，**不承诺重复 done 幂等**（无法区分下一项同名调用与上一项重复投递）。
+   *  批准了但执行失败（失败形状摘要）时把失败文本追加为该行尾注并翻失败态——决策词
+   *  （已采纳）保留，执行结果如实补记。 */
   interface SettledApprovalCall {
     name: string;
     row: HTMLElement;
     approved: boolean;
     consumed: boolean;
+    /** 认领该记录的 done call_id；快照兜底项在第一次 done 后升级，重复同 id done 因此幂等。 */
+    callId: string | null;
+    /** 批准项到达序：同名 FIFO 按它取最早未消费项（不是决策顺序）。 */
+    arrivalSeq: number;
   }
+  /** 有真实 call_id 的已决调用：键 = 模型 `call_id`（来自 live started 行），done 精确配对。 */
   const settledApprovalCalls = new Map<string, SettledApprovalCall>();
+  /** 无 call_id 的已决调用（快照恢复的待批 / 旧后端）：按工具名 + 调用顺序 FIFO 兜底。
+   *  后端顺序执行，done 正常也按调用序到达；同名 **反序** done 无法从现成事件区分调用身份，
+   *  归属可能与执行顺序相反——这是快照恢复路径的已知限制（design §4），MUST NOT 假装精确。 */
+  const settledApprovalQueue = new Map<string, SettledApprovalCall[]>();
+  function clearSettledApprovalCalls(): void {
+    settledApprovalCalls.clear();
+    settledApprovalQueue.clear();
+  }
 
   /** 步骤行追加 / 翻转（M406 人话化版）：started 追加 running 行（名徽章 + 人话化参数）；
    *  done 翻 block.running 行——失败（TOOL_FAILED_SUMMARY 形状）→ is-fail + ✕ + 失败摘要
@@ -6991,17 +7028,25 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
     // 已决策调用的 done 判定先于 ensureToolsBlock：命中时不建行，也不该为被抑制的 done 开新块。
     if (status === "done") {
+      const exact = callId !== null ? settledApprovalCalls.get(callId) : undefined;
       const slot =
-        callId !== null
-          ? settledApprovalCalls.get(callId)
-          : [...settledApprovalCalls.values()].find((entry) => entry.name === name && !entry.consumed);
+        exact ??
+        (settledApprovalQueue.get(name) ?? [])
+          .filter((entry) => !entry.consumed)
+          .sort((a, b) => a.arrivalSeq - b.arrivalSeq)[0];
       if (slot !== undefined) {
         if (slot.consumed) {
-          // 重复 done（同一调用身份；无身份的旧事件重复投递）幂等：不再建行、不改归属。
+          // 重复 done（同一 call_id）幂等：不再建行、不改归属，也不会消费下一项同名记录
+          //（exact 命中已消费项时直接返回，不再落到 FIFO）。
           follow.contentGrew();
           return;
         }
         slot.consumed = true;
+        if (callId !== null && slot.callId === null) {
+          // 快照兜底项第一次被 done 认领：记住 call_id，重复的同 id done 此后走 exact 幂等。
+          slot.callId = callId;
+          settledApprovalCalls.set(callId, slot);
+        }
         if (slot.approved && TOOL_FAILED_SUMMARY.test(summary)) {
           // 批准了但执行失败：终态行翻失败态 + 失败文本尾注（决策词「已采纳」不动）。
           slot.row.classList.replace("is-done", "is-fail");
@@ -7028,6 +7073,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         createToolText(name, humanizeToolArgs(name, summary), undefined, toolPathTargetsOf(name, summary)),
       );
       startedArgs.set(row, summary);
+      if (callId !== null) startedCallIds.set(row, callId);
       block.el.append(row);
       block.rows.push(row);
       block.running = row;
@@ -7036,6 +7082,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       block.running = null;
       const args = startedArgs.get(row) ?? "";
       startedArgs.delete(row);
+      startedCallIds.delete(row);
       const failed = TOOL_FAILED_SUMMARY.test(summary);
       row.classList.replace("is-running", failed ? "is-fail" : "is-done");
       row.replaceChildren(
@@ -7431,7 +7478,23 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       if (index >= 0) block.rows[index] = term;
       if (block.running === row) block.running = null;
     }
-    settledApprovalCalls.set(pending.id, { name: pending.tool, row, approved, consumed: false });
+    {
+      const entry: SettledApprovalCall = {
+        name: pending.tool,
+        row,
+        approved,
+        consumed: false,
+        callId: pending.callId ?? null,
+        arrivalSeq: pending.arrivalSeq,
+      };
+      if (entry.callId !== null) {
+        settledApprovalCalls.set(entry.callId, entry);
+      } else {
+        const queue = settledApprovalQueue.get(entry.name) ?? [];
+        queue.push(entry);
+        settledApprovalQueue.set(entry.name, queue);
+      }
+    }
 
     decidedApprovals.set(pending.id, {
       id: pending.id,
@@ -7461,7 +7524,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    * `stale` 与 done / error 同标签：这一轮已经结束（或从未被后端承认），调用没有执行。
    */
   function withdrawPendingApprovals(reason: "aborted" | "unfinished" | "stale"): void {
-    if (!hasPendingApprovals()) return;
     const labelKey = reason === "aborted" ? "D383" : "D977";
     for (const pending of pendingApprovals.values()) {
       pending.element.remove();
@@ -7479,7 +7541,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       }
     }
     pendingApprovals.clear();
-    settledApprovalCalls.clear();
+    // 正常终态时 pending 可能已为空（全部决策并 done 完），配对表仍要清——否则已消费的
+    // tombstone 与 DOM 引用跨轮累积，并扩大未来 call_id 碰撞时的误配对面。
+    clearSettledApprovalCalls();
     refreshApprovalSignal();
   }
 
@@ -7561,8 +7625,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 复用它——复用会把上一条已挂的 `.lumir-hp-pend` 壳连同它自己的卡一起 replaceWith 掉，第一项
     // 的卡在第二项到达时静默消失。已在待决壳里的行另起一行（追加在块尾），两条卡各自可决策。
     if (row !== null && row.closest(".lumir-hp-pend") !== null) row = null;
+    // 批准请求的 id 是 ap-N，工具 done 带的是模型 call_id；两者只在 live 路径靠**这条
+    // started 行**关联（同一 handle_call 先发 started 再发 approval_request）。快照恢复 /
+    // 协议外到达没有 started 行 ⇒ callId 缺席，决策后走同名 + 调用顺序 FIFO。
+    let callId: string | undefined;
     if (row !== null) {
       // started 行就地升级：截断摘要换成批准载荷全文 +「等待批准」尾注。
+      callId = startedCallIds.get(row);
+      startedCallIds.delete(row);
       startedArgs.delete(row);
       row.classList.add("is-waiting");
       row.replaceChildren(
@@ -7684,6 +7754,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
     const pending: PendingApproval = {
       id: request.id,
+      callId,
+      arrivalSeq: (approvalArrivalSeq += 1),
       tool: request.tool,
       diff: request.diff,
       argv: request.argv,
@@ -9622,7 +9694,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     imageThumbCache.prune();
     pendingApprovals.clear();
     decidedApprovals.clear();
-    settledApprovalCalls.clear();
+    clearSettledApprovalCalls();
     // 清面（换会话 / 切 vault / 新会话 / 终态对账清面共用）：集合清空后重施一次，否则标题栏 /
     // 阶段行可能停在上一视图的「等待批准」幻影上（相位随后的复位会再施加一次，幂等）。
     refreshApprovalSignal();

@@ -128,11 +128,17 @@
       → 新文案「未执行」；aborted → D383「已停止」）、清集合、失效决策、`settledApprovalCalls.clear()`；
       `done` / `error` / `aborted` 在 `dispatchActivity(terminal)` 前各调一次（`aborted` 用同一函数
       替换内联循环）
-- [x] 5.1c （独立评审 P1）`settledAwaitingDone` 单槽改为 `settledApprovalCalls`：按 `pending.id`
-      （= 后端 `call_id`）配对，`consumed` 让重复 done 幂等；无 `call_id` 的旧事件退回同名未消费项
-      FIFO。m384 新增「多待批全部决策后 done」同名 / 异名 / 正反序 / 成功失败 / 重复 done 用例
-- [x] 5.1b `sent` / `auto_turn_started` 在置 `turnOpen` 前、且上一相位为 `idle` 时，若集合非空则清
-      stale；处理中的轮次不清合法待批；`appendApproval` 在**函数入口**判 `idle` 并直接返回
+- [x] 5.1c （独立评审 r1 / r2）`settledAwaitingDone` 单槽改为按**真实调用身份**配对：
+      live 路径用 `tool_call started` 行的 call_id（`startedCallIds` → `pending.callId`，
+      `approval_request.id` 是独立的 `ap-N`，MUST NOT 假设二者相等）；快照恢复的待批没有
+      call_id，按工具名 + 到达顺序 FIFO 兜底（快照列表序 = 调用序，不是决策序；同名反序 done 的
+      归属限制见 design §4）。有
+      call_id 的重复 done 幂等；无 call_id 的旧事件只有 FIFO、不承诺幂等。配对表在正常终态与
+      新一轮无条件清理。m384 用真实 `ap-N ≠ call_...` 覆盖同名 / 异名 / 反序 / 成功失败 /
+      重复 done 不消费下一项、快照 FIFO、终态后新旧 call_id 碰撞
+- [x] 5.1b `sent` / `auto_turn_started` 在置 `turnOpen` 前、且上一相位为 `idle` 时无条件清 stale
+      （集合为空也要清配对表）；处理中的轮次不清合法待批；`appendApproval` 在**函数入口**判
+      `idle` 并直接返回
       （MUST NOT 先建流式泡 / 工具块、不落卡、不入集合）
 - [x] 5.2 `appendApproval`（**非 idle 路径**）：`pendingApprovals.set` + `relabelApproval` 之后、
       `follow.contentGrew()` 之前调用；idle 入口早退见 5.1b

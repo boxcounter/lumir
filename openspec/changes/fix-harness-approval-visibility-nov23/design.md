@@ -205,11 +205,19 @@ function refreshApprovalSignal(): void {
   在第一次 `delete` 后就假设已清空。**实现期发现并修复**：`appendApproval` 复用
   `block.running` 时会把上一条已挂的 `.lumir-hp-pend` 壳整体 `replaceWith` 掉，第一项的卡在第
   二项到达时静默消失；现在已在待决壳里的行会另起一行（同一工具块尾部），两张卡各自可决策。
-- **决策后 done 配对（独立评审 P1）**：已决策待收尾的调用按**调用身份**（批准请求 id = 后端
-  `call_id`）存放在 `settledApprovalCalls`，MUST NOT 用可覆盖的单槽 + 工具名——两项都决策后槽会
-  被后一项覆盖，先到的 done 会消费错槽（同名时把 A 的失败贴到 B 行），后到的 done 找不到槽就新建
-  重复行。done 按 `call_id` 精确消费；`consumed` 让重复 done 幂等；无 `call_id` 的旧事件才退回
-  同名未消费项 FIFO。回归场景见 m384 的两条「多待批全部决策后 done」用例。
+- **决策后 done 配对（独立评审 r1 / r2）**：生产身份链是 `approval_request.id = ap-N`、工具
+  done 带模型 `call_id`，两者**没有协议字段**可直接对应（`ApprovalRequest` /
+  `PendingApprovalSnapshot` 都不带 call_id）。唯一现成关联是**事件序 + 行身份**：同一
+  `handle_call` 先发带 `call_id` 的 `tool_call started`，批准卡就地升级这条行；前端据此把
+  call_id 记到待批记录（`startedCallIds` → `pending.callId`），done 按 call_id 精确消费。
+  快照恢复的待批没有 started 行，只能按工具名 + **到达顺序**（快照列表序 = 调用序，不是用户决策序）FIFO；后端顺序
+  执行时 done 也按调用序到达，但**同名反序 done 无法从现成事件区分调用身份**，归属可能与执行顺序相反——这是该
+  路径的明确限制，MUST NOT 假装精确。无 call_id 的旧事件同样只有 FIFO，**不承诺重复 done
+  幂等**。有 call_id 的同一调用重复 done 幂等（`consumed`；快照项首次认领后升级 call_id，
+  后续同 id done 同样幂等）。
+- **配对表清理（r2 评审）**：终态撤回 MUST NOT 因 `pendingApprovals` 已空而早退——已消费记录
+  及其 DOM 引用必须在**正常终态**与**新一轮开始**时无条件清掉，否则跨轮累积并扩大未来
+  call_id 碰撞时的误配对面。`sent` / `auto_turn_started` 在上一相位为空闲时无条件清 stale。
 - **不自动超时**：待批不会因时间退场；只有上述出口会清算。
 - **快照是地板**：进入 / 对账快照的 `pending_approvals` 是待决集合的唯一重建依据；前端 MUST NOT
   保留「上一份快照里有过待批」的记忆来补状态。

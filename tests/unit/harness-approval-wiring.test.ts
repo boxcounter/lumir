@@ -97,7 +97,7 @@ test("单一判据：applyStage / applyActivityBadge / 新一轮清 stale 都只
   );
   assertNoMatch(BADGE, /pendingApprovals\.(size|has)/, "徽标不得自己读集合");
   const started = PROJECT.slice(PROJECT.indexOf('case "turn_started":'), PROJECT.indexOf('case "terminal":'));
-  assert.match(started, /prev\.phase === "idle" && hasPendingApprovals\(\)/, "清 stale 只认「上一相位空闲 + 集合非空」");
+  assert.match(started, /prev\.phase === "idle"\) withdrawPendingApprovals\("stale"\)/, "清 stale 只认「上一相位空闲」；集合空也要清配对表");
 });
 
 // ── 2. 三个输出面：同源写点与幂等写入 ───────────────────────────────────────
@@ -171,24 +171,49 @@ test("withdrawPendingApprovals：撤卡 / 标未执行或已停止 / 清集合 /
   assert.match(WITHDRAW, /const labelKey = reason === "aborted" \? "D383" : "D977"/, "aborted 沿用「已停止」，done / error 标「未执行」");
   assert.match(WITHDRAW, /t\(labelKey\)/, "标签在落 DOM 时才取文案");
   assert.match(WITHDRAW, /pendingApprovals\.clear\(\)/, "清空集合（决策闭包随之失效）");
-  assert.match(WITHDRAW, /settledApprovalCalls\.clear\(\)/, "清已决策待收 done 的配对表");
+  assert.match(WITHDRAW, /clearSettledApprovalCalls\(\)/, "清已决策待收 done 的配对表");
   assert.match(WITHDRAW, /refreshApprovalSignal\(\)/, "撤完之后重施，避免幻影状态");
 });
 
-test("已决策调用按调用身份配对 done（P1 评审）：pending.id 为键、callId 消费、重复 done 幂等", () => {
+test("已决策调用按真实调用身份配对 done（r2 评审）：started call_id 桥接 ap-N、快照 FIFO、重复 done 幂等", () => {
   const SETTLE = functionBodyOf(PANEL_SOURCE, "settleApprovalRecord");
+  // 生产身份链：approval id 是 ap-N，done 是模型 call_id；bridge = 被升级的那条 started 行。
+  assert.match(PANEL_SOURCE, /const startedCallIds = new WeakMap<HTMLElement, string>\(\)/);
+  assert.match(PANEL_SOURCE, /if \(callId !== null\) startedCallIds\.set\(row, callId\)/);
+  assert.match(APPROVAL, /callId = startedCallIds\.get\(row\)/);
   assert.match(
-    SETTLE,
-    /settledApprovalCalls\.set\(pending\.id, \{ name: pending\.tool, row, approved, consumed: false \}\)/,
-    "决策记录必须按批准请求 id（= 后端 call_id）入表，供 done 精确配对",
+    APPROVAL,
+    /const pending: PendingApproval = \{\s*id: request\.id,\s*callId,/,
+    "批准卡必须把 started 行的 call_id 记到待批记录上（MUST NOT 假设 id = call_id）",
   );
+  assert.match(SETTLE, /callId: pending\.callId \?\? null/, "决策时按真实 call_id 建记录");
+  assert.match(SETTLE, /settledApprovalCalls\.set\(entry\.callId, entry\)/, "有 id 的进精确 Map");
+  assert.match(SETTLE, /settledApprovalQueue\.set\(entry\.name, queue\)/, "无 id 的（快照）进同名 FIFO");
+  assert.match(PANEL_SOURCE, /const exact = callId !== null \? settledApprovalCalls\.get\(callId\) : undefined;/);
   assert.match(
     PANEL_SOURCE,
-    /callId !== null\s*\n\s*\? settledApprovalCalls\.get\(callId\)/,
-    "done 必须按调用身份取配对（不能按工具名消费可覆盖的单槽）",
+    /settledApprovalQueue\.get\(name\) \?\? \[\]\)\s*\.filter\(\(entry\) => !entry\.consumed\)/,
+  );
+  assert.match(PANEL_SOURCE, /slot\.callId === null/, "快照项首次被 done 认领后升级 call_id");
+  assert.match(APPROVAL, /arrivalSeq: \(approvalArrivalSeq \+= 1\)/, "待批到达序在 appendApproval 分配");
+  assert.match(SETTLE, /arrivalSeq: pending\.arrivalSeq/, "决策记录带到达序");
+  assert.match(
+    PANEL_SOURCE,
+    /\.sort\(\(a, b\) => a\.arrivalSeq - b\.arrivalSeq\)\[0\]/,
+    "同名 FIFO 取最早到达的未消费项（不是决策顺序）",
   );
   assert.match(PANEL_SOURCE, /if \(slot\.consumed\)/, "重复 done 读到已消费即幂等");
   assertNoMatch(PANEL_SOURCE, /settledAwaitingDone/, "旧的单槽变量必须删除（多待批会被后一项覆盖）");
+});
+
+test("正常终态 / 新一轮清理不依赖 pending 非空（r2 评审）", () => {
+  assertNoMatch(WITHDRAW, /if \(!hasPendingApprovals\(\)\) return;/, "撤回不得在清配对表之前早退");
+  assert.match(WITHDRAW, /clearSettledApprovalCalls\(\)/, "pending 为空也要清已消费 tombstone");
+  assert.match(
+    PANEL_SOURCE,
+    /if \(prev\.phase === "idle"\) withdrawPendingApprovals\("stale"\);/,
+    "新一轮开始无条件清上一轮遗留（含正常终态后已空的 pending）",
+  );
 });
 
 test("终态：done / error / aborted 都在施加终态之前走同一撤回函数", () => {

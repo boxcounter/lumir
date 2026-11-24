@@ -78,8 +78,10 @@ async function stubHarnessApproval(page: Page): Promise<void> {
     const invoke = internals.invoke as (cmd: string, args: unknown) => unknown;
     w.__approvals = [] as unknown[];
     w.__harnessEventHandlerIds = [] as number[];
+    w.__harnessStateCalls = 0;
     internals.invoke = async (cmd: string, args: any) => {
       if (cmd === "harness_state") {
+        w.__harnessStateCalls += 1;
         const override = w.__pendingApprovalOverride as Record<string, unknown> | undefined;
         // `__pendingApprovalList` 让用例把待决列表整体换掉（含空列表）；缺省仍是单张
         // vault_patch 卡。`in_flight: true` 是待批呈现的前提（change
@@ -91,13 +93,14 @@ async function stubHarnessApproval(page: Page): Promise<void> {
           pending_approvals:
             overrideList ?? [override ?? { id: "call_p1", tool: "vault_patch", diff, argv: undefined }],
           warn_ctx_pct: 85,
-          in_flight: true,
+          in_flight: w.__inFlight !== false,
         });
       }
       if (cmd === "harness_approve") {
         w.__approvals.push({ request_id: args.request_id, approved: args.approved, reason: args.reason });
         return null;
       }
+      if (cmd === "harness_send" || cmd === "harness_abort" || cmd === "harness_new_session") return null;
       if (cmd === "plugin:event|listen" && args.event === "harness:event") {
         w.__harnessEventHandlerIds.push(args.handler ?? 0);
       }
@@ -400,12 +403,16 @@ test("待批状态：running 桩下正断言等待批准；两项逐个清算；
   ]);
 });
 
-// ── P1（independent review d43ba3d9）：多待批全部决策后的 done 配对 ────────────────────
+// ── P1（独立评审 r1 / r2）：多待批全部决策后的 done 配对 ────────────────────────────
 //
-// 现场：`settledAwaitingDone` 是单槽，两张卡都决策后槽被后一项覆盖。先到的 done 按工具名
-// 消费错槽（同名时把 A 的失败贴到 B 行），后到的 done 找不到槽就新建一条工具行——同一调用
-// 出现重复行。判据：两个已决调用的 done 按**调用身份**（call_id = 批准请求 id）配对，
-// 成功 / 失败归属正确、行数恰好两条、重复 done 幂等。
+// 生产身份链（r2 复审核实）：`park_approval` 生成 `ap-N` 作为 `approval_request.id`；
+// 同一次 `handle_call` 先发 `tool_call started`（带模型 `call_id`），批准卡就升级这条行。
+// done 带的仍是模型 `call_id`——**ap-N ≠ call_id**。前端用「started 行」作桥，把 call_id
+// 记到待批记录上；快照恢复的待批没有这个桥（`PendingApprovalSnapshot` 不带 call_id），
+// 决策后按工具名 + 调用顺序 FIFO 兜底（同名反序 done 的归属限制见 design §4）。
+//
+// 本组用例因此一律用真实形状：approval id = ap-N、started / done = call_...，不再人为令
+// 两者相同；同名 A 失败 B 成功、异名反序、重复 done 不消费下一项 / 不重建。
 
 /** 打开空待批的 running 面板（`__pendingApprovalList = []`），供 live 多卡场景用。 */
 async function openEmptyRunningPanel(page: Page): Promise<void> {
@@ -419,6 +426,21 @@ async function openEmptyRunningPanel(page: Page): Promise<void> {
   await expect(page.locator(".lumir-hp-stage")).toHaveText("等待响应…");
 }
 
+/** 先发 live started（带 call_id），再发批准请求（id 是独立的 ap-N）。 */
+async function startAndRequestApproval(
+  page: Page,
+  input: { callId: string; approvalId: string; tool: string; args: Record<string, unknown> },
+): Promise<void> {
+  await fire(page, {
+    type: "tool_call",
+    name: input.tool,
+    status: "started",
+    summary: input.tool === "cli_run" ? JSON.stringify({ command: "echo", args: [(input.args.argv as string[])[1]] }) : "harness-note.md",
+    call_id: input.callId,
+  });
+  await fire(page, { type: "approval_request", id: input.approvalId, tool: input.tool, ...input.args });
+}
+
 async function decideBothApprovals(page: Page): Promise<void> {
   await page.locator('button[data-act="approve"]').first().click();
   await expect(page.locator('button[data-act="approve"]')).toHaveCount(1);
@@ -427,12 +449,22 @@ async function decideBothApprovals(page: Page): Promise<void> {
   await expect(page.locator(".lumir-hp-termwrap .lumir-hp-tool-row")).toHaveCount(2);
 }
 
-test("多待批全部决策后 done：同名工具按调用身份配对，失败不贴错行，重复 done 幂等", async ({
+test("多待批全部决策后 done：真实 ap-N ≠ call_id，同名失败贴对行，重复 done 不消费下一项", async ({
   page,
 }) => {
   await openEmptyRunningPanel(page);
-  await fire(page, { type: "approval_request", id: "call_same_a", tool: "cli_run", argv: ["echo", "A"] });
-  await fire(page, { type: "approval_request", id: "call_same_b", tool: "cli_run", argv: ["echo", "B"] });
+  await startAndRequestApproval(page, {
+    callId: "call_same_a",
+    approvalId: "ap-same-a",
+    tool: "cli_run",
+    args: { argv: ["echo", "A"] },
+  });
+  await startAndRequestApproval(page, {
+    callId: "call_same_b",
+    approvalId: "ap-same-b",
+    tool: "cli_run",
+    args: { argv: ["echo", "B"] },
+  });
   await expect(page.locator(".lumir-hp-pend")).toHaveCount(2);
   await decideBothApprovals(page);
 
@@ -440,8 +472,15 @@ test("多待批全部决策后 done：同名工具按调用身份配对，失败
   const rowA = rows.filter({ hasText: "echo A" });
   const rowB = rows.filter({ hasText: "echo B" });
 
-  // 先到的 done 是 A 且执行失败；B 后到且成功。旧实现把 A 的失败贴到 B 的终态行，再为 B
-  // 新建第三行。
+  // 先到的 done 是 A 且执行失败；紧接着重复一次 A 的 done（必须在 B 之前），不得消费 B 的
+  // 记录。B 后到且成功。
+  await fire(page, {
+    type: "tool_call",
+    name: "cli_run",
+    status: "done",
+    summary: "failed · io: A 写盘失败",
+    call_id: "call_same_a",
+  });
   await fire(page, {
     type: "tool_call",
     name: "cli_run",
@@ -455,26 +494,23 @@ test("多待批全部决策后 done：同名工具按调用身份配对，失败
   await expect(rowA.locator(".lumir-hp-tool-out")).toContainText("A 写盘失败");
   await expect(rowB).not.toHaveClass(/is-fail/);
   await expect(rowB.locator(".lumir-hp-tool-out")).toHaveCount(0);
-  // 行数恰好两条：不再为已决策调用新建行。
   await expect(page.locator(".lumir-hp-tool-row")).toHaveCount(2);
-
-  // 重复 done（同一调用身份）幂等：不新建行、不改归属。
-  await fire(page, {
-    type: "tool_call",
-    name: "cli_run",
-    status: "done",
-    summary: "failed · io: A 写盘失败",
-    call_id: "call_same_a",
-  });
-  await expect(page.locator(".lumir-hp-tool-row")).toHaveCount(2);
-  await expect(rowA).toHaveClass(/is-fail/);
-  await expect(rowB).not.toHaveClass(/is-fail/);
 });
 
-test("多待批全部决策后 done：异名工具反序到达仍按身份配对，成功不建重复行", async ({ page }) => {
+test("多待批全部决策后 done：异名工具反序到达仍按调用身份配对", async ({ page }) => {
   await openEmptyRunningPanel(page);
-  await fire(page, { type: "approval_request", id: "call_x1", tool: "vault_patch", diff: DIFF });
-  await fire(page, { type: "approval_request", id: "call_x2", tool: "cli_run", argv: ["echo", "B"] });
+  await startAndRequestApproval(page, {
+    callId: "call_x1",
+    approvalId: "ap-x1",
+    tool: "vault_patch",
+    args: { diff: DIFF },
+  });
+  await startAndRequestApproval(page, {
+    callId: "call_x2",
+    approvalId: "ap-x2",
+    tool: "cli_run",
+    args: { argv: ["echo", "B"] },
+  });
   await expect(page.locator(".lumir-hp-pend")).toHaveCount(2);
   await decideBothApprovals(page);
 
@@ -482,8 +518,7 @@ test("多待批全部决策后 done：异名工具反序到达仍按身份配对
   const patchRow = rows.filter({ hasText: "harness-note.md" });
   const cliRow = rows.filter({ hasText: "echo B" });
 
-  // 反序：B（cli_run）先成功，A（vault_patch）后失败。旧实现会把 A 的 done 当成无主调用，
-  // 新建一条失败行，A 的终态行保持「已采纳」。
+  // 反序：B（cli_run）先成功，A（vault_patch）后失败；身份精确配对（不是按名 FIFO）。
   await fire(page, { type: "tool_call", name: "cli_run", status: "done", summary: "完成", call_id: "call_x2" });
   await fire(page, {
     type: "tool_call",
@@ -497,4 +532,88 @@ test("多待批全部决策后 done：异名工具反序到达仍按身份配对
   await expect(patchRow.locator(".lumir-hp-tool-out")).toContainText("文件已被改动");
   await expect(cliRow).not.toHaveClass(/is-fail/);
   await expect(page.locator(".lumir-hp-tool-row")).toHaveCount(2);
+});
+
+test("快照恢复的待批：决策乱序仍按工具名 + 到达顺序 FIFO 配对 done", async ({ page }) => {
+  // 快照的待决列表没有 call_id（PendingApprovalSnapshot 不带），前端只能用同名 FIFO。
+  // 队列序取**到达序**（快照列表序 = 调用序），不是用户决策序：这里先决策 B 再决策 A，
+  // 后端仍按调用序执行（A done 先到），失败必须贴到 A（第一项）。若按决策序建队会贴错 B。
+  await page.addInitScript(() => {
+    (window as unknown as Record<string, unknown>).__pendingApprovalList = [
+      { id: "ap-snap-a", tool: "cli_run", argv: ["echo", "A"] },
+      { id: "ap-snap-b", tool: "cli_run", argv: ["echo", "B"] },
+    ];
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(2);
+  // 决策乱序：先 B 后 A。
+  await page.locator('button[data-act="approve"]').last().click();
+  await expect(page.locator('button[data-act="approve"]')).toHaveCount(1);
+  await page.locator('button[data-act="approve"]').first().click();
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-termwrap .lumir-hp-tool-row")).toHaveCount(2);
+
+  const rows = page.locator(".lumir-hp-termwrap .lumir-hp-tool-row");
+  const rowA = rows.filter({ hasText: "echo A" });
+  const rowB = rows.filter({ hasText: "echo B" });
+  await fire(page, {
+    type: "tool_call",
+    name: "cli_run",
+    status: "done",
+    summary: "failed · io: A 写盘失败",
+    call_id: "call_snap_a",
+  });
+  await fire(page, { type: "tool_call", name: "cli_run", status: "done", summary: "完成", call_id: "call_snap_b" });
+
+  await expect(rowA).toHaveClass(/is-fail/);
+  await expect(rowA.locator(".lumir-hp-tool-out")).toContainText("A 写盘失败");
+  await expect(rowB).not.toHaveClass(/is-fail/);
+  await expect(page.locator(".lumir-hp-tool-row")).toHaveCount(2);
+});
+
+test("正常终态后清理配对表：新一轮复用同一 call_id 不被陈旧 tombstone 吞掉", async ({ page }) => {
+  // 本地起一轮（in_flight:false → 发送建立 running，midTakeover=false）：终态不走 content
+  // 对账，才能单独判「正常终态」这条清理路径。
+  await page.addInitScript(() => {
+    (window as unknown as Record<string, unknown>).__pendingApprovalList = [];
+    (window as unknown as Record<string, unknown>).__inFlight = false;
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await page.locator(".lumir-hp-composer .cm-content").fill("第一轮");
+  await page.locator(".lumir-hp-send").click();
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("等待响应…");
+  await startAndRequestApproval(page, {
+    callId: "call_reuse",
+    approvalId: "ap-reuse-1",
+    tool: "cli_run",
+    args: { argv: ["echo", "A"] },
+  });
+  await page.locator('button[data-act="approve"]').click();
+  await fire(page, { type: "tool_call", name: "cli_run", status: "done", summary: "完成", call_id: "call_reuse" });
+  await expect(page.locator(".lumir-hp-termwrap .lumir-hp-tool-row")).toHaveCount(1);
+  // 正常终态（pending 已空）：撤回函数必须仍清掉已消费的配对记录。
+  await fire(page, { type: "done" });
+  await expect(page.locator(".lumir-hp-stage")).toBeHidden();
+
+  // 新一轮：同一 call_id 再次出现（碰撞场景），done 必须能收口新行而不是被旧 consumed 吞掉。
+  await page.locator(".lumir-hp-composer .cm-content").fill("新一轮");
+  await page.locator(".lumir-hp-send").click();
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("等待响应…");
+  await fire(page, { type: "tool_call", name: "cli_run", status: "started", summary: "{\"command\":\"echo\",\"args\":[\"C\"]}", call_id: "call_reuse" });
+  await expect(page.locator(".lumir-hp-tool-row.is-running")).toHaveCount(1);
+  await fire(page, {
+    type: "tool_call",
+    name: "cli_run",
+    status: "done",
+    summary: "failed · io: 新一轮失败",
+    call_id: "call_reuse",
+  });
+  await expect(page.locator(".lumir-hp-tool-row.is-running")).toHaveCount(0);
+  const newRow = page.locator(".lumir-hp-tool-row.is-fail").last();
+  await expect(newRow.locator(".lumir-hp-tool-out")).toContainText("新一轮失败");
 });
