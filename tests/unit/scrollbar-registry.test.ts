@@ -72,6 +72,7 @@ const REGISTRY: RegistryEntry[] = [
       ".cm-lp-table-scroll",
       ".cm-lp-math-block",
       ".cm-lp-mermaid",
+      ".lumir-hp-skill-menu",
     ],
     note:
       "harness 的代码块 / diff / argv（M406 / M628）、harness 对话表格的横滚容器（M703）+ 编辑器" +
@@ -377,7 +378,7 @@ test("滚动条注册表与源码双向对齐，且各档声明实际成立", ()
   );
 });
 
-test("注册表覆盖盘点出的全部滚动容器（22 个面 = 23 个选择器）", () => {
+test("注册表覆盖盘点出的全部滚动容器（23 个面 = 24 个选择器）", () => {
   const scanned = scrollContainers(realWorld());
   assert.deepEqual(
     [...scanned.keys()].sort(),
@@ -394,6 +395,7 @@ test("注册表覆盖盘点出的全部滚动容器（22 个面 = 23 个选择�
       ".lumir-hp-diff",
       ".lumir-hp-permpop-rules",
       ".lumir-hp-sesspop-list",
+      ".lumir-hp-skill-menu",
       ".lumir-hp-table-scroll",
       ".lumir-hp-transcript",
       ".lumir-qo-list",

@@ -87,6 +87,9 @@ import {
   composerImageOrdinals,
   composerInlineCards,
   composerIsEmpty,
+  composerSkillEffect,
+  composerSkillsField,
+  composerSkillsJson,
   createComposerState,
   insertComposerText,
   mergeRejectedComposerContent,
@@ -115,6 +118,7 @@ import {
   harnessRetry,
   harnessSend,
   harnessSetThinkingEffort,
+  harnessSkillsList,
   harnessState,
   harnessSubagentContinue,
   harnessSubagentStop,
@@ -133,6 +137,10 @@ import {
 } from "./harness-context";
 import type { HarnessContextBlock, HarnessContextSource } from "./harness-context";
 import { createHarnessDraftStore } from "./harness-draft";
+import { moveSkillHighlight, openSkillMenu, skillSelectionSpec, skillTokenAt } from "./skill-menu";
+import type { SkillMenuState } from "./skill-menu";
+import { skillCatalogRefreshEffect, skillChips } from "./skill-chips";
+import type { SkillSummary } from "./bindings/SkillSummary";
 import {
   activityDisplayed,
   activityKind,
@@ -4405,6 +4413,141 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const cardData = new WeakMap<Element, QuoteCard | MessageQuoteCard | ImageCard>();
   let imeGateState = imeKeyGate();
   let quoteJumpHandler: ((card: QuoteCard) => void) | null = null;
+  const skillMenuEl = document.createElement("div");
+  skillMenuEl.className = "lumir-hp-skill-menu";
+  skillMenuEl.hidden = true;
+  skillMenuEl.setAttribute("role", "listbox");
+  skillMenuEl.setAttribute("aria-label", t("D978"));
+  composerArea.append(skillMenuEl);
+  let skillMenuState: SkillMenuState | null = null;
+  let skillCatalog: readonly SkillSummary[] | null = null;
+  let skillCatalogEpoch = 0;
+  let skillTokenFrom: number | null = null;
+
+  function closeSkillMenu(): void {
+    skillMenuState = null;
+    skillMenuEl.hidden = true;
+    skillMenuEl.replaceChildren();
+    unregisterEscapeLayer("harness-skill-menu");
+    composerView?.contentDOM.removeAttribute("aria-activedescendant");
+  }
+
+  function resetSkillCatalog(): void {
+    closeSkillMenu();
+    skillCatalog = null;
+    skillTokenFrom = null;
+    skillCatalogEpoch += 1;
+  }
+
+  function renderSkillMenu(): void {
+    const state = skillMenuState;
+    if (state === null) {
+      closeSkillMenu();
+      return;
+    }
+    skillMenuEl.hidden = false;
+    registerEscapeLayer("harness-skill-menu", closeSkillMenu);
+    skillMenuEl.replaceChildren();
+    state.items.forEach((item, index) => {
+      const option = document.createElement("div");
+      option.className = "lumir-hp-skill-option";
+      option.id = `lumir-hp-skill-option-${index}`;
+      option.setAttribute("role", "option");
+      option.setAttribute("aria-selected", String(state.highlighted === index));
+      if (state.highlighted === index) option.classList.add("is-selected");
+      const name = document.createElement("span");
+      name.className = "lumir-hp-skill-name";
+      name.textContent = item.name;
+      const description = document.createElement("span");
+      description.className = "lumir-hp-skill-description";
+      description.textContent = item.description;
+      option.append(name, description);
+      option.addEventListener("mousedown", (event) => event.preventDefault());
+      option.addEventListener("mouseenter", () => {
+        if (skillMenuState === null) return;
+        skillMenuState = { ...skillMenuState, highlighted: index };
+        renderSkillMenu();
+      });
+      option.addEventListener("click", () => selectSkillMenuItem());
+      skillMenuEl.append(option);
+    });
+    const highlighted = state.highlighted;
+    if (highlighted === null) composerView.contentDOM.removeAttribute("aria-activedescendant");
+    else composerView.contentDOM.setAttribute("aria-activedescendant", `lumir-hp-skill-option-${highlighted}`);
+    placeSkillMenu();
+  }
+
+  function placeSkillMenu(): void {
+    if (skillMenuState === null || !isLayoutCapable(skillMenuEl)) return;
+    const caret = composerView.coordsAtPos(composerView.state.selection.main.head);
+    const host = composerArea.getBoundingClientRect();
+    if (caret === null) return;
+    const width = placeOverlay({
+      tier: "list",
+      natural: measureOverlayNaturalWidth(skillMenuEl),
+      host: host.width,
+      hostLeft: host.left,
+      fontSize: overlayFontSize(skillMenuEl),
+      anchor: { left: caret.left, right: caret.right },
+      preferred: "left",
+    });
+    skillMenuEl.style.width = `${width.width}px`;
+    const estimatedHeight = Math.min(6, skillMenuState.items.length) * 32 + 8;
+    const below = caret.bottom + 4;
+    const top = below + estimatedHeight <= host.bottom
+      ? below
+      : Math.max(host.top + 8, caret.top - estimatedHeight - 4);
+    skillMenuEl.style.left = `${width.left - host.left}px`;
+    skillMenuEl.style.top = `${top - host.top}px`;
+  }
+
+  function syncSkillMenu(forceCatalog = false): void {
+    const token = skillTokenAt(
+      composerView.state.doc.toString(),
+      composerView.state.selection.main.head,
+    );
+    const newToken = token !== null && token.from !== skillTokenFrom;
+    skillTokenFrom = token?.from ?? null;
+    if (token !== null && (forceCatalog || newToken)) {
+      refreshSkillCatalog(true);
+    }
+    skillMenuState = token === null
+      ? null
+      : openSkillMenu(
+          composerView.state.doc.toString(),
+          composerView.state.selection.main.head,
+          skillCatalog ?? [],
+        );
+    renderSkillMenu();
+  }
+
+  function refreshSkillCatalog(force: boolean): void {
+    if (!force && skillCatalog !== null) return;
+    const vault = currentVault;
+    const epoch = ++skillCatalogEpoch;
+    void harnessSkillsList().then((items) => {
+      if (epoch !== skillCatalogEpoch || vault !== currentVault) return;
+      skillCatalog = items;
+      composerView.dispatch({ effects: skillCatalogRefreshEffect.of(null) });
+      syncSkillMenu();
+    }).catch(() => {
+      // 最新成功清单保留；初次失败仍是 null，refs chip 不误标 missing/disabled。
+    });
+  }
+
+  function selectSkillMenuItem(): void {
+    if (skillMenuState === null) return;
+    const selected = skillSelectionSpec(composerView.state.doc.toString(), skillMenuState);
+    if (selected === null) return;
+    const { skill, ...spec } = selected;
+    composerView.dispatch({
+      ...spec,
+      effects: composerSkillEffect.of({ type: "add", ref: skill }),
+    });
+    closeSkillMenu();
+    composerView.focus();
+  }
+
   const composerViewExtensions = [
     EditorView.lineWrapping,
     composerInlineCards({
@@ -4424,9 +4567,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       }).join(" / "),
       prune: () => imageThumbCache.prune(),
     }),
+    skillChips(() => skillCatalog, {
+      missing: t("D979"),
+      userDisabled: t("D980"),
+      invalid: t("D981"),
+    }),
     EditorView.contentAttributes.of({
       "aria-label": t("D328"),
       "aria-multiline": "true",
+      "aria-autocomplete": "list",
       spellcheck: "false",
     }),
     EditorView.updateListener.of((update) => {
@@ -4439,15 +4588,18 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           requestAnimationFrame(() => (update.view as unknown as { measure(): void }).measure());
         }
       }
-      if (update.docChanged || update.selectionSet || cardsChanged) {
+      const skillsChanged = update.startState.field(composerSkillsField)
+        !== update.state.field(composerSkillsField);
+      if (update.docChanged || update.selectionSet || cardsChanged || skillsChanged) {
         updateEmptyClass();
         markDraft();
       }
+      if (update.docChanged || update.selectionSet) syncSkillMenu();
     }),
   ];
   const composerView = new EditorView({
     parent: composer,
-    state: createComposerState({ text: "", caret: 0, cards: [] }, composerViewExtensions),
+    state: createComposerState({ text: "", caret: 0, cards: [], skills: [] }, composerViewExtensions),
   });
 
   // ── composer 草稿（change composer-draft-persistence，design §4/§5/§7）──────────────
@@ -4466,7 +4618,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   function markDraft(): void {
     const content = composerContentOf(composerView.state);
-    draft.schedule(content.text, content.caret, content.cards);
+    draft.schedule(content.text, content.caret, content.cards, content.skills);
   }
 
   /** 离散 flush：把待写内容立刻落盘（输入区失焦 / 面板关闭 / 窗口失焦 / 退出）。防抖是主
@@ -4878,7 +5030,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     composer.classList.toggle("is-empty", composerIsEmpty(composerView.state));
   }
 
-  function resetComposer(content: Parameters<typeof createComposerState>[0] = { text: "", caret: 0, cards: [] }): void {
+  function resetComposer(content: Parameters<typeof createComposerState>[0] = { text: "", caret: 0, cards: [], skills: [] }): void {
+    closeSkillMenu();
+    skillTokenFrom = null;
     composerView.setState(createComposerState(content, composerViewExtensions));
     syncComposerAriaValue();
     updateEmptyClass();
@@ -9820,6 +9974,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    * 「新会话」后切到 B，回包到达时清 B 会把 B 的未读 / 在途清掉。
    */
   function resetView(options: { clearActivityFor: string | null }): void {
+    resetSkillCatalog();
     // **视图换代 ⇒ 所有在途快照作废**（推进 `snapshotSeq`）：`resetView` 之后到达的回包属于
     // 上一代视图，落地时会把旧会话的 messages 重放进刚清空的渲染面。新建会话是这条交错最容易
     // 命中的入口——它成功之后只有 `resetView`，相位是 idle → idle（`phaseEpoch` 不推进），
@@ -9948,6 +10103,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const loaded = await draft.load(currentVaultId).catch(() => null);
     if (seq !== draftSeq || loaded === null || !composerIsPristine()) return;
     resetComposer(loaded);
+    refreshSkillCatalog(false);
   }
 
   // 后端不可用（纯浏览器预览 / 命令未注册）时按空会话降级——面板本身照常可用，
@@ -9994,6 +10150,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   function performSend(): void {
     if (currentActivity().phase !== "idle") return;
     const content = composerContentOf(composerView.state);
+    const skillsJson = composerSkillsJson(composerView.state);
     const blocks = composerBlocks(composerView.state);
     const projection = projectComposerDelivery(composerView.state);
     const { panelText: text, parts } = projection;
@@ -10031,7 +10188,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 绑定（那时可能已经切了 vault、用户也可能已经在 composer 里继续输入）。
     const sendDraftVaultId = currentVaultId;
     const sendDraftEditVersion = draft.editVersion();
-    harnessSend(JSON.stringify(parts), block !== null ? serializeHarnessContext(block) : "")
+    harnessSend(JSON.stringify(parts), block !== null ? serializeHarnessContext(block) : "", skillsJson)
       .then(() => {
         // 成功回执按**发送时**的 vault + 编辑版本清草稿：切走之后 A 的草稿仍要清（否则切回 A
         // 会复活已发送内容）；同视图等待期间的新输入不能被这轮回执取消 / 删除（版本已变 ⇒
@@ -10115,7 +10272,25 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       dispatchComposerCommand("editor.redo");
       return;
     }
+    if (event.ctrlKey && !event.metaKey && !event.altKey &&
+        (event.key.toLowerCase() === "n" || event.key.toLowerCase() === "p")) {
+      closeSkillMenu();
+      return;
+    }
     if (mod) return;
+    if (skillMenuState !== null && !event.altKey &&
+        (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      event.preventDefault();
+      skillMenuState = moveSkillHighlight(skillMenuState, event.key === "ArrowDown" ? 1 : -1);
+      renderSkillMenu();
+      return;
+    }
+    if (skillMenuState !== null && skillMenuState.highlighted !== null &&
+        (event.key === "Enter" || event.key === "Tab")) {
+      event.preventDefault();
+      selectSkillMenuItem();
+      return;
+    }
     if (event.key === "Enter") {
       event.preventDefault();
       if (event.shiftKey) insertComposerText(composerView, "\n", "input.shift-enter");
@@ -10123,6 +10298,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }, true);
   composer.addEventListener("compositionstart", () => {
+    closeSkillMenu();
     (composerView as unknown as { measure(): void }).measure();
     imeGateState = imeGateCompositionStart(imeGateState);
   });
@@ -10159,7 +10335,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     insertComposerText(composerView, text, "input.drop");
   }, true);
   composer.addEventListener("focusin", () => refreshChip());
-  composer.addEventListener("focusout", () => flushDraft());
+  composer.addEventListener("focusout", () => {
+    closeSkillMenu();
+    flushDraft();
+  });
 
   // ── 新建会话（harness 段 ＋钮与会话浮层动作项共用一条路径；两个入口一个语义）──
   function startNewSession(): void {

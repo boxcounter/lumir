@@ -187,6 +187,7 @@ function composerStateWith(text: string, caret: number, cards: readonly Composer
     text,
     caret,
     cards: cards.map((card, index) => ({ id: index + 1, card, anchor: 0 })),
+    skills: [],
   });
 }
 
@@ -411,7 +412,7 @@ test("composer 物理 Backspace / Delete：非空选区按 state.selection 删�
 });
 
 test("composer 物理 Backspace：修饰键变体 / IME 组合 / 只读保持既有路径", () => {
-  const readOnly = createComposerState({ text: "abcde", caret: 5, cards: [{ card: CARD, anchor: 0 }] }, [EditorState.readOnly.of(true)]);
+  const readOnly = createComposerState({ text: "abcde", caret: 5, cards: [{ card: CARD, anchor: 0 }], skills: [] }, [EditorState.readOnly.of(true)]);
   const cases: { label: string; state: EditorState; inputType: string; isComposing?: boolean; compositionStarted?: boolean }[] = [
     { label: "⌥⌫ 词删除变体", state: composerStateWith("abcde", 5), inputType: "deleteWordBackward" },
     { label: "⌘⌫ 行删除变体", state: composerStateWith("abcde", 5), inputType: "deleteHardLineBackward" },
@@ -434,11 +435,11 @@ test("composer 物理 Backspace：修饰键变体 / IME 组合 / 只读保持既
 
 test("composer ⌃H：只读会话下折叠 caret 与非空选区都不改文档（直接命令入口）", () => {
   const readOnly = [EditorState.readOnly.of(true)];
-  const folded = createComposerState({ text: "x👍🏽y", caret: 5, cards: [{ card: CARD, anchor: 0 }] }, readOnly);
+  const folded = createComposerState({ text: "x👍🏽y", caret: 5, cards: [{ card: CARD, anchor: 0 }], skills: [] }, readOnly);
   const foldedAfter = runComposer(folded, "editor.delete-char-backward");
   assert.deepEqual(composerReading(foldedAfter), composerReading(folded), "折叠 caret：只读不得删除");
 
-  const selected = createComposerState({ text: "abcde", caret: 3, cards: [{ card: CARD, anchor: 0 }] }, readOnly).update({
+  const selected = createComposerState({ text: "abcde", caret: 3, cards: [{ card: CARD, anchor: 0 }], skills: [] }, readOnly).update({
     selection: EditorSelection.range(1, 3),
   }).state;
   const selectedAfter = runComposer(selected, "editor.delete-char-backward");

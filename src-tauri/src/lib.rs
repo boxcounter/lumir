@@ -198,6 +198,7 @@ pub fn run() {
             // abort 为 M348 新增（发送钮停止态点击，design §5「不再继续」）。
             // set_thinking_effort 为 M362 新增（思考程度档位，会话内生效、不写回配置）。
             harness::harness_send,
+            harness::harness_skills_list,
             // 失败轮次的显式重试（change add-harness-turn-retry-nov23）：只重发失败的那一次
             // provider 往返；守卫与 vision 前置闸在 `Runtime::begin_retry`。
             harness::harness_retry,

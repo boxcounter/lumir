@@ -111,7 +111,7 @@ test("行首 anchor：零长度 widget 在 CM 文本内且位于文字之前，t
 });
 
 test("行中 anchor：widget 把一行拆成文字 / 卡片 / 文字，doc 不新增换行", async ({ page }, testInfo) => {
-  await openComposer(page, { version: 3, text: "AB", caret: 0, cards: [{ card: QUOTE, at: 1 }] });
+  await openComposer(page, { version: 3, text: "AB", caret: 0, cards: [{ card: QUOTE, at: 1 }], skills: [] });
   const content = page.locator(".lumir-hp-composer .cm-content");
   await expect(content.locator(".lumir-hp-cwidget > .lumir-hp-qcard")).toHaveCount(1);
   const order = await content.evaluate((el) => [...el.children].flatMap((child) => {
@@ -127,7 +127,7 @@ test("行中 anchor：widget 把一行拆成文字 / 卡片 / 文字，doc 不�
 });
 
 test("应用内 copy 事件逐字节只含选区文本，不带卡片、按钮或哨兵", async ({ page }) => {
-  await openComposer(page, { version: 3, text: "AB", caret: 0, cards: [{ card: QUOTE, at: 1 }] });
+  await openComposer(page, { version: 3, text: "AB", caret: 0, cards: [{ card: QUOTE, at: 1 }], skills: [] });
   await page.evaluate(() => {
     const w = window as unknown as Record<string, any>;
     w.__copied = null;
@@ -147,7 +147,7 @@ test("应用内 copy 事件逐字节只含选区文本，不带卡片、按钮�
 });
 
 test("空选区 copy 不意外复制整段，视觉摘录由 ::before 保留", async ({ page }) => {
-  await openComposer(page, { version: 3, text: "AB", caret: 0, cards: [{ card: QUOTE, at: 1 }] });
+  await openComposer(page, { version: 3, text: "AB", caret: 0, cards: [{ card: QUOTE, at: 1 }], skills: [] });
   const excerpt = page.locator(".lumir-hp-cwidget .lumir-hp-qc-ex");
   await expect(excerpt).toHaveAttribute("data-excerpt", QUOTED);
   expect(await excerpt.evaluate((el) => getComputedStyle(el, "::before").content)).toBe(JSON.stringify(QUOTED));
@@ -168,7 +168,7 @@ test("空选区 copy 不意外复制整段，视觉摘录由 ::before 保留", a
 
 test("实际 AX 树：textbox value 只含文档，摘录只读一次且动作保留可访问名", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "CDP AX 树只在 chromium 提供");
-  await openComposer(page, { version: 3, text: "AB", caret: 0, cards: [{ card: QUOTE, at: 1 }] });
+  await openComposer(page, { version: 3, text: "AB", caret: 0, cards: [{ card: QUOTE, at: 1 }], skills: [] });
   await page.mouse.move(0, 0);
   const cdp = await page.context().newCDPSession(page);
   const { nodes } = await cdp.send("Accessibility.getFullAXTree") as { nodes: Array<{ nodeId: string; parentId?: string; role?: { value?: string }; name?: { value?: string }; value?: { value?: string } }> };

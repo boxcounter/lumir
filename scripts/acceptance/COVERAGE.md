@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：277
-- 验收项（不同 item 编号）：246
-- 分档：core 31 / full 236 / bundle 5 / evidence 5（full 批 = 全部 277 个，含其余各档）
+- 场景：278
+- 验收项（不同 item 编号）：247
+- 分档：core 32 / full 236 / bundle 5 / evidence 5（full 批 = 全部 278 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -264,3 +264,4 @@
 | 723 | `723-harness-composer-inline-cards` | composer 零长度 inline cards：精确块序 + scoped AX + 一步 undo + 纯文本复制 + 草稿 v3 | core |
 | 724 | `724-harness-session-order` | 会话清单按最后活动排序（每文件一行）：恢复不置顶、sidecar 不计入、compact 不沿链、缺时间回落、打开期间不重排 | full |
 | 725 | `725-harness-approval-visibility` | 待批可见性：脱离态下批准卡到达仍有标题栏信号与未读；回底决策后清算；停止撤回无幻影 | full |
+| 726 | `726-harness-skill-hybrid-invocation` | Skill 混合调用：显式 refs 确定性注入 + 自动 skill_load 分控 + deny/非法 fail closed + 普通路径与草稿恢复 | core |

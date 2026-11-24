@@ -2585,6 +2585,14 @@ const COPY_TABLE = {
     zh: "未执行",
     en: "Not executed",
   },
+  D978: { zh: "选择 Skill", en: "Select a Skill" },
+  D979: { zh: "当前 vault 中不存在这个 Skill", en: "This Skill does not exist in the current vault" },
+  D980: { zh: "这个 Skill 禁止用户显式调用", en: "This Skill is not user-invocable" },
+  D981: { zh: "这个 Skill 的调用元数据非法", en: "This Skill has invalid invocation metadata" },
+  D982: {
+    zh: "Skill 选择元数据不合法，消息未发送（{reason}）",
+    en: "The Skill selection metadata is invalid; the message was not sent ({reason})",
+  },
 
   // D899–D927：设置面板的**装载期配置诊断**（M865，M858 finding 的第三条信封
   // `ConfigDiagnostic{code, path, message}`）。消费点是 `src/settings-panel.ts` 的三处直出
@@ -2911,6 +2919,7 @@ export const COPY: Record<CopyKey, CopyEntry> = COPY_TABLE;
  *（细节措辞有损失，是 D6(a) 的明账）——因此模板只使用该 code **全部**构造点都提供的占位名。
  */
 export const ERROR_COPY: Record<string, CopyKey> = {
+  harness_skills_invalid: "D982",
   vault_not_open: "D159",
   vault_list_failed: "D160",
   config_home_unknown: "D161",

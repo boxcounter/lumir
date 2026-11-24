@@ -30,14 +30,15 @@ const restoredContent = (over: Partial<ComposerContent> = {}): ComposerContent =
   text: "原文问题",
   caret: 2,
   cards: [quoteCard("原文摘录")],
+  skills: [],
   ...over,
 });
 
 test("空 composer（无新文本、无新卡片）：原样返回 restored，caret 逐字段不变", () => {
   const restored = restoredContent();
-  const merged = mergeRejectedComposerContent(restored, { text: "", caret: 0, cards: [] });
+  const merged = mergeRejectedComposerContent(restored, { text: "", caret: 0, cards: [], skills: [] });
   assert.equal(merged, restored); // 同一对象：常见路径不做无意义的拷贝
-  assert.deepEqual(merged, { text: "原文问题", caret: 2, cards: [quoteCard("原文摘录")] });
+  assert.deepEqual(merged, { text: "原文问题", caret: 2, cards: [quoteCard("原文摘录")], skills: [] });
 });
 
 test("等待期间打了新文本：原文在前、新输入在后，caret 按原文长度偏移", () => {
@@ -45,6 +46,7 @@ test("等待期间打了新文本：原文在前、新输入在后，caret 按�
     text: "新输入",
     caret: 1,
     cards: [],
+    skills: [],
   });
   assert.equal(merged.text, "原文问题新输入");
   assert.equal(merged.caret, "原文问题".length + 1);
@@ -56,6 +58,7 @@ test("当前 caret 在末尾（null）⇒ 合并后的 caret 仍是末尾（null
     text: "cd",
     caret: null,
     cards: [],
+    skills: [],
   });
   assert.equal(merged.text, "abcd");
   assert.equal(merged.caret, null);
@@ -64,7 +67,7 @@ test("当前 caret 在末尾（null）⇒ 合并后的 caret 仍是末尾（null
 test("卡片两边都保留：原在前、当前在后，顺序确定", () => {
   const merged = mergeRejectedComposerContent(
     restoredContent({ text: "", caret: 0, cards: [quoteCard("原")] }),
-    { text: "", caret: 0, cards: [imageCard("pasted-0f9a8b7c6d5e4f.webp")] },
+    { text: "", caret: 0, cards: [imageCard("pasted-0f9a8b7c6d5e4f.webp")], skills: [] },
   );
   assert.deepEqual(
     merged.cards.map((attachment) => attachment.card.kind),
@@ -75,8 +78,8 @@ test("卡片两边都保留：原在前、当前在后，顺序确定", () => {
 test("同名的图片卡也不去重（不静默删除任何内容）", () => {
   const attachment = imageCard("pasted-0f9a8b7c6d5e4f.webp");
   const merged = mergeRejectedComposerContent(
-    restoredContent({ text: "", caret: 0, cards: [attachment] }),
-    { text: "", caret: 0, cards: [attachment] },
+    restoredContent({ text: "", caret: 0, cards: [attachment], skills: [] }),
+    { text: "", caret: 0, cards: [attachment], skills: [] },
   );
   assert.equal(merged.cards.length, 2);
 });
@@ -86,6 +89,7 @@ test("文本与卡片同时有新输入：两段文本与两类卡片都在，�
     text: "继续",
     caret: 2,
     cards: [imageCard("pasted-0f9a8b7c6d5e4f.webp")],
+    skills: [],
   });
   assert.equal(merged.text, "原文问题继续");
   assert.equal(merged.caret, "原文问题".length + 2);
@@ -104,6 +108,7 @@ test("caret 边界：0 与当前文本末尾都是确定值", () => {
       text: "XY",
       caret: 0,
       cards: [],
+      skills: [],
     }).caret,
     4,
   );
@@ -112,6 +117,7 @@ test("caret 边界：0 与当前文本末尾都是确定值", () => {
       text: "XY",
       caret: 2,
       cards: [],
+      skills: [],
     }).caret,
     6,
   );

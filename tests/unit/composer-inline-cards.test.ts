@@ -160,8 +160,8 @@ test("移除按稳定 id，undo 恢复原堆叠位次", () => {
 test("拒绝合并：当前卡片只平移原文长度，不补换行、不钳行首", async () => {
   const { mergeRejectedComposerContent } = await import("../../src/harness-composer.ts");
   const merged = mergeRejectedComposerContent(
-    { text: "OLD", caret: 3, cards: [placed(1, quote, 1)] },
-    { text: "NEW", caret: 1, cards: [placed(2, image, 0)] },
+    { text: "OLD", caret: 3, cards: [placed(1, quote, 1)], skills: [] },
+    { text: "NEW", caret: 1, cards: [placed(2, image, 0)], skills: [] },
   );
   assert.equal(merged.text, "OLDNEW");
   assert.equal(merged.caret, 4);

@@ -451,7 +451,7 @@ const REGISTRY: VaultListRow[] = [
     tab_count: 0,
   },
 ];
-const DRAFT_A = JSON.stringify({ version: 3, text: "A-DRAFT", caret: 7, cards: [] });
+const DRAFT_A = JSON.stringify({ version: 3, text: "A-DRAFT", caret: 7, cards: [], skills: [] });
 
 test("草稿延迟读跨 vault：旧 vault 的读在途时打字、切走，读回来不得覆盖新输入", async ({ page }) => {
   await stubTauri(page, { ...DEMO_VAULT, vaults: REGISTRY, switchTo: VAULT_B });

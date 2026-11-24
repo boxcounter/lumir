@@ -258,7 +258,21 @@ fn assemble_with_identity(
     let skills = discover_skills(vault_root);
     let mut index = String::new();
     for skill in &skills {
-        index.push_str(&format!("- {}: {}\n", skill.name, skill.description));
+        index.push_str(&format!("- {}: {}", skill.name, skill.description));
+        if !skill.invocation.valid {
+            index.push_str(" [调用元数据非法]");
+        } else {
+            match (
+                skill.invocation.user_invocable,
+                skill.invocation.model_invocable,
+            ) {
+                (true, false) => index.push_str(" [仅用户显式调用]"),
+                (false, true) => index.push_str(" [仅模型自动调用]"),
+                (false, false) => index.push_str(" [双入口均禁用]"),
+                (true, true) => {}
+            }
+        }
+        index.push('\n');
     }
     manifest.push(AssemblySource {
         source: "skill_index",
@@ -316,28 +330,98 @@ fn read_agents_md(path: &Path) -> Option<String> {
     fs::read_to_string(path).ok()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub enum SkillSource {
+    User,
+    Vault,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct SkillInvocation {
+    pub user_invocable: bool,
+    pub model_invocable: bool,
+    pub valid: bool,
+}
+
+impl Default for SkillInvocation {
+    fn default() -> Self {
+        Self {
+            user_invocable: true,
+            model_invocable: true,
+            valid: true,
+        }
+    }
+}
+
 /// 一个已发现的 Skill（双根合并、override 已应用后的清单项）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SkillEntry {
     pub name: String,
     pub description: String,
+    pub source: SkillSource,
+    pub invocation: SkillInvocation,
     /// Skill 目录的绝对路径（skill_load 的根内读取基准）。
     pub dir: PathBuf,
 }
 
-/// 双根发现：user-wide 先入表，vault-wide 同名覆盖（HashMap 后写覆盖先写）。
-/// 每个 Skill = 含 SKILL.md 的目录；name 取目录名，description 取 SKILL.md
-/// frontmatter 的 `description:` 行（无 frontmatter 或无该字段 ⇒ 空描述）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ts_rs::TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct SkillSummary {
+    pub name: String,
+    pub description: String,
+    pub source: SkillSource,
+    pub user_invocable: bool,
+    pub model_invocable: bool,
+    pub invocation_valid: bool,
+}
+
+impl SkillSummary {
+    fn from_entry(entry: &SkillEntry) -> Self {
+        Self {
+            name: entry.name.clone(),
+            description: entry.description.clone(),
+            source: entry.source,
+            user_invocable: entry.invocation.user_invocable,
+            model_invocable: entry.invocation.model_invocable,
+            invocation_valid: entry.invocation.valid,
+        }
+    }
+}
+
+pub fn explicit_skill_name_valid(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    first.is_ascii_alphanumeric()
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+}
+
+pub fn skill_summaries(skills: &[SkillEntry]) -> Vec<SkillSummary> {
+    skills
+        .iter()
+        .filter(|skill| explicit_skill_name_valid(&skill.name))
+        .map(SkillSummary::from_entry)
+        .collect()
+}
+
+/// 双根发现：user-wide 先入表，vault-wide 同名整项覆盖。发现期沿用整文件读取，
+/// 文本只用于元数据解析；正文加载在执行期另行经过权限与入口策略。
 pub fn discover_skills(vault_root: &Path) -> Vec<SkillEntry> {
     let mut by_name: std::collections::HashMap<String, SkillEntry> =
         std::collections::HashMap::new();
     let roots = [
-        home_dir().join(".agents").join("skills"),
-        vault_root.join(".agents").join("skills"),
+        (home_dir().join(".agents").join("skills"), SkillSource::User),
+        (
+            vault_root.join(".agents").join("skills"),
+            SkillSource::Vault,
+        ),
     ];
-    for root in roots {
+    for (root, source) in roots {
         let Ok(entries) = fs::read_dir(&root) else {
-            continue; // 根不存在是常态
+            continue;
         };
         for entry in entries.flatten() {
             let dir = entry.path();
@@ -351,52 +435,101 @@ pub fn discover_skills(vault_root: &Path) -> Vec<SkillEntry> {
             if !skill_md.is_file() {
                 continue;
             }
-            let description = fs::read_to_string(&skill_md)
-                .map(|text| parse_description(&text))
-                .unwrap_or_default();
+            let (description, invocation) = fs::read_to_string(&skill_md)
+                .map(|text| parse_skill_metadata(&text))
+                .unwrap_or_else(|_| (String::new(), SkillInvocation::default()));
             by_name.insert(
                 name.to_string(),
                 SkillEntry {
                     name: name.to_string(),
                     description,
+                    source,
+                    invocation,
                     dir,
                 },
             );
         }
     }
-    // 稳定输出：按名字排序（发现顺序随文件系统返回序，不可依赖）。
     let mut skills: Vec<SkillEntry> = by_name.into_values().collect();
     skills.sort_by(|a, b| a.name.cmp(&b.name));
     skills
 }
 
-/// 从 SKILL.md 文本解析描述：frontmatter（`---` 包裹）里的 `description:` 值；
-/// 无 frontmatter 时取第一个非空行作为兜底描述。
-fn parse_description(text: &str) -> String {
+fn parse_skill_metadata(text: &str) -> (String, SkillInvocation) {
     let trimmed = text.trim_start();
-    if let Some(rest) = trimmed.strip_prefix("---") {
-        // frontmatter 内逐行找 `description:`（简单键值，不引 YAML 依赖）。
-        for line in rest.lines() {
-            let line = line.trim();
-            if line == "---" {
-                break;
-            }
+    let Some(rest) = trimmed.strip_prefix("---") else {
+        return (
+            text.lines()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or("")
+                .trim()
+                .to_string(),
+            SkillInvocation::default(),
+        );
+    };
+    let mut description = String::new();
+    let mut description_seen = false;
+    let mut disable_model = false;
+    let mut user_invocable = true;
+    let mut disable_seen = false;
+    let mut user_seen = false;
+    let mut valid = true;
+    for line in rest.lines() {
+        let line = line.trim();
+        if line == "---" {
+            break;
+        }
+        if !description_seen {
             if let Some(value) = line.strip_prefix("description:") {
-                return value
+                description_seen = true;
+                description = value
                     .trim()
                     .trim_matches('"')
                     .trim_matches('\'')
                     .to_string();
             }
         }
-        String::new()
-    } else {
-        text.lines()
-            .find(|l| !l.trim().is_empty())
-            .unwrap_or("")
-            .trim()
-            .to_string()
+        for (key, seen, target) in [
+            (
+                "disable-model-invocation:",
+                &mut disable_seen,
+                &mut disable_model,
+            ),
+            ("user-invocable:", &mut user_seen, &mut user_invocable),
+        ] {
+            let Some(raw) = line.strip_prefix(key) else {
+                continue;
+            };
+            if *seen {
+                valid = false;
+                continue;
+            }
+            *seen = true;
+            match raw.trim() {
+                "true" => *target = true,
+                "false" => *target = false,
+                _ => valid = false,
+            }
+        }
     }
+    if !valid {
+        return (
+            description,
+            SkillInvocation {
+                user_invocable: false,
+                model_invocable: false,
+                valid: false,
+            },
+        );
+    }
+    (
+        description,
+        SkillInvocation {
+            user_invocable,
+            model_invocable: !disable_model,
+            valid: true,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -404,14 +537,14 @@ mod tests {
     use super::*;
 
     /// HOME 是进程全局，两个用例串行（cargo test 默认并行，不设锁会互相踩）。
-    static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    pub(super) static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// 隔离 HOME 与配置环境的临时夹具（多测串行：env 是进程全局）。
-    struct EnvGuard {
+    pub(super) struct EnvGuard {
         previous_home: Option<std::ffi::OsString>,
     }
     impl EnvGuard {
-        fn new(home: &Path) -> Self {
+        pub(super) fn new(home: &Path) -> Self {
             let previous_home = std::env::var_os("HOME");
             std::env::set_var("HOME", home);
             Self { previous_home }
@@ -426,7 +559,7 @@ mod tests {
         }
     }
 
-    fn tmpdir(name: &str) -> PathBuf {
+    pub(super) fn tmpdir(name: &str) -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("lumir-harness-ctx-{}-{}", name, std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -863,6 +996,8 @@ mod tests {
     /// change `add-harness-vault-workspace-list` 2.3：identity.md 的只读工具句改为
     /// `vault_read / vault_search / vault_list`，并补「找文件先用 vault_list…不用 pwd / ls / 广域
     /// find 探测」两句——identity 段 1917 → 2181 字节，指纹再次更新（QUOTE_REFERENCE 未动）。
+    /// change `add-harness-skill-slash-invocation-nov23`：补显式段头、普通斜杠路径与双入口约定，
+    /// identity 段 2181 → 2550 字节（QUOTE_REFERENCE 未动）。
     #[test]
     fn fixed_segments_keep_migrated_bytes() {
         let identity = IDENTITY.trim_end();
@@ -874,7 +1009,7 @@ mod tests {
                 fnv1a64(quote.as_bytes()),
                 quote.len(),
             ),
-            (0x0ac63947ad031685, 2181, 0x5cba54b785b843b, 1170),
+            (0xef4e1e1ee92064af, 2550, 0x5cba54b785b843b, 1170),
         );
     }
 
@@ -1009,5 +1144,156 @@ mod tests {
         );
         assert!(IDENTITY.contains("不要用 pwd"), "{IDENTITY}");
         assert!(IDENTITY.contains("广域 find"), "{IDENTITY}");
+    }
+}
+
+#[cfg(test)]
+mod skill_invocation_tests {
+    use super::*;
+
+    #[test]
+    fn invocation_defaults_and_matrix_are_independent() {
+        let default = parse_skill_metadata("---\ndescription: demo\n---\nbody").1;
+        assert!(default.valid);
+        assert!(default.user_invocable);
+        assert!(default.model_invocable);
+        assert_eq!(
+            parse_skill_metadata("---\ndescription:\ndescription: second\n---\nbody").0,
+            "",
+            "description 保持旧首值语义，空首值也不被后续字段顶替",
+        );
+
+        let user_only = parse_skill_metadata("---\ndisable-model-invocation: true\n---\nbody").1;
+        assert!(user_only.user_invocable);
+        assert!(!user_only.model_invocable);
+        let model_only = parse_skill_metadata("---\nuser-invocable: false\n---\nbody").1;
+        assert!(!model_only.user_invocable);
+        assert!(model_only.model_invocable);
+        let closed = parse_skill_metadata(
+            "---\ndisable-model-invocation: true\nuser-invocable: false\n---\nbody",
+        )
+        .1;
+        assert!(!closed.user_invocable);
+        assert!(!closed.model_invocable);
+    }
+
+    #[test]
+    fn invocation_invalid_values_fail_closed_and_unknown_fields_are_ignored() {
+        for text in [
+            "---\ndisable-model-invocation: true\ndisable-model-invocation: false\n---\nbody",
+            "---\ndisable-model-invocation: \"true\"\n---\nbody",
+            "---\ndisable-model-invocation: yes\n---\nbody",
+            "---\ndisable-model-invocation: TRUE\n---\nbody",
+            "---\nuser-invocable: no\n---\nbody",
+            "---\nuser-invocable: 0\n---\nbody",
+        ] {
+            let invocation = parse_skill_metadata(text).1;
+            assert!(!invocation.valid, "{text}");
+            assert!(!invocation.user_invocable, "{text}");
+            assert!(!invocation.model_invocable, "{text}");
+        }
+        let unknown = parse_skill_metadata(
+            "---\ndescription: demo\nallow_implicit_invocation: false\nfuture: value\n---\nbody",
+        )
+        .1;
+        assert!(unknown.valid);
+        assert!(unknown.user_invocable);
+        assert!(unknown.model_invocable);
+    }
+
+    #[test]
+    fn vault_override_replaces_source_body_and_invocation_as_one_entry() {
+        let _lock = tests::HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = tests::tmpdir("skill-policy-home");
+        let vault = tests::tmpdir("skill-policy-vault");
+        let _guard = tests::EnvGuard::new(&home);
+        std::fs::create_dir_all(home.join(".agents/skills/demo")).unwrap();
+        std::fs::write(
+            home.join(".agents/skills/demo/SKILL.md"),
+            "---\ndescription: user\nuser-invocable: false\n---\nuser body",
+        )
+        .unwrap();
+        std::fs::create_dir_all(vault.join(".agents/skills/demo")).unwrap();
+        std::fs::write(
+            vault.join(".agents/skills/demo/SKILL.md"),
+            "---\ndescription: vault\ndisable-model-invocation: true\n---\nvault body",
+        )
+        .unwrap();
+        let skills = discover_skills(&vault);
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].description, "vault");
+        assert_eq!(skills[0].source, SkillSource::Vault);
+        assert!(skills[0].dir.starts_with(&vault));
+        assert!(skills[0].invocation.user_invocable);
+        assert!(!skills[0].invocation.model_invocable);
+    }
+
+    #[test]
+    fn summaries_filter_only_explicit_grammar_without_narrowing_discovery() {
+        let _lock = tests::HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = tests::tmpdir("skill-summary-home");
+        let vault = tests::tmpdir("skill-summary-vault");
+        let _guard = tests::EnvGuard::new(&home);
+        for name in ["default", "has.dot", "中文", ".hidden"] {
+            std::fs::create_dir_all(vault.join(".agents/skills").join(name)).unwrap();
+            std::fs::write(
+                vault.join(".agents/skills").join(name).join("SKILL.md"),
+                format!("---\ndescription: {name}\n---\nbody"),
+            )
+            .unwrap();
+        }
+        let discovered = discover_skills(&vault);
+        assert_eq!(discovered.len(), 4);
+        let summaries = skill_summaries(&discovered);
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].name, "default");
+        assert_eq!(summaries[0].source, SkillSource::Vault);
+        let json = serde_json::to_string(&summaries).unwrap();
+        assert!(!json.contains("dir"));
+        let system = assemble_system(&vault).text;
+        for name in ["has.dot", "中文", ".hidden"] {
+            assert!(system.contains(&format!("- {name}: {name}")), "{system}");
+        }
+    }
+
+    #[test]
+    fn identity_and_index_describe_the_hybrid_contract() {
+        assert!(IDENTITY.contains(super::super::turn::EXPLICIT_SKILL_HEADER_PREFIX));
+        assert!(IDENTITY.contains("/tmp"));
+        assert!(IDENTITY.contains("其他可自动调用的技能仍按索引使用 skill_load"));
+        assert!(IDENTITY.contains("标记为仅用户调用的技能不得由模型自行加载"));
+
+        let _lock = tests::HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = tests::tmpdir("skill-index-home");
+        let vault = tests::tmpdir("skill-index-vault");
+        let _guard = tests::EnvGuard::new(&home);
+        for (name, extra) in [
+            ("default", ""),
+            ("user-only", "disable-model-invocation: true\n"),
+            ("model-only", "user-invocable: false\n"),
+            ("invalid", "user-invocable: yes\n"),
+        ] {
+            std::fs::create_dir_all(vault.join(".agents/skills").join(name)).unwrap();
+            std::fs::write(
+                vault.join(".agents/skills").join(name).join("SKILL.md"),
+                format!("---\ndescription: {name}\n{extra}---\nbody"),
+            )
+            .unwrap();
+        }
+        let system = assemble_system(&vault).text;
+        assert!(system.contains("- default: default\n"), "{system}");
+        assert!(!system.contains("- default: default ["), "{system}");
+        assert!(
+            system.contains("- user-only: user-only [仅用户显式调用]"),
+            "{system}"
+        );
+        assert!(
+            system.contains("- model-only: model-only [仅模型自动调用]"),
+            "{system}"
+        );
+        assert!(
+            system.contains("- invalid: invalid [调用元数据非法]"),
+            "{system}"
+        );
     }
 }

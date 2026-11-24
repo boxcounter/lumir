@@ -1692,6 +1692,15 @@ fn vault_scope(vault: &crate::commands::VaultState) -> Result<VaultScope, Comman
     })
 }
 
+#[tauri::command(rename_all = "snake_case")]
+pub fn harness_skills_list(
+    vault: tauri::State<'_, crate::commands::VaultState>,
+) -> Result<Vec<context::SkillSummary>, CommandError> {
+    let scope = vault_scope(&vault)?;
+    let skills = context::discover_skills(&scope.root);
+    Ok(context::skill_summaries(&skills))
+}
+
 /// 发送一条提问。立即返回：工具循环在 `lumir-harness-llm` 专线程跑，进展经
 /// `harness:event` 事件推送；上下文块 `context_json` 是 TS 侧组装的
 /// `{path, selection?} | {path, viewport_range?}`（宽容解析，见 [`turn::parse_context`]）。
@@ -1711,9 +1720,17 @@ pub fn harness_send(
     app: tauri::AppHandle,
     parts_json: String,
     context_json: String,
+    skills_json: String,
 ) -> Result<(), CommandError> {
     let scope = vault_scope(&vault)?;
     let config = config::load()?.config.harness;
+    let skill_names = serde_json::from_str::<Vec<String>>(&skills_json).map_err(|e| {
+        CommandError::new(
+            "harness_skills_invalid",
+            format!("Skill 选择元数据必须是字符串数组：{e}"),
+        )
+        .param("reason", e.to_string())
+    })?;
     let parts = attachments::parse_delivery_parts(&parts_json)?;
     // 发送期缺失态（task 4.7）：没有 provider / 缺 Key / 缺 Base URL / 没有模型时在建会话之前
     // 给出人话错误——顺序在图片闸之前，否则「没有 provider 却附了图」会报成图片不支持。
@@ -1731,6 +1748,7 @@ pub fn harness_send(
         config,
         parts,
         context_section,
+        skill_names,
         // 交互发送没有运行交接契约：注册表原样暴露（`None`）。
         None,
         None,
@@ -1801,6 +1819,7 @@ fn start_turn(
     config: HarnessConfig,
     parts: Vec<attachments::DeliveryPart>,
     context_section: Option<String>,
+    skill_names: Vec<String>,
     tool_policy: Option<run::ToolPolicy>,
     completion: Option<Box<dyn FnOnce() + Send>>,
     origin: turn::TurnOrigin,
@@ -1823,6 +1842,7 @@ fn start_turn(
                 config,
                 parts,
                 context_section,
+                skill_names,
                 origin,
             );
             if let Some(completion) = completion {
@@ -2032,6 +2052,7 @@ pub fn harness_cron_run(
         config,
         parts,
         None,
+        Vec::new(),
         // 契约的工具白名单原样交给运行层：`SessionContext` 只暴露其中声明的工具。
         // 定时 / 点击两个槽位共用这一条链路（点击槽也用契约值，不回落交互全量）。
         Some(spec.tool_policy),

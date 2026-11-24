@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "responses": [
+    { "text": "显式选择回合完成。" },
+    {
+      "text": "自动策略回合开始。",
+      "tool_calls": [
+        { "id": "hybrid-auto-deploy", "name": "skill_load", "arguments": "{\"name\":\"acc-deploy\"}" },
+        { "id": "hybrid-auto-background", "name": "skill_load", "arguments": "{\"name\":\"acc-background\"}" },
+        { "id": "hybrid-auto-invalid", "name": "skill_load", "arguments": "{\"name\":\"acc-invalid\"}" },
+        { "id": "hybrid-auto-default", "name": "skill_load", "arguments": "{\"name\":\"default\"}" }
+      ]
+    },
+    { "text": "自动策略回合完成。" },
+    { "text": "普通路径回合完成。" },
+    { "text": "候选选择回合完成。" },
+    { "text": "历史恢复回合完成。" }
+  ]
+}
