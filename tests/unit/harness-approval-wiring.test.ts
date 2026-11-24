@@ -62,6 +62,8 @@ function switchCaseOf(source: string, label: string): string {
 
 const HAS = functionBodyOf(PANEL_SOURCE, "hasPendingApprovals");
 const STAGE = functionBodyOf(PANEL_SOURCE, "applyStage");
+const MARK_OUTPUT = functionBodyOf(PANEL_SOURCE, "markAssistantOutputStarted");
+const SEND_PHASE = functionBodyOf(PANEL_SOURCE, "applySendPhase");
 const BADGE = functionBodyOf(PANEL_SOURCE, "applyActivityBadge");
 const REFRESH = functionBodyOf(PANEL_SOURCE, "refreshApprovalSignal");
 const WITHDRAW = functionBodyOf(PANEL_SOURCE, "withdrawPendingApprovals");
@@ -99,6 +101,30 @@ test("单一判据：applyStage / applyActivityBadge / 新一轮清 stale 都只
   assertNoMatch(BADGE, /pendingApprovals\.(size|has)/, "徽标不得自己读集合");
   const started = PROJECT.slice(PROJECT.indexOf('case "turn_started":'), PROJECT.indexOf('case "terminal":'));
   assert.match(started, /prev\.phase === "idle"\) withdrawPendingApprovals\("stale"\)/, "清 stale 只认「上一相位空闲」；集合空也要清配对表");
+});
+
+test("纯文案重施零布局副作用：applyStage / 首个产出 / 待批重施 / relabelOnly 均禁测量与置尾", () => {
+  const sideEffects = /scrollHeight|layoutMutated|ensureTailLast|jumpToBottom/;
+  for (const [name, body] of [
+    ["applyStage", STAGE],
+    ["markAssistantOutputStarted", MARK_OUTPUT],
+    ["refreshApprovalSignal", REFRESH],
+  ] as const) {
+    assertNoMatch(body, sideEffects, `${name} 只更新文案，不得读取布局、置尾或强制回底`);
+  }
+
+  const relabelStart = SEND_PHASE.indexOf("if (relabelOnly)");
+  const heightBefore = SEND_PHASE.indexOf("const heightBefore");
+  assert.ok(relabelStart >= 0, "applySendPhase 必须有 relabelOnly 短路");
+  assert.ok(heightBefore > relabelStart, "relabelOnly 必须在任何 scrollHeight 测量之前返回");
+  const relabel = SEND_PHASE.slice(relabelStart, heightBefore);
+  assertNoMatch(relabel, sideEffects, "语言重绘短路不得测量、置尾或回底");
+  assert.match(relabel, /applyStage\(\);/, "语言重绘复用唯一文案写点");
+
+  // 反例自证：向唯一文案写点注入任一副作用，判据必须能把它判红。
+  for (const mutation of ["transcript.scrollHeight", "follow.layoutMutated(0)", "ensureTailLast()", "follow.jumpToBottom()"]) {
+    assert.ok(sideEffects.test(`${STAGE}\n${mutation};`), `反例未被判红：${mutation}`);
+  }
 });
 
 // ── 2. 三个输出面：同源写点与幂等写入 ───────────────────────────────────────

@@ -62,7 +62,10 @@
         提示中心 `(cx0, cy0)`，改造后断言 `|cx-cx0| ≤1px`、`|cy-cy0| ≤1px`；只测尾行显隐前后不变
         抓不到整体 2px 上移；MUST NOT 以排版前旧基线为对账起点
       - running 中触发 `compact` 标记、无 assistant 宿主的工具记录、快照 assistant 重建后，
-        `lastElementChild` 仍是尾行
+        `lastElementChild` 仍是尾行；孤儿工具另有「空 assistant + tool」快照 fixture，证明工具块直接在
+        transcript 顶层、无 assistant 宿主且末位仍为尾行（m756）
+      - 纯文案重施零测量：wiring 反例覆盖 `applyStage` / 首个产出 / 待批重施 / `relabelOnly`，
+        真实 ⌘⇧L 下 `scrollHeight` getter 计数为 0，identity / `data-phase` / 条形 / 滚动位不变
 - [x] 1.2a 集成测试（m347 / m756）：尾行在 transcript 内 + `enter_snapshot(in_flight=true) +
       pending` → `.lumir-hp-stage` 读「等待批准…」、标题栏段 / toggle 信号仍在（前置 change 的承载），
       MUST NOT 读「正在继续本轮…」；脱离态待批到达 → 标题栏信号仍在、`scrollTop` ≤1px
@@ -176,11 +179,11 @@
       9. 空态几何：仅空态 + 尾行时，尾行显隐前后提示位置不动（截图证据）
       10. `auto_turn_started` 开始一轮（**不要用普通发送**）：上滚 detached 后阅读行不移动、不出现
           未读圆点（截图证据）
-- [ ] 6.2 已回扫既有验收场景 88 / 97 / 104：阶段行 AX 文本断言逐字不变，静态校验 PASS；
-      真机复跑归主会话，当前不得标行为已验
-- [ ] 6.3 证据落 `.local/acceptance/<批次>/`（git 外）；FAIL 项逐条定位，不把偶发超窗当产品
-      缺陷，也不静默重跑
-- [ ] 6.4 证据目录用绝对路径 `ls` 一遍再写进报告（REVIEW.md「证据只在终端跑过」条）
+- [x] 6.2 已回扫既有验收场景 88 / 97 / 104：阶段行 AX 文本断言逐字不变，静态校验与真机均 PASS；
+      727 的工具窗口修正后同批其余步骤保持通过（`acceptance-727-related.log` / r2 后续日志）
+- [x] 6.3 证据落 `.local/acceptance/2026-11-24-progress-tail-r2/`（git 外）；初次工具窗口与 stopping
+      窗口 FAIL 已逐条定位并修 fixture 时序，未静默重跑或把终态截图冒充生成中
+- [x] 6.4 证据目录已用绝对路径 `ls` 核对（REVIEW.md「证据只在终端跑过」条）
 - [x] 6.5 未动标题栏内元素的事件监听，无需另跑场景 39（REVIEW.md「标题栏 mousedown」条）
 
 ## 7. 规格与文档
@@ -205,7 +208,8 @@
 - [ ] 8.4 已完整跑 `LUMIR_VISUAL_PORT=4393 scripts/gate.sh visual` 与像素层：
       `GATE RESULT: 14/15 PASS（SKIP 0）`，退出码 1；10 个 running 基线差异待 Alex 过目，
       按 D6 未更新，故本项不能勾「通过」
-- [ ] 8.5 真机场景 PASS；证据指针可 `ls`
+- [x] 8.5 真机 727 PASS（1/1，40 断言，92.7s，runner 退出码 0）；证据指针已 `ls`：
+      `.local/acceptance/2026-11-24-progress-tail-r2/727-harness-progress-tail/`
 - [x] 8.6 视觉基线未更新；候选截图已落主仓指定目录，「是否更新」留 Alex 过目后裁决
 
 ## 9. 信息卫生

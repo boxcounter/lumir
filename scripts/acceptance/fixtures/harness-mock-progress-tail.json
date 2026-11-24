@@ -34,7 +34,9 @@
       ]
     },
     {
-      "text": "PT-TOOL-END 工具先行轮次完成。"
+      "text": "PT-TOOL-STREAM-A 工具结果已返回，后续正文仍在生成。PT-TOOL-END 工具先行轮次完成。",
+      "chunks": ["PT-TOOL-STREAM-A 工具结果已返回，后续正文仍在生成。", "PT-TOOL-END 工具先行轮次完成。"],
+      "chunk_delay_ms": 10000
     },
     {
       "text": "PT-APPROVAL-START 准备一处需要批准的修改。",
@@ -51,14 +53,22 @@
       "text": "PT-APPROVAL-END 批准后的轮次完成。"
     },
     {
-      "text": "PT-STOP-A 第一片已到达。PT-STOP-B 第二片不应在停止后出现。",
-      "chunks": ["PT-STOP-A 第一片已到达。", "PT-STOP-B 第二片不应在停止后出现。"],
-      "chunk_delay_ms": 9000
+      "text": "PT-STOP-A 第一片已到达。",
+      "tool_calls": [
+        {
+          "id": "call_pt_stop_sleep",
+          "name": "cli_run",
+          "arguments": "{\"command\":\"sleep\",\"args\":[\"2\"],\"purpose\":\"等待两秒以观测停止中状态\"}"
+        }
+      ]
     },
     {
       "text": "PT-TAKEOVER-A 切走前的第一片。PT-TAKEOVER-B 第二片。PT-TAKEOVER-C 接管后的最后一片。",
       "chunks": ["PT-TAKEOVER-A 切走前的第一片。", "PT-TAKEOVER-B 第二片。", "PT-TAKEOVER-C 接管后的最后一片。"],
       "chunk_delay_ms": 10000
+    },
+    {
+      "text": "PT-STOP-B 第二片不应在停止后出现。"
     }
   ]
 }

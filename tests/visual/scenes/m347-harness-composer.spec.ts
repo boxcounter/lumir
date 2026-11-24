@@ -1139,6 +1139,67 @@ test("尾行结构：transcript 末位 / 节点与几何恒定 / 顶层追加兜
   await expect(transcript.locator(":scope > :not(.lumir-hp-progress):not(.lumir-hp-empty)").last()).toHaveClass(/lumir-hp-error/);
 });
 
+test("语言重绘零布局测量：真实切换只换文案，identity / phase / 条形 / 滚动位不变", async ({ page }) => {
+  await openProgressTailPanel(page);
+  await page.locator(".lumir-hp-composer .cm-content").fill("语言重绘零测量");
+  await page.locator(".lumir-hp-send").click();
+  const progress = page.locator(".lumir-hp-progress");
+  const transcript = page.locator(".lumir-hp-transcript");
+  await expect(progress).toBeVisible();
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("等待响应…");
+
+  await transcript.evaluate((el) => {
+    const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, "scrollHeight");
+    if (descriptor?.get === undefined) throw new Error("scrollHeight getter 不可探针化");
+    const getter = descriptor.get;
+    const progressEl = el.querySelector(".lumir-hp-progress");
+    const bar = el.querySelector(".lumir-hp-bar-fill");
+    if (progressEl === null || bar === null) throw new Error("尾行探针目标不在场");
+    (window as unknown as Record<string, unknown>).__relabelProbe = {
+      count: 0,
+      node: progressEl,
+      phase: (progressEl as HTMLElement).dataset.phase,
+      scrollTop: el.scrollTop,
+      animation: getComputedStyle(bar).animationName,
+    };
+    Object.defineProperty(el, "scrollHeight", {
+      configurable: true,
+      get() {
+        const probe = (window as unknown as { __relabelProbe: { count: number } }).__relabelProbe;
+        probe.count += 1;
+        return getter.call(this);
+      },
+    });
+  });
+
+  await page.locator(".lumir-hp-composer .cm-content").click();
+  await page.keyboard.press("Meta+Shift+L");
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("Waiting for a response…");
+  const after = await transcript.evaluate((el) => {
+    const probe = (window as unknown as {
+      __relabelProbe: { count: number; node: Element; phase: string; scrollTop: number; animation: string };
+    }).__relabelProbe;
+    const progressEl = el.querySelector(".lumir-hp-progress")!;
+    const result = {
+      count: probe.count,
+      sameNode: probe.node === progressEl,
+      phaseBefore: probe.phase,
+      phaseAfter: (progressEl as HTMLElement).dataset.phase,
+      scrollTopBefore: probe.scrollTop,
+      scrollTopAfter: el.scrollTop,
+      animationBefore: probe.animation,
+      animationAfter: getComputedStyle(el.querySelector(".lumir-hp-bar-fill")!).animationName,
+    };
+    Reflect.deleteProperty(el, "scrollHeight");
+    return result;
+  });
+  expect(after.count, "语言重绘不得读取 transcript.scrollHeight").toBe(0);
+  expect(after.sameNode).toBe(true);
+  expect(after.phaseAfter).toBe(after.phaseBefore);
+  expect(after.scrollTopAfter).toBe(after.scrollTopBefore);
+  expect(after.animationAfter).toBe(after.animationBefore);
+});
+
 // 施工前由排版归档后的实现实测回填；不得按印象改这个对账基准。
 const PRE_CHANGE_IDLE_CENTER = { cx: 959.75, cy: 338 };
 

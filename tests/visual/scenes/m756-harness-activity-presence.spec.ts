@@ -41,10 +41,12 @@ const HISTORY = Array.from({ length: 6 }, (_, index) => [
   { role: "assistant", text: `H${index * 2 + 2} 历史回答 ${index + 1}。${"正文占位。".repeat(12)}` },
 ]).flat();
 
+type ActivityMessage = { role: string } & Record<string, unknown>;
+
 /** 桩的可调参数（r1 P1 的两条回归各用一组）。 */
 interface ActivityStubOptions {
-  /** `harness_state` 的 messages（键集合与 Rust `PanelMessage` 同形）。 */
-  messages?: Array<{ role: string; text: string }>;
+  /** `harness_state` 的 messages（键集合与 Rust `PanelMessage` 同形，tool 记录保留 name/summary/status）。 */
+  messages?: ActivityMessage[];
   /** 快照的呈现读；缺省 false（空闲）。 */
   inFlight?: boolean;
   /** 快照的待决批准列表（change fix-harness-approval-visibility-nov23）；缺省空。 */
@@ -52,7 +54,7 @@ interface ActivityStubOptions {
   /** `harness_send` 的拒绝形态（缺省成功）。 */
   sendReject?: { code: string; message: string } | null;
   /** cron 点击运行：`harness_cron_run` 成功 + 运行开始后 `harness_state` 换成 `cronMessages`。 */
-  cronMessages?: Array<{ role: string; text: string }>;
+  cronMessages?: ActivityMessage[];
   /** 第 `fromCall` 次起（1 基）的快照应答延迟毫秒数：给出「重取已发出、响应未回」的窗口，
    *  用来判「响应回来时会不会把视口拽走」。 */
   stateDelayFromCall?: { fromCall: number; ms: number };
@@ -77,11 +79,10 @@ async function stubHarnessActivity(page: Page, options: ActivityStubOptions = {}
     // 「非空 / 空列表」两档因此不必各起一套桩）。
     w.__pendingApprovals = opts.pendingApprovals ?? [];
     let cronStarted = false;
-    const snapshot = (messages: Array<{ role: string; text: string }>) =>
+    const snapshot = (messages: ActivityMessage[]) =>
       JSON.stringify({
         messages: messages.map((m) => ({
-          role: m.role,
-          text: m.text,
+          ...m,
           ts: 1759912345,
         })),
         usage: { ctx_pct: 0, cache_pct_session: 0, has_usage: false },
@@ -709,6 +710,26 @@ test("进入快照在途但无待批：不出现待批状态（对照组）", as
   await expect(page.locator(".lumir-hp-stage")).not.toHaveText("等待响应…");
   await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
   await expect(page.locator(".lumir-hp-msg-assistant")).toContainText("接管前已经产生的快照正文。");
+  expect(await page.locator(".lumir-hp-progress").evaluate((el) => el.parentElement?.lastElementChild === el)).toBe(true);
+});
+
+test("快照孤儿工具：空 assistant 不建宿主，顶层工具块之后仍是输出尾行", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarnessActivity(page, {
+    inFlight: true,
+    pendingApprovals: [],
+    messages: [
+      { role: "assistant", text: "" },
+      { role: "tool", name: "vault_read", summary: "activity-note.md", status: "done" },
+    ],
+  });
+  await openActivityPanel(page);
+
+  const tools = page.locator(".lumir-hp-transcript > .lumir-hp-tools");
+  await expect(tools).toHaveCount(1);
+  await expect(tools.locator(".lumir-hp-tool-row")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-msg-assistant")).toHaveCount(0);
+  expect(await tools.evaluate((el) => el.parentElement?.classList.contains("lumir-hp-transcript") ?? false)).toBe(true);
   expect(await page.locator(".lumir-hp-progress").evaluate((el) => el.parentElement?.lastElementChild === el)).toBe(true);
 });
 

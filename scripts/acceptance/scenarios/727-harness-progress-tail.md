@@ -14,6 +14,8 @@ config:
     provider: mock
     fixture: "$fixtures/harness-mock-progress-tail.json"
     permission_mode: read_only
+    permissions:
+      allow: ["cli_run(sleep *)"]
 steps:
   - name: 写入合成后台 agent 定义
     do: vaultWrite
@@ -99,18 +101,21 @@ steps:
   - name: 发送
     do: key
     key: enter
-  - name: 等工具调用到达（本响应没有 text_chunk）
+  - name: 等工具调用到达并停在后续正文分片间隔（工具已产出、响应未终态）
     do: waitFor
     waitFor:
-      has: ["vault_read"]
+      has: ["vault_read", "PT-TOOL-STREAM-A 工具结果已返回，后续正文仍在生成。"]
+      not: ["PT-TOOL-END 工具先行轮次完成。"]
     timeoutMs: 20000
     expect:
-      - label: 首个有效产出是工具时也离开等待，读生成档
-        ax: { has: "正在生成回复…" }
+      - label: 首个有效产出是工具时也离开等待，读生成档（此时 PT-TOOL-END 尚未到达）
+        ax: { has: "正在生成回复…", not: "PT-TOOL-END 工具先行轮次完成。" }
       - label: 不停在旧实现的等待档
         ax: { not: "等待响应…" }
       - label: 工具细节由工具行承担
         ax: { has: "vault_read" }
+      - label: 停止钮证明轮次仍在途
+        node: { role: AXButton, name: "^停止$", present: true }
       - shot: 05-工具先行-生成档
 
   - name: 等工具轮次终态
