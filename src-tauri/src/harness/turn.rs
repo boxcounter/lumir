@@ -261,8 +261,8 @@ fn register_failed<C: RunContext>(
 /// `catch_unwind` 兜底：panic 路径发 error 事件并照常释放 busy（会话锁已改为
 /// poison 容忍，恐慌后仍可取回）。
 #[allow(clippy::too_many_arguments)] // 发送与 cron 共用的线程入口；显式技能名是本轮输入的一部分。
-pub fn run_turn(
-    app: tauri::AppHandle,
+pub fn run_turn<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     runtime: Runtime,
     scope: VaultScope,
     config: HarnessConfig,
@@ -288,8 +288,8 @@ pub fn run_turn(
 /// 显式重试的线程入口（change add-harness-turn-retry-nov23 design §4.2 第 7 条）：
 /// `begin_retry` 已消费 `failed` 并 `begin_turn`（相位 Running），本函数**MUST NOT** 再调
 /// `acquire_turn`。线程体与发送路径同一份实现（sink / client / catch_unwind / release / title）。
-pub fn run_turn_resume(
-    app: tauri::AppHandle,
+pub fn run_turn_resume<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     runtime: Runtime,
     scope: VaultScope,
     config: HarnessConfig,
@@ -306,8 +306,8 @@ pub fn run_turn_resume(
 }
 
 /// `run_turn` 与 `run_turn_resume` 共用的线程体。
-fn run_turn_inner(
-    app: tauri::AppHandle,
+fn run_turn_inner<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     runtime: Runtime,
     scope: VaultScope,
     config: HarnessConfig,
@@ -2092,9 +2092,9 @@ pub(crate) fn run_auto_turn_acquired(
 }
 
 /// AppHandle 事件发射（真机路径；payload 是 JSON 对象，m303 零改动接入）。
-pub(crate) struct TauriEventSink(pub(crate) tauri::AppHandle);
+pub(crate) struct TauriEventSink<R: tauri::Runtime>(pub(crate) tauri::AppHandle<R>);
 
-impl EventSink for TauriEventSink {
+impl<R: tauri::Runtime> EventSink for TauriEventSink<R> {
     fn emit(&self, payload: serde_json::Value) {
         use tauri::Emitter;
         let _ = self.0.emit(events::EVENT_NAME, payload);
@@ -2106,14 +2106,14 @@ impl EventSink for TauriEventSink {
 ///
 /// `forward` 为 `None` = 无人值守运行槽：事件**不**发往面板（其 transcript 不属于用户当前
 /// 会话）；为 `Some` 时照旧转发（交互槽位行为一字不变）。
-struct TerminalSink {
+struct TerminalSink<R: tauri::Runtime> {
     /// 弱引用（见 `run_turn` 构造点）：运行实例结束后终态无处可记，静默跳过即可
     /// （此时也没有回执消费者）。
     runtime: super::WeakRuntime,
-    forward: Option<TauriEventSink>,
+    forward: Option<TauriEventSink<R>>,
 }
 
-impl EventSink for TerminalSink {
+impl<R: tauri::Runtime> EventSink for TerminalSink<R> {
     fn emit(&self, payload: serde_json::Value) {
         if let Some(runtime) = self.runtime.upgrade() {
             match payload["type"].as_str() {

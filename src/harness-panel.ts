@@ -4427,14 +4427,18 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   let skillCatalogInFlight: { vault: string | null; epoch: number } | null = null;
   let programmaticComposerReset = 0;
 
-  function closeSkillMenu(): void {
+  function hideSkillMenu(): void {
     skillMenuState = null;
-    skillMenuIntentFrom = null;
-    skillTokenFrom = null;
     skillMenuEl.hidden = true;
     skillMenuEl.replaceChildren();
     unregisterEscapeLayer("harness-skill-menu");
     composerView?.contentDOM.removeAttribute("aria-activedescendant");
+  }
+
+  function closeSkillMenu(): void {
+    hideSkillMenu();
+    skillMenuIntentFrom = null;
+    skillTokenFrom = null;
   }
 
   function resetSkillCatalog(): void {
@@ -4448,7 +4452,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   function renderSkillMenu(): void {
     const state = skillMenuState;
     if (state === null) {
-      closeSkillMenu();
+      hideSkillMenu();
       return;
     }
     skillMenuEl.hidden = false;

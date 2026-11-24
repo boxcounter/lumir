@@ -150,6 +150,19 @@ test("草稿恢复 catalog 恰好一次且零新键入不打开候选", async ({
   await expect(page.locator(".lumir-hp-skill-menu")).toBeHidden();
 });
 
+test("deferred catalog 裸 / 回包后显示合法项且连续输入不重复强制请求", async ({ page }) => {
+  await setup(page, null, true);
+  const menu = page.locator(".lumir-hp-skill-menu");
+  await page.keyboard.type("/");
+  await expect(menu).toBeHidden();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __skillCalls: number }).__skillCalls)).toBe(1);
+  await page.evaluate(() => (window as unknown as { __resolveSkills: () => void }).__resolveSkills());
+  await expect(menu).toBeVisible();
+  await expect(menu.locator(".lumir-hp-skill-name")).toHaveText(["acc-skill-abc", "tmp-acc", "acc-deploy"]);
+  await page.keyboard.type("acc");
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __skillCalls: number }).__skillCalls)).toBe(1);
+});
+
 test("Esc/失焦/切会话后 catalog 回包不得复活候选", async ({ page }) => {
   for (const cancel of ["escape", "blur", "session"] as const) {
     await setup(page, null, true);

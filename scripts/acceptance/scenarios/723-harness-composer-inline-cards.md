@@ -67,8 +67,13 @@ steps:
   - name: 移到第 5 行并选取 QGAMMA
     do: keys
     keys: ["ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+shift+n"]
+  - name: 等第三次选区对应的摘录按钮进入 AX 树
+    do: waitFor
+    waitFor:
+      has: ["/AXButton \\(摘录到对话\\)/"]
+    timeoutMs: 10000
   - name: 行中插入第三张卡（拆行与卡片同一 history 步）
-    do: click
+    do: clickInNode
     target: { role: AXButton, name: "摘录到对话" }
     expect:
       - label: 第三张卡在场且移除钮总数为 3

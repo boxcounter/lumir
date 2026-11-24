@@ -1724,10 +1724,10 @@ fn parse_explicit_skill_names(skills_json: &str) -> Result<Vec<String>, CommandE
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn harness_send(
+pub fn harness_send<R: tauri::Runtime>(
     vault: tauri::State<'_, crate::commands::VaultState>,
     runtime: tauri::State<'_, Runtime>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<R>,
     parts_json: String,
     context_json: String,
     skills_json: String,
@@ -1816,8 +1816,8 @@ pub fn harness_retry(
 /// 之后挂到 runtime 上，`SessionContext` 构造时读取并过滤工具定义，`release_turn` 清掉。
 /// 交互发送传 `None`（没有交接契约 ⇒ 完整注册表）；cron 两个槽位都传契约值。
 #[allow(clippy::too_many_arguments)] // 两个入口共用这一条运行实现；拆结构体只会把参数换个容器。
-fn start_turn(
-    app: tauri::AppHandle,
+fn start_turn<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     runtime: Runtime,
     scope: VaultScope,
     config: HarnessConfig,
@@ -3843,29 +3843,5 @@ mod tests {
         assert_eq!(error.code, "harness_busy");
         runtime.release_turn(&scope);
         let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn invalid_skills_json_does_not_create_session_or_queue_input() {
-        let _lock = xdg_test_lock();
-        let root =
-            std::env::temp_dir().join(format!("lumir-skill-invalid-send-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
-        let previous = std::env::var_os("XDG_CONFIG_HOME");
-        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
-        let error = parse_explicit_skill_names("not-json").unwrap_err();
-        assert_eq!(error.code, "harness_skills_invalid");
-        let no_sessions = jsonl::vault_sessions_dir("invalid-send")
-            .ok()
-            .and_then(|dir| std::fs::read_dir(dir).ok())
-            .map(|mut entries| entries.next().is_none())
-            .unwrap_or(true);
-        assert!(no_sessions);
-        match previous {
-            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
-            None => std::env::remove_var("XDG_CONFIG_HOME"),
-        }
-        let _ = std::fs::remove_dir_all(root);
     }
 }

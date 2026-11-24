@@ -441,3 +441,88 @@ fn harness_write_image_lands_in_the_vault_that_started_it() {
         "切到 B 之后 MUST NOT 新建 / 改写 B 的附件目录"
     );
 }
+
+#[test]
+fn harness_send_rejects_invalid_skill_json_without_changing_session() {
+    let _serial = crate::command_test_gate::serial();
+    let _xdg_lock = crate::harness::xdg_test_lock();
+    let config_root = TempDir::new("invalid-skill-json-config");
+    let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+    std::env::set_var("XDG_CONFIG_HOME", config_root.path().join("xdg"));
+    let vault_root = TempDir::new("invalid-skill-json-vault");
+    let fixture = config_root.path().join("fixture.json");
+    std::fs::write(
+        &fixture,
+        r#"{"version":1,"responses":[{"text":"baseline"}]}"#,
+    )
+    .expect("write mock fixture");
+    std::fs::create_dir_all(config_root.path().join("xdg/lumir")).expect("create config dir");
+    std::fs::write(
+        config_root.path().join("xdg/lumir/config.json"),
+        serde_json::json!({
+            "harness": {
+                "provider": "mock",
+                "providers": {"mock": {"preset": "mock", "fixture": fixture}},
+            }
+        })
+        .to_string(),
+    )
+    .expect("write mock config");
+
+    let state = committed_state(&vault_root.path(), VAULT_ID);
+    let (root, policy, vault_id) = state.root_policy_and_id().expect("scope");
+    let scope = crate::harness::VaultScope {
+        root,
+        policy,
+        vault_id,
+    };
+    let runtime = crate::harness::Runtime::default();
+    let config = crate::config::test_mock(None);
+    runtime.acquire_turn(&scope, &config).expect("seed session");
+    let baseline_input = runtime
+        .with_session(&scope, |session| {
+            session.push_input(crate::harness::session::user_item("BASELINE-INPUT"));
+            session.input().to_vec()
+        })
+        .expect("seed baseline input");
+    runtime.release_turn(&scope);
+    let baseline_session = runtime
+        .current_session_id(&scope)
+        .expect("baseline session");
+
+    let app = tauri::test::mock_builder()
+        .invoke_handler(tauri::generate_handler![crate::harness::harness_send])
+        .manage(state)
+        .manage(runtime.clone())
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .expect("mock app");
+    let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .expect("mock webview");
+    let dispatcher = Dispatcher::start(webview.as_ref().clone());
+
+    for skills_json in ["not-json", "{}", r#"[1]"#] {
+        let response = dispatcher
+            .dispatch(
+                "harness_send",
+                serde_json::json!({
+                    "parts_json": "[]",
+                    "context_json": "",
+                    "skills_json": skills_json,
+                }),
+            )
+            .recv_timeout(Duration::from_secs(5))
+            .expect("invalid send must settle");
+        let error = response.expect_err("invalid skills_json must reject");
+        assert_eq!(error["code"], "harness_skills_invalid", "{error}");
+        let current_input = runtime
+            .with_session(&scope, |session| session.input().to_vec())
+            .expect("read session input");
+        assert_eq!(current_input, baseline_input, "非法输入不得改变既有 input");
+        assert_eq!(
+            runtime.current_session_id(&scope),
+            Some(baseline_session.clone())
+        );
+    }
+    dispatcher.finish();
+}

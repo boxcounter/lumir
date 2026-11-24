@@ -1094,12 +1094,12 @@ impl CronRuntime {
 /// 调度工具端口的 tauri 实现（change add-cron-conversational-registration tasks 2.2）：
 /// 落盘逻辑与「什么是一条合法任务」都在 `cron.rs`（无 tauri 依赖），本结构只补两件接线层才有
 /// 的东西——配置目录解析与重载通道。
-pub struct CronToolPort {
-    app: tauri::AppHandle,
+pub struct CronToolPort<R: tauri::Runtime> {
+    app: tauri::AppHandle<R>,
 }
 
-impl CronToolPort {
-    pub fn new(app: tauri::AppHandle) -> Self {
+impl<R: tauri::Runtime> CronToolPort<R> {
+    pub fn new(app: tauri::AppHandle<R>) -> Self {
         Self { app }
     }
 
@@ -1139,7 +1139,7 @@ impl CronToolPort {
     }
 }
 
-impl cron::CronPort for CronToolPort {
+impl<R: tauri::Runtime> cron::CronPort for CronToolPort<R> {
     fn create(
         &self,
         draft: cron::CronTaskDraft,

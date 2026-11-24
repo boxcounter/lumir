@@ -214,15 +214,20 @@ steps:
       has: ["历史恢复回合完成。"]
     timeoutMs: 20000
     expect:
-      - label: 恢复后旧显式正文与自动工具结果仍在请求历史
+      - label: 恢复产生新会话且此刻只有恢复这一条请求，旧文件不得冒充证据
+        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", count: { pattern: '"kind":"llm_request"', exact: 1 } }
+      - label: 恢复产生的请求含旧显式正文
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-TMP-BODY" }
-      - label: 恢复后旧自动工具结果仍在请求历史
+      - label: 恢复产生的请求含旧自动工具结果
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-BACKGROUND-BODY" }
       - label: 恢复面板不显示显式正文
         ax: { not: "ACC-TMP-BODY" }
       - label: 恢复面板也不显示自动工具正文
         ax: { not: "ACC-BACKGROUND-BODY" }
 
+  - name: 恢复会话不代用户聚焦 composer，真实点击建立后续键入落点
+    do: clickInNode
+    target: { role: AXTextArea, name: "问点什么" }
   - name: 策略变更后发起新的自动调用
     do: keys
     keys: ["a", "u", "t", "o", "2"]
@@ -235,8 +240,8 @@ steps:
       has: ["策略变更新调用完成。"]
     timeoutMs: 20000
     expect:
-      - label: 新自动调用按当前禁自动策略拒绝
-        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", jsonlOutput: { tool: skill_load, has: { code: skill_model_invocation_disabled } } }
+      - label: 新自动调用按当前禁自动策略拒绝（唯一错误绑定 acc-skill-abc，排除前序 acc-deploy）
+        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", jsonlOutput: { tool: skill_load, has: { code: skill_model_invocation_disabled, message: "技能 acc-skill-abc 只允许用户显式选择" } } }
       - label: 旧显式与自动正文仍不被策略回写
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-TMP-BODY" }
       - label: 旧自动工具结果仍保留
