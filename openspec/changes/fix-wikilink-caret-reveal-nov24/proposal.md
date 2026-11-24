@@ -6,7 +6,7 @@
 - 关联 change：[`add-wikilink-suggestion-nov24`](../add-wikilink-suggestion-nov24/proposal.md)。两者可同批完成节点 1 评审，但无行为或归档硬依赖；按真实文件冲突排程，分别独立验收与归档。
 
 > 评审记录
-> 节点 1：待 Alex 裁决。独立评审 r2 仅余 Shift / Alt 入口缺口；本稿已补全四类修饰键在进入前让开及原选区保留测试，等待 r3。推荐方案已完整写入 design 与 spec delta，未获批准前不进入实现。
+> 节点 1：独立评审 r3 clean / ready-for-Alex；Alex 于 2026-11-24 裁决「采纳。wikilink 按推荐。」推荐方案已完整写入 design 与 spec delta。
 
 ## Why
 

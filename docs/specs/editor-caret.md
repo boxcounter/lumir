@@ -50,22 +50,20 @@
 C1–C4 的显露、光标移动与装饰重建 MUST NOT 改写文档：`EditorState.doc` 与磁盘文件在操作前后
 逐字节不变（ADR 0003 §3）。这条是既有铁律在本合同的复述，作为属性测试的公共断言。
 
-## C6 — 水平移动把隐藏的 inline 源码区间当作一个原子步
+## C6 — 水平移动在隐藏 inline 源码区间保持可见落点
 
-对**任意** md 文档、任意由 live preview 隐藏的 **inline replace 源码区间**（列表 marker 及其尾随
-空白、续行行首缩进、裸 marker 行的编辑态标记；范围以渲染层同一份判定为准，见
-`docs/specs/lists.md` 的 L5）：
+对任意 md 文档、任意由 live preview 隐藏的 inline replace 源码区间，水平移动（`←` / `→`、
+`⌃F` / `⌃B` 及其扩选变体）SHALL 按该构造是否有选区显露判据分流：
 
-- 水平移动（`←` / `→`、`⌃F` / `⌃B`，及其扩选变体）的落点 SHALL NOT 停在区间**内部**——那里没有
-  可见字形，原生 contenteditable 路径上还会先停在 CM 给不可编辑 widget 插的 `cm-widgetBuffer` 上
-  （同一行要求两次按键才进正文，且 `→` 与 `⌃F` 的可见行为分叉）。
-- 落点落在区间内部时 SHALL 钳到移动方向一侧的可见边界：前进 → 区间右端（正文起点），
-  后退 → 区间左端（可见行首）。两个边界本身是可见停靠点，MUST 保持可达。
-- 由此，从**可见行首**出发：一次 `→` 或 `⌃F` SHALL 恰好落到正文起点，再一次前进**一个字素簇**；
-  反向（正文起点 → 可见行首）对称。这条对列表情形要求：任意列表类型、任意嵌套深度、任意 marker
-  宽度（1–9 位编号 / 任务框）、任意正文字素（含组合字符序列与 emoji ZWJ 序列）。
-- 区间是否隐藏 SHALL 以渲染层同一份判定为准，MUST NOT 在移动层另判一遍（两处真源会漂移）。
-- 本条的移动与钳制 MUST NOT 改写文档（C5 照旧）。
+- **有显露判据的构造**（强调、标准链接、公式、普通 wikilink）：落点进入源码区间时 SHALL 触发该构造
+  既有显露判据，完整源码 MUST 上屏；随后移动 SHALL 按字素簇在源码内逐位进行，MUST NOT 钳到区间边界，
+  MUST NOT 把整条构造作为一个原子步。反向移动对称，跨行不跳字。
+- **无显露判据的构造**（列表 marker 及其尾随空白、续行行首缩进、裸 marker 行的编辑态标记；范围见
+  `docs/specs/lists.md` L5）：落点 SHALL NOT 停在区间内部；前进落到区间右端，后退落到区间左端。
+  两个边界本身 MUST 保持可达，从可见行首一次前进恰好落到正文起点，再一次前进一个字素簇，反向对称。
+- 区间是否隐藏、是否有显露判据 SHALL 以渲染层同一份判定为准，MUST NOT 在移动层另建一份构造分类或
+  隐藏状态真源。
+- 本条的移动、显露与钳制 MUST NOT 改写文档（C5 照旧）。
 
 ## 条款的输入分布（属性测试口径）
 
@@ -81,6 +79,7 @@ C1–C4 的显露、光标移动与装饰重建 MUST NOT 改写文档：`EditorS
 | 文档位置 | fm 在文档首（唯一合法位置）；长文档滚动到中段后回到篇首；只有 fm 的短文档 |
 | 列表行（C6） | 列表类型：ul（`-` / `*` / `+`）· ol（`1.` / `2)`）· 任务项（`- [ ]` / `- [x]`）；嵌套深度 1–3；marker 宽度 1 位 / 2 位 / 6 位编号与任务框；行形态：项首行 · 真续行（带源码缩进）· 裸 marker 行（编辑态 / 非编辑态）· 引用内列表（`> -`）· 空项行（`- `）；正文字素：ASCII · CJK · emoji ZWJ 组合序列 |
 | 入口（C6） | 可见行首（marker 之前）· 隐藏区间内部（程序化落点）· 正文起点 · 正文第 2 字；`←` / `→` 与 `⌃B` / `⌃F` 两组键各一遍 |
+| wikilink（C6） | resolved · ambiguous · unresolved；`[[target]]` · `[[target\|alias]]` · `[[target#heading]]`；ASCII · CJK · 组合字符 · emoji ZWJ；从左 `→` / `⌃F` 与从右 `←` / `⌃B` 及 Shift 扩选；首个内部落点显露完整源码，之后逐字素，移出后恢复三态，文档不变 |
 
 ## 实现落点（条款 ↔ 代码的单向指针）
 
@@ -91,7 +90,7 @@ C1–C4 的显露、光标移动与装饰重建 MUST NOT 改写文档：`EditorS
 | C3 | `firstBodyLineStart` / `normalizeFrontmatterCaret` / `frontmatterCaretSpecs`（`src/preview/frontmatter.ts`）；装载路径 `initialCaretState` / `normalizeInitialCaret`（`src/editor.ts`）；focus 处理器（`src/preview/livePreview.ts`） |
 | C4 | `clampAcrossBlockWidgets`（`src/editor.ts`）与 `frontmatterCaretSpecs` 的垂直移动分支 |
 | C5 | 全链路只 dispatch 选区，不改文档 |
-| C6 | `src/editor.ts` 的 `horizontalTarget`（钳制点）+ `src/preview/lists.ts` 的 `listHiddenRangeAt` / `listLineRender`（区间判定，与渲染共用一份）；键位见 `src/keys.ts` 的 `KEY_BINDINGS`（`←` / `→` 与 `⌃B` / `⌃F` 同一条命令） |
+| C6 | 无显露区间：`src/editor.ts` 的 `horizontalTarget`（钳制点）+ `src/preview/lists.ts` 的 `listHiddenRangeAt` / `listLineRender`（区间判定，与渲染共用一份）；普通 wikilink：`src/preview/livePreview.ts` 的 `collectWikilinks` 复用 `touchesSource`，widget 复用 `enterReplacedSource`；键位见 `src/keys.ts` 的 `KEY_BINDINGS`（`←` / `→` 与 `⌃B` / `⌃F` 同一条命令） |
 
 光标视觉（**不是**组件常量）：宽度 / 居中取 CodeMirror 基础主题默认值——`border-left: 1.2px`、
 `margin-left: -0.6px`，三主题同值（eink 同为 1.2px；可发现性由闪烁承担，与 1px hairline 的
@@ -116,4 +115,5 @@ infinite`（半程 `opacity: 0`，周期取 `EditorView.cursorBlinkRate` 的默�
 | 几何 / 计算样式 | `tests/visual/scenes/m647-caret-geometry.spec.ts` | 光标矩形高度 = 所在可见行行盒 ±1px，且小于 `.cm-lp-frontmatter-outer` 高度（区分度对照）；宽度的级联声明 = CM 基础主题的 `1.2px`（`marginLeft` = -0.6px；计算样式在 Chromium DPR=1 下取整为 `1px`，故渲染读数只钉「非 2px」）、颜色 = `--text`、`animationName` ∈ {`cm-blink`, `cm-blink2`}、`animationDuration` = 1.2s 且动画运行中；暂停在 0ms / 700ms 时 `opacity` = 1 / 0（亮 / 灭相位） |
 | 纯判定（C6） | `tests/unit/list-lazy-continuation.test.ts` | `listLineRender` 的隐藏区间端点矩阵（列表类型 × marker 宽度 × 嵌套 × 引用前缀 × 任务项）；`listHiddenRangeAt` 的钳制与边界不移动；裸行编辑态门控 |
 | 几何 / 按键落点（C1 列表行 + C6） | `tests/visual/scenes/m647-caret-geometry.spec.ts`、`tests/visual/scenes/cursor-motion.spec.ts` | m647：列表行四个光标入口的高度 = 正文文本行盒 ±1px（主题 × 类型 × 嵌套 × marker 宽度，含空项行与 32px 档），marker 盒高比行盒高 ≥ 2px（区分度）；cursor-motion：`←` / `→` 与 `⌃B` / `⌃F` 两组键的行首一次到位、再一次一个字素簇、反向对称、跨行不跳字、文档字节不变 |
+| 显露 / 指针入口（C6 wikilink） | `tests/visual/scenes/wikilink-caret-reveal.spec.ts`、`tests/visual/scenes/wikilink.spec.ts`、`tests/visual/scenes/markdown-editing-stability.spec.ts` | 三态 × 左右方向与 Emacs 水平键的首个内部落点显露、之后逐字素；点击与两次拖选；Meta / Ctrl / Shift / Alt 不先经过编辑入口；pending 延迟迁移、只读、undo / save、离开恢复；选区与文档逐值断言 |
 | 真机 | `scripts/acceptance/scenarios/228-caret-visibility.md`、`scripts/acceptance/scenarios/255-list-caret-navigation-oct29.md` | 228：点击 properties / doc-title 后 properties 撤下、标题让位、文档字节不变（光标高度归手感项）；255：列表行上 `→` 与 `⌃F` 的落点一致、文档字节不变（光标高度同样归手感项） |

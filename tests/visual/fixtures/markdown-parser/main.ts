@@ -67,6 +67,16 @@ function snapshot(tree: any, state: EditorState) {
 }
 Object.assign(window, { experiment: {
   open(doc: string) { const start = performance.now(); editor.reloadSession(editor.activeSession(), doc, 'experiment.md'); timings.push(performance.now() - start); },
+  wikilink(status: 'resolved' | 'ambiguous' | 'unresolved', editable: boolean) {
+    editor.setWikilinkResolver({ resolve: () => ({
+      status,
+      path: status === 'unresolved' ? null : 'target.md',
+      candidates: status === 'ambiguous' ? ['a.md', 'b.md'] : [],
+      embed_target: null,
+      anchor: { status: 'none', heading: null, line: null },
+    }) });
+    editor.setSessionEditable(editor.activeSession(), editable);
+  },
   available() { const start = performance.now(); const result = forceParsing(view, view.state.doc.length, 10); timings.push(performance.now() - start); return result && syntaxTreeAvailable(view.state, view.state.doc.length); },
   compare() {
     const reference = EditorState.create({ doc: view.state.doc, extensions: markdown({ base: markdownLanguage, extensions: [GFM] }) });
