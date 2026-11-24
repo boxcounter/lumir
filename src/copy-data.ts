@@ -2904,6 +2904,14 @@ const COPY_TABLE = {
     zh: "对话暂未保存，不能切换或新建会话；请先检查磁盘空间与目录权限后重试",
     en: "This conversation isn't saved, so you can't switch or start a new session. Check disk space and folder permissions, then try again",
   },
+  // D988：新建文件的默认名（change add-default-note-name-nov24；Alex 2026-11-25 裁决改为
+  // 始终启用，不设设置项）。编号接 D984 末位；D985–D987 是初稿已删除的设置行文案，编号
+  // 不得复用。语言真源是 `<html lang>`（`t()`），编号后缀由 `uniqueNewNoteName` 一处拼；
+  // 消费方是 `src/tree.ts` 的 `beginCreate`。
+  D988: {
+    zh: "未命名笔记",
+    en: "Untitled note",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

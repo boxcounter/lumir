@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：287
-- 验收项（不同 item 编号）：256
-- 分档：core 32 / full 245 / bundle 5 / evidence 5（full 批 = 全部 287 个，含其余各档）
+- 场景：288
+- 验收项（不同 item 编号）：257
+- 分档：core 32 / full 246 / bundle 5 / evidence 5（full 批 = 全部 288 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -272,5 +272,6 @@
 | 731 | `731-harness-lazy-restore-publish-retry` | 首次发布失败不阻断对话：provider 后置失败入内存批次，权限恢复后显式重试同文件精确计数 | full |
 | 732 | `732-harness-lazy-restore-unpublished-guard` | 未发布批次守卫：发布仍失败拒绝切换与新会话；权限恢复后旧 pending 恰好发布一次再执行 | full |
 | 733 | `733-harness-lazy-restore-preflight-exit` | 查看后退出不复活；provider 前置拒绝不激活 pending（无新文件、无临时文件、错误可见） | full |
+| 734 | `734-default-note-name` | 新建文件默认名：始终预填并全选、键入替换、Enter 接受、Escape 取消、撞名递增、焦点落正文 | full |
 | 865 | `865-wikilink-caret-reveal-nov24` | wikilink 键盘 / 指针进入源码、修饰键旧语义与精确 undo / save | full |
 | 866 | `866-wikilink-suggestion-nov24` | 行内 [[ 候选：过滤 / 键鼠接受 / Escape / 空态 / 特殊扩展名与零隐式写入 | full |

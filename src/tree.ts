@@ -80,6 +80,29 @@ export function withDefaultFileExtension(raw: string): string {
 }
 
 /**
+ * 新建文件的默认名候选（change add-default-note-name-nov24）：在 `base` 基础上按
+ * `名字 2` / `名字 3`… 递增，直到**最终落盘名**（`withDefaultFileExtension` 之后）不与同级
+ * 既有条目撞名。返回的是**主文件名**（不含 `.md`），补扩展名仍由提交路径的唯一一处做。
+ *
+ * 判据必须落在最终落盘名上：同级集合里是 `未命名笔记.md` 这类磁盘名，拿裸 `未命名笔记`
+ * 去比会永远不撞（REVIEW.md『同一语义两处真源』条的同族——默认扩展名规则只有一份）。
+ *
+ * 只服务**自动预填**：用户自己输入的名称不走这里，撞名仍由既有预检 / 后端拒绝处理，
+ * MUST NOT 静默改名。
+ */
+export function uniqueNewNoteName(base: string, siblings: ReadonlySet<string>): string {
+  const trimmed = base.trim();
+  if (trimmed === "") return trimmed;
+  let candidate = trimmed;
+  let seq = 1;
+  while (siblings.has(withDefaultFileExtension(candidate))) {
+    seq += 1;
+    candidate = `${trimmed} ${seq}`;
+  }
+  return candidate;
+}
+
+/**
  * 改名后的路径 remap（纯函数，M244 的裁决点 5）：路径正好是 `from` 时换成 `to`；落在
  * `from/` 子树下时换成 `to` 下对应位置；其余返回 undefined（不受影响）。
  *
@@ -1123,6 +1146,13 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     wireEdit(state, siblings);
     input.setAttribute("aria-label", kind === "dir" ? NEW_DIR_INPUT_LABEL() : NEW_FILE_INPUT_LABEL());
     input.focus();
+    // 新建文件的默认名（change add-default-note-name-nov24；Alex 2026-11-25 裁决改为始终启用，
+    // 不设配置开关）：只作用于 file，目录不预填。输入框只含主文件名（不含 .md），因此全选 =
+    // 「只选主文件名」；提交时仍由 withDefaultFileExtension 一处补扩展名。重名按最终落盘名递增。
+    if (kind === "file") {
+      input.value = uniqueNewNoteName(t("D988"), siblings);
+      input.setSelectionRange(0, input.value.length);
+    }
   }
 
   function cancelEdit(): void {

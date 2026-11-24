@@ -208,6 +208,34 @@ test("file.exact：错内容（含只差一个尾换行）判 FAIL，理由带�
   assert.match(rec.detail ?? "", /expected="甲项" actual="甲项\\n"/, "detail 带两端原文（JSON 转义）");
 });
 
+// change add-default-note-name-nov24（评审 r1 P2-1 的反向验证）：场景 728 用 exact: ""
+// 证明「新建文件为空」与「撞名后既有文件未被覆盖」。这里同时钉住正向与反向：真正的空文件
+// PASS；同一路径先空后写入非空内容时，exact: "" 必须 FAIL——若实现退回 has: ""（子串），
+// 非空内容也会被空串命中，这条会假绿。
+test("file.exact：空串只匹配真正的空文件；非空内容必须 FAIL（场景 728 的反向验证）", async () => {
+  const root = tmpRoot("exact-empty");
+  useTmpEnv(root);
+  const empty = await drive(root, {
+    steps: [
+      { name: "写空文件", do: "vaultWrite", file: "empty.md", content: "" },
+      { name: "空串匹配", expect: [{ label: "空文件", file: { path: "empty.md", exact: "" } }] },
+    ],
+  });
+  assert.equal(empty.status, "PASS", "真正的空文件应 PASS");
+
+  const overwritten = await drive(root, {
+    steps: [
+      { name: "先写空文件", do: "vaultWrite", file: "probe.md", content: "" },
+      { name: "再写非空内容（模拟撞名覆盖）", do: "vaultWrite", file: "probe.md", content: "非空正文\n" },
+      { name: "空串不匹配", expect: [{ label: "空文件", file: { path: "probe.md", exact: "" } }] },
+    ],
+  });
+  assert.equal(overwritten.status, "FAIL", "非空内容不得被空串命中");
+  const rec = overwritten.records.find((r) => !r.ok);
+  assert.ok(rec, `应有一条 FAIL 记录，实际：${JSON.stringify(overwritten.records)}`);
+  assert.match(rec.label, /内容不一致：期望 0 字符，实际 5 字符/);
+});
+
 test("file.exact：文件缺失 / 目标是目录一律 FAIL（不把读不到当成空）", async () => {
   const root = tmpRoot("exact-missing");
   useTmpEnv(root);
