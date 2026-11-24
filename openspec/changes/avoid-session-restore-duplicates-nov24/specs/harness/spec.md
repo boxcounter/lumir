@@ -2,7 +2,7 @@
 
 ### Requirement: 会话边界
 
-会话 SHALL 绑定 vault：内存态一个 vault 一个活跃会话（`RuntimeInner.sessions` 按 vault 键控；resume 在真正切换时铸新 id 替换槽位，同一待激活恢复复用已铸身份）；盘上按 vault 分目录并存多份历史会话 JSONL 留存，浮层可切换 / 新建 / 恢复（M433）。切 vault SHALL 切到该 vault 的会话，切回时恢复；关闭 vault 丢弃其会话；app 重启清空全部会话。每个逻辑会话 SHALL 有稳定 session id（`s<unix_millis>-<6 位随机>`，落 JSONL 文件名与 `session_open`）；会话建立、「新会话」重置、自动压缩、从历史会话恢复，四者 SHALL 各开一个 JSONL 文件（从历史恢复在首次真实请求时开），旧文件封闭不再追加（压缩前历史完整留存在旧文件，压缩摘要随新文件 `session_open` 留存；恢复新文件以 `opened_from=restore` + `restored_from` 标记源会话）。标题栏 harness 段 SHALL 提供「新会话」动作（面板在场时）：清空当前 vault 会话的消息历史并重新装配系统上下文（AGENTS.md / Skill 索引不变），旧会话 JSONL 文件不受影响。harness 段 SHALL 显示会话名——取**有效标题**（「会话本地留存」条的 last-wins 口径：最后一条带 `title` 的 `session_title` 记录），无标题记录时回落首条用户消息截断（约 20 字），两者皆无时显示「新会话」；生成标题的硬上限（20 码点）与显示截断长度相同，故标题显示不带省略号。会话标题变化 SHALL 即时反映到标题栏会话名与已打开的历史浮层行名，MUST NOT 要求 webview 重载；标题变化 MUST NOT 改变 transcript、session id、历史清单顺序或会话内容。自动压缩与从历史会话恢复开新逻辑会话时，源会话的有效标题 SHALL 随新文件继承（见「会话本地留存」条），使会话名在轮换后保持连续；「新会话」显式开始新对话，MUST NOT 继承。探针期 SHALL 提供**最小恢复入口**：标题栏 harness 段的会话浮层 SHALL 列出本 vault 的历史会话（极简选择器，按最后活动时间倒序、会话名取该会话的有效标题、无标题记录时回落该会话首条用户消息截断约 20 字；仅本 vault，只列不管理），选中一项 SHALL 只读该会话 JSONL、把恢复结果重建到内存（**查看零写盘**：MUST NOT 创建目录 / 临时文件 / JSONL / sidecar，MUST NOT 改动源文件字节与 mtime），首次真实 `llm_request` 才原子发布一份新的恢复文件——恢复 = 读文件最后一条 `llm_request` 的完整请求体，并折叠其后未入请求的末尾响应（算法见 change `reshape-harness-session-recording` 的 design §6.2「恢复算法（重建 Session）」），system 与 input 原样灌回（**不重新装配**系统上下文）、不跨 provider 重写回放项。探针期 SHALL NOT 提供完整多会话管理 UI（会话重命名 / 搜索 / 分组等）与历史回看列表的完整形态；自动命名不属本禁令的「完整多会话管理 UI」——仍无手动重命名入口、无搜索、无分组。会话浮层每行已提供**单条删除**入口（行内两步确认、活跃会话拒删，M406 面板批次落地），它不属上述「完整管理 UI」。
+会话 SHALL 绑定 vault：内存态一个 vault 一个活跃会话（`RuntimeInner.sessions` 按 vault 键控；resume 在真正切换时铸新 id 替换槽位，同一份未发布的 pending 恢复复用已铸身份）；盘上按 vault 分目录并存多份历史会话 JSONL 留存，浮层可切换 / 新建 / 恢复（M433）。切 vault SHALL 切到该 vault 的会话，切回时恢复；关闭 vault 丢弃其会话；app 重启清空全部会话。每个逻辑会话 SHALL 有稳定 session id（`s<unix_millis>-<6 位随机>`，落 JSONL 文件名与 `session_open`）；会话建立、「新会话」重置、自动压缩、从历史会话恢复，四者 SHALL 各开一个 JSONL 文件（从历史恢复在首次真实请求时开），旧文件封闭不再追加（压缩前历史完整留存在旧文件，压缩摘要随新文件 `session_open` 留存；恢复新文件以 `opened_from=restore` + `restored_from` 标记源会话）。标题栏 harness 段 SHALL 提供「新会话」动作（面板在场时）：清空当前 vault 会话的消息历史并重新装配系统上下文（AGENTS.md / Skill 索引不变），旧会话 JSONL 文件不受影响。harness 段 SHALL 显示会话名——取**有效标题**（「会话本地留存」条的 last-wins 口径：最后一条带 `title` 的 `session_title` 记录），无标题记录时回落首条用户消息截断（约 20 字），两者皆无时显示「新会话」；生成标题的硬上限（20 码点）与显示截断长度相同，故标题显示不带省略号。会话标题变化 SHALL 即时反映到标题栏会话名与已打开的历史浮层行名，MUST NOT 要求 webview 重载；标题变化 MUST NOT 改变 transcript、session id、历史清单顺序或会话内容。自动压缩与从历史会话恢复开新逻辑会话时，源会话的有效标题 SHALL 随新文件继承（见「会话本地留存」条），使会话名在轮换后保持连续；「新会话」显式开始新对话，MUST NOT 继承。探针期 SHALL 提供**最小恢复入口**：标题栏 harness 段的会话浮层 SHALL 列出本 vault 的历史会话（极简选择器，按最后活动时间倒序、会话名取该会话的有效标题、无标题记录时回落该会话首条用户消息截断约 20 字；仅本 vault，只列不管理），选中一项 SHALL 只读该会话 JSONL、把恢复结果重建到内存（**查看零写盘**：MUST NOT 创建目录 / 临时文件 / JSONL / sidecar，MUST NOT 改动源文件字节与 mtime），首次真实 `llm_request` 才原子发布一份新的恢复文件——恢复 = 读文件最后一条 `llm_request` 的完整请求体，并折叠其后未入请求的末尾响应（算法见 change `reshape-harness-session-recording` 的 design §6.2「恢复算法（重建 Session）」），system 与 input 原样灌回（**不重新装配**系统上下文）、不跨 provider 重写回放项。探针期 SHALL NOT 提供完整多会话管理 UI（会话重命名 / 搜索 / 分组等）与历史回看列表的完整形态；自动命名不属本禁令的「完整多会话管理 UI」——仍无手动重命名入口、无搜索、无分组。会话浮层每行已提供**单条删除**入口（行内两步确认、活跃会话拒删，M406 面板批次落地），它不属上述「完整管理 UI」。
 
 会话清单 SHALL 以一份 JSONL 文件为一行（行身份 = `session_id`）；MUST NOT 折叠、合并、隐藏或去重源文件——恢复 / 压缩产生的多份文件各占一行。每行的最后活动时间 SHALL 是：该文件及其 `session_open.restored_from` 祖先链上 `llm_request` / `llm_response` 记录信封 `ts` 的最大值；链上没有任何轮次时，回落链上最早的首行 `session_open` 信封 ts；都没有时为无值——无值者排在有值者之后、按 session id 倒序，且行时间格不显示读数（MUST NOT 用 id 前缀或其它派生值伪造）。`session_title`（含 `inherit`）、`notice_delivered`、`approval`、`turn_aborted`、`error`、`loop_limit`、`subrun` 等 sidecar MUST NOT 计入活动时间。被拒的发送（没有 `llm_request`）与无人值守 cron（不写交互会话文件）MUST NOT 改变排序。
 
@@ -10,7 +10,7 @@
 
 从历史会话恢复 SHALL 只在首次真实 `llm_request` 时开新文件并因此新增一行（查看阶段零新增、清单行数不变）；源文件行 MUST 保留，MUST NOT 被折叠或隐藏。新行的活动时间 SHALL 沿 `restored_from` 链继承：没有自己的轮次时不得越过任何活动更晚的会话；与源行同值时按 session id 倒序相邻。源行与恢复行 SHALL 各自可恢复、可删除（活跃会话拒删不变）；用户 MAY 从源行再次恢复形成分支。
 
-当前活跃会话 SHALL 按同一条排序自然落位，MUST NOT 钉顶、MUST NOT 单独加「当前」标记；待激活恢复（已查看、尚未发出首次真实请求）SHALL NOT 出现在清单里——清单行身份是一份文件，没有文件就没有行，MUST NOT 为它伪造行或读数；首次真实请求发布文件后，它沿用链上的活动时间落位，行位置 MUST NOT 因恢复动作而越过活动更晚的会话。
+当前活跃会话 SHALL 按同一条排序自然落位，MUST NOT 钉顶、MUST NOT 单独加「当前」标记；待发布恢复（`activated=false`，或 `activated=true` 而尚未发布）SHALL NOT 出现在清单里——清单行身份是一份文件，没有文件就没有行，MUST NOT 为它伪造行或读数；首次真实请求发布文件后，它沿用链上的活动时间落位，行位置 MUST NOT 因恢复动作而越过活动更晚的会话。
 
 会话浮层 SHALL 在每次打开时现拉现建；打开期间 MUST NOT 实时重排、MUST NOT 轮询或订阅活动变化。改名仍 SHALL 原地更新已打开行的行名，MUST NOT 触发重排。
 
@@ -18,11 +18,11 @@
 
 查看历史会话 SHALL 与列举同一纪律：MUST NOT 创建目录、临时文件、JSONL 或任何 sidecar，MUST NOT 改动源文件字节与 mtime；查看 MAY 在内存中分配恢复身份（session id / token），但该身份 MUST NOT 产生任何持久化副作用。所点文件就是当前活跃会话的已发布文件时，系统 SHALL 直接返回 `switched=false`（不 fork、不新增文件、不重放 transcript；busy 下也成功）。同一份未激活恢复被重复点击时，系统 SHALL 复用查看阶段已分配的 session id 与持久化 token，MUST NOT 重新铸 id、MUST NOT 重新读源、MUST NOT 重复重建 transcript 或通知。
 
-查看另一份历史会话（A→B→A）SHALL 只替换内存投影，零新增文件；未发送即退出不留下任何新文件，重启后 MUST NOT 自动复活空恢复文件。待激活恢复 MUST NOT 出现在会话清单里：清单行身份是一份文件，没有发布就没有行。
+查看另一份历史会话（A→B→A）SHALL 只替换内存投影，零新增文件；未发送即退出不留下任何新文件，重启后 MUST NOT 自动复活空恢复文件。待发布恢复（无论是否已激活）MUST NOT 出现在会话清单里：清单行身份是一份文件，没有发布就没有行。
 
 跨 vault、非法 id、不可读或缺 `system` 的损坏源，以及需要真正切换时的 busy，SHALL 在替换当前会话之前失败：当前的会话、pending、token 与目录内容都不变；目录不存在时 MUST NOT 被创建。空源 SHALL 允许查看为空 transcript，零新增；其首次真实请求同样只发布一份恢复文件。查看成功后源被外部删除时，发送 SHALL 使用查看阶段捕获的内存快照，MUST NOT 重读或改用别的历史。
 
-替换未激活恢复时，若旧 pending 尚未激活（从未发生首次真实 `llm_request`），SHALL 直接丢弃、零写盘、不触碰临时文件；若旧 pending 已激活且仍未发布，任何丢弃或轮换它的操作（查看另一历史、显式「新会话」及走同一入口的 cron 会话新建 / 恢复回落新建、自动压缩）SHALL 先以完整缓冲批次尝试一次发布，仍失败则拒绝该操作并返回可见错误，保留当前会话、input、writer、缓冲、token 与健康，MUST NOT 静默丢弃已产生的对话。判据 MUST NOT 用「批次空 / 非空」——`session_open` 恒在，唯一判据是「是否已激活」。
+替换 pending 恢复时：若其尚未激活（`activated=false`，从未发生首次真实 `llm_request`），SHALL 直接丢弃、零写盘、不触碰临时文件；若已激活（`activated=true`）且仍未发布，任何丢弃或轮换它的操作（查看另一历史、显式「新会话」及走同一入口的 cron 会话新建 / 恢复回落新建）SHALL 先以完整缓冲批次尝试一次发布，仍失败则拒绝该操作并返回可见错误，保留当前会话、input、writer、缓冲、token 与健康，MUST NOT 静默丢弃已产生的对话。自动压缩走同一发布尝试，但其失败是内部「跳过压缩」结果，不返回用户可见的持久化错误（两个调用点的收尾见「会话本地留存」条）。判据 MUST NOT 用「批次空 / 非空」——`session_open` 恒在，唯一判据是「是否已激活」。
 
 #### Scenario: 切 vault 切会话
 
@@ -37,7 +37,7 @@
 #### Scenario: 新会话动作的幂等性
 
 - **WHEN** 在任意会话状态（含尚无会话——首条提问未发出）下触发「新会话」，或连续触发多次
-- **THEN** 除「待激活恢复已激活且仍有未发布 history、发布仍失败」这一态返回可见的持久化错误（当前会话与健康不变）外，每次调用均成功，结果恒为新空会话；尚无会话时为平凡成功（不报错——「没有会话」正是目标状态）
+- **THEN** 除「pending 恢复已 `activated=true` 且仍有未发布 history、发布仍失败」这一态返回可见的持久化错误（当前会话与健康不变）外，每次调用均成功，结果恒为新空会话；尚无会话时为平凡成功（不报错——「没有会话」正是目标状态）
 
 #### Scenario: 处理中触发新会话
 
@@ -117,7 +117,7 @@
 #### Scenario: 被拒的发送不改变排序
 
 - **WHEN** 一次发送被 `harness_busy` / 缺 provider / 图片能力闸拒绝
-- **THEN** 没有 `llm_request` 落盘，该会话的最后活动时间与清单位置不变；若这是待激活恢复的首次发送，MUST NOT 发布恢复文件（零新增）
+- **THEN** 没有 `llm_request` 落盘，该会话的最后活动时间与清单位置不变；若这是 pending 恢复的首次发送，MUST NOT 发布恢复文件（零新增）
 
 #### Scenario: compact 文件不沿链继承
 
@@ -154,7 +154,7 @@
 - **WHEN** 一轮对话处理中（busy），分别点击当前会话行与另一历史会话行
 - **THEN** 前者返回 `switched=false` 且零副作用；后者返回 `harness_busy`，当前会话、文件与 pending 都不动
 
-#### Scenario: 待激活恢复不占清单行
+#### Scenario: 未发布的 pending 恢复不占清单行
 
 - **WHEN** 查看一份历史会话但尚未发送
 - **THEN** 清单行数与顺序不变，不出现指向未发布文件的伪行；重复打开浮层仍只列既有文件
@@ -194,10 +194,15 @@
 - **WHEN** 一份恢复已激活且发布失败，用户点击「新会话」
 - **THEN** 系统先尝试一次发布；仍失败则返回可见的持久化错误，当前会话、transcript、缓冲与健康不变；MUST NOT 重置会话、MUST NOT 清缺口 / `history_written`
 
-#### Scenario: 未发布批次阻止压缩轮换
+#### Scenario: 阈值触发的压缩被跳过
 
-- **WHEN** 一份恢复已激活且发布失败，会话触发自动压缩并已产生压缩请求 / 响应
-- **THEN** 轮换前先以完整批次尝试发布；仍失败则跳过轮换：不创建 compact 文件、不替换 input / system / writer、不采用摘要；压缩请求 / 响应留在原批次，本轮用未压缩上下文继续
+- **WHEN** 一份恢复已激活且发布失败，一轮回答完成时达到自动压缩阈值，压缩请求 / 响应已产生
+- **THEN** 轮换前先以完整批次尝试发布；仍失败则跳过轮换：不创建 compact 文件、不替换 input / system / writer、不采用摘要；本轮回答照常完成、对话继续；既有 persistence 告警可见，MUST NOT 产生新的持久化错误
+
+#### Scenario: context overflow 的压缩被跳过
+
+- **WHEN** 一份恢复已激活且发布失败，provider 返回 context overflow，压缩请求 / 响应已产生
+- **THEN** 轮换前先尝试发布；仍失败则 MUST NOT 在未压缩上下文上重试，MUST NOT 新增持久化错误，按本轮既有 overflow 错误落回终态；原 pending、未压缩 input 与完整批次保留
 
 ### Requirement: 会话本地留存
 
@@ -209,7 +214,12 @@
 
 发布失败时（权限 / 磁盘 / 撞名 / 目录缺失），**本次发布 MUST NOT 创建最终文件**：目标此前不存在则失败后仍不存在；因撞名失败时既有目标 MUST 逐字节保留、不覆盖、不改 id；MUST NOT 留下空文件或半截的本次最终文件。已激活但未发布的初始批次 SHALL 完整保留在内存中，后续记录继续加入该批次，重试 SHALL 使用**同一个 session id、同一个持久化 token、同一份缓冲批次**，每次写动作至多尝试一次发布。发布成功后缓冲的每条记录在文件里恰好出现一次，触发发布的那条记录 MUST NOT 再经 append 写一次。发布成功前进程退出，则这段对话随内存消失，MUST NOT 在重启后留下或复活该恢复文件。
 
-自动压缩轮换 SHALL 走同一未发布批次守卫：恢复文件已激活但未发布时，轮换前 MUST 以包含压缩请求 / 响应的完整批次尝试一次发布；失败则 MUST NOT 创建 compact 文件、MUST NOT 替换 input / system / writer、MUST NOT 采用摘要；压缩请求 / 响应记录仍留在原批次，本轮用未压缩上下文继续。显式「新会话」在同一态下同样先尝试发布，失败则拒绝并保留会话与健康（见「会话边界」条）。
+自动压缩 SHALL 走同一未发布批次守卫，但结果是内部「跳过压缩」，不是用户可见的持久化错误：
+
+- **阈值触发**（一轮完成后的自动压缩）：发布失败 ⇒ MUST NOT 轮换、MUST NOT 采用摘要；保留未压缩 input / system / writer 与完整批次，本轮回答照常完成；既有 persistence 健康告警（degraded + 退出风险句）即用户可见反馈，MUST NOT 静默、MUST NOT 把本轮判失败。
+- **context overflow 恢复**：发布失败 ⇒ MUST NOT 在未压缩上下文上重试（该轮 overflow 重试机会已消费，重试必然再次 overflow），MUST NOT 新增持久化用户错误，SHALL 落回既有 overflow 终态（沿用本轮 provider 的 overflow 错误事件 / 终态），同时保留原 pending、未压缩 input 与完整批次。
+
+两种情形都 MUST NOT 创建 compact 文件、MUST NOT 替换 input / system / writer、MUST NOT 采用摘要；压缩请求 / 响应记录仍留在原批次。显式「新会话」在同一态下先尝试发布，失败则拒绝并保留会话与健康（见「会话边界」条）。
 
 恢复文件的 `opened_from` 恒为 `restore`、`restored_from` 恒为所选源 id；即使源文件本身是 `opened_from=compact`，新文件也 MUST NOT 继承 compact 身份。`restored_from` 指向的源文件在查看后被外部删除时，发送 SHALL 使用查看阶段捕获的内存快照，MUST NOT 重读源文件或改用别的历史；悬空父 id 沿用既有列举算法。
 
@@ -328,7 +338,7 @@
 
 #### Scenario: 显式重试后的批次精确计数
 
-- **WHEN** 待激活恢复的首次发布因权限失败；首条真实请求已发出且 provider 返回错误；用户恢复权限并点显式重试，重试成功且发布成功
+- **WHEN** pending 恢复的首次发布因权限失败；首条真实请求已发出且 provider 返回错误；用户恢复权限并点显式重试，重试成功且发布成功
 - **THEN** 恰好一份恢复文件；kind 计数为 `session_open` 1、`inherit` ≤1、`notice_delivered` 按重建条数、`llm_request` 2、`llm_response` 2、失败 sidecar 1；面板与 input 里用户消息各 1 条（两条请求的历史中都含该消息）；两条请求与两条响应各自对应；同一 session id；MUST NOT 出现第三条请求、重复记录或第二份文件
 
 #### Scenario: 目标撞名不覆盖
@@ -343,18 +353,23 @@
 
 #### Scenario: 双击发送只受理一轮
 
-- **WHEN** 待激活恢复的首次发送被快速双击 / 重复触发
+- **WHEN** pending 恢复的首次发送被快速双击 / 重复触发
 - **THEN** 只受理一轮；恰好一份恢复文件、一条用户消息、一条首个 `llm_request`；第二击得到 busy 或等价拒绝，零新增
 
 #### Scenario: provider 前置拒绝不激活
 
-- **WHEN** 待激活恢复的首次发送被缺 provider / 图片能力闸拒绝
-- **THEN** 零新文件、零临时文件；错误可见；待激活状态保留，修好后首次成功的真实请求才发布
+- **WHEN** pending 恢复的首次发送被缺 provider / 图片能力闸拒绝
+- **THEN** 零新文件、零临时文件；错误可见；未发布状态保留，修好后首次成功的真实请求才发布
 
-#### Scenario: provider 请求后失败仍留痕
+#### Scenario: provider 请求后失败（首次发布已成功）
 
-- **WHEN** 首条真实请求已发出后 provider 返回错误
-- **THEN** 恢复文件已发布，含该 `llm_request` 与失败的 `llm_response`；显式重试追加同一文件，不新增文件
+- **WHEN** 恢复文件已发布成功，首条真实请求发出后 provider 返回错误
+- **THEN** 该 `llm_request`、失败的 `llm_response` 与失败 sidecar 追加到同一文件；显式重试追加同一文件，不新增文件
+
+#### Scenario: provider 请求后失败（首次发布未成功）
+
+- **WHEN** 首次发布因权限失败，首条真实请求仍发出且 provider 返回错误
+- **THEN** 该 `llm_request`、失败的 `llm_response` 与失败 sidecar 进入同一内存批次；最终文件仍不存在（本次未创建，无空 / 半截）；后续写动作或显式重试按 D1 同身份发布；MUST NOT 声称该失败轮次无记录或已丢失
 
 ### Requirement: 留存健康状态
 
@@ -375,9 +390,9 @@
 - 本次 payload 是 annotation：首行失败 SHALL 只影响当前写健康（`severity=history`），不置 `history_gap`；annotation 丢失不 latch。首行重试成功后当前写健康回 `ok`。
 - 本次只写首行、没有 payload 被丢弃（若存在这种独立写首行的路径）：不置 `history_gap`。
 
-写点 MUST 保留挂起的 `session_open` 行，使下一条记录仍先重试写首行。首行或任意记录的部分写 SHALL 置 `history_gap`。系统 MUST NOT 承诺部分写后的文件仍可被完整读取或恢复；已损坏的文件不修复、不截断。唯一的例外是恢复会话文件的首次发布：它 MUST 采用原子发布（临时文件完整写入后不覆盖地发布最终 JSONL），发布失败 MUST NOT 在最终路径留下空文件或半截文件（见「会话本地留存」条）；该例外不适用于发布成功之后的 append-only 写入，也不修复既有损坏文件。
+写点 MUST 保留挂起的 `session_open` 行，使下一条记录仍先重试写首行。首行或任意记录的部分写 SHALL 置 `history_gap`。系统 MUST NOT 承诺部分写后的文件仍可被完整读取或恢复；已损坏的文件不修复、不截断。唯一的例外是恢复会话文件的首次发布：它 MUST 采用原子发布（临时文件完整写入后不覆盖地发布最终 JSONL）；**本次发布 MUST NOT 创建空 / 半截最终文件；撞名时既有目标 MUST 逐字节保留**（见「会话本地留存」条）；该例外不适用于发布成功之后的 append-only 写入，也不修复既有损坏文件。
 
-**已激活但未发布的恢复批次** SHALL 单独评价，不与已发布文件的 append-only 失败混同。从历史会话恢复、查看完成而文件尚未发布时，初始批次（`session_open` / `inherit` / `notice_delivered` / 已产生的 history 记录）SHALL 完整保留在内存中；此期间发布失败 SHALL 置当前写健康为 `degraded`、`severity=history`、`detail` 记录发布失败分类、`since_ts` 记首次失败时间，但 MUST NOT 置 `history_gap.present=true`——缓冲记录尚未永久丢失，MUST NOT 提前制造缺口，也 MUST NOT 发 `false→true` 的缺口事件。`history_written` 保持 `false`；呈现 SHALL 用「对话暂未保存」与「现在退出，这段对话将无法恢复」两段文案，MUST NOT 使用缺口文案「此前部分对话记录未能保存」。全部缓冲记录随后一次发布成功时，当前写健康 SHALL 转 `ok`、`history_written` SHALL 转 `true`、`history_gap.present` 保持 `false`，MUST NOT 出现假缺口。若退出前始终未发布成功，该批记录随内存消失且 MUST NOT 在重启后补报——它不属于 latch 口径（文件从未存在）。已发布之后的普通 append-only 写入（含部分写）仍按本条的既有口径判缺口。因未发布批次被拒绝的查看切换 / 显式新会话 / 压缩轮换 MUST NOT 重置、清除或改写当前健康（`degraded`、`since_ts`、`history_written`、`history_gap` 全部保持）。
+**已激活但未发布的恢复批次** SHALL 单独评价，不与已发布文件的 append-only 失败混同。从历史会话恢复、首次真实请求已使恢复激活（`activated=true`）而文件尚未发布时，激活时形成的批次（`session_open` / `inherit` / `notice_delivered` / 已产生的 history 记录）SHALL 完整保留在内存中；此期间发布失败 SHALL 置当前写健康为 `degraded`、`severity=history`、`detail` 记录发布失败分类、`since_ts` 记首次失败时间，但 MUST NOT 置 `history_gap.present=true`——缓冲记录尚未永久丢失，MUST NOT 提前制造缺口，也 MUST NOT 发 `false→true` 的缺口事件。`history_written` 保持 `false`；呈现 SHALL 用「对话暂未保存」与「现在退出，这段对话将无法恢复」两段文案，MUST NOT 使用缺口文案「此前部分对话记录未能保存」。全部缓冲记录随后一次发布成功时，当前写健康 SHALL 转 `ok`、`history_written` SHALL 转 `true`、`history_gap.present` 保持 `false`，MUST NOT 出现假缺口。若退出前始终未发布成功，该批记录随内存消失且 MUST NOT 在重启后补报——它不属于 latch 口径（文件从未存在）。已发布之后的普通 append-only 写入（含部分写）仍按本条的既有口径判缺口。因未发布批次被拒绝的查看切换 / 显式新会话，或被跳过的压缩轮换 / 落回的 overflow 终态，MUST NOT 重置、清除或改写当前健康（`degraded`、`since_ts`、`history_written`、`history_gap` 全部保持）。
 
 `history_written` SHALL 在本逻辑会话第一条 `llm_request` / `llm_response` 成功写盘时转 `true`，同一逻辑会话内不再回落；自动压缩换文件沿用；新逻辑会话重置为 `false`。它 MUST NOT 参与 `history_gap` 判定，只决定「现在退出，这段对话将无法恢复」这条退出风险句是否还在。
 
@@ -395,7 +410,7 @@
 
 每次写失败 SHALL 另落一条结构化诊断日志（记录种类 + 错误分类 + 是否可能部分写）；日志 MUST NOT 含消息正文、文档内容或 system prompt。
 
-会话目录创建失败 SHALL 仍走既有 `harness_jsonl_failed` 硬错误（发送被拒），不进入健康状态；恢复文件的首次发布 MUST NOT 创建目录，其目录缺失按「未激活恢复的初始批次」处理，不适用本句。子运行审计流水、composer 草稿、附件 MUST NOT 进入本状态。健康只覆盖「本次 write 系统调用是否成功」，MUST NOT 被理解为对 `fsync`、断电、外部删除或写到旧 inode 的保证。隔离运行（无人值守）SHALL NOT 向面板呈现健康，只进日志。
+会话目录创建失败 SHALL 仍走既有 `harness_jsonl_failed` 硬错误（发送被拒），不进入健康状态；恢复文件的首次发布 MUST NOT 创建目录，其目录缺失按「已激活但未发布的恢复批次」处理，不适用本句。子运行审计流水、composer 草稿、附件 MUST NOT 进入本状态。健康只覆盖「本次 write 系统调用是否成功」，MUST NOT 被理解为对 `fsync`、断电、外部删除或写到旧 inode 的保证。隔离运行（无人值守）SHALL NOT 向面板呈现健康，只进日志。
 
 #### Scenario: 当前写失败与恢复
 
@@ -487,7 +502,7 @@
 - **WHEN** 留存写入失败期间用户继续一轮对话
 - **THEN** 轮次照常完成、消息照常上屏；新增的只有健康状态与诊断日志，MUST NOT 出现用户侧「发送失败」
 
-#### Scenario: 待激活恢复发布失败不置缺口
+#### Scenario: pending 恢复激活后发布失败不置缺口
 
 - **WHEN** 恢复会话后首次发送，发布因目录不可写在最终 `.jsonl` 出现前失败
 - **THEN** `state=degraded`、`severity=history`、`history_written=false`、`history_gap.present=false`；事件只发 `ok→degraded`，不发缺口 `false→true`；警示块说明「对话暂未保存」与退出风险，MUST NOT 出现「此前部分对话记录未能保存」
@@ -497,7 +512,7 @@
 - **WHEN** 上一场景后目录恢复可写，下一条记录触发发布成功
 - **THEN** `state=ok`、`severity=null`、`history_written=true`、`history_gap.present=false`；缓冲记录各落盘一次；事件发 `degraded→ok` 与 `history_written` `false→true`，不发缺口事件
 
-#### Scenario: 待激活批次的豁免止于发布
+#### Scenario: 初始批次的豁免止于发布
 
 - **WHEN** 恢复文件已发布成功，随后一条 `llm_request` 部分写失败
 - **THEN** 按既有口径 `severity=history`、`history_gap.present=true`；MUST NOT 以「初始批次豁免」放行
@@ -509,5 +524,5 @@
 
 #### Scenario: 拒绝替换不清健康
 
-- **WHEN** 待激活恢复已激活且发布失败（`state=degraded`、`history_gap=false`），用户点另一历史 / 触发新会话 / 触发压缩轮换被拒
-- **THEN** `state`、`severity`、`since_ts`、`history_written`、`history_gap` 全部保持原值；不发 `degraded→ok` 或缺口事件；警示块文案不变；被拒操作本身 MUST NOT 产生新的持久化写
+- **WHEN** pending 恢复已 `activated=true` 且发布失败（`state=degraded`、`history_gap=false`），用户点另一历史 / 触发新会话被拒，或自动压缩被跳过 / 落回既有 overflow 终态
+- **THEN** `state`、`severity`、`since_ts`、`history_written`、`history_gap` 全部保持原值；不发 `degraded→ok` 或缺口事件；警示块文案不变；被拒操作本身 MUST NOT 产生新的持久化写；overflow 终态只发既有 provider 错误事件，MUST NOT 发新的 persistence 错误

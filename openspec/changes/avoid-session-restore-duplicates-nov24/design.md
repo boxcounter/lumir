@@ -85,13 +85,18 @@ PendingRestore { source_id, new_id, token, view, activated, batch }
 守卫判定与动作：
 
 - 当前会话不是 pending，或 `activated=false`，或已发布 ⇒ 不触发守卫（纯查看替换恒零写盘）。
-- `activated=true` 且仍未发布 ⇒ 以**完整缓冲批次**尝试一次发布；失败则拒绝该操作并返回可见错误
-  （新错误码 `harness_persistence_unpublished`），当前会话、input、system、writer、批次、token
-  与健康**全部不变**。
+- `activated=true` 且仍未发布 ⇒ 以**完整缓冲批次**尝试一次发布；失败时：查看切换 / 显式新会话
+  拒绝并返回可见错误（新错误码 `harness_persistence_unpublished`）；自动压缩按下面的
+  「跳过压缩」收尾，不返回该错误。当前会话、input、system、writer、批次、token 与健康全部不变。
 - 显式新会话被拒：MUST NOT 清健康、MUST NOT 写 `pending_open=reset`。
-- compact 被拒：MUST NOT 创建 compact writer / 最终文件，MUST NOT 替换 input / system / writer，
-  MUST NOT 采用摘要；压缩请求 / 响应记录仍留在原批次（它们是真实 provider 调用，不得丢），
-  本轮继续用未压缩的上下文。压缩是优化，跳过是合法结果。
+- compact 被跳过（内部结果，不是 UI 错误）：MUST NOT 创建 compact writer / 最终文件，
+  MUST NOT 替换 input / system / writer，MUST NOT 采用摘要；压缩请求 / 响应记录仍留在原批次
+  （它们是真实 provider 调用，不得丢）。两个调用点分别收尾：
+  - **阈值触发**：本轮回答照常完成、对话继续；既有 persistence 告警即用户可见反馈，
+    MUST NOT 新增用户可见错误。
+  - **context overflow**：MUST NOT 在未压缩上下文上重试（overflow 重试机会已消费），
+    MUST NOT 新增持久化错误，按本轮既有 overflow 错误落回既有终态；原 pending、未压缩 input
+    与完整批次保留。
 - 关闭 vault 与退出 app 属**终止**路径，不在守卫内：它们无法在终止瞬间保证发布成功，只由
   「现在退出，这段对话将无法恢复」的告警覆盖（§6）。
 - cron 的交互会话形态（`SessionShape::Dedicated` 恢复失败回落 `new_session`、或 `new` 形态）
@@ -143,10 +148,15 @@ view 元数据），因此 A→B 纯查看替换**不可能**触发发布。以�
 - busy 拒绝、非法附件、线程未启动；
 - 纯查看、标题评估、删除、列举。
 
-provider 已实际收到请求后失败（非 2xx、网络、流中断）：这是真实失败轮次，文件已发布，失败与
-后续显式重试追加同一文件。**每次真实 provider 尝试各落一条 `llm_request` 与一条对应
-`llm_response`**；显式重试是第二次真实尝试，新增一条请求与一条响应，但 MUST NOT 新增用户消息
-或文件。
+provider 已实际收到请求后失败（非 2xx、网络、流中断）：这是真实失败轮次，分两态：
+
+- **首次发布已成功**：失败请求、失败响应与失败 sidecar 追加到既有文件；显式重试追加同一文件。
+- **首次发布失败**：同一份 `llm_request`、失败的 `llm_response` 与失败 sidecar 进入同一内存批次；
+  最终文件仍不存在（本次未创建）；后续写动作或显式重试按 D1 同身份发布。MUST NOT 把该失败轮次
+  写成「无记录」或丢弃其响应。
+
+**每次真实 provider 尝试各落一条 `llm_request` 与一条对应 `llm_response`**；显式重试是第二次
+真实尝试，新增一条请求与一条响应，但 MUST NOT 新增用户消息或文件。
 
 ### 5.2 批次内容与顺序
 
@@ -195,8 +205,8 @@ llm_request            （首条真实请求）
 - 后续每条记录继续加入批次；每次写动作至多尝试一次发布（不在同一次调用里循环重试）。
 - 重试 MUST 使用同一 `session_id`、同一 `session_token`、同一份批次。
 - 发布成功后：批次每条记录恰好一次；此后记录走普通 append；MUST NOT 双写触发发布的那条记录。
-- 任何替换 / 轮换当前会话的操作在此时先尝试一次发布；失败则拒绝该操作（§3.1），不得静默丢弃
-  缓冲，也不得清健康。
+- 任何替换 / 轮换当前会话的操作在此时先尝试一次发布；失败则拒绝该操作（compact 为内部跳过，
+  §3.1），不得静默丢弃缓冲，也不得清健康。
 - 退出前始终未发布成功：新增对话随内存消失；源文件不动；重启不复活空恢复文件。
 
 ### 6.2 健康状态（与「留存健康状态」条对齐）
@@ -234,7 +244,7 @@ D1 已裁决 A，B 不再保留可执行合同。B **不是局部替换**：若�
 - `switched=false`：直切或同一 pending 复用；`session_id` / `session_token` 为当前身份，
   `restored_items=0`、`messages=[]`；前端 MUST NOT 用它们重放。
 
-`session_id` 的文档改为「当前或待激活身份，不保证文件已存在」。`session_token` 语义不变：
+`session_id` 的文档改为「当前或未发布身份，不保证文件已存在」。`session_token` 语义不变：
 查看阶段分配，首次发布不重铸——前端在查看阶段采纳的 token 在首次发送与写失败事件中持续有效。
 真机无法从 AX 读出 pending token：真机只验证 `switched` 回执的可观测效果、文件数、transcript、
 通知与 `persistence` 事件；token 稳定性由 Rust 测试断言，MUST NOT 声称真机验证过 token。
@@ -251,7 +261,9 @@ ts-rs 重导出 `src/bindings/SessionResumeInfo.ts`，前端桩同步。
 - 首次发送不改变 token：activation 的 persistence 事件仍归同一逻辑会话。
 - 显式「新会话」被 `harness_persistence_unpublished` 拒绝时，前端 SHALL 呈现可见错误（错误行 /
   toast），MUST NOT 清空视图、composer 或健康；用户修好磁盘 / 权限后重试。
-- 自动压缩被同一守卫拒绝时不产生用户侧错误（压缩是内部优化）：对话继续、健康告警沿用。
+- 自动压缩被同一守卫跳过时不产生持久化用户错误：阈值路径完成本轮未压缩回答（健康告警可见）；
+  overflow 路径不重试、不加新错误，落回既有 overflow 终态。两态都保留原 pending、未压缩 input
+  与完整批次。
 - 迟到的旧快照 / 事件按既有 token + 世代守卫丢弃，不串 vault、不重复 transcript。
 
 ## 9. 验收矩阵（真机）
@@ -282,9 +294,9 @@ ts-rs 重导出 `src/bindings/SessionResumeInfo.ts`，前端桩同步。
 | 17 | 撞名（目标已存在） | 既有目标逐字节不变；本次不创建空 / 半截文件；按发布失败告警 |
 | 18 | 旧场景 724 / 206 回改后 | 行数在首次发送后才 +1；`notice_delivered` 首帧断言改为发送后成立 |
 
-自动压缩 + 未发布批次的组合优先用 Rust 反例证明（守卫在 `begin_compacted_session` / `rotate`）；
-真机若能稳定构造（低上下文 + `envChmod`）则补一条，构造不出来时必须在 tasks 登记放弃理由与
-Rust 证据指针，不得声称真机已验。
+自动压缩的两个调用点（阈值触发 / context overflow）Rust 必验（守卫在 `begin_compacted_session` /
+`rotate`，并断言调用方收尾）；真机尽力构造（低上下文 + `envChmod`），构造不出来时必须在 tasks
+登记放弃理由与 Rust 证据指针，不得声称真机已验。
 
 ## 10. 规格增量映射
 
@@ -294,11 +306,11 @@ Rust 证据指针，不得声称真机已验。
    `activated`（首次真实 `llm_request`），不是批次空 / 非空**；新增查看零写盘、重复 pending
    复用、当前项直切、带标题与通知的纯查看 A→B 零发布、pending 不出现在清单、首次发送唯一文件、
    查看后退出不复活等段落与场景；「新会话动作的幂等性」增加「未发布批次发布失败时返回可见错误、
-   状态不变」的例外；新增统一守卫场景（查看切换 / 新会话 / compact 轮换）；其余段落（每文件
-   一行、排序、compact、列举只读、纯环谱系）逐字保留。
+   状态不变」的例外；新增统一守卫场景（查看切换 / 新会话 / compact 阈值跳过 / compact overflow
+   落回既有终态）；其余段落（每文件一行、排序、compact、列举只读、纯环谱系）逐字保留。
 2. **会话本地留存**：新增查看零写盘、初始批次顺序、原子发布、**失败语义三态（本次未创建 /
    目标此前不存在则仍不存在 / 撞名既有目标逐字节保留）**、同身份重试、显式重试的精确 kind
-   计数、compact 轮换守卫、双击只受理一轮、provider 前置不激活 / 后置失败仍留痕等条款与场景；
+   计数、compact 两调用点的跳过收尾、双击只受理一轮、provider 前置不激活 / 后置失败两态等条款与场景；
    `inherit` 改为初始批次的一部分；恢复充分性、append-only、孤儿化等段落逐字保留。
 3. **留存健康状态**：新增「已激活但未发布批次」的 scoped 规则（degraded + severity=history +
    `history_written=false` + 缺口保持 false；发布成功后恢复 `ok` 且无假缺口）；**被拒绝的替换
@@ -314,8 +326,9 @@ Rust 证据指针，不得声称真机已验。
 - **硬链接不可用**（少数文件系统）：发布按失败处理，走 D1；不降级为可能覆盖的 rename。
 - **临时残留**：反复失败可能积累 `.jsonl.tmp` 残留；它们不被列举、不属清单消费者，本 change
   不做自动清扫（不引入后台任务）。
-- **显式新会话 / compact**：在已激活未发布的 pending 上被 §3.1 守卫拒绝；关闭 vault 与退出 app
-  属终止路径，不在守卫内，只由退出风险文案覆盖。
+- **显式新会话 / compact**：在已激活未发布的 pending 上，显式新会话被 §3.1 守卫拒绝并可见报错；
+  compact 被内部跳过（阈值路径完成本轮，overflow 路径落回既有终态），不产生持久化用户错误。
+  关闭 vault 与退出 app 属终止路径，不在守卫内，只由退出风险文案覆盖。
 - **`envChmod` 当前不存在**：矩阵 11 / 12 / 13 / 16 / 17 依赖本 change 新增的受限动作；未实现前
   这些行不得声称已验。真机读不到 pending token，id / token 稳定性只由 Rust 测试承担。
 - **`fsync` / 断电**：不在承诺内；原子发布只保证「发布点之前不可见、之后可见且完整」。
