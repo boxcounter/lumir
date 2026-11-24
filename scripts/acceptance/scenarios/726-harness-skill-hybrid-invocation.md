@@ -85,6 +85,12 @@ steps:
       has: ["/AXButton \\(发送\\)/", "tmp-acc", "acc-background"]
     timeoutMs: 40000
 
+  - name: 重启恢复后真实点击 composer，建立首个发送焦点
+    do: clickInNode
+    target: { role: AXTextArea, name: "tmp-acc" }
+    expect:
+      - label: 恢复后的 composer 已持焦
+        ax: { focused: "AXTextArea" }
   - name: 显式旧 refs 发送（当前策略复核，不重新扫描文本）
     do: key
     key: enter

@@ -24,8 +24,13 @@ steps:
   - name: 建立第 3 行选区
     do: keys
     keys: ["ctrl+n", "ctrl+n", "ctrl+shift+n"]
+  - name: 等第一次选区对应的摘录按钮进入 AX 树
+    do: waitFor
+    waitFor:
+      has: ["/AXButton \\(摘录到对话\\)/"]
+    timeoutMs: 10000
   - name: 插入第一张卡
-    do: click
+    do: clickInNode
     target: { role: AXButton, name: "摘录到对话" }
 
   - name: 键入卡后文本并核对 composer 子树顺序与负向 value
@@ -46,8 +51,13 @@ steps:
   - name: 移到第 4 行并选取 QBETA
     do: keys
     keys: ["ctrl+n", "ctrl+n", "ctrl+n", "ctrl+shift+n"]
+  - name: 等第二次选区对应的摘录按钮进入 AX 树
+    do: waitFor
+    waitFor:
+      has: ["/AXButton \\(摘录到对话\\)/"]
+    timeoutMs: 10000
   - name: 文末插入第二张卡
-    do: click
+    do: clickInNode
     target: { role: AXButton, name: "摘录到对话" }
   - name: 键入第二段文字
     do: typeInNode
