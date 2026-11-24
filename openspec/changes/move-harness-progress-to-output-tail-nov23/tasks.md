@@ -153,9 +153,9 @@
 ## 5. 视觉
 
 - [x] 5.1 结构层断言全绿（1.2 / 1.3 转绿）
-- [ ] 5.2 本地已完整跑 `LUMIR_VISUAL_PORT=4393 scripts/gate.sh visual`：
-      `GATE RESULT: 14/15 PASS（SKIP 0）`，退出码 1；1356 passed / 10 failed / 1 skipped。
-      10 个失败全部是 running 基线差异，idle 相对排版归档后的新基线零漂移；按 D6 不更新，待 Alex 裁决
+- [x] 5.2 Alex 批准 10 张 running 基线后，本地完整跑 `LUMIR_VISUAL_PORT=4398 scripts/gate.sh visual`：
+      `GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0；1368 passed / 0 failed / 1 skipped；
+      idle 相对排版归档后的新基线零漂移，其余 98 张基线哈希不变
 - [x] 5.3 running 态新像素只出候选：三主题 × 三宽度 + 空态接管共 10 张实图已落主仓
       `.local/reviews/ux-improvements/progress-tail-candidates/`（git 外），**不**执行 `--update`；
       候选交 Alex 过目后再决定是否更新
@@ -205,12 +205,12 @@
       `node scripts/openspec-archive-check.mjs --change move-harness-progress-to-output-tail-nov23`
       PASS（1 条 MODIFIED，对比 59 段）
 - [x] 8.3 `scripts/gate.sh quick` 通过：`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0
-- [ ] 8.4 已完整跑 `LUMIR_VISUAL_PORT=4393 scripts/gate.sh visual` 与像素层：
-      `GATE RESULT: 14/15 PASS（SKIP 0）`，退出码 1；10 个 running 基线差异待 Alex 过目，
-      按 D6 未更新，故本项不能勾「通过」
+- [x] 8.4 `LUMIR_VISUAL_PORT=4398 scripts/gate.sh visual` 与像素层通过：
+      `GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0；1368 passed / 0 failed / 1 skipped
 - [x] 8.5 真机 727 PASS（1/1，40 断言，92.7s，runner 退出码 0）；证据指针已 `ls`：
       `.local/acceptance/2026-11-24-progress-tail-r2/727-harness-progress-tail/`
-- [x] 8.6 视觉基线未更新；候选截图已落主仓指定目录，「是否更新」留 Alex 过目后裁决
+- [x] 8.6 Alex 已明确「批准进度尾行基线」：仅 9 张矩阵 running + empty-running 共 10 张已更新；
+      其余 98 张基线与容差不改；前后哈希清单及 light-narrow 反向验证证据已落主仓指定目录
 
 ## 9. 信息卫生
 
@@ -223,7 +223,7 @@
 ## 10. 收尾
 
 - [ ] 10.1 `tasks.md` 全部勾选，未勾项就地写放弃理由（不删任务项、不留空勾）
-- [ ] 10.2 在 `docs/backlog.md` 的归档跟踪队列落一条本 change 记录（五要件齐待归档 / 命中例外待裁）
-- [ ] 10.3 交独立 reviewer；评审判断层不降档；verdict 绑定当前 tip
+- [x] 10.2 已在 `docs/backlog.md` 的归档跟踪队列落一条本 change 记录（五要件齐待归档）
+- [x] 10.3 独立 reviewer final r2 判 clean / merge，verdict 绑定 `7bbd9010`；评审判断层未降档
 - [ ] 10.4 归档前逐条核对节点 2 五要件；归档走 `node scripts/openspec-archive.mjs <change-id>`，
       归档提交后跑 `--archived` 审计至 PASS

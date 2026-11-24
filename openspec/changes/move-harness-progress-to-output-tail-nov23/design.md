@@ -376,6 +376,20 @@ padding，未改居中方式）；尾行一占位，剩余空间变小，提示�
 
 手感（出现 / 消失的节奏、长文案截断是否可接受）归 Alex 真机裁决，不进机器判据。
 
+### 8.1 基线落地补充（2026-11-24）
+
+Alex 已明确「批准进度尾行基线」。本次只更新审阅页中的 10 张 running 基线：light / dark / eink
+各 narrow / wide / ultrawide 共 9 张，加 `harness-typography-empty-running`；其余 98 张基线和容差一律
+不改。替换前后哈希清单证明 10 张目标与批准来源逐张一致，其余 98 张逐字节不变；light-narrow 另做
+「新图 PASS → 旧图必 FAIL（10769 像素差）→ 新图恢复 PASS」的区分度验证。证据在主仓
+`.local/reviews/ux-improvements/progress-tail-candidates/baseline-update-manifest-{before,after}.json` 与
+`baseline-{new,old,restored}-light-narrow-*.log`。
+
+final r2 对 `7bbd9010` 判 clean / merge；727 真机 1/1 PASS、40 断言、92.7s，88 / 97 / 104 相关
+场景均 PASS。完整 `LUMIR_VISUAL_PORT=4398 scripts/gate.sh visual` 最终为
+`GATE RESULT: 15/15 PASS（SKIP 0）`、退出码 0（1368 passed / 0 failed / 1 skipped）。上述批准、真机与
+门禁证据共同满足节点 2 的独立验收面，不扩大 D6 的历史授权范围到其他基线。
+
 ## 9. 风险与已知边界
 
 1. **28px 历史现场**：旧位置对视口高度的影响已记录在跟滚控制器注释里；新位置改为「内容高度」

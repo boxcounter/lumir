@@ -10,7 +10,13 @@
 >   本文件推荐值生效。批准只覆盖方向与裁决点，不代表本 change 已实现或已归档。
 > - 两个前序均已归档且 `--archived` PASS，排版新基线已获 Alex 批准落盘；本 change 已进入实现。
 > - delta 以两个前序归档后的 living「进度呈现」整块重抄，24 个既有 scenario 全部保留，再叠加尾行合同。
-> - living spec 的改动仍以 delta 形式留在本 change 目录内，归档时并入，不提前改写；本次实现提交不归档。
+> - living spec 的改动仍以 delta 形式留在本 change 目录内，归档时并入，不提前改写。
+> - **独立复审已放行**：final r2 对 `7bbd9010` 判 clean / merge；727 真机 1/1 PASS（40 断言、92.7s），
+>   88 / 97 / 104 相关场景均 PASS。
+> - **基线已获 Alex 明确批准**：仅更新审阅页中的 9 张三主题 × 三宽度 running 图与 empty-running，
+>   其余 98 张基线与容差不改；light-narrow 已做「新图 PASS → 旧图必 FAIL → 新图恢复 PASS」反向验证。
+> - **完整门禁已收口**：`LUMIR_VISUAL_PORT=4398 scripts/gate.sh visual` 为
+>   `GATE RESULT: 15/15 PASS（SKIP 0）`、退出码 0（1368 passed / 0 failed / 1 skipped）。
 
 ## 前置门禁（硬）
 
