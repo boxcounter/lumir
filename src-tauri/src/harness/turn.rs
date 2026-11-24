@@ -839,7 +839,21 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
                 overflow_retried = true;
                 rounds -= 1; // 重试同一轮，不占循环额度
                 match compact_now(ctx, config, client) {
-                    Ok(()) => {
+                    Ok(super::run::CompactOutcome::SkippedUnpublished) => {
+                        ctx.persist(llm_error_payload(&error));
+                        let retry_turn = register_failed(
+                            ctx,
+                            allow_retry,
+                            &turn_user_text,
+                            llm::error_retryable(&error),
+                        );
+                        emit_terminal(
+                            ctx,
+                            events::error_with_retry(&error.code, &error.message, retry_turn),
+                        );
+                        return None;
+                    }
+                    Ok(super::run::CompactOutcome::Rotated) => {
                         // 压缩重试成功：撤销刚才那条「上下文超限」错误，否则子运行引擎会把
                         // 已恢复的请求误判为终态（设计 §7.5 的「沿用一次重试」）。
                         ctx.on_llm_error_recovered();
@@ -1783,7 +1797,7 @@ fn compact_now<C: RunContext>(
     ctx: &mut C,
     config: &HarnessConfig,
     client: &mut dyn LlmClient,
-) -> Result<(), CommandError> {
+) -> Result<super::run::CompactOutcome, CommandError> {
     const COMPACT_INSTRUCTION: &str = "\
 把以下对话历史压缩成一份续聊摘要，供新会话接着工作：保留用户的目标与关键诉求、\
 已经确认的决策、工具调用的关键结果（读了什么、改了什么、批准与否）、尚未完成的动作。\
@@ -3213,7 +3227,10 @@ mod tests {
             self.inner.external_mock_consumed()
         }
 
-        fn begin_compacted_session(&mut self, summary: &str) -> Result<(), CommandError> {
+        fn begin_compacted_session(
+            &mut self,
+            summary: &str,
+        ) -> Result<crate::harness::run::CompactOutcome, CommandError> {
             self.inner.begin_compacted_session(summary)
         }
 
@@ -3509,7 +3526,7 @@ mod tests {
             );
         }
         // 发射点总数（F15 的 10 个位点 / 11 条语句）：上面的循环只抓「绕过 helper」，抓不到
-        // 「整条语句被误删」，因此把两类调用的条数分别钉住——交互回合 7 条走
+        // 「整条语句被误删」，因此把两类调用的条数分别钉住——交互回合 8 条走
         // `emit_terminal`，配置级 / panic / 自动回合 4 条走 `emit_terminal_on`。
         fn calls_of(source: &str, name: &str) -> usize {
             let needle = format!("{name}(");
@@ -3526,8 +3543,8 @@ mod tests {
             .unwrap_or(source);
         assert_eq!(
             calls_of(production, "emit_terminal"),
-            7,
-            "交互回合的终态发射语句数变了（预期 7：入队失败 / 压缩重试 / LLM / 空响应 / done / 中止两条）"
+            8,
+            "交互回合的终态发射语句数变了（预期 8：入队失败 / overflow 跳过 / 压缩重试 / LLM / 空响应 / done / 中止两条）"
         );
         assert_eq!(
             calls_of(production, "emit_terminal_on"),
@@ -4247,6 +4264,7 @@ mod tests {
             .with_session(&fixture.scope, |session| session.input().to_vec())
             .unwrap();
         let source_id = runtime.current_session_id(&fixture.scope).unwrap();
+        runtime.new_session(&fixture.scope).unwrap();
         let resumed = runtime
             .resume_session(&fixture.scope, &fixture.config, &source_id)
             .unwrap();

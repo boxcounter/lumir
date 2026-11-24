@@ -157,6 +157,7 @@ test("会话恢复重放：who 行带留存 ts 的时间读数（同日窄相对
       info: {
         session_id: "s1759912345679-resume",
         restored_items: 3,
+        switched: true,
         messages: [
           { role: "user", text: "恢复的历史问题", ts: NOW_S - 90 },
           { role: "assistant", text: "恢复的历史回答", ts: NOW_S - 30 },

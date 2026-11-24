@@ -258,6 +258,15 @@ test("restoreSnapshot：in_flight 只在进入档位被读（对账档连读都�
   }
 });
 
+test("同源恢复 no-op 只关浮层，发生在任何视图复位与 token 更换之前", () => {
+  const noop = RESUME.indexOf("if (info.switched === false)");
+  const reset = RESUME.indexOf("resetView(");
+  const adopt = RESUME.indexOf("persistenceSessionToken = persistenceSessionTokenOf");
+  assert.ok(noop >= 0, "必须显式处理 switched=false");
+  assert.ok(noop < reset && noop < adopt, "no-op 必须先于 resetView 与新 token 采纳返回");
+  assert.match(RESUME.slice(noop, reset), /setSessPop\(false\);\s*return;/);
+});
+
 test("恢复会话也是进入时点：只读相位、不重放内容", () => {
   assert.match(RESUME, /fetchActivitySnapshot\(\)/, "恢复会话后必须按快照的 in_flight 回填相位");
   const phaseOnly = functionBodyOf(PANEL_SOURCE, "fetchActivitySnapshot");

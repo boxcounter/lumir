@@ -1165,7 +1165,7 @@ fn vault_scoping_switch_restore_and_reset() {
         .unwrap()
         .lines()
         .count();
-    runtime.reset_session(&f.scope());
+    runtime.reset_session(&f.scope()).unwrap();
     let snap = runtime.snapshot(&f.scope(), &config);
     assert!(snap.messages.is_empty(), "重置后空态");
     // 重置后再问一轮：新文件建立（opened_from=reset），旧文件逐字节不变（封闭）。

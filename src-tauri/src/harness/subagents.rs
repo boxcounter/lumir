@@ -2975,7 +2975,10 @@ impl RunContext for ChildContext {
         None
     }
 
-    fn begin_compacted_session(&mut self, summary: &str) -> Result<(), CommandError> {
+    fn begin_compacted_session(
+        &mut self,
+        summary: &str,
+    ) -> Result<super::run::CompactOutcome, CommandError> {
         // 子运行的压缩只压**内存态输入**：审计是一次运行的完整轨迹，不轮转文件
         // （design §7.5）。压缩调用自己的 usage 已在 `on_compact_usage` 计入段预算。
         self.session.jsonl().record(&serde_json::json!({
@@ -2985,7 +2988,7 @@ impl RunContext for ChildContext {
         self.session.replace_input(vec![session::user_item(&format!(
             "（此前子运行上下文已压缩为摘要，接着摘要继续）\n{summary}"
         ))]);
-        Ok(())
+        Ok(super::run::CompactOutcome::Rotated)
     }
 
     fn tool_allowed(&self, name: &str) -> bool {

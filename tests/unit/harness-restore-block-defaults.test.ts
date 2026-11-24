@@ -492,6 +492,7 @@ async function resumeViaSessionPicker(
     session_id: "s1759009000-beta",
     restored_items: messages.length,
     messages,
+    switched: true,
   }));
   const button = titlebar.querySelector(".lumir-hp-session");
   assert.ok(button !== null, "标题栏 harness 段应在场（会话名钮）");

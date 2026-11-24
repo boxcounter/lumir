@@ -308,7 +308,7 @@ pub trait RunContext {
     fn after_turn(&mut self, user_text: &str) -> Option<TitleJob>;
 
     /// 压缩续聊的会话侧收尾（交互 = 轮换留存文件 + 重装系统上下文；子运行 = 只压内存态输入）。
-    fn begin_compacted_session(&mut self, summary: &str) -> Result<(), CommandError>;
+    fn begin_compacted_session(&mut self, summary: &str) -> Result<CompactOutcome, CommandError>;
 
     /// 若该调用属于**并行编排**（`task`），启动它并返回句柄；`None` = 按普通工具串行执行。
     /// 交互上下文实现 `task` 的启动；子运行上下文永远 `None`（深度 1）。
@@ -378,6 +378,12 @@ pub trait RunContext {
     fn external_mock_consumed(&self) -> usize {
         0
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactOutcome {
+    Rotated,
+    SkippedUnpublished,
 }
 
 /// 交互 / cron 槽位的上下文实现（design §2.2）：会话与事件都走既有 `Runtime` 协议，语义与
@@ -752,7 +758,16 @@ impl RunContext for SessionContext<'_> {
             .unwrap_or(0)
     }
 
-    fn begin_compacted_session(&mut self, summary: &str) -> Result<(), CommandError> {
+    fn begin_compacted_session(&mut self, summary: &str) -> Result<CompactOutcome, CommandError> {
+        let can_rotate = self.runtime.with_session(self.scope, |session| {
+            if session.jsonl().has_unpublished_history() {
+                session.jsonl().try_publish_pending();
+            }
+            !session.jsonl().has_unpublished_history()
+        })?;
+        if !can_rotate {
+            return Ok(CompactOutcome::SkippedUnpublished);
+        }
         let context_section =
             self.with_session(|session| session.current_context().map(str::to_string))?;
         // 压缩是一次汇总调用，档位照会话现值；读数种子带压缩前的快照 + **清零**的累计器。
@@ -829,7 +844,7 @@ impl RunContext for SessionContext<'_> {
         if let Some(title) = &inherited_title {
             self.sink.emit(events::title(title));
         }
-        Ok(())
+        Ok(CompactOutcome::Rotated)
     }
 }
 

@@ -2900,6 +2900,10 @@ const COPY_TABLE = {
     zh: "关闭提示",
     en: "Close notification",
   },
+  D984: {
+    zh: "对话暂未保存，不能切换或新建会话；请先检查磁盘空间与目录权限后重试",
+    en: "This conversation isn't saved, so you can't switch or start a new session. Check disk space and folder permissions, then try again",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -3026,6 +3030,7 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   harness_no_session: "D362",
   harness_thread_failed: "D363",
   harness_state_failed: "D364",
+  harness_persistence_unpublished: "D984",
   harness_not_running: "D384",
   // 会话恢复（M391，change reshape-harness-session-recording）：harness_resume_session。
   harness_session_unreadable: "D409",

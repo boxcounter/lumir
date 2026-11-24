@@ -3601,12 +3601,14 @@ async function handleCronOpenSession(payload: { vault: string; session_id: strin
   try {
     await ensureCronVault(payload.vault);
     target = { targetVault: loadedRoot ?? payload.vault, viewToken: harnessPanel.viewToken() };
-    await invoke("harness_resume_session", { session_id: payload.session_id });
+    const resume = (await invoke("harness_resume_session", {
+      session_id: payload.session_id,
+    })) as { switched: boolean };
     const stillCurrent =
       harnessPanel.isViewCurrent(target.viewToken) && loadedRoot === target.targetVault;
-    // 清目标 vault 的活动记录；只在目标仍当前、世代未变时复位视图并重取快照。取代旧的
-    // `vaultChanged("", null)` + `vaultChanged(root)` 空哨兵（它会破坏显示门、触发两次完整重建）。
-    harnessPanel.reloadSessionView(target);
+    // 真正切换才清目标 vault 的活动记录并复位视图；当前文件直切只打开面板。
+    // 视图重载仍受目标 vault 与世代守卫，取代旧的 `vaultChanged` 空哨兵。
+    if (resume.switched) harnessPanel.reloadSessionView(target);
     // 只在这一代视图里打开面板：切走后 MUST NOT 把 B 的 harness pane 打开（那会抢走用户
     // 正在看的东西）。A 的恢复内容留在后端会话里，切回 A 时由快照重建。
     if (stillCurrent) openHarnessPane(false);

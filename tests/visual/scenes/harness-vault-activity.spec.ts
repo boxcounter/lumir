@@ -67,6 +67,8 @@ interface RaceStubOptions {
   retryReject?: { at: number; envelope: { code: string; message: string } };
   /** 把第 N 次 `harness_resume_session` 挂起（`__release('resume', 'resolve'|'reject', …)`）。 */
   holdResume?: number[];
+  /** deferred 恢复的回执；缺省为真正切换。 */
+  resumeResult?: { session_token: number | null; messages: unknown[]; switched: boolean };
   /** 会话浮层的历史条目（`harness_list_sessions`）。 */
   sessionList?: Array<{ session_id: string; first_user_text?: string | null; title?: string | null; ts?: number }>;
   /** 把第 N 次 `vault_session_get` 延迟这么多毫秒（造「布局尚未落定」的窗口）。 */
@@ -97,6 +99,9 @@ async function stubRace(page: Page, options: RaceStubOptions = {}): Promise<void
       if (!pending) throw new Error(`没有挂起的调用：${name}`);
       delete w.__pending[name];
       if (mode === "reject") pending.reject(error);
+      else if (name === "resume") {
+        pending.resolve(opts.resumeResult ?? { session_token: null, messages: [], switched: true });
+      }
       else pending.resolve(null);
     };
     const counts = { send: 0, abort: 0, new: 0, cron: 0, retry: 0, resume: 0, sessionGet: 0 };
@@ -176,7 +181,7 @@ async function stubRace(page: Page, options: RaceStubOptions = {}): Promise<void
         const call = counts.resume;
         counts.resume += 1;
         if (opts.holdResume?.includes(call)) return hold("resume");
-        return { session_token: null, messages: [] };
+        return { session_token: null, messages: [], switched: true };
       }
       if (cmd === "harness_list_sessions") return opts.sessionList ?? [];
       if (cmd === "harness_state") return snapshotFor(w.__root);
@@ -551,7 +556,7 @@ test("cron 结果通知恢复跨 vault：不打开 B 的面板、不清 B 的未
     internals.invoke = async (cmd: string, args: any) => {
       if (cmd === "harness_resume_session") {
         return new Promise((resolve) => {
-          w.__pending.resume = { resolve: () => resolve({ session_token: null, messages: [] }) };
+          w.__pending.resume = { resolve: () => resolve({ session_token: null, messages: [], switched: true }) };
         });
       }
       return original(cmd, args);
@@ -893,4 +898,59 @@ test("会话恢复回包跨 vault（会话浮层入口）：只清 A 的记录�
   await page.keyboard.press("Meta+Shift+A");
   await openSwitcher(page);
   expect(await rowMarker(page, "act-a")).toBeNull();
+});
+
+test("迟到的 switched=false 不得关闭新视图的会话浮层", async ({ page }) => {
+  await stubTauri(page, A_FIXTURE);
+  await stubRace(page, {
+    holdResume: [0],
+    resumeResult: { session_token: null, messages: [], switched: false },
+    sessionList: [{ session_id: "session-a-1", first_user_text: "A-OLD 历史会话提问", ts: 1759912345 }],
+    state: { [B_ROOT]: { messages: [{ role: "assistant", text: "B-KEEP B 的既有内容" }], inFlight: false } },
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="a-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await page.locator(".lumir-hp-session").click();
+  await page.locator(".lumir-hp-sesspop-history").first().click();
+
+  await switchTo(page, "act-b", "lumir-activity-b");
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-hp-transcript")).toContainText("B-KEEP B 的既有内容");
+  await page.locator(".lumir-hp-session").click();
+  await expect(page.locator(".lumir-hp-sesspop-history").first()).toBeVisible();
+
+  await release(page, "resume", "resolve");
+  await expect(page.locator(".lumir-hp-sesspop-history").first()).toBeVisible();
+});
+
+test("当前代 switched=false 只关浮层，不重建视图或重取快照", async ({ page }) => {
+  await stubTauri(page, A_FIXTURE);
+  await stubRace(page, {
+    holdResume: [0],
+    resumeResult: { session_token: null, messages: [], switched: false },
+    sessionList: [{ session_id: "session-a-1", first_user_text: "A-OLD 历史会话提问", ts: 1759912345 }],
+    state: { [A_ROOT]: { messages: [{ role: "assistant", text: "A-KEEP 当前内容" }], inFlight: false } },
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="a-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-hp-transcript")).toContainText("A-KEEP 当前内容");
+  await page.locator(".lumir-hp-session").click();
+  await page.locator(".lumir-hp-sesspop-history").first().click();
+  const callsBefore = await page.evaluate(
+    (root) => (window as unknown as { __stateCallsFor: (r: string) => number }).__stateCallsFor(root),
+    A_ROOT,
+  );
+
+  await release(page, "resume", "resolve");
+  await expect(page.locator(".lumir-hp-sesspop-history").first()).toBeHidden();
+  await expect(page.locator(".lumir-hp-transcript")).toContainText("A-KEEP 当前内容");
+  await expect(page.locator(".lumir-hp-transcript")).not.toContainText("A-OLD 历史会话提问");
+  const callsAfter = await page.evaluate(
+    (root) => (window as unknown as { __stateCallsFor: (r: string) => number }).__stateCallsFor(root),
+    A_ROOT,
+  );
+  expect(callsAfter).toBe(callsBefore);
 });

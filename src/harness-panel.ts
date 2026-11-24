@@ -10717,8 +10717,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       });
   }
 
-  /** 恢复选中历史会话（选择器点击路径，M392/M398）：恢复 = 后端读源文件最后一条会话轮次
-   *  llm_request 的完整请求体、system + input 原样灌进**新**会话并续写新留存文件
+  /** 恢复选中历史会话（选择器点击路径，M392/M398）：后端只读源文件并重建内存视图；
+   *  首次真实 llm_request 才原子发布新留存文件
    *  （harness_resume_session；busy / 跨 vault / 留存损坏由后端拒绝，D409–D411 经
    *  errorText 按 code 渲染上错误行）。
    *
@@ -10731,75 +10731,42 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  （留存重算：最近一次真实读数 + 会话累计），经 harness_state 快照应用——控制行/气泡恢复后
    *  即有真值；从未发过请求的会话快照 has_usage=false，读数区保持隐藏（不假读数）。 */
   function resumeSession(entry: SessionEntry): void {
-    // 恢复期间先退役旧逻辑会话的 token 并藏掉旧状态行：新会话的写失败事件可能在 Promise
-    // 回执之前到达（后端在返回前写 notice / inherit），必须能显示；回执失败时整体回滚。
-    const previousToken = persistenceSessionToken;
-    const previousView = persistenceView;
-    const previousHidden = persistenceLineHidden;
-    const previousShown = historyStickyShown.has(currentVault ?? "");
-    if (previousToken !== null) retiredPersistenceTokens.add(previousToken);
-    persistenceSessionToken = null;
-    // 恢复期间旧 persistence 轻量快照的迟到回包整体作废（回执后以新快照为地板）。
-    persistenceSnapshotSeq += 1;
-    hidePersistenceLine();
-    // 发起时定格（design §7 / §14.3b）：记录只清发起 vault；DOM 复位 / 内容渲染 / 快照重取
-    // 只在视图仍是发起视图时执行——切走后 A 的恢复内容 MUST NOT 渲染进 B。
     const actionVault = currentVault;
     const actionToken = viewGeneration;
+    const previousToken = persistenceSessionToken;
     harnessResumeSession(entry.sessionId)
       .then((info) => {
         if (actionVault !== null && (actionVault !== currentVault || actionToken !== viewGeneration)) {
-          // 只清 A 的记录（恢复 = A 换了会话）；B 的记录、transcript 与快照一概不动。
-          activity.reset(actionVault);
+          if (info.switched !== false) {
+            if (previousToken !== null) retiredPersistenceTokens.add(previousToken);
+            activity.reset(actionVault);
+          }
           return;
         }
+        if (info.switched === false) {
+          setSessPop(false);
+          return;
+        }
+        if (previousToken !== null) retiredPersistenceTokens.add(previousToken);
+        persistenceSnapshotSeq += 1;
         resetView({ clearActivityFor: actionVault });
-        // 从历史恢复 = 新逻辑会话：采纳回执里的新 token；**MUST NOT** 在这里 reset 健康读数
-        // （会抹掉先于回执到达的真实写失败事件）。完整 persistence 快照随后做地板。
         persistenceSessionToken = persistenceSessionTokenOf(info.session_token);
         historyStickyShown.delete(currentVault ?? "");
+        hidePersistenceLine();
         fetchPersistenceSnapshot();
         renderSnapshotMessages(Array.isArray(info.messages) ? info.messages : []);
         firstUserText = entry.firstUserText;
-        // 恢复后的标题 = 选中项的有效标题（后端 `SessionSummary.title` 的同一读数；恢复入口在
-        // 源有标题时把 inherit 记录写进新文件，值与此一致——design D7/D11）。
         sessionTitle = entry.title;
         applySessionName();
-        // 恢复批次收尾落在末尾（与 restoreSnapshot 末尾同一句）：`appendSnapshotMessage` 的
-        // assistant 分支经顶层 helper 追加、不滚——恢复 transcript 以 assistant 收尾
-        // （会话常态：末轮答复后用户尚未再提问）时少了这一句就停在最末 user 消息处、收尾回复
-        // 折在视口外（M398 r1 P1）。user / tool 分支自带滚动不足以覆盖这个尾形态。
-        follow.jumpToBottom(); // 分流表 #16：恢复历史会话必须从末尾读起（既有语义）
+        follow.jumpToBottom();
         refreshThinkingState();
         refreshUsageState();
-        // 恢复出的会话若带子运行分桶（M589 的恢复重算），任务区的用量区要跟着出来——
-        // 恢复命令只回放消息，不含读数快照（M590 真机场景 192：恢复后用量区整块缺席）。
         refreshTaskState();
-        // 相位（spec「恢复会话」也是进入时点之一）：`resetView` 只做视图复位，真相取自
-        // 快照的 `in_flight`——协议上恢复会被在途轮次挡住（`harness_busy`），所以这里通常
-        // 读回空闲；但读口存在，将来放宽协议时不必再改这条路径。
         fetchActivitySnapshot();
       })
       .catch((e: unknown) => {
-        // 视图世代守卫（design §7）：换代之后到达的旧回包属于上一段会话——整条 no-op，
-        // 不写 B 的持久化状态、不把 A 的错误行写进 B。
         if (actionVault !== null && actionVault !== currentVault) return;
         if (actionToken !== viewGeneration) return;
-        // 恢复失败：恢复旧逻辑会话的身份 / 读数 / 显隐与「已提示」标记；期间若误接纳了
-        // 新 token 的事件，一并作废。
-        if (
-          persistenceSessionToken !== null &&
-          persistenceSessionToken !== previousToken
-        ) {
-          retiredPersistenceTokens.add(persistenceSessionToken);
-        }
-        if (previousToken !== null) retiredPersistenceTokens.delete(previousToken);
-        persistenceSessionToken = previousToken;
-        persistenceView = previousView;
-        persistenceLineHidden = previousHidden;
-        renderPersistenceLine();
-        if (previousShown) historyStickyShown.add(currentVault ?? "");
-        else historyStickyShown.delete(currentVault ?? "");
         appendError(t("D348", { message: errorText(e) }));
       });
   }
