@@ -9,8 +9,17 @@ const ROW = ".lumir-link-suggest-item";
 
 function fixture(doc: string, paths: readonly string[]): VaultFixture {
   const all = ["source.md", ...paths];
+  const directories = new Set<string>();
+  for (const path of all) {
+    for (let index = 1; index < path.length; index += 1) {
+      if (path[index] === "/") directories.add(path.slice(0, index));
+    }
+  }
   return {
-    entries: all.map((path) => ({ path, kind: "file", size: path === "source.md" ? doc.length : 0, mtime_ms: 0 })),
+    entries: [
+      ...[...directories].map((path) => ({ path, kind: "dir", size: 0, mtime_ms: 0 })),
+      ...all.map((path) => ({ path, kind: "file", size: path === "source.md" ? doc.length : 0, mtime_ms: 0 })),
+    ],
     files: Object.fromEntries(all.map((path) => [path, path === "source.md" ? doc : ""])),
   };
 }
@@ -162,22 +171,120 @@ test("根文件精确同名不可接受，目录项仍可接受且不会误拒 f
   expect(await readDocument(page)).toBe("[[dir/foo.md]]");
 });
 
-test("组合期 Enter / 229 不接受、不移动候选、不消费事件", async ({ page }) => {
-  const doc = "[[al";
-  await openDoc(page, doc);
-  const before = await rows(page);
-  const result = await page.locator(".cm-content").evaluate((content) => {
-    const view = (content as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
-    const event = new KeyboardEvent("keydown", {
-      key: "Enter", code: "Enter", keyCode: 229, which: 229, isComposing: true,
-      bubbles: true, cancelable: true,
+for (const signal of [
+  { name: "isComposing=true / keyCode=13", isComposing: true, keyCode: 13 },
+  { name: "isComposing=false / keyCode=229", isComposing: false, keyCode: 229 },
+] as const) {
+  for (const key of [
+    { key: "Enter", code: "Enter", ctrlKey: false },
+    { key: "ArrowDown", code: "ArrowDown", ctrlKey: false },
+    { key: "ArrowUp", code: "ArrowUp", ctrlKey: false },
+    { key: "n", code: "KeyN", ctrlKey: true },
+    { key: "p", code: "KeyP", ctrlKey: true },
+  ] as const) {
+    test(`组合期 ${signal.name}：${key.key} 不接受、不导航、不消费`, async ({ page }) => {
+      const doc = "[[al";
+      await openDoc(page, doc);
+      const active = page.locator(`${ROW}.is-active`);
+      await expect(active).toHaveText("notes/Alpha.md");
+      const result = await page.locator(".cm-content").evaluate((content, input) => {
+        const view = (content as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+        const event = new KeyboardEvent("keydown", {
+          key: input.key,
+          code: input.code,
+          keyCode: input.keyCode,
+          which: input.keyCode,
+          isComposing: input.isComposing,
+          ctrlKey: input.ctrlKey,
+          bubbles: true,
+          cancelable: true,
+        });
+        view.contentDOM.dispatchEvent(event);
+        return {
+          prevented: event.defaultPrevented,
+          doc: view.state.doc.toString(),
+          active: document.querySelector(".lumir-link-suggest-item.is-active")?.textContent ?? null,
+        };
+      }, { ...key, ...signal });
+      expect(result).toEqual({ prevented: false, doc, active: "notes/Alpha.md" });
+      expect(await readDocument(page)).toBe(doc);
+      await expect(active).toHaveText("notes/Alpha.md");
+      await expect(page.locator(OVERLAY)).toBeVisible();
     });
-    view.contentDOM.dispatchEvent(event);
-    return { prevented: event.defaultPrevented, doc: view.state.doc.toString() };
-  });
-  expect(result).toEqual({ prevented: false, doc });
-  expect(await rows(page)).toEqual(before);
+  }
+}
+
+test("切标签关闭候选，源文档与磁盘均不变", async ({ page }) => {
+  const doc = "[[al";
+  await openDoc(page, doc, ["notes/Alpha.md", "notes/alphabet.md"]);
   await expect(page.locator(OVERLAY)).toBeVisible();
+  await page.locator('.ft-row[title="notes"]').click();
+  await page.locator('.ft-row[title="notes/Alpha.md"]').click();
+  await expect(page.locator(".modeline-path")).toHaveText(/notes\s*\/\s*Alpha\.md/);
+  await expect(page.locator(OVERLAY)).toHaveCount(0);
+  expect(await fileText(page, "source.md")).toBe(doc);
+});
+
+test("切 vault 关闭候选，不携带旧查询或浮层", async ({ page }) => {
+  const doc = "[[al";
+  const initial = fixture(doc, ["notes/Alpha.md", "notes/alphabet.md"]);
+  initial.vaults = [
+    { id: "first", path: "/Users/alex/demo-vault", name: "first-vault", available: true, last_opened_at: 2, tab_count: 1 },
+    { id: "second", path: "/tmp/second-vault", name: "second-vault", available: true, last_opened_at: 1, tab_count: 0 },
+  ];
+  initial.switchTo = { root: "/tmp/second-vault", ...fixture("other.md", ["other.md"]) };
+  await stubTauri(page, initial);
+  await page.goto("/");
+  await page.locator('.ft-row[title="source.md"]').click();
+  await expect(page.locator(".modeline-path")).toHaveText("source.md");
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await select(page, doc.length);
+  await expect(page.locator(OVERLAY)).toBeVisible();
+  await page.locator(".ft-vault").click();
+  const row = page.locator(".vault-row").filter({ has: page.locator(".vault-row-name", { hasText: /^second-vault$/ }) });
+  await expect(row).toBeVisible();
+  await row.click();
+  await expect(page.locator(".ft-vault-name")).toHaveText("second-vault", { timeout: 15_000 });
+  await expect(page.locator(OVERLAY)).toHaveCount(0);
+  await expect(page.locator('.ft-row[title="other.md"]')).toBeVisible();
+});
+
+test("锚点滚出视口关闭候选，文档不变", async ({ page }) => {
+  const doc = `[[al\n${" filler\n".repeat(200)}`;
+  await openDoc(page, doc);
+  await select(page, 4);
+  await expect(page.locator(OVERLAY)).toBeVisible();
+  await page.locator(".cm-content").evaluate((content) => {
+    const view = (content as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    view.scrollDOM.scrollTop = view.scrollDOM.scrollHeight;
+  });
+  await expect(page.locator(OVERLAY)).toHaveCount(0);
+  expect(await readDocument(page)).toBe(doc);
+  expect(await fileText(page, "source.md")).toBe(doc);
+});
+
+test("光标位于视口下缘时浮层向上翻转且不越界", async ({ page }) => {
+  const doc = `${" filler\n".repeat(200)}[[al`;
+  await openDoc(page, doc);
+  await page.locator(".cm-content").evaluate((content) => {
+    const view = (content as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const head = view.state.selection.main.head;
+    view.scrollDOM.scrollTop = view.scrollDOM.scrollHeight;
+    const caret = view.coordsAtPos(head)!;
+    view.scrollDOM.scrollTop += caret.bottom - (view.scrollDOM.clientHeight - 24);
+    view.contentDOM.dispatchEvent(new Event("input"));
+  });
+  await expect(page.locator(OVERLAY)).toBeVisible();
+  const geometry = await page.locator(".cm-content").evaluate((content) => {
+    const view = (content as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const caret = view.coordsAtPos(view.state.selection.main.head)!;
+    const overlay = document.querySelector(".lumir-link-suggest")!.getBoundingClientRect();
+    return { caretTop: caret.top, overlayTop: overlay.top, overlayBottom: overlay.bottom, viewport: innerHeight };
+  });
+  expect(geometry.overlayBottom).toBeLessThanOrEqual(geometry.caretTop);
+  expect(geometry.overlayTop).toBeGreaterThanOrEqual(0);
+  expect(geometry.overlayBottom).toBeLessThanOrEqual(geometry.viewport);
+  expect(await readDocument(page)).toBe(doc);
 });
 
 test("三主题壳完全不透明，长路径和同名可辨，边缘与 resize 后不越出视口", async ({ page }) => {
@@ -267,24 +374,38 @@ test("上下文矩阵：代码 / frontmatter / Link / Image / 完整链接 / 只
   expect(await readDocument(page)).toBe("[[alp");
 });
 
-test("compositionend 等 pending flush：同步不刷新不 dispatch，最终 query 只刷新一次", async ({ page }) => {
+test("compositionend：DOM 已是最终候选而 state 仍旧，pending flush 前零刷新，flush 后仅刷新一次", async ({ page }) => {
   const doc = "[[";
   await openExperiment(page, doc, ["notes/Alpha.md", "notes/Beta.md"]);
   await expect(page.locator(OVERLAY)).toBeVisible();
   const before = await rows(page);
-  await page.locator(".cm-content").evaluate((content) => {
+  const atEnd = await page.locator(".cm-content").evaluate((content) => {
     const view = (content as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
     const observer = view.observer;
     const dispatch = view.dispatch.bind(view);
-    const probe = window.__wikilinkIme = { pending: true, dispatches: 0, mutations: 0 };
+    const list = document.querySelector(".lumir-link-suggest-list") as HTMLElement;
+    const replaceChildren = list.replaceChildren;
+    const probe = window.__wikilinkIme = { pending: true, dispatches: 0, refreshes: 0 };
     observer.pendingRecords = () => probe.pending ? [{}] : [];
-    view.dispatch = (...args: any[]) => { probe.dispatches += 1; return dispatch(...args); };
-    new MutationObserver(() => { probe.mutations += 1; }).observe(document.querySelector(".lumir-link-suggest-list")!, { childList: true });
+    view.dispatch = (...args: any[]) => {
+      if (!probe.pending) {
+        probe.dispatches += 1;
+        return dispatch(...args);
+      }
+    };
+    list.replaceChildren = (...nodes: Array<Node | string>) => {
+      probe.refreshes += 1;
+      return replaceChildren.apply(list, nodes);
+    };
     view.contentDOM.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" }));
+    view.contentDOM.textContent = "[[Alpha";
     view.contentDOM.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "Alpha" }));
+    return { state: view.state.doc.toString(), dom: view.contentDOM.textContent };
   });
+  expect(atEnd).toEqual({ state: doc, dom: "[[Alpha" });
   expect(await rows(page)).toEqual(before);
   expect(await page.evaluate(() => window.__wikilinkIme.dispatches)).toBe(0);
+  expect(await page.evaluate(() => window.__wikilinkIme.refreshes)).toBe(0);
   const confirmingEnter = await page.locator(".cm-content").evaluate((content) => {
     const view = (content as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
     const event = new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true, cancelable: true });
@@ -292,10 +413,10 @@ test("compositionend 等 pending flush：同步不刷新不 dispatch，最终 qu
     return { prevented: event.defaultPrevented, doc: view.state.doc.toString() };
   });
   expect(confirmingEnter).toEqual({ prevented: false, doc });
-  expect(await page.evaluate(() => window.__wikilinkIme.dispatches)).toBe(0);
   await page.waitForTimeout(32);
   expect(await rows(page)).toEqual(before);
   expect(await page.evaluate(() => window.__wikilinkIme.dispatches)).toBe(0);
+  expect(await page.evaluate(() => window.__wikilinkIme.refreshes)).toBe(0);
 
   await page.locator(".cm-content").evaluate((content) => {
     const view = (content as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
@@ -306,12 +427,12 @@ test("compositionend 等 pending flush：同步不刷新不 dispatch，最终 qu
   });
   await expect(page.locator(ROW)).toHaveCount(1);
   await expect(page.locator(ROW)).toHaveText("notes/Alpha.md");
-  expect(await page.evaluate(() => window.__wikilinkIme.mutations)).toBe(1);
+  expect(await page.evaluate(() => window.__wikilinkIme.refreshes)).toBe(1);
   expect(await readDocument(page)).toBe("[[Alpha");
 });
 
 declare global {
   interface Window {
-    __wikilinkIme: { pending: boolean; dispatches: number; mutations: number };
+    __wikilinkIme: { pending: boolean; dispatches: number; refreshes: number };
   }
 }
