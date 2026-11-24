@@ -2017,6 +2017,8 @@
   gap: var(--sp-3);
   margin: var(--sp-2) 0;
   padding: var(--sp-2) var(--sp-4) var(--sp-2) var(--sp-3);
+  font-size: calc(var(--fs-ui) * var(--lumir-hp-scale, 1));
+  line-height: var(--lh-ui);
   background: var(--agent-bg);
   border: 1px solid var(--border-soft);
   border-radius: var(--r6);
@@ -2145,8 +2147,8 @@
   color: var(--text);
 }
 /* 编号徽标（design §8）：缩略图左上角的小圆角徽标，内容是裸编号 `1` / `2`。压在图上的纯读数，
-   不参与指针（pointer-events: none）——点击穿透到缩略图。反色底（--text 底 + --bg 字）在任意
-   图片内容上都有对比度，eink 主题同样成立。 */
+   不参与指针（pointer-events: none）——点击穿透到缩略图。反色底（--text 底 + --content-bg 字）在任意
+   图片内容上都有对比度，eink 主题同样成立。transcript 同样消费 data-glyph，不能只吃 composer 的伪元素。 */
 .lumir-hp-qc-ord {
   position: absolute;
   top: 3px;
@@ -2160,7 +2162,7 @@
   align-items: center;
   justify-content: center;
   background: var(--text);
-  color: var(--bg);
+  color: var(--content-bg);
   font-family: var(--font-mono);
   font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
   font-weight: 600;
@@ -2207,6 +2209,9 @@
 }
 .lumir-hp-qc-thumb.is-broken::after {
   content: "?";
+}
+.lumir-hp-msg-user .lumir-hp-qc-ord::before {
+  content: attr(data-glyph);
 }
 .lumir-hp-qc-img {
   width: 100%;

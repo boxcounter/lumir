@@ -416,6 +416,35 @@ test("composer 控制行：合并选择器三维写回 / 形态合同 / ctx 读�
   // 气泡的像素基线（M443 建立的元素级判据；本场景此前只 hover 不截图）：
   // **M533 改了行集 ⇒ 既有基线必失配**——新实图另存主仓 test-results/m533-ctxpop-slim/
   // 供 Alex 过目，基线更新是人肉裁决点（见 tests/visual/README.md 的「更新基线」）。
+  const typography = await ctxPop.evaluate((el) => {
+    const popStyle = getComputedStyle(el);
+    const composerStyle = getComputedStyle(document.querySelector(".lumir-hp-composer")!);
+    return {
+      popFontSize: popStyle.fontSize,
+      popLineHeight: popStyle.lineHeight,
+      popFontWeight: popStyle.fontWeight,
+      popLetterSpacing: popStyle.letterSpacing,
+      composerFontSize: composerStyle.fontSize,
+      composerLineHeight: composerStyle.lineHeight,
+      children: [...el.children].map((child) => {
+        const style = getComputedStyle(child);
+        return { fontSize: style.fontSize, lineHeight: style.lineHeight };
+      }),
+    };
+  });
+  expect(typography).toEqual({
+    popFontSize: "12px",
+    popLineHeight: "18px",
+    popFontWeight: "400",
+    popLetterSpacing: "normal",
+    composerFontSize: "15px",
+    composerLineHeight: "23.7px",
+    children: [
+      { fontSize: "12px", lineHeight: "18px" },
+      { fontSize: "12px", lineHeight: "18px" },
+      { fontSize: "12px", lineHeight: "18px" },
+    ],
+  });
   await expectScreenshot(ctxPop, "m347-ctxpop-cache-metrics.png");
   await page.mouse.move(10, 10);
   await expect(ctxPop).toBeHidden();

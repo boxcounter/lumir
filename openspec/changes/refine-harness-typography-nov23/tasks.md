@@ -1,9 +1,10 @@
 # Tasks: refine-harness-typography-nov23
 
 > 产品 CSS、Chromium 场景与真机截图说明已实现；`openspec/specs/**` 活跃期只读，未提前改 living spec。
-> 0.6 / 5.2 仅登记已完成的前置修复。§8.2 九张矩阵及空态候选已采集；完整视觉门禁因 §8.3 的
-> m347 / m440 / m454 非预期差异中止，§8.1 既有 actual 仅 3/7。候选基线必须经 Alex 过目，未批准不得
-> `--update` / `--update-snapshots`。八场景真机复跑由主会话串行执行，本实现提交不预写其结果。
+> 0.6 / 5.2 仅登记已完成的前置修复。§8.1 七张、§8.2 九张及空态候选已采齐；图片卡 badge 已恢复可见，
+> m440 / m454 仅为外层可用宽变化，需 Alex 额外过目。m347 ctxpop 像素差仍未解决，不得转为新基线。
+> 候选基线必须经 Alex 过目，未批准不得 `--update` / `--update-snapshots`。八场景真机复跑由主会话串行执行，
+> 本实现提交不预写其结果。
 > 有序链硬门禁：`fix-harness-approval-visibility-nov23` → 本 change →
 > `move-harness-progress-to-output-tail-nov23`。0.5 / 0.6 未完成时 §1–§7 全部不得施工；
 > 本 change 未归档、基线未批准落盘前，后续尾行 change 同样不得施工。
