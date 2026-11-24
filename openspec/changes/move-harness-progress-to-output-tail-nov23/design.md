@@ -18,7 +18,7 @@
    排版承接值，未逐字包含两前序的全部条款）；MUST NOT 以当前 living 为基线直接改，MUST NOT 以本
    草案直接归档，否则归档时整块替换会抹掉前置新增的终态撤回 / idle stale / enter 前置 / 清算矩阵 /
    发送最终几何等条款，以及排版 change 的阅读密度 / token 条款。
-4. **承接排版几何**：阶段行取 `--text-2`；transcript gap 16px，尾行 2px 净间距用
+4. **承接排版几何**：阶段行取 `--text-2`；transcript gap 16px，尾行 4px 净间距用
    `calc(var(--sp-2) - var(--sp-8))`；空态绝对定位四边 `top/right/left: var(--sp-8);
    bottom: var(--sp-6)`，并继承 13px/1.58、`--text-2`、24px padding。MUST NOT 恢复排版前的阶段色、
    间距公式或空态配方；排版归档后的 living / CSS 是唯一基线。
@@ -81,7 +81,10 @@ F7 / F8 / F15 的样式读数按 `refine-harness-typography-nov23` 归档后的�
 6. **detached 零写入**：尾行显隐只补偿**自身布局增量**到未读基线，不点未读、不写滚动位；同一批
    真实内容增长仍照常点亮未读。
 7. **终态先离场**：先隐藏尾行，再落终态标记 / 错误行。
-8. **单一写点**：显隐 / 文案 / 条形形态只在相位施加函数一处落 DOM。
+8. **写点分工**：`applySendPhase` 是按钮态、显隐、挂载 / 置尾、`data-phase` 与布局测量的唯一
+   入口；`applyStage` 是阶段文案的唯一 DOM 写点，由相位施加、首个有效产出推进、审批集合变化
+   重施与语言重绘共同调用。文本重施 MUST NOT 另写显隐、位置或条形形态，也 MUST NOT 触发置尾、
+   贴底或布局测量。
 9. **顶层追加唯一入口**：helper 同步置尾，`childList` 兜底覆盖绕过路径；MUST NOT 靠逐个调用点
    人工枚举。
 
@@ -104,7 +107,8 @@ F7 / F8 / F15 的样式读数按 `refine-harness-typography-nov23` 归档后的�
 
 - `.lumir-hp-progress`：去掉自身左右 padding（transcript 已有左右 padding），改为 `padding: 0`；
   `order: 1`；`margin-top: calc(var(--sp-2) - var(--sp-8))`——transcript gap 为 16px（`--sp-8`），
-  尾行与上方末条的净间距取 `--sp-2`（4px）。`[hidden] { display: none }` 保留。
+  尾行与上方末条的净间距为 16px gap + (4px − 16px) margin = 4px（`--sp-2`）。`[hidden] { display: none }`
+  保留。
 - `.lumir-hp-stage`：颜色取 `--text-2`（排版 change 已升档，本 change 不重复声明，也 MUST NOT
   改回排版前的阶段色）；`white-space: nowrap; overflow: hidden; text-overflow: ellipsis;`
   `margin-bottom: 4px` 保留（与条形的最小分隔）。
@@ -140,19 +144,25 @@ eink 只改 `width` / `animation`，不改高度。
 | `terminal` / `local_finish` / `vault_changed` | idle | `dispatchActivity` → `applySendPhase` |
 
 现行代码只有 `text_chunk` 翻假（F5）；`reasoning_chunk` / `tool_call` 必须先调用同一个推进函数，
-否则「先思考 / 先调工具、全程无正文」会一直停在 D381。推进函数只翻 `stageWaiting` 并重施加阶段行，
-不改相位、不建节点；重施加仍沿用 `text_chunk` 的既有守卫——仅 `activity.phase !== "idle"` 时调用，
-迟到分片不得把已收口的尾行写回。
+否则「先思考 / 先调工具、全程无正文」会一直停在 D381。推进函数只翻 `stageWaiting` 并调
+`applyStage()` 重施阶段文案，不改相位、不建节点、不触发布局测量；重施加仍沿用 `text_chunk` 的
+既有守卫——仅 `activity.phase !== "idle"` 时调用，迟到分片不得把已收口的尾行写回。
 
-### 4.2 施加顺序（一处写 DOM）
+### 4.2 写点分工与施加顺序
 
-`applySendPhase(next)` 是唯一写点，顺序固定：
+写点按职责拆开，两者都不复制对方的逻辑：
 
-1. 按钮态（既有）；
-2. `progress.hidden = next === "idle"`；
-3. 若 running：确保节点在 transcript 内、且是最后一个子节点（`ensureTailLast()`）；
-4. `progress.dataset.phase = next`（停止冻结的判据）；
-5. `applyStage()` 写文案。
+- `applySendPhase(next)`：按钮态、尾行显隐、挂载 / 置尾、`data-phase` 与对应
+  `layoutMutated` 布局测量的唯一入口。顺序固定：
+  1. 按钮态（既有）；
+  2. `progress.hidden = next === "idle"`；
+  3. 若 running：确保节点在 transcript 内、且是最后一个子节点（`ensureTailLast()`）；
+  4. `progress.dataset.phase = next`（停止冻结的判据）；
+  5. 调 `applyStage()` 写文案（同一入口的收尾步骤；布局测量已在步骤 2–4 前后完成）。
+- `applyStage()`：阶段文案的唯一 DOM 写点。调用方包括 `applySendPhase`、首个有效产出推进
+  （`markAssistantOutputStarted()`）、审批前置的 `refreshApprovalSignal()` 重施与语言重绘
+  （`onRelabel`）。它只写阶段行文本，MUST NOT 改显隐、位置、`data-phase` 或条形形态，
+  MUST NOT 触发置尾、贴底或布局测量。
 
 文案优先级（`applyStage`）：
 
@@ -170,6 +180,9 @@ stageWaiting → D381
 - `midTakeover` 在 `stageWaiting` 之前：接管期已经有过输出，不能读「等待响应」。
 - 工具循环期没有单独档位（D4）：`stageWaiting` 已为假，读 D382。
 
+文案重施路径（首个有效产出、审批集合变化、语言切换）只换文本，不重跑 `applySendPhase` 的步骤
+1–4；不得为复用 `applyStage` 而额外调用 `applySendPhase`，也不得因此额外置尾、贴底或测量布局。
+
 ### 4.3 终止次序
 
 - `done`：`finalizeStreamingMessage()` → `dispatchActivity(terminal)`（尾行隐藏）。既有顺序已满足。
@@ -179,7 +192,7 @@ stageWaiting → D381
 - `error`：既有顺序已是「先终态、后错误行」，保持；只需确认尾行在同一次相位施加里隐藏。
 
 终态分支 MUST NOT 为了「先隐藏」而新增第二处写 `progress.hidden`；隐藏必须仍由 `applySendPhase`
-完成（单一写点）。调整的是分支里**调用次序**，不是写点。
+完成（显隐的唯一写点）。调整的是分支里**调用次序**，不是写点。
 
 ### 4.4 中途接管
 
@@ -233,8 +246,9 @@ function appendTranscriptNode(node: Node): void {
 layoutMutated(deltaPx: number): void;
 ```
 
-`deltaPx` MUST 只由尾行本身的 DOM 变化测量：调用点在改 `progress.hidden` / 置尾 / 写文案之前读一次
-`transcript.scrollHeight`，完成后读一次，传差值。MUST NOT 把同一批内容追加的高度算进来。
+`deltaPx` MUST 只由尾行自身的布局变化测量：`applySendPhase` 在改 `progress.hidden` / 置尾 /
+`data-phase` 之前读一次 `transcript.scrollHeight`，这些步骤完成后读一次，传差值。MUST NOT 把同一批
+内容追加或纯文案重施的高度算进来；`applyStage` 的文本重施路径 MUST NOT 测量或调用 `layoutMutated`。
 
 为什么不是复用 `contentGrew`：它会把增量判成「有新内容」，detached 下点亮未读（正是要避免的
 假未读）。为什么不是 `viewportChanged`：它管视口尺寸变化，且 following 下会排写底；尾行显隐
@@ -242,9 +256,12 @@ layoutMutated(deltaPx: number): void;
 
 ### 5.2 调用点
 
-- `applySendPhase` 的尾行 DOM 三件事（`hidden` / 置尾 / 文案）包在一段里，前后各读一次
-  `transcript.scrollHeight`，完成后 `layoutMutated(after - before)`；
+- `applySendPhase` 的布局三件事（`hidden` / 置尾 / `data-phase`）包在一段里，前后各读一次
+  `transcript.scrollHeight`，完成后 `layoutMutated(after - before)`；随后调 `applyStage()` 写文案，
+  文案不计入 delta；
 - 快照重建后重挂尾行同样只测这一段的差值；
+- `applyStage` 的文本重施路径（首个有效产出、审批集合变化、语言重绘）不测量、不调
+  `layoutMutated`、不置尾、不贴底；
 - 空闲态重建（尾行被清掉、没有重新挂）不调用——transcript 已由 `reset()` 写底。
 
 ### 5.3 为什么不能把当前总高度当新基线
@@ -328,7 +345,7 @@ padding，未改居中方式）；尾行一占位，剩余空间变小，提示�
 | 三档文案 + 中途接管句 | 纯模型单测：相位 × `pending` × `stageWaiting` × `midTakeover` → 文案键 / 可见 / 条形形态；m347 断言文案 | 88 / 97 / 104 既有 AX 文本断言逐字不变；新场景补接管 |
 | 待批优先于接管 + 标题栏信号 | 集成：尾行在 transcript 内 + `enter_snapshot(in_flight=true) + pending` → 阶段行读「等待批准…」、条形态不定态；脱离态待批 → 标题栏审批信号仍在、`scrollTop` ≤1px | 新场景：AX 读「等待批准…」+ 面板收起后 toggle help |
 | 不遮挡 | 几何：尾行 `top` ≥ 末条内容的 `bottom`；滚动到底时尾行 `bottom` ≤ 滚动区 `bottom` | 截图（手感归 Alex） |
-| 不跳动 | 几何：等待 → 生成之间尾行高度不变、与末条内容的间距恒定（±1px）；节点 identity 不变 | 截图 |
+| 不跳动 | 几何：等待 → 生成之间尾行高度不变；与末条内容的绝对净间距为 4px（±1px），相位切换前后恒定；节点 identity 不变 | 截图 |
 | 顶层追加路径不越过尾行 | running 中触发 `compact` 标记、无 assistant 宿主的工具记录、快照 assistant 重建，各断言 `lastElementChild === progress`；再直接 `transcript.append` 一个节点，等一帧后观察器把尾行移回末位 | 可并入新场景（compact / 孤儿工具截图） |
 | detached 下不拽视口、不假未读 | `tests/unit/harness-scroll-lock.test.ts`：尾行单独显隐不点未读；`H0 → +C → -P → layoutMutated(-P) → contentGrew` 必须未读；m638 用 `auto_turn_started`（**不用普通发送**）扩展「上滚后轮次开始 / 结束」 | `scrollTop` 在 AX 读不到，归截图证据 |
 | 终态次序 | m347 扩展：`error` / `aborted` 后尾行隐藏、错误行 / 已停止标记在尾部 | 88 / 97 的「阶段行离场」断言 |
@@ -341,8 +358,8 @@ padding，未改居中方式）；尾行一占位，剩余空间变小，提示�
 
 本 change 没有新原型，视觉口径按既有设计系统与 token 落：
 
-- **位置**：transcript 文档流末尾；与末条内容的净间距 `--sp-2`（排版后 gap 16px，以
-  `margin-top: calc(var(--sp-2) - var(--sp-8))` 实现）；左右与 transcript 内容同边。
+- **位置**：transcript 文档流末尾；与末条内容的净间距为 4px（排版后 16px gap 与
+  `margin-top: calc(var(--sp-2) - var(--sp-8))` 的 -12px 叠加）；左右与 transcript 内容同边。
 - **字层级**：阶段行沿用 `--fs-meta` 与排版后的 `--text-2`（不升字号、不加粗）；本 change MUST NOT
   改回排版前的阶段色。
 - **条形**：3px、`--border-soft` 轨道、`--accent` 填充；停止态静态基准位；eink 满宽 + 明度双档。

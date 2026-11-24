@@ -49,7 +49,8 @@
       - **只发 `tool_call`、全程无 `text_chunk`** → 阶段行读 D382（旧实现停在 D381，必红）
       - **只发 `reasoning_chunk`** → 同样读 D382
       - `.lumir-hp-progress` 位于 `.lumir-hp-transcript` 内、是 `lastElementChild`、`order` 计算值
-        为 1；等待 → 生成之间节点 identity 不变、高度不变、与末条内容间距恒定（±1px）
+        为 1；等待 → 生成之间节点 identity 不变、高度不变、与末条内容绝对净间距 4px（±1px）且
+        相位切换前后恒定
       - 终态后尾行隐藏且错误行 / 已停止标记是最后内容
       - 空态只有尾行时提示仍在；尾行显隐前后提示 `top` 位移 ≤1px；正控制用尾行自身矩形（高度 >0、
         在 transcript 视口内），**不要只断言 `scrollHeight`**（空态下它有 `clientHeight` 下限）；若
@@ -86,13 +87,16 @@
       或 `lastElementChild === progress` 时直接返回（防循环）；覆盖任何绕过 helper 的追加路径
       （现有 compact / 孤儿工具 / 快照 + 未来新增），MUST NOT 维护调用点清单
 - [ ] 2.2b 新增 `markAssistantOutputStarted()`：首个 `reasoning_chunk` / `tool_call` / `text_chunk`
-      任一到达时把 `stageWaiting` 置假并重施加阶段行；三个事件处理器共用，MUST NOT 只挂在
-      `text_chunk`
-- [ ] 2.3 `applySendPhase`：按 design §4.2 的固定顺序落 DOM（按钮 → `hidden` → `ensureTailLast` →
-      `dataset.phase` → `applyStage`）；`applySendPhase` 仍是唯一写点
-- [ ] 2.4 `applyStage`：文案优先级 `stopping > approval > midTakeover > waiting/generating`
-      （D381 / D382 是最后两档）；`approval` 读前置 change 的 `pendingApprovals` 派生信号，不是新相位；
-      不新增第三档
+      任一到达时把 `stageWaiting` 置假并调 `applyStage()` 重施阶段文案；三个事件处理器共用，
+      MUST NOT 只挂在 `text_chunk`；该路径 MUST NOT 触发布局测量 / 置尾 / 强制回底
+- [ ] 2.3 `applySendPhase`：按钮态、`hidden`、`ensureTailLast`、`dataset.phase` 与对应
+      `layoutMutated` 布局测量的唯一入口；按 design §4.2 的顺序落 DOM 后调 `applyStage` 写文案。
+      `applySendPhase` MUST NOT 被当作文案的唯一写点
+- [ ] 2.4 `applyStage`：阶段文案的唯一 DOM 写点，由 `applySendPhase`、首个有效产出推进、审批
+      集合变化重施与语言重绘共同调用；只写文本，MUST NOT 改显隐 / 位置 / `data-phase` / 条形
+      形态，也不得为文案重施触发置尾 / 贴底 / 布局测量。文案优先级
+      `stopping > approval > midTakeover > waiting/generating`（D381 / D382 是最后两档）；
+      `approval` 读前置 change 的 `pendingApprovals` 派生信号，不是新相位；不新增第三档
 - [ ] 2.5 终态次序：`aborted` 分支改为先 `dispatchActivity(terminal)`、再补「已停止」标记；
       `error` / `done` 保持既有顺序，确认尾行在同一次相位施加里隐藏；不新增第二处写 `hidden`
 - [ ] 2.6 中途接管：`enter_snapshot` 的 `inFlight=true` 分支同时把 `stageWaiting` 置假；快照重建
@@ -102,8 +106,9 @@
       绝对定位（`position:absolute; top/right/left: var(--sp-8); bottom: var(--sp-6); display:grid;
       place-items:center; margin:0; pointer-events:none`），不参与 flex 剩余空间分配，MUST NOT 用
       `top:50%` 直接居中
-- [ ] 2.8 单一写点对账：全仓 `rg "progress.hidden"` 只允许 `applySendPhase` 一处；`rg
+- [ ] 2.8 写点边界对账：全仓 `rg "progress.hidden"` 只允许 `applySendPhase` 一处；`rg
       "transcript.append"` 只允许 `appendTranscriptNode` 与 `clearTranscriptSurface` 的清空处；
+      阶段文案只经 `applyStage` 落 DOM，文本重施路径不出现置尾 / `layoutMutated` / `jumpToBottom`；
       观察器与 helper 的守卫与 design §4.5 一致
 
 ## 3. 样式（`src/harness-panel.css`）
@@ -129,8 +134,9 @@
 - [ ] 4.1 新增 `layoutMutated(deltaPx: number)`：following 排一次贴底；detached 只做
       `unreadBaseline += deltaPx`（clamp ≥ 0），不改态、不点未读、不写滚动位。**MUST NOT** 把当前
       总 `scrollHeight` 直接设为新基线
-- [ ] 4.2 调用点：`applySendPhase` 的尾行三件事（`hidden` / 置尾 / 文案）前后各读一次
-      `transcript.scrollHeight`，完成后传差值；快照重建重挂尾行同样只测这一段；空闲重建不调用
+- [ ] 4.2 调用点：`applySendPhase` 的布局三件事（`hidden` / 置尾 / `data-phase`）前后各读一次
+      `transcript.scrollHeight`，完成后传差值；随后调 `applyStage` 写文案，文案不计入 delta；
+      快照重建重挂尾行同样只测这一段；`applyStage` 的文本重施不测量；空闲重建不调用
 - [ ] 4.3 顺序：尾行 DOM 变化 → `layoutMutated(delta)` → 若有新内容 `contentGrew()`；注释里写明
       delta 只含尾行自身布局变化，不能跨内容追加测量
 - [ ] 4.4 `tests/unit/harness-scroll-lock.test.ts` 覆盖：following / detached × 尾行单独出现 / 消失；

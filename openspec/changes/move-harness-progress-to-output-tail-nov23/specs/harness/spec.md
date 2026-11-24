@@ -32,13 +32,13 @@
 
 空态提示的在场判定 MUST 排除尾行（尾行不是内容）：没有消息时提示仍在，有消息时提示不在。空态提示的几何位置 MUST NOT 随尾行显隐变化：MUST NOT 依赖 flex 剩余空间（auto margin）居中；提示中心 MUST 取 transcript 内容盒的中心（排版后上 padding `--sp-8` 与下 padding `--sp-6` 之间），MUST NOT 取 padding box 的几何中心；与本 change 施工前（即排版归档后）的 idle 中心差 MUST ≤ 1px，MUST NOT 以排版前旧基线为对账起点。空态的 13px/1.58、`--text-2`、24px padding SHALL 继承排版 change，本 change MUST NOT 改动。尾行出现 / 消失前后提示位置位移 MUST ≤ 1px，且尾行自身 MUST 真实在场（矩形高度 > 0、落在 transcript 视口内；空态下 `scrollHeight` 有 `clientHeight` 下限，不能单独作为正控制）。
 
-尾行的阶段行颜色 SHALL 取 `--text-2`（排版 change 已升档，MUST NOT 恢复排版前阶段色）；尾行与上方末条内容的净间距 SHALL 为 2px，按排版后的 16px transcript gap 以 `calc(var(--sp-2) - var(--sp-8))` 实现。空态改为绝对定位时，四边 SHALL 取 `top/right/left: var(--sp-8); bottom: var(--sp-6)`。
+尾行的阶段行颜色 SHALL 取 `--text-2`（排版 change 已升档，MUST NOT 恢复排版前阶段色）；尾行与上方末条内容的净间距 SHALL 为 4px（16px gap 与 `calc(var(--sp-2) - var(--sp-8))` 的 -12px 叠加），按排版后的 16px transcript gap 以该公式实现。空态改为绝对定位时，四边 SHALL 取 `top/right/left: var(--sp-8); bottom: var(--sp-6)`。
 
 尾行的显隐 SHALL 被当作**布局变化**而不是新内容：脱离态下 MUST NOT 因此点亮未读提示；未读判据的基线 SHALL 只补偿尾行自身的布局增量，MUST NOT 把同一批中真实内容增长的高度一起吞掉——同一批中真实内容增长 MUST 照常点亮未读，且 `scrollTop` 变化 MUST ≤ 1px。跟随态下照常贴底。
 
 停止相位的条形 SHALL 冻结（无位移动画、无脉冲）：停止没有推进，运动暗示与语义相反；eink 主题下同样冻结。其余相位的条形保持不定态，动画只作用于 `transform` / `opacity`，MUST NOT 触发布局。
 
-尾行的显隐、文案与条形形态 SHALL 由面板的相位施加函数一处落 DOM；流式分片的「等待 → 生成」推进 MUST NOT 另写一份可见性或位置逻辑。transcript 的顶层追加 SHALL 经唯一入口维持尾行末位，并 SHALL 有运行时兜底覆盖任何绕过入口的追加路径（含自动压缩标记、孤儿工具记录、快照重建等），MUST NOT 依赖逐个调用点人工置尾。
+尾行的按钮态、显隐、挂载 / 置尾、`data-phase` 与对应布局测量 SHALL 由相位施加函数 `applySendPhase` 一处落 DOM；阶段文案 SHALL 由 `applyStage` 一处落 DOM，并由相位施加、首个有效产出推进、审批集合变化重施与语言重绘共同调用。流式分片与待批路径 MUST NOT 另写一份显隐、位置或条形形态，也 MUST NOT 为更新文案触发额外置尾、贴底或布局测量。transcript 的顶层追加 SHALL 经唯一入口维持尾行末位，并 SHALL 有运行时兜底覆盖任何绕过入口的追加路径（含自动压缩标记、孤儿工具记录、快照重建等），MUST NOT 依赖逐个调用点人工置尾。
 
 #### Scenario: 进行中呈现不定态与阶段
 
@@ -113,9 +113,9 @@
 #### Scenario: 承接排版后的阶段色与间距
 
 - **WHEN** 排版 change 归档后，处理中的尾行显示在 transcript 末尾
-- **THEN** 阶段行颜色为 `--text-2`（不恢复排版前阶段色）；尾行与上方末条内容的净间距为 2px（16px gap
-  下以 `calc(var(--sp-2) - var(--sp-8))` 实现）；空态绝对定位四边为 `sp-8/sp-8/sp-6/sp-8`，并继承
-  13px/1.58、`--text-2`、24px padding
+- **THEN** 阶段行颜色为 `--text-2`（不恢复排版前阶段色）；尾行与上方末条内容的净间距为 4px（16px
+  gap 与 `calc(var(--sp-2) - var(--sp-8))` 的 -12px 叠加；容差 ±1px）；空态绝对定位四边为
+  `sp-8/sp-8/sp-6/sp-8`，并继承 13px/1.58、`--text-2`、24px padding
 
 #### Scenario: 空态中心不因改造移动
 

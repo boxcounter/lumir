@@ -27,7 +27,7 @@
    **整块重抄**进本 change 的 delta；当前 delta 只是承接草案（见 `specs/harness/spec.md` 的起草
    注记），不得直接当作最终基线，也不得提前改写 living spec。
 4. **承接排版几何**（以 `refine-harness-typography-nov23` 归档后的 CSS / token 为准）：阶段行取
-   `--text-2`；transcript gap 为 16px，尾行 2px 净间距公式为 `calc(var(--sp-2) - var(--sp-8))`；
+   `--text-2`；transcript gap 为 16px，尾行 4px 净间距公式为 `calc(var(--sp-2) - var(--sp-8))`；
    空态绝对定位四边 `top/right/left: var(--sp-8); bottom: var(--sp-6)`，并继承排版后的 13px/1.58、
    `--text-2`、24px padding。MUST NOT 恢复排版前的阶段色、间距公式或空态配方；排版归档后的
    living / CSS 是唯一基线。
@@ -147,8 +147,10 @@ harness 的「生成中进度」今天是挂在 transcript 滚动区**之外**�
    MUST NOT 改变阅读位置（`scrollTop` 变化 ≤ 1px）；未读基线随该布局变化重设。
 6. **终态先离场**：`done` / `aborted` / `error` 分支 SHALL 先隐藏尾行，再追加「已停止」标记或
    错误行，避免「进度还在跑、下面已有结果」的误读。
-7. **单一写点**：尾行的显隐、文案与条形形态由面板的相位施加函数一处落 DOM；流式分片的
-   「等待 → 生成」推进 MUST NOT 另写一份可见性或位置逻辑。
+7. **写点分工**：尾行的按钮态、显隐、挂载 / 置尾、`data-phase` 与对应布局测量由
+   `applySendPhase` 一处落 DOM；阶段文案由 `applyStage` 一处落 DOM，由相位施加、首个有效产出
+   推进、审批集合变化重施与语言重绘共同调用。流式分片与待批路径 MUST NOT 另写显隐、位置或条形
+   形态，也 MUST NOT 为更新文案触发额外置尾 / 贴底 / 布局测量。
 8. **eink 口径不变**：明度 / 线宽表达、无彩色；停止态冻结在 eink 下同样成立。
 9. **空态几何独立**：空态提示的位置 MUST NOT 随尾行显隐变化；不能靠 flex 剩余空间分配（auto
    margin）居中，否则尾行一出现提示就会移动。
