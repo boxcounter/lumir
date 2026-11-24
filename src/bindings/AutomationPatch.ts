@@ -2,6 +2,10 @@
 import type { FieldEdit } from "./FieldEdit";
 
 /**
- * 四个开关的 patch（每个键独立：`None` = 不动）。
+ * 五个开关的 patch（每个键独立：`None` = 不动）。
  */
-export type AutomationPatch = { auto_compact?: FieldEdit<boolean>, session_naming?: FieldEdit<boolean>, attachment_naming?: FieldEdit<boolean>, subagents?: FieldEdit<boolean>, };
+export type AutomationPatch = { auto_compact?: FieldEdit<boolean>, session_naming?: FieldEdit<boolean>, attachment_naming?: FieldEdit<boolean>, subagents?: FieldEdit<boolean>, 
+/**
+ * `editor.prefill_note_name`（change add-default-note-name-nov24）。
+ */
+prefill_note_name?: FieldEdit<boolean>, };

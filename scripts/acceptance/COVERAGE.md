@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：279
-- 验收项（不同 item 编号）：248
-- 分档：core 32 / full 237 / bundle 5 / evidence 5（full 批 = 全部 279 个，含其余各档）
+- 场景：280
+- 验收项（不同 item 编号）：249
+- 分档：core 32 / full 238 / bundle 5 / evidence 5（full 批 = 全部 280 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -266,3 +266,4 @@
 | 725 | `725-harness-approval-visibility` | 待批可见性：脱离态下批准卡到达仍有标题栏信号与未读；回底决策后清算；停止撤回无幻影 | full |
 | 726 | `726-harness-skill-hybrid-invocation` | Skill 混合调用：显式 refs 确定性注入 + 自动 skill_load 分控 + deny/非法 fail closed + 普通路径与草稿恢复 | core |
 | 727 | `727-harness-progress-tail` | 输出尾行：状态矩阵 / 工具先行 / 待批 / 停止 / 跨 vault 接管 / 空态与自动回合 detached | full |
+| 728 | `728-default-note-name` | 新建文件默认名：设置开关持久化、预填与全选、键入替换、Enter 接受、Escape 取消、撞名递增、焦点落正文 | full |

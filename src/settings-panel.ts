@@ -1,7 +1,9 @@
 // 设置面板（change add-model-automation-settings-oct24 tasks §5；capability `settings`）。
 //
 // 单页两节，没有 TAB / 侧边导航：**模型接入**（provider 列表 + 选中项的编辑表单，可增删改）
-// 与**自动化**（四个全局开关 + 会话命名 / 图片命名各自内联的目标选择与一行生效说明）。
+// 与**自动化**（五个全局开关 + 会话命名 / 图片命名各自内联的目标选择与一行生效说明）。前四个开关
+// 是 `harness.*`，第五个「新建文件时预填默认名称」是 `editor.prefill_note_name`（默认关，
+// change add-default-note-name-nov24）。
 //
 // 分层（与本仓既有面板同一条纪律）：
 //   - **纯模型层**（本文件上半部，零 DOM）：草稿 `Draft`、脏判定、patch 构造、命名目标预览、
@@ -156,6 +158,9 @@ const C = {
   subagents: "D799",
   subagentsDesc: "D800",
   subagentsMeta: "D801",
+  prefillNoteName: "D985",
+  prefillNoteNameDesc: "D986",
+  prefillNoteNameMeta: "D987",
   defaultBadge: "D802",
   restartNote: "D803",
   sendTo: "D804",
@@ -224,7 +229,12 @@ const C = {
 // ---------------------------------------------------------------------------
 
 export type NamingKind = "session" | "attachment";
-export type AutomationKey = "auto_compact" | "session_naming" | "attachment_naming" | "subagents";
+export type AutomationKey =
+  | "auto_compact"
+  | "session_naming"
+  | "attachment_naming"
+  | "subagents"
+  | "prefill_note_name";
 
 /** 一行模型草稿：`effort` / `vision` / `window` 的 `null` = 文件里未声明（装载期按默认），
  *  渲染时标「未声明」，保存时按默认显式写入（design §9.1 的显式归一化）。 */
@@ -355,6 +365,7 @@ export const AUTOMATION_KEYS: readonly AutomationKey[] = [
   "session_naming",
   "attachment_naming",
   "subagents",
+  "prefill_note_name",
 ];
 
 const NAMING_KINDS: readonly NamingKind[] = ["session", "attachment"];
@@ -458,6 +469,13 @@ export function createDraft(snapshot: SettingsSnapshot): Draft {
   // 快照里的引用只可能指向已保存条目（或列表外的 `mock` / 悬空 id → 无持有者）。
   const ownerOf = (id: string | null): DraftProvider | null =>
     id === null ? null : (providers.find((item) => item.id === id) ?? null);
+  // 开关副本按 AUTOMATION_KEYS 遍历（change add-default-note-name-nov24）：新增一个开关只需要
+  // 在键联合与文案表各加一处，MUST NOT 再回来补第三份手写清单（REVIEW.md『同一语义两处真源』条）。
+  const flagCopies = (): Record<AutomationKey, DraftAutomationFlag> => {
+    const copies = {} as Record<AutomationKey, DraftAutomationFlag>;
+    for (const key of AUTOMATION_KEYS) copies[key] = { ...snapshot.automation[key] };
+    return copies;
+  };
   return {
     providers,
     active: snapshot.active,
@@ -467,12 +485,7 @@ export function createDraft(snapshot: SettingsSnapshot): Draft {
       attachment: ownerOf(snapshot.naming.attachment.override_provider),
     },
     activeTouched: false,
-    automation: {
-      auto_compact: { ...snapshot.automation.auto_compact },
-      session_naming: { ...snapshot.automation.session_naming },
-      attachment_naming: { ...snapshot.automation.attachment_naming },
-      subagents: { ...snapshot.automation.subagents },
-    },
+    automation: flagCopies(),
     naming: {
       session: {
         provider: snapshot.naming.session.override_provider,
@@ -494,12 +507,7 @@ export function createDraft(snapshot: SettingsSnapshot): Draft {
     pageReset: false,
     baseline: {
       active: snapshot.active,
-      automation: {
-        auto_compact: { ...snapshot.automation.auto_compact },
-        session_naming: { ...snapshot.automation.session_naming },
-        attachment_naming: { ...snapshot.automation.attachment_naming },
-        subagents: { ...snapshot.automation.subagents },
-      },
+      automation: flagCopies(),
       naming: {
         session: {
           provider: snapshot.naming.session.override_provider,
@@ -1484,6 +1492,9 @@ export interface SettingsPanelDeps {
   restoreFocus(): void;
   /** 面板关闭后的一次取数（chip 重取；不引入全局配置状态层）。 */
   onClosed?(): void;
+  /** 保存成功（`applied`）后回传最新快照：装配层据此更新运行期读数（change
+   *  add-default-note-name-nov24 的 `editor.prefill_note_name`），不再发第二次 `config_get`。 */
+  onApplied?(snapshot: SettingsSnapshot): void;
 }
 
 export interface SettingsPanelHandle {
@@ -1781,7 +1792,10 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
   function renderDiagnostics(): void {
     if (snapshot === null) return;
     const automationScoped = (path: string | null): boolean =>
-      path !== null && /^harness\.(session_naming|attachment_naming|auto_compact|subagents)\b/.test(path);
+      path !== null &&
+      // 第五个开关在 [editor] 表（change add-default-note-name-nov24）；其余四个在 [harness]。
+      (path === "editor.prefill_note_name" ||
+        /^harness\.(session_naming|attachment_naming|auto_compact|subagents)\b/.test(path));
     fillDiagnostics(modelDiags, snapshot.diagnostics.filter((entry) => !automationScoped(entry.path)));
     fillDiagnostics(automationDiags, snapshot.diagnostics.filter((entry) => automationScoped(entry.path)));
   }
@@ -2637,6 +2651,12 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
         return { title: t(C.sessionNaming), desc: t(C.sessionNamingDesc), meta: t(C.sessionNamingMeta) };
       case "attachment_naming":
         return { title: t(C.attachmentNaming), desc: t(C.attachmentNamingDesc), meta: t(C.attachmentNamingMeta) };
+      case "prefill_note_name":
+        return {
+          title: t(C.prefillNoteName),
+          desc: t(C.prefillNoteNameDesc),
+          meta: t(C.prefillNoteNameMeta),
+        };
       default:
         return { title: t(C.subagents), desc: t(C.subagentsDesc), meta: t(C.subagentsMeta) };
     }
@@ -2913,6 +2933,7 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       conflictRevision = null;
       attachmentTurnedOn = restartNeeded;
       automationRows.clear();
+      deps.onApplied?.(outcome.snapshot);
       render();
       return;
     }
@@ -3157,10 +3178,15 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
 
 const FLAG_KEYS: Record<
   AutomationKey,
-  "auto_compact" | "session_naming_enabled" | "attachment_naming_enabled" | "subagents_enabled"
+  | "auto_compact"
+  | "session_naming_enabled"
+  | "attachment_naming_enabled"
+  | "subagents_enabled"
+  | "prefill_note_name"
 > = {
   auto_compact: "auto_compact",
   session_naming: "session_naming_enabled",
   attachment_naming: "attachment_naming_enabled",
   subagents: "subagents_enabled",
+  prefill_note_name: "prefill_note_name",
 };

@@ -144,6 +144,7 @@ function snapshot(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {
       session_naming: { value: true, explicit: false },
       attachment_naming: { value: true, explicit: false },
       subagents: { value: true, explicit: false },
+      prefill_note_name: { value: false, explicit: false },
     },
     naming: {
       session: {
@@ -188,6 +189,7 @@ function snapshot(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {
       session_naming_enabled: true,
       attachment_naming_enabled: true,
       subagents_enabled: true,
+      prefill_note_name: false,
       model_window: 131072n,
     },
     diagnostics: [],
@@ -436,7 +438,7 @@ test("buildPatch：删掉当前项后再「还原此页默认」→ delete 仍�
   applyDraftDelete(draft);
   // 页级还原把 active 清成 null（Reset）——删除本身仍需要一个合法替代目标才能过删保护，
   // 随后同一笔的 Reset 再把键删掉。
-  pageResetDraft(draft, { auto_compact: true, session_naming: true, attachment_naming: true, subagents: true });
+  pageResetDraft(draft, { auto_compact: true, session_naming: true, attachment_naming: true, subagents: true, prefill_note_name: false });
   assert.equal(draft.active, null);
   const patch = buildPatch(draft, base, base.revision!);
   assert.deepEqual(patch.providers[0], { action: "delete", id: "kimi-work", active_after: "deepseek" });
@@ -675,6 +677,23 @@ test("buildPatch：四个开关各自独立（显式关闭 → Set；恢复默�
   assert.deepEqual(buildPatch(draft2, base2, base2.revision!).automation, {});
 });
 
+test("buildPatch：新建文件默认名开关独立 Set / Reset（默认关）", () => {
+  const base = snapshot();
+  const draft = createDraft(base);
+  draft.automation.prefill_note_name = { value: true, explicit: true };
+  assert.deepEqual(buildPatch(draft, base, base.revision!).automation, {
+    prefill_note_name: { kind: "set", value: true },
+  });
+
+  const base2 = snapshot();
+  base2.automation.prefill_note_name = { value: true, explicit: true };
+  const draft2 = createDraft(base2);
+  draft2.automation.prefill_note_name = { value: false, explicit: false };
+  assert.deepEqual(buildPatch(draft2, base2, base2.revision!).automation, {
+    prefill_note_name: { kind: "reset" },
+  });
+});
+
 test("自动化不随 provider 增删改：开关值与显式状态在草稿操作前后不变", () => {
   const base = snapshot({
     providers: [provider("kimi-work"), provider("deepseek", { preset: "deepseek" })],
@@ -691,7 +710,7 @@ test("自动化不随 provider 增删改：开关值与显式状态在草稿操�
 test("pageResetDraft：条目字段全标删键、active 与命名覆盖删键、开关回默认；provider 条目本身保留", () => {
   const base = snapshot();
   const draft = createDraft(base);
-  const defaults = { auto_compact: true, session_naming: true, attachment_naming: true, subagents: true };
+  const defaults = { auto_compact: true, session_naming: true, attachment_naming: true, subagents: true, prefill_note_name: false };
   pageResetDraft(draft, defaults);
   const entry = draft.providers[0]!;
   assert.equal(entry.removed, false, "provider id / preset 是身份，不是设置值");

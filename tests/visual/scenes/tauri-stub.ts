@@ -201,6 +201,10 @@ export interface VaultFixture {
     /** 编辑器内容字号 px（M195）：合法区间 [12, 32]，区间外由 Rust 侧回落 `DEFAULT_FONT_SIZE`
      *  并附 warning——桩不复制那条校验（那归 cargo test），它只负责把配置**送达**前端。 */
     font_size?: number;
+    /** 新建文件时预填默认名（change add-default-note-name-nov24）：缺省 `false` = 出厂口径
+     *  （内联新建文件的输入框为空）。场景要验预填 / 全选时从这里给 `true`；默认名文案与编号
+     *  规则归产品代码，桩只送达开关值。 */
+    prefill_note_name?: boolean;
     /** 界面主题（M213）：`light` / `dark` / `eink`（与 Rust `UiTheme` 同一闭集合）。
      *  缺省 `light` = 出厂口径——不传的场景天然跑浅色主题，不会因为桩扩了形状而换主题。
      *  它对应启动装配层「把 `ui.theme` 写进 `documentElement.dataset.theme`」那一步
@@ -580,6 +584,9 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
               font_family: current?.config?.font_family ?? null,
               mono_font_family: current?.config?.mono_font_family ?? null,
               font_size: current?.config?.font_size ?? 15,
+              // change add-default-note-name-nov24：缺省 false = 出厂口径（空输入框），
+              // 既有场景因此不会因为桩扩了形状而带上预填行为。
+              prefill_note_name: current?.config?.prefill_note_name ?? false,
             },
             // 界面主题（M213）：形状与 Rust `AppConfig` 的 `ui` 表逐项同值，缺省 `light`。
             // `ui` 不是 Option（Rust 侧序列化必带），因此这里**总是**给出整表——桩落后于契约
