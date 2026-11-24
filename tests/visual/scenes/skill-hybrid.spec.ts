@@ -76,6 +76,8 @@ test("方向键进入选择态后 Enter 选中并提交当前 ref", async ({ pag
   const menu = page.locator(".lumir-hp-skill-menu");
   await page.keyboard.type("/acc");
   await expect(menu.locator("[role=option]")).toHaveCount(2);
+  // 本用例判键盘选择；移开指针，避免菜单重渲染时的 mouseenter 覆盖键盘高亮。
+  await page.mouse.move(10, 10);
   await page.keyboard.press("ArrowDown");
   await expect(menu.locator("[role=option][aria-selected=true]")).toHaveCount(1);
   await expect(composer).toHaveAttribute("aria-activedescendant", "lumir-hp-skill-option-0");
