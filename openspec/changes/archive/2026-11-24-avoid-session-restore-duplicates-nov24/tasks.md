@@ -1,6 +1,6 @@
 # Tasks: avoid-session-restore-duplicates-nov24
 
-> 状态：节点 1 已闭合（独立评审 r4 clean / ready-for-Alex），自动化实现完成、待真机验收；D1 已由 Alex
+> 状态：节点 1 已闭合（独立评审 r4 clean / ready-for-Alex）；实现与节点 2 证据齐备；D1 已由 Alex
 > 2026-11-24 裁决「采用这个。」→ 采用 A。实现顺序按「失败用例先行」：先写会红的测试，再改实现；
 > 协议 / 行为以 `design.md` 为准。
 
@@ -109,7 +109,7 @@
 - [x] 6.3 新增场景：首次发送唯一文件、分支文件、双击只受理一轮、查看后退出不复活。
 - [x] 6.4 新增场景：provider 前置拒绝 / 后置失败 + 显式重试；`envChmod` 制造真实权限失败，
       验证发布失败、告警、同身份重试不双写，并按 4.4 的精确计数核对。
-- [ ] 6.5 回跑恢复、删除、通知、跨 vault、持久化健康、重试相关既有场景全绿。
+- [x] 6.5 回跑恢复、删除、通知、跨 vault、持久化健康、重试相关既有场景全绿。
 - [x] 6.6 新增场景：发布仍失败时点另一历史 / 触发新会话被拒——有可见错误、旧 transcript 仍在、
       目录文件数不变；权限恢复后点 B ⇒ A 的完整批次恰好发布一次，再切到 B。
 - [x] 6.7 pending id / token 稳定性只在 Rust 测试断言；真机只声明可观测证据（文件数、transcript、
@@ -117,10 +117,19 @@
 - [ ] 6.8 compact 两态 Rust 必验（1.11b）；真机尽力构造「自动压缩 + 发布失败」，构造不出来时
       登记放弃理由与 Rust 证据指针，不得声称真机已验。
 
-执行备注：compact 两态已由 `src-tauri/src/harness/lazy_restore_tests.rs` 的
+执行备注：724 按真实发送后的 `max(本文件, restored_from 祖先链)` 活动时间改准行数与行序；206 改为
+首次真实发送后才断言恢复文件的 `notice_delivered`。恢复回包的 stale 竞态由真实 deferred Promise 测试
+覆盖：旧 `switched=false` 不得关闭新浮层，旧 switched 不得取消新视图 persistence 快照；修前两条红、
+修后相关 42/42 绿。`GATE RESULT: 15/15 PASS（SKIP 0）`、quick / docs / validate 全绿。最终真机
+106 + 724 + 728–733 共 8/8 PASS、171 条断言（`.local/acceptance/2026-11-24-session-lazy-restore-final/`），
+独立 r2（agent-372）clean / merge，绑定 `fe475484132fbf8b739ec89717ef881b95ad89b1`
+（`.local/reviews/session-lazy-restore-final-r2.md`）。
+
+compact 两态已由 `src-tauri/src/harness/lazy_restore_tests.rs` 的
 `threshold_compact_skip_keeps_uncompressed_session_and_complete_batch` 与
-`overflow_compact_skip_falls_back_to_original_error_without_retry` 验证。实现会话未启动真机；
-6.5、6.8 的真机部分与 7.4 待主会话串行执行。
+`overflow_compact_skip_falls_back_to_original_error_without_retry` 验证。真机未构造「低上下文 +
+目录只读」叠加环境：最终串行窗口只执行已声明的 8 个场景，未另造 compact 权限故障，故 6.8 的真机部分
+按合同记为未构造，不虚报已验。
 
 ## 7. 门禁与交付
 
@@ -128,5 +137,5 @@
 - [x] 7.2 `scripts/gate.sh quick` 与本地 `scripts/gate.sh visual` 通过；照抄 `GATE RESULT` 原文行。
 - [x] 7.3 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 与
       `bash scripts/docs-check.sh` 通过。
-- [ ] 7.4 真机目标场景 PASS，证据落 `.local/acceptance/`（不落 worktree）。
+- [x] 7.4 真机目标场景 PASS，证据落 `.local/acceptance/`（不落 worktree）。
 - [ ] 7.5 实现 PR 合并后按流程落归档跟踪条目并归档（归档不由本提案阶段执行）。

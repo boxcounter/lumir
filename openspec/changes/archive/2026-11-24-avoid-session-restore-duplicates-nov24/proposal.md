@@ -4,7 +4,7 @@
 - 日期: 2026-11-24
 - 角色: Alex Lee（缺陷报告、节点 1 裁决），AI agent（诊断与起草）
 
-> **节点状态**：节点 1 已闭合，独立评审 r4 clean / ready-for-Alex；自动化实现完成、待真机验收。
+> **节点状态**：节点 1 已闭合，独立评审 r4 clean / ready-for-Alex；实现与节点 2 证据齐备、待归档。
 > 2026-11-24 Alex 已对 D1 裁决「采用这个。」——采用 A（首次发布失败仍允许本轮对话继续、
 > 初始记录内存缓冲、同一 session id / token 重试）。D1 之外的方向按本需求的直接约束处理。
 > 独立评审 r1（agent-361，绑定 tip `604660d7`）与 r2（绑定 `6fe5007c`）判 needs-changes；
@@ -179,6 +179,46 @@ B 不是局部替换——若未来重启 B，至少同时改写「会话本地�
 | r2 P2-1 | compact 守卫改为内部「跳过压缩」：阈值路径完成本轮、以既有健康告警为可见反馈；overflow 路径不重试、不加持久化错误、落回既有 overflow 终态；两个调用点在 design §3.1 / spec / tasks 1.11a / 1.11b / 2.8 分别写清。验收改为「切换 / 新会话真机必验；compact 两态 Rust 必验、真机尽力」；Non-goal 收窄为不改触发阈值 / 摘要调用 / 摘要算法 |
 | r2 P2-2 | provider 后置失败拆两态：已发布则追加；未发布则请求 / 失败响应 / 失败 sidecar 进入内存批次、最终文件仍不存在；design §5.1、spec 两个场景、tasks 4.2 同步 |
 | r2 P2-3 | 健康条撞名措辞改为「本次未创建空 / 半截；既有目标逐字节保留」；delta 全篇统一 pending 恢复 / `activated=false|true` 术语，删除 pending 与 activated 混用的自相矛盾短语，并修正 r1 闭合映射任务号 |
+
+## 节点 2（归档记录）
+
+**放行方式：机器 + 独立评审放行（`docs/process/openspec-workflow.md`「节点 2」五要件）。**
+
+### 实现与验收事实
+
+- 恢复查看只重建内存；首次真实 `llm_request` 才以同目录临时文件 + `hard_link` 原子发布一份 JSONL。
+  同源 pending 复用 id/token，当前文件 busy 直切，发布失败保留内存批次并以同身份重试，未发布批次守卫
+  分流 resume / new_session / compact。`SessionResumeInfo.switched` 与前端 no-op、受限 `envChmod` 均已落地。
+- 场景 724 按真实发送后的 `max(本文件, restored_from 祖先链)` 活动时间改准：分支自己的当前活动不被
+  源时间覆盖，保留每文件一行、恢复不置顶（无自有轮次时）、sidecar 不计、compact 不沿链、删除与
+  打开期间不重排等原语义。场景 206 改为首次真实发送后才断言恢复文件的 `notice_delivered`，通知恰好
+  上屏一次且不补唤醒。
+- 恢复回包竞态已修：成功回包先判视图代际，stale 不关闭新浮层、不推进 persistence 序号；真实 deferred
+  Promise 测试覆盖旧 `switched=false` 关闭新浮层、旧 switched 取消健康快照，以及当前代 no-op。
+  修前两条红，修后相关 42/42 绿。
+- 自动化门禁：`GATE RESULT: 15/15 PASS（SKIP 0）`（完整 visual，基线未更新）；quick 全绿；
+  `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 与 `bash scripts/docs-check.sh` 通过。
+- 最终真机：106 + 724 + 728–733 共 **8/8 PASS、171 条断言**，证据目录
+  `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-24-session-lazy-restore-final/`，
+  日志 `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/session-lazy-restore/acceptance-final.log`。
+- compact 真机两态未构造「低上下文 + 目录只读」叠加环境，未声称已验；Rust 必验证据为
+  `src-tauri/src/harness/lazy_restore_tests.rs` 的
+  `threshold_compact_skip_keeps_uncompressed_session_and_complete_batch` 与
+  `overflow_compact_skip_falls_back_to_original_error_without_retry`。
+
+### 归档前五要件
+
+1. **方案已批准**：节点 1 已闭合，D1 采用 A（首次发布失败仍允许本轮对话继续、内存缓冲、同 id/token
+   重试），实现期未改排序、折叠存量或 compact 身份。
+2. **独立 reviewer clean / merge**：agent-372 的 r2 绑定
+   `fe475484132fbf8b739ec89717ef881b95ad89b1`，无 P1 / P2 findings；文件
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/session-lazy-restore-final-r2.md`。
+3. **tasks 完成或有放弃理由**：除 6.8 真机 compact 未构造外全部勾选；未构造原因与 Rust 证据就地记录于
+   `tasks.md`「执行备注」。
+4. **要求的门禁与真机证据通过**：完整 visual 15/15、quick / docs / validate 全绿；最终 8 个真机场景全绿，
+   证据落 `.local/`。
+5. **规格对账无丢段**：`scripts/openspec-archive-check.mjs` 门禁模式随 docs-check PASS；
+   `validate --all --strict` PASS；`docs/backlog.md` 的归档跟踪队列条目唯一。
 
 ## 关联材料
 
