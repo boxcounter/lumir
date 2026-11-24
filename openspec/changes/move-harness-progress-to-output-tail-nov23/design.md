@@ -2,22 +2,24 @@
 
 > 本文件写实现合同与取舍，不是实现记录。行号是起草时（2026-11-23）的读数，实现时以符号为准。
 > 节点状态见 [proposal.md](proposal.md)：节点 1 已批准——Alex 2026-11-24 回复「同意。」，D1–D6 按
-> 推荐值生效。本文件按已裁值写合同；实现仍受两个前序归档与排版基线批准的前置门禁约束。
+> 推荐值生效。审批前序已归档，排版前序仍未归档；实现仍受该前置门禁与排版基线批准约束。
 
 ## 0. 前置门禁（硬）
 
 三项 change 的顺序固定为 `fix-harness-approval-visibility-nov23` →
 `refine-harness-typography-nov23` → 本 change。本 change **必须最后落**：
 
-1. **两个前序都已归档**：`node scripts/openspec-archive-check.mjs --archived <change-id>` 对两者都
+1. **两个前序都已归档**：`fix-harness-approval-visibility-nov23` 已归档并 `--archived` PASS（归档
+   提交 `12a21a97`，审计记录 `ab6ef4ad`，合并 `bae7b47f`）；`refine-harness-typography-nov23` 仍
+   未归档。任一前序未归档、或 `node scripts/openspec-archive-check.mjs --archived <change-id>` 未
    PASS 之前，本 change 不得进入实现、不得归档。
 2. **排版新基线已批准落盘**：`refine-harness-typography-nov23` 的候选视觉基线须经 Alex 逐张过目并
    批准落盘；未批准前本 change 不得施工，也不得把候选图当正式基线。
-3. **delta 以两前序归档后的 living 为基线**：实现第一步是把两者归档后的 living「进度呈现」**整块
-   重抄**进本 change 的 delta（当前 delta 只是承接草案，只并入尾行直接相关的待批 / 标题栏条款与
-   排版承接值，未逐字包含两前序的全部条款）；MUST NOT 以当前 living 为基线直接改，MUST NOT 以本
-   草案直接归档，否则归档时整块替换会抹掉前置新增的终态撤回 / idle stale / enter 前置 / 清算矩阵 /
-   发送最终几何等条款，以及排版 change 的阅读密度 / token 条款。
+3. **delta 以两前序归档后的 living 为基线**：审批归档后的 living「进度呈现」已**整块重抄**进本
+   change 的 delta——24 个 living scenario 全部逐条保留，另加 19 个尾行 / 排版承接 scenario；排版
+   前序归档后仍须复核该 requirement 未被改写并再次整块对账。MUST NOT 以当前 living 为基线直接改，
+   MUST NOT 在未复核的情况下直接归档，否则归档时整块替换会抹掉审批前序新增的终态撤回 / idle stale /
+   enter 前置 / 清算矩阵 / 发送最终几何等条款，以及排版 change 的阅读密度 / token 条款。
 4. **承接排版几何**：阶段行取 `--text-2`；transcript gap 16px，尾行 4px 净间距用
    `calc(var(--sp-2) - var(--sp-8))`；空态绝对定位四边 `top/right/left: var(--sp-8);
    bottom: var(--sp-6)`，并继承 13px/1.58、`--text-2`、24px padding。MUST NOT 恢复排版前的阶段色、
