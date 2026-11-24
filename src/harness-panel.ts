@@ -10736,16 +10736,19 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const previousToken = persistenceSessionToken;
     harnessResumeSession(entry.sessionId)
       .then((info) => {
+        if (actionVault !== null && (actionVault !== currentVault || actionToken !== viewGeneration)) {
+          if (info.switched !== false) {
+            if (previousToken !== null) retiredPersistenceTokens.add(previousToken);
+            activity.reset(actionVault);
+          }
+          return;
+        }
         if (info.switched === false) {
           setSessPop(false);
           return;
         }
         if (previousToken !== null) retiredPersistenceTokens.add(previousToken);
         persistenceSnapshotSeq += 1;
-        if (actionVault !== null && (actionVault !== currentVault || actionToken !== viewGeneration)) {
-          activity.reset(actionVault);
-          return;
-        }
         resetView({ clearActivityFor: actionVault });
         persistenceSessionToken = persistenceSessionTokenOf(info.session_token);
         historyStickyShown.delete(currentVault ?? "");
