@@ -673,10 +673,17 @@ test("wikilink：在渲染态链接尾部点击后输入，字符按顺序写入
   });
   expect(point, "wikilink 的渲染文本没有可测端点").not.toBeNull();
   await page.mouse.click(point!.x, point!.y);
-  await page.waitForTimeout(150);
+  await expect(page.locator(".cm-lp-wikilink-resolved")).toHaveCount(0);
+  await expect(page.locator(".cm-content")).toContainText("x [[note]] y");
+  await expect.poll(async () => bodyState(page)).toEqual({ doc, anchor: 8, head: 8 });
   await page.keyboard.type("QR");
-  await expect.poll(async () => bodyState(page)).toEqual({ doc: "x [[note]]QR y\n", anchor: 12, head: 12 });
-  expect(await fileText(page, "wiki.md")).toBe(doc);
+  await expect.poll(async () => bodyState(page)).toEqual({ doc: "x [[noteQR]] y\n", anchor: 10, head: 10 });
+  await page.keyboard.press("Meta+s");
+  await expect.poll(async () => fileText(page, "wiki.md")).toBe("x [[noteQR]] y\n");
+  await page.keyboard.press("Meta+z");
+  await expect.poll(async () => bodyState(page)).toEqual({ doc, anchor: 8, head: 8 });
+  await page.keyboard.press("Meta+s");
+  await expect.poll(async () => fileText(page, "wiki.md")).toBe(doc);
 });
 
 // ---------------------------------------------------------------------------

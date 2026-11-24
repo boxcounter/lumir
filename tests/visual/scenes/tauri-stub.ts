@@ -151,6 +151,8 @@ export interface VaultFixture {
   positions?: Record<string, Record<string, { pos: number; y: number; x: number; at: number }>>;
   /** link_graph_resolve 桩：链接原文 → LinkResolveResult。未命中按 unresolved 应答。 */
   links?: Record<string, unknown>;
+  /** link_graph_resolve 的应答延迟；用于在真实 pending 窗口内移动光标或编辑。 */
+  linkGraphDelayMs?: number;
   /**
    * link_resolve_note 桩（M145）：`${from}\n${target}` → 解析到的 vault 相对路径，
    * `null` = 解析不到。未收录的键按 null 应答（同 link_graph_resolve 的「未收录即
@@ -851,7 +853,9 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
       },
       // link graph 桩：语义由场景 fixture 注入（前端不复制解析语义，
       // 桩也只查表不计算）；未收录的链接按 unresolved 应答。
-      link_graph_resolve: (args) => {
+      link_graph_resolve: async (args) => {
+        const delay = current?.linkGraphDelayMs ?? 0;
+        if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
         const hit = current?.links?.[args.link ?? ""];
         return (
           hit ?? {

@@ -2,7 +2,7 @@
 // 裁决点 D 推荐项落地：视口增量 ViewPlugin —— 只为可见区域构建 decoration，
 // 滚动/文档变化/语法树增量解析时重建；MUST NOT 全量构建（1MB <100ms 性能合同）。
 // 编辑态口径（M1 只读期已结束）：光标/选区触及的结构显露源码——callout 行、
-// 标准 Markdown 链接、frontmatter 块、公式与 mermaid widget；显露由选区驱动的
+// 标准 Markdown 链接、普通 wikilink、frontmatter 块、公式与 mermaid widget；显露由选区驱动的
 // 装饰重建实现，MUST NOT 改写文档（ADR 0003 §3 铁律）。
 
 import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
@@ -50,6 +50,7 @@ import {
   standardLinkEnvelope,
 } from "./syntax-envelope";
 import { hiddenInlineTailCaretFilter } from "./hidden-tail-caret";
+import { enterReplacedSource } from "./replaced-source";
 import { docTitleForFrontmatter, docTitleTop } from "./doc-title";
 import { sampleCallback } from "../diagnostics";
 import { focusPreservingReadingPosition } from "../scroll-position-view";
@@ -134,11 +135,31 @@ class WikilinkWidget extends WidgetType {
     );
   }
 
-  toDOM(): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const el = document.createElement("span");
     el.className = `cm-lp-wikilink cm-lp-wikilink-${this.status}`;
     el.dataset.status = this.status;
     el.textContent = this.label;
+    el.addEventListener("mousedown", (event) => {
+      if (event.button !== 0 || view.state.readOnly || event.metaKey || event.ctrlKey) return;
+      if (event.shiftKey || event.altKey) {
+        // 不消费事件；只在本次按压内挡住 widget 的原生拖选，保留既有 CM 选区。
+        el.style.userSelect = "none";
+        el.ownerDocument.defaultView?.addEventListener("mouseup", () => {
+          el.style.userSelect = "";
+        }, { once: true });
+        return;
+      }
+      const from = view.posAtDOM(el);
+      // 显露后开定界符把文本右移；尾缘点击仍对应 alias / target 的源码尾端。
+      const range = el.ownerDocument.createRange();
+      range.selectNodeContents(el.firstChild ?? el);
+      const atTail = event.clientX >= range.getBoundingClientRect().right - 1;
+      enterReplacedSource(event, view, el, 2, this.raw.length - 2);
+      if (atTail) {
+        view.dispatch({ selection: { anchor: from + this.raw.length - 2 }, userEvent: "select.pointer" });
+      }
+    });
     if (this.status === "ambiguous") {
       // 歧义标识 + 悬停候选列表（spec §4.1：跳转前即可见）
       el.title = t("D215", { candidates: this.candidates.join("\n") });
@@ -1464,7 +1485,8 @@ function collectWikilinks(
       const to = line.from + span.to;
       if (inFrontmatter(fm, from, to) || isInsideCodeContext(syntaxTree(view.state), from)) continue;
       const raw = doc.sliceString(from, to);
-      decos.push(buildWikilink(raw, span.embed, ctx, resolver).range(from, to));
+      const decoration = buildWikilink(raw, span.embed, ctx, resolver, touchesSource(view.state, from, to));
+      if (decoration !== null) decos.push(decoration.range(from, to));
     }
     if (line.number >= doc.lines) break;
     line = doc.line(line.number + 1);
@@ -1485,7 +1507,8 @@ function buildWikilink(
   embed: boolean,
   ctx: PreviewContext,
   resolver: WikilinkResolver | null,
-): Decoration {
+  revealSource: boolean,
+): Decoration | null {
   // 降级路径：无解析器（未打开 vault / 后端无 link graph）。不做任何语义判断：
   // embed 沿用既有附件占位路径，普通链接只加链接样式、保持原文。
   if (!resolver) {
@@ -1526,6 +1549,7 @@ function buildWikilink(
       ),
     });
   }
+  if (revealSource) return null;
   return Decoration.replace({
     widget: new WikilinkWidget(wikilinkLabel(raw, false), result.status, result.candidates, raw),
   });

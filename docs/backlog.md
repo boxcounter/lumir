@@ -53,7 +53,6 @@
 - `#fix` **lightbox 不随文档代际退出**（M280 残余）→ 下一动作：给 `ImageLightbox` 加关闭口子并接入 `closeDocumentOverlays` 的代际信号（`src/main.ts:1408` 已登记），顺手收编它的重复状态机。
 - `#probe` **长 chain 注入（8–19 chord）可靠性** → 下一动作：跑一轮量落地率与「可点节点」判定边界，结论落 `scripts/acceptance/README.md`「已知边界」。
 - `#fix` **会话浮层快速关→再开重复历史行**（M392）→ 下一动作：复现并定位重复行来源后修，补一条真机判据。
-
 ## 承接残项（长期口径 + 未闭合尾巴）
 
 - **多标签会话恢复观测缺口**：启动日志 `session_restored{count}` 未实现（`src-tauri/src/logging.rs` 白名单没有、`src/vault-switcher.ts` 不发）；下一动作：恢复结束时发 `log_event` 并扩白名单。
@@ -78,3 +77,4 @@
 - **`move-harness-progress-to-output-tail-nov23`（已归档 2026-11-24，提交 `44410018`）**：节点 1 已裁（Alex 2026-11-24「同意」）；final r2 clean / merge 绑定 `7bbd9010`。真机 727 PASS 1/1（40 断言、92.7s），88 / 97 / 104 相关 PASS。Alex 明确批准 10 张 running 基线，其余 98 张与容差不改；light-narrow 反向验证通过。完整 quick `GATE RESULT: 13/13 PASS（SKIP 0）`、visual `GATE RESULT: 15/15 PASS（SKIP 0）`（1368 passed / 0 failed / 1 skipped，exit 0）。归档目录 `openspec/changes/archive/2026-11-24-move-harness-progress-to-output-tail-nov23/`，包装器修链 0 处，`--archived` PASS（2026-11-24T19:21:36+08:00）。
 - **`fix-skill-menu-opaque-background-nov24`**（已归档 2026-11-24，提交 `a1978439`）：delta = `harness` 1 条 ADDED（Skill 候选浮层表面不变量）+ `ui-design-system` 1 条 ADDED（CSS token 引用链静态防线）。clean / merge 绑定 tip `37dd4646`（`.local/reviews/skill-menu-background-r1.md`）。quick `GATE RESULT: 13/13 PASS（SKIP 0）`、visual `GATE RESULT: 15/15 PASS（SKIP 0）`（1371 passed，基线未更新）、单测 1951 passed；真机 726 1/1 PASS（36 断言、52.6s，`.local/acceptance/2026-11-24-skill-menu-background/`）。归档目录 `openspec/changes/archive/2026-11-24-fix-skill-menu-opaque-background-nov24/`，包装器修链 4 处（links 696 条全绿），`--archived` PASS（2026-11-24T20:57:17+0800）。
 - **`fix-harness-message-excerpt-drag-nov24`（已归档 2026-11-24，提交 `48caacf8`）**：test-only 场景修复，agent-373 clean / merge 绑定 `fe04278a`；最终 121 PASS 1/1（19 断言、23.7s），quick 13/13；归档目录 `openspec/changes/archive/2026-11-24-fix-harness-message-excerpt-drag-nov24/`，包装器修链 0 处（links 699 条 PASS），`--archived` PASS（2026-11-24T22:51:25+0800）。
+- **`fix-wikilink-caret-reveal-nov24`（已归档 2026-11-24，提交 `daf2b29a`）**：节点 1 已裁（Alex「采纳。wikilink 按推荐。」）；agent-375 clean/merge 绑定产品 tip `31f88e69`，后续 `b4380bf9` 仅 test-only。修前 8 红 2 绿，相关 visual 207 passed，完整 visual `GATE RESULT: 15/15 PASS（SKIP 0）`（1431 passed / 1 skipped），前端 1951 passed；真机 865 1/1 PASS（29 断言、19.3s，`.local/acceptance/2026-11-24-wikilink-caret-reveal-r2/`）。包装器修链 2 处 + 反向关联链接 1 处（links 699 全绿），`--archived` PASS（2026-11-24T23:48:19+08:00）。
