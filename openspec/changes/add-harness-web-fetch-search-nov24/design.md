@@ -356,6 +356,7 @@ LLM 请求的 wire 历史会携带它。若该后续 LLM 往返失败，显式�
 | code | 含义 |
 |---|---|
 | `web_args_invalid` | query / count / URL 基本参数不合法 |
+| `web_access_config_invalid` | 显式非法 `web_access` 表 / 字段；`provider:null, provider_id:null, attempts:0`，不注册、零请求；MUST NOT 映射为 `tool_unknown` 或 `web_provider_unconfigured` |
 | `web_provider_unconfigured` | 无可用官方 DeepSeek 配置、配置歧义或自定义 base URL；零请求 |
 | `web_url_blocked` | scheme / userinfo / host / IP 非允许目标 |
 | `web_dns_failed` / `web_dns_blocked` | DNS 失败或任一答案非全局单播 |

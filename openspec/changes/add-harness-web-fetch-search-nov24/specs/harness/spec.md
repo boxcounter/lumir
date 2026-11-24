@@ -933,13 +933,15 @@ timeout、取消、200 后响应过大 / 非 JSON / 坏 JSON / 形状不符 / �
 本地预检 MUST NOT 自动重试。Search 空 results 不视为错误，Fetch 空 Markdown 即使官方不计费也不重试。
 200 已到达后的本地解析失败 MUST NOT 为追求成功而重复请求。
 
-错误 SHALL 使用稳定内部分类：`web_args_invalid` / `web_provider_unconfigured` / `web_url_blocked` /
-`web_dns_failed` / `web_dns_blocked` / `web_redirect_limit` /
-`web_unsupported_content` / `web_content_type_unknown` / `web_network_failed` / `web_timeout` /
-`web_cancelled` / `web_response_too_large` / `web_provider_protocol_error` / `web_http_error` /
-`web_empty_content`。4xx / 5xx SHALL 归 `web_http_error` 并保留真实 status、attempts 与可得的 provider
-code / request id；3xx SHALL 不跟随并统一归 `web_provider_protocol_error`，不得双重映射。
-DeepSeek 404 MUST NOT 被伪造为更精确的目标原因。
+错误 SHALL 使用稳定内部分类：`web_args_invalid` / `web_access_config_invalid` /
+`web_provider_unconfigured` / `web_url_blocked` / `web_dns_failed` / `web_dns_blocked` /
+`web_redirect_limit` / `web_unsupported_content` / `web_content_type_unknown` / `web_network_failed` /
+`web_timeout` / `web_cancelled` / `web_response_too_large` / `web_provider_protocol_error` /
+`web_http_error` / `web_empty_content`。4xx / 5xx SHALL 归 `web_http_error` 并保留真实 status、
+attempts 与可得的 provider code / request id；3xx SHALL 不跟随并统一归
+`web_provider_protocol_error`，不得双重映射。DeepSeek 404 MUST NOT 被伪造为更精确的目标原因。
+`web_access_config_invalid` 的结果 SHALL 为 `provider:null, provider_id:null, attempts:0`，不注册、
+零请求，MUST NOT 映射为 `tool_unknown` 或 `web_provider_unconfigured`。
 
 Web 工具错误 SHALL 是 `ToolOutput{ok:false}`，不是 LLM `TurnError`，MUST NOT 设置 `Session.failed`
 或新增错误行重试按钮。Web 分类 MUST NOT 复用 LLM 的 `FailureKind`，也不得把 LLM 集合中的 425 加入
