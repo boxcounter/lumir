@@ -3,7 +3,7 @@ import { StateEffect, type EditorState, type Extension } from "@codemirror/state
 import { EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import { cancelCompositionSettle, scheduleCompositionSettle } from "./composition-settle";
 import { registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
-import { FILTER_LABEL, NO_MATCH_TEXT, foldCase } from "./list-filter";
+import { FILTER_LABEL, NO_MATCH_TEXT, foldCase, isFoldedMatch } from "./list-filter";
 import {
   applyOverlayPlacement,
   measureOverlayNaturalWidth,
@@ -146,7 +146,7 @@ export function buildLinkSuggestions(paths: readonly string[], query: string): L
   for (let index = 0; index < unique.length; index += 1) {
     const item = unique[index] as IndexedLinkPath;
     if (query === "") buckets[0].push(index);
-    else if (!item.foldedPath.includes(foldedQuery)) continue;
+    else if (!isFoldedMatch(item.foldedPath, foldedQuery)) continue;
     else {
       const stem = fileName(item.path).slice(0, -3);
       const foldedStem = foldCase(stem);

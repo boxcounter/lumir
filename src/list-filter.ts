@@ -3,8 +3,8 @@
 // 为什么单独一个模块（REVIEW.md 「同一语义两处真源」条）：`s 开头` 这类语义一旦在两处各写一份，就会漂移成
 // 「大纲是子串、vault 是前缀」。规则本体在 `openspec/specs/toc-outline` 的两条 ADDED requirement
 // （「浮层输入筛选的匹配语义」与「浮层输入筛选的交互（输入框、焦点与退出）」），`vault-workspace`
-// 引用它们；匹配与文案的真源都归本模块——列表输入框使用 `isMatch` / `filterIndices`，候选索引复用
-// `foldCase` 与同一子串包含语义。
+// 引用它们；匹配与文案的真源都归本模块——列表输入框使用 `isMatch` / `filterIndices`，候选预折叠索引
+// 共用 `isFoldedMatch`。
 //
 // 本模块是纯逻辑：零 DOM、零 CodeMirror、零 IPC，可被 tests/unit 直接 import（那一层的分工见
 // tests/unit/README.md）。DOM 与焦点迁移留在两处浮层自己那一层。
@@ -22,10 +22,15 @@ export function foldCase(value: string): string {
   return value.toLowerCase();
 }
 
+/** 已折叠文本与查询的子串包含判定；预折叠索引与 `isMatch` 共用。 */
+export function isFoldedMatch(foldedText: string, foldedQuery: string): boolean {
+  return foldedText.includes(foldedQuery);
+}
+
 /** 单条判定：查询为空即命中（空查询 = 全量态，不特判调用方）。 */
 export function isMatch(text: string, query: string): boolean {
   if (query === "") return true;
-  return foldCase(text).includes(foldCase(query));
+  return isFoldedMatch(foldCase(text), foldCase(query));
 }
 
 /** 结果集：`texts` 里匹配 `query` 的下标（升序 = 源顺序，MUST NOT 重排）。 */

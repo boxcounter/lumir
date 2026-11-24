@@ -30,7 +30,7 @@
 
 候选 SHALL 同步读取与 Quick Open 相同的 `vaultFilePaths` 内存索引，只保留 `foldCase(path).endsWith(".md")` 的路径，与 Rust `is_markdown` 的普通 wikilink 候选全集一致；`.markdown` MUST NOT 进入候选，`fileClassOfPath(path) === "md"` 的较宽分类 MUST NOT 用作本判据。候选按完整路径去重，MUST NOT 新增 IPC、异步磁盘枚举或依赖，MUST NOT 改用包含 code / text 的 `linkableVaultPaths`。显示文本 SHALL 是完整 vault 相对路径（含实际扩展名）；惰性目录不在当前索引的既有边界保持不变。
 
-候选 SHALL 复用 `list-filter` 的 `foldCase`、子串匹配和保序语义，依次分为精确 stem、折叠 stem、折叠前缀、折叠子串四层：精确为 `stem === query`；折叠为 `foldCase(stem) === foldCase(query)`；前缀为折叠 stem 以折叠 query 开头；子串经 `filterIndices` 对显示路径匹配。每项只进入最前一个命中层，层间按四层顺序、层内保持源数组顺序，MUST NOT 计算相似度分数或引入模糊子序列、拼音、全角 / 简繁归一。空查询全部命中并保序；连接后 SHALL 最多显示 100 条，零命中显示既有 `NO_MATCH_TEXT` 且不设置活动候选。
+候选 SHALL 复用 `list-filter` 的 `foldCase`、子串匹配和保序语义，依次分为精确 stem、折叠 stem、折叠前缀、折叠子串四层：精确为 `stem === query`；折叠为 `foldCase(stem) === foldCase(query)`；前缀为折叠 stem 以折叠 query 开头；子串经 `list-filter` 的 `isFoldedMatch` 对预折叠显示路径与查询匹配。每项只进入最前一个命中层，层间按四层顺序、层内保持源数组顺序，MUST NOT 计算相似度分数或引入模糊子序列、拼音、全角 / 简繁归一。空查询全部命中并保序；连接后 SHALL 最多显示 100 条，零命中显示既有 `NO_MATCH_TEXT` 且不设置活动候选。
 
 无法无损表示为 wikilink target 的路径 MUST NOT 生成可接受候选；系统 MUST NOT 为其发明转义或接受会改变解析语义的字符串。
 
