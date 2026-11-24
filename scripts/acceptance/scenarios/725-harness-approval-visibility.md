@@ -73,8 +73,13 @@ steps:
       - shot: 02-引用卡入composer
 
   - name: 写问题（卡片下一行）
+    # composer inline cards（master 已合并）后，卡片是 composer 内的 widget：AXTextArea 的
+    # label 仍是占位句「问点什么…」，旧的 tray 形态才会把卡片出处「Agent」读成 AX 名。
+    # 按 typeInNode 的硬口径并联「占位名 | 本轮注入文本」（M779）：注入前命中占位句，注入后
+    # 命中 value。卡片在 widget 里、插入后 composer 已聚焦，type_text 追加到文档末尾 = 卡片
+    # 之后；动作内部 N→N+1 回读继续证明文本真的落在 composer。
     do: typeInNode
-    target: { role: AXTextArea, name: "Agent|avis-quote" }
+    target: { role: AXTextArea, name: "问点什么|avis-quote" }
     text: "avis-quote"
   - name: 发送（携带引用卡）
     do: key
@@ -107,6 +112,23 @@ steps:
         node: { role: AXButton, name: "有新内容，回到底部", present: true }
       - shot: 04-屏外待批与标题栏信号
 
+  # 回底必须在面板仍然打开、且确实处于脱离态时点：面板「重新打开」走 attachTo 的
+  # 白名单强制回底（既有合同），重开后再找浮钮本来就不存在。先点浮钮再收起 / 重开，
+  # 既保住真实未读浮钮的正断言与点击动作，也保住收起 / 重开时的标题栏信号检查。
+  - name: 点浮钮回底：批准卡进入视口，状态仍在（回底不是决策）
+    do: click
+    target: { role: AXButton, name: "有新内容，回到底部" }
+    expect:
+      - label: 回底后未读浮钮退场
+        node: { role: AXButton, name: "有新内容，回到底部", present: false }
+      - label: 批准卡可见（问句 + 闸语义副句）
+        ax: { has: "要修改这个文件吗？" }
+      - label: 闸语义副句在场（采纳前不落盘）
+        ax: { has: "批准后才会落盘" }
+      - label: 阶段行仍读「等待批准…」（回底不是决策）
+        ax: { has: "等待批准…" }
+      - shot: 05-回底后仍待批
+
   - name: 收起面板：toggle 状态承担同一状态（AX 读到的 help）
     do: keys
     keys: ["cmd+shift+a"]
@@ -115,9 +137,9 @@ steps:
         ax: { not: "分隔条" }
       - label: 收起态 toggle 悬停提示读「对话面板 · 等待批准」
         ax: { has: "对话面板 · 等待批准" }
-      - shot: 05-收起态仍有审批信号
+      - shot: 06-收起态仍有审批信号
 
-  - name: 重新打开面板（重开不拉快照，保留的是本地状态）
+  - name: 重新打开面板（重开不拉快照、按白名单回底；保留的是本地待批状态）
     do: keys
     keys: ["cmd+shift+a"]
     expect:
@@ -125,21 +147,11 @@ steps:
         ax: { has: "分隔条" }
       - label: 待批状态仍在（重开保留本地状态）
         ax: { has: "等待批准…" }
-      - shot: 06-重开仍待批
-
-  - name: 点浮钮回底：批准卡进入视口，状态仍在（回底不是决策）
-    do: click
-    target: { role: AXButton, name: "有新内容，回到底部" }
-    expect:
-      - label: 回底后浮钮退场
-        node: { role: AXButton, name: "回到底部", present: false }
-      - label: 批准卡可见（问句 + 闸语义副句）
+      - label: 批准卡在场（重开回底后可见，不复活 / 不丢失）
         ax: { has: "要修改这个文件吗？" }
-      - label: 闸语义副句在场（采纳前不落盘）
-        ax: { has: "批准后才会落盘" }
-      - label: 阶段行仍读「等待批准…」（回底不是决策）
-        ax: { has: "等待批准…" }
-      - shot: 07-回底后仍待批
+      - label: 重开按既有白名单回底，未读浮钮已退场（不是停在脱离态）
+        node: { role: AXButton, name: "回到底部", present: false }
+      - shot: 07-重开仍待批
 
   - name: 采纳第一处
     do: click
