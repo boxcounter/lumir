@@ -4423,9 +4423,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   let skillCatalog: readonly SkillSummary[] | null = null;
   let skillCatalogEpoch = 0;
   let skillTokenFrom: number | null = null;
+  let skillMenuIntentFrom: number | null = null;
+  let skillCatalogInFlight: { vault: string | null; epoch: number } | null = null;
+  let programmaticComposerReset = 0;
 
   function closeSkillMenu(): void {
     skillMenuState = null;
+    skillMenuIntentFrom = null;
+    skillTokenFrom = null;
     skillMenuEl.hidden = true;
     skillMenuEl.replaceChildren();
     unregisterEscapeLayer("harness-skill-menu");
@@ -4436,6 +4441,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     closeSkillMenu();
     skillCatalog = null;
     skillTokenFrom = null;
+    skillCatalogInFlight = null;
     skillCatalogEpoch += 1;
   }
 
@@ -4501,37 +4507,52 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     skillMenuEl.style.top = `${top - host.top}px`;
   }
 
-  function syncSkillMenu(forceCatalog = false): void {
+  function syncSkillMenu(forceCatalog = false, fromCatalog = false): void {
+    if (programmaticComposerReset > 0 || composerIsComposing()) {
+      closeSkillMenu();
+      return;
+    }
     const token = skillTokenAt(
       composerView.state.doc.toString(),
       composerView.state.selection.main.head,
     );
-    const newToken = token !== null && token.from !== skillTokenFrom;
-    skillTokenFrom = token?.from ?? null;
-    if (token !== null && (forceCatalog || newToken)) {
+    if (token === null) {
+      closeSkillMenu();
+      return;
+    }
+    if (fromCatalog && skillMenuIntentFrom !== token.from) {
+      closeSkillMenu();
+      return;
+    }
+    if (!fromCatalog) skillMenuIntentFrom = token.from;
+    const newToken = token.from !== skillTokenFrom;
+    skillTokenFrom = token.from;
+    if (forceCatalog || newToken) {
       refreshSkillCatalog(true);
     }
-    skillMenuState = token === null
-      ? null
-      : openSkillMenu(
-          composerView.state.doc.toString(),
-          composerView.state.selection.main.head,
-          skillCatalog ?? [],
-        );
+    skillMenuState = openSkillMenu(
+      composerView.state.doc.toString(),
+      composerView.state.selection.main.head,
+      skillCatalog ?? [],
+    );
     renderSkillMenu();
   }
 
   function refreshSkillCatalog(force: boolean): void {
-    if (!force && skillCatalog !== null) return;
+    if (skillCatalogInFlight !== null || (!force && skillCatalog !== null)) return;
     const vault = currentVault;
     const epoch = ++skillCatalogEpoch;
+    const request = { vault, epoch };
+    skillCatalogInFlight = request;
     void harnessSkillsList().then((items) => {
       if (epoch !== skillCatalogEpoch || vault !== currentVault) return;
       skillCatalog = items;
       composerView.dispatch({ effects: skillCatalogRefreshEffect.of(null) });
-      syncSkillMenu();
+      syncSkillMenu(false, true);
     }).catch(() => {
       // 最新成功清单保留；初次失败仍是 null，refs chip 不误标 missing/disabled。
+    }).finally(() => {
+      if (skillCatalogInFlight === request) skillCatalogInFlight = null;
     });
   }
 
@@ -4594,7 +4615,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         updateEmptyClass();
         markDraft();
       }
-      if (update.docChanged || update.selectionSet) syncSkillMenu();
+      if (update.docChanged || (update.selectionSet && skillMenuState !== null)) syncSkillMenu();
     }),
   ];
   const composerView = new EditorView({
@@ -5031,12 +5052,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   function resetComposer(content: Parameters<typeof createComposerState>[0] = { text: "", caret: 0, cards: [], skills: [] }): void {
-    closeSkillMenu();
-    skillTokenFrom = null;
-    composerView.setState(createComposerState(content, composerViewExtensions));
-    syncComposerAriaValue();
-    updateEmptyClass();
-    imageThumbCache.prune();
+    programmaticComposerReset += 1;
+    try {
+      closeSkillMenu();
+      skillTokenFrom = null;
+      composerView.setState(createComposerState(content, composerViewExtensions));
+      syncComposerAriaValue();
+      updateEmptyClass();
+      imageThumbCache.prune();
+    } finally {
+      programmaticComposerReset -= 1;
+    }
   }
 
   function syncAttachmentProjection(previous: readonly PlacedAttachment[]): void {

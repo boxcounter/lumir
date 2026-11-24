@@ -196,6 +196,51 @@ steps:
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-BACKGROUND-BODY" }
       - label: 旧显式正文仍在历史
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-TMP-BODY" }
+
+  - name: 打开历史会话清单并真正恢复含显式 part + 自动工具结果的会话
+    do: click
+    target: { role: AXPopUpButton, nth: 0 }
+  - name: 等历史会话行出现
+    do: waitFor
+    waitFor:
+      has: ["/AXMenuItem \\(/"]
+    timeoutMs: 15000
+  - name: 恢复该会话（最后一条 llm_request.messages 原样灌回）
+    do: clickInNode
+    target: { role: AXMenuItem, nth: 0 }
+  - name: 等恢复回合完成
+    do: waitFor
+    waitFor:
+      has: ["历史恢复回合完成。"]
+    timeoutMs: 20000
+    expect:
+      - label: 恢复后旧显式正文与自动工具结果仍在请求历史
+        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-TMP-BODY" }
+      - label: 恢复后旧自动工具结果仍在请求历史
+        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-BACKGROUND-BODY" }
+      - label: 恢复面板不显示显式正文
+        ax: { not: "ACC-TMP-BODY" }
+      - label: 恢复面板也不显示自动工具正文
+        ax: { not: "ACC-BACKGROUND-BODY" }
+
+  - name: 策略变更后发起新的自动调用
+    do: keys
+    keys: ["a", "u", "t", "o", "2"]
+  - name: 发送新自动调用
+    do: key
+    key: enter
+  - name: 等新策略调用完成
+    do: waitFor
+    waitFor:
+      has: ["策略变更新调用完成。"]
+    timeoutMs: 20000
+    expect:
+      - label: 新自动调用按当前禁自动策略拒绝
+        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", jsonlOutput: { tool: skill_load, has: { code: skill_model_invocation_disabled } } }
+      - label: 旧显式与自动正文仍不被策略回写
+        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-TMP-BODY" }
+      - label: 旧自动工具结果仍保留
+        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-BACKGROUND-BODY" }
 ---
 
 本场景只证明 mock 链路下的注入、留存、投影、策略执行和发送行为，不证明真实模型会遵守索引提示。

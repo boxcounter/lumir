@@ -1713,6 +1713,16 @@ pub fn harness_skills_list(
 /// **不建会话、不入队**；前端收到该 code → toast + 把消息里的图片卡片标错误态（前端
 /// MUST NOT 另立能力判定）。放行后含图消息照常入队——会话侧与 JSONL 恒为引用形态，
 /// base64 展开落在 client 发送前（`attachments::expand_image_refs`）。
+fn parse_explicit_skill_names(skills_json: &str) -> Result<Vec<String>, CommandError> {
+    serde_json::from_str::<Vec<String>>(skills_json).map_err(|e| {
+        CommandError::new(
+            "harness_skills_invalid",
+            format!("Skill 选择元数据必须是字符串数组：{e}"),
+        )
+        .param("reason", e.to_string())
+    })
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub fn harness_send(
     vault: tauri::State<'_, crate::commands::VaultState>,
@@ -1724,13 +1734,7 @@ pub fn harness_send(
 ) -> Result<(), CommandError> {
     let scope = vault_scope(&vault)?;
     let config = config::load()?.config.harness;
-    let skill_names = serde_json::from_str::<Vec<String>>(&skills_json).map_err(|e| {
-        CommandError::new(
-            "harness_skills_invalid",
-            format!("Skill 选择元数据必须是字符串数组：{e}"),
-        )
-        .param("reason", e.to_string())
-    })?;
+    let skill_names = parse_explicit_skill_names(&skills_json)?;
     let parts = attachments::parse_delivery_parts(&parts_json)?;
     // 发送期缺失态（task 4.7）：没有 provider / 缺 Key / 缺 Base URL / 没有模型时在建会话之前
     // 给出人话错误——顺序在图片闸之前，否则「没有 provider 却附了图」会报成图片不支持。
@@ -3839,5 +3843,29 @@ mod tests {
         assert_eq!(error.code, "harness_busy");
         runtime.release_turn(&scope);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn invalid_skills_json_does_not_create_session_or_queue_input() {
+        let _lock = xdg_test_lock();
+        let root =
+            std::env::temp_dir().join(format!("lumir-skill-invalid-send-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let previous = std::env::var_os("XDG_CONFIG_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+        let error = parse_explicit_skill_names("not-json").unwrap_err();
+        assert_eq!(error.code, "harness_skills_invalid");
+        let no_sessions = jsonl::vault_sessions_dir("invalid-send")
+            .ok()
+            .and_then(|dir| std::fs::read_dir(dir).ok())
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(true);
+        assert!(no_sessions);
+        match previous {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -804,11 +804,6 @@ mod tests {
         let none = parse_delivery_parts(r#"[{"kind":"text","text":"问"}]"#).unwrap();
         assert_eq!(apply_context_section(none, None).len(), 1);
     }
-}
-
-#[cfg(test)]
-mod skill_projection_tests {
-    use super::*;
 
     #[test]
     fn no_image_wire_still_strips_skill_marker_without_resolving_attachments() {

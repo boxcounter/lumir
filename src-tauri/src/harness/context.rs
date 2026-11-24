@@ -1145,11 +1145,6 @@ mod tests {
         assert!(IDENTITY.contains("不要用 pwd"), "{IDENTITY}");
         assert!(IDENTITY.contains("广域 find"), "{IDENTITY}");
     }
-}
-
-#[cfg(test)]
-mod skill_invocation_tests {
-    use super::*;
 
     #[test]
     fn invocation_defaults_and_matrix_are_independent() {

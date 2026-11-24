@@ -19,7 +19,21 @@ import {
 
 const selected = () => createComposerState({ text: "/acc", caret: 4, cards: [], skills: [] });
 
-test("Skill ref 随选中创建，发送按位置排序且同名首次去重", () => {
+test("多个逆序 refs 按位置排序，同名只取首个", () => {
+  const state = createComposerState({
+    text: "/beta /alpha /beta",
+    caret: 18,
+    cards: [],
+    skills: [
+      { name: "alpha", from: 6 },
+      { name: "beta", from: 13 },
+      { name: "beta", from: 0 },
+    ],
+  });
+  assert.equal(composerSkillsJson(state), '["beta","alpha"]');
+});
+
+test("手打同形文本不产生 ref", () => {
   let state = selected();
   state = applyComposerTransaction(state, selectComposerSkill(state, { name: "acc-skill-abc", from: 0, to: 4 }));
   state = applyComposerTransaction(state, {

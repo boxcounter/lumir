@@ -3973,17 +3973,6 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&root);
     }
-}
-
-#[cfg(test)]
-mod skill_hybrid_tests {
-    use super::*;
-    use crate::fs_io::IgnorePolicy;
-
-    struct NullSink;
-    impl EventSink for NullSink {
-        fn emit(&self, _payload: serde_json::Value) {}
-    }
 
     struct EnvGuard {
         home: Option<std::ffi::OsString>,
@@ -4133,6 +4122,27 @@ mod skill_hybrid_tests {
         assert!(wire.contains("UNIQUE-BODY-model-only"));
         assert!(!wire.contains("UNIQUE-BODY-invalid"));
 
+        let session_id = runtime.current_session_id(&fixture.scope).unwrap();
+        let file = jsonl::read_session_file(
+            &jsonl::vault_sessions_dir(&fixture.scope.vault_id)
+                .unwrap()
+                .join(format!("{session_id}.jsonl")),
+        )
+        .unwrap();
+        let requests: Vec<&serde_json::Value> = file
+            .records
+            .iter()
+            .filter(|record| record["kind"] == "llm_request")
+            .map(|record| &record["request"]["messages"])
+            .collect();
+        assert!(!requests.is_empty());
+        let request_json = serde_json::to_string(&requests).unwrap();
+        assert!(request_json.contains("UNIQUE-BODY-user-only"));
+        assert!(request_json.contains("UNIQUE-BODY-default"));
+        assert!(request_json.contains("UNIQUE-BODY-model-only"));
+        assert!(!request_json.contains("UNIQUE-BODY-invalid"));
+        assert!(request_json.contains("lumir_skill"));
+
         let mut retry_client =
             llm::MockClient::from_str(r#"{"responses":[{"text":"retry-done"}]}"#, "skill-retry")
                 .unwrap();
@@ -4162,6 +4172,134 @@ mod skill_hybrid_tests {
                 .count(),
             2,
             "重试不重复追加显式 part",
+        );
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn auto_compact_does_not_reinject_explicit_skill() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("compact");
+        let mut config = fixture.config.clone();
+        config.auto_compact = true;
+        config.warn_ctx_pct = 0.0;
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&fixture.scope, &config).unwrap();
+        let script = r#"{"responses":[
+          {"text":"done","usage":{"input_tokens":100,"cached_tokens":0,"output_tokens":1}},
+          {"text":"摘要"}
+        ]}"#;
+        let mut client = llm::MockClient::from_str(script, "skill-compact").unwrap();
+        let _counter_lock = tools::skill_content_test_lock();
+        tools::reset_skill_content_load_count();
+        run_turn_for_with_skills(
+            &NullSink,
+            &runtime,
+            &fixture.scope,
+            &config,
+            "question",
+            None,
+            vec!["default".into()],
+            &mut client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert_eq!(tools::skill_content_load_count(), 1, "压缩不得重新显式加载");
+        let compacted = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let json = serde_json::to_string(&compacted).unwrap();
+        assert!(json.contains("摘要"));
+        assert!(
+            !json.contains("lumir_skill"),
+            "新逻辑会话只接收摘要，不重新注入 Skill part"
+        );
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn restore_replays_history_without_reinjection_and_new_policy_applies() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("restore-policy");
+        let runtime = Runtime::default();
+        runtime
+            .acquire_turn(&fixture.scope, &fixture.config)
+            .unwrap();
+        let script = r#"{"responses":[
+          {"tool_calls":[{"id":"auto-model-only","name":"skill_load","arguments":"{\"name\":\"model-only\"}"}]},
+          {"text":"done"}
+        ]}"#;
+        let mut client = llm::MockClient::from_str(script, "skill-restore").unwrap();
+        let _counter_lock = tools::skill_content_test_lock();
+        tools::reset_skill_content_load_count();
+        run_turn_for_with_skills(
+            &NullSink,
+            &runtime,
+            &fixture.scope,
+            &fixture.config,
+            "question",
+            None,
+            vec!["default".into()],
+            &mut client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert_eq!(tools::skill_content_load_count(), 2);
+        let source_input = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let source_id = runtime.current_session_id(&fixture.scope).unwrap();
+        let resumed = runtime
+            .resume_session(&fixture.scope, &fixture.config, &source_id)
+            .unwrap();
+        assert!(resumed.restored_items > 0);
+        let restored_input = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        assert_eq!(
+            restored_input, source_input,
+            "恢复必须原样灌回最后请求与响应历史"
+        );
+        assert_eq!(tools::skill_content_load_count(), 2, "恢复不得重新显式加载");
+
+        std::fs::write(
+            fixture.root.join(".agents/skills/default/SKILL.md"),
+            "---\ndescription: changed\ndisable-model-invocation: true\n---\nUNIQUE-BODY-default",
+        )
+        .unwrap();
+        runtime
+            .acquire_turn(&fixture.scope, &fixture.config)
+            .unwrap();
+        let mut new_client = llm::MockClient::from_str(
+            r#"{"responses":[
+              {"tool_calls":[{"id":"new-auto","name":"skill_load","arguments":"{\"name\":\"default\"}"}]},
+              {"text":"new done"}
+            ]}"#,
+            "skill-new-policy",
+        )
+        .unwrap();
+        run_turn_for(
+            &NullSink,
+            &runtime,
+            &fixture.scope,
+            &fixture.config,
+            "new question",
+            None,
+            &mut new_client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert_eq!(
+            tools::skill_content_load_count(),
+            2,
+            "策略变更后的新自动调用不得加载"
+        );
+        let wire = serde_json::to_string(new_client.received_inputs()).unwrap();
+        assert!(wire.contains("skill_model_invocation_disabled"));
+        assert!(
+            wire.contains("UNIQUE-BODY-default"),
+            "旧显式正文仍保留在历史"
+        );
+        assert!(
+            wire.contains("UNIQUE-BODY-model-only"),
+            "旧自动工具结果仍保留在历史"
         );
         let _ = std::fs::remove_dir_all(&fixture.root);
     }

@@ -3280,11 +3280,6 @@ mod tests {
             "缺基本目录：{got}"
         );
     }
-}
-
-#[cfg(test)]
-mod skill_policy_tests {
-    use super::*;
 
     struct HomeGuard(Option<std::ffi::OsString>);
     impl Drop for HomeGuard {
