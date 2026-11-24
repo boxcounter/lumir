@@ -34,5 +34,5 @@
 ## 实施验证记录（不归档）
 
 - 修前红：新增 Node 测试因 `src/link-suggest.ts` 不存在而失败；新增 visual 11/11 FAIL（候选未实现，IME 229 被旧 Enter 路径消费）。Rust 真实解析矩阵 1/1 PASS，用于冻结完整路径插入语义。
-- 修后绿：`tests/unit/link-suggest.test.ts` + 滚动注册表 23/23 PASS；最终结构下新增 visual 15/15 PASS，覆盖键鼠、IME、特殊路径、三主题、证书失效与源文档不变。完整 quick `GATE RESULT: 13/13 PASS（SKIP 0）`；完整 visual `GATE RESULT: 15/15 PASS（SKIP 0）`（视觉回归 1449 passed / 1 skipped），未更新基线。
+- 修后绿：r2 最终相关 unit 32/32 PASS；`wikilink-suggestion.spec.ts` 28/28 PASS，覆盖键鼠、IME、特殊路径、三主题、证书失效与源文档不变。完整 quick `GATE RESULT: 13/13 PASS（SKIP 0）`；完整 visual 门禁通过（视觉回归 1462 passed / 1 skipped），未更新基线。
 - 真机场景 `866-wikilink-suggestion-nov24` 已新增并 `CHECK PASS`，覆盖表 287 场景一致；2026-11-25 真实 WKWebView 最终 1/1 场景 PASS、24 条断言、0 失败（24.5s），证据 `.local/acceptance/2026-11-25-wikilink-suggestion-r2/`。接受复核只固定 opener，允许查询内 caret 移动，索引与唯一解析证书不变。

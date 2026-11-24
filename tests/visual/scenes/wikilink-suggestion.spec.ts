@@ -382,16 +382,18 @@ test("compositionend：DOM 已是最终候选而 state 仍旧，pending flush �
   const atEnd = await page.locator(".cm-content").evaluate((content) => {
     const view = (content as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
     const observer = view.observer;
+    const flush = observer.flush.bind(observer);
     const dispatch = view.dispatch.bind(view);
     const list = document.querySelector(".lumir-link-suggest-list") as HTMLElement;
     const replaceChildren = list.replaceChildren;
     const probe = window.__wikilinkIme = { pending: true, dispatches: 0, refreshes: 0 };
     observer.pendingRecords = () => probe.pending ? [{}] : [];
+    observer.flush = () => {
+      if (!probe.pending) return flush();
+    };
     view.dispatch = (...args: any[]) => {
-      if (!probe.pending) {
-        probe.dispatches += 1;
-        return dispatch(...args);
-      }
+      probe.dispatches += 1;
+      if (!probe.pending) return dispatch(...args);
     };
     list.replaceChildren = (...nodes: Array<Node | string>) => {
       probe.refreshes += 1;
@@ -418,13 +420,15 @@ test("compositionend：DOM 已是最终候选而 state 仍旧，pending flush �
   expect(await page.evaluate(() => window.__wikilinkIme.dispatches)).toBe(0);
   expect(await page.evaluate(() => window.__wikilinkIme.refreshes)).toBe(0);
 
-  await page.locator(".cm-content").evaluate((content) => {
+  const flushDispatches = await page.locator(".cm-content").evaluate((content) => {
     const view = (content as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
     window.__wikilinkIme.pending = false;
     Object.defineProperty(view, "compositionStarted", { value: false, configurable: true });
     view.dispatch({ changes: { from: 2, insert: "Alpha" }, selection: { anchor: 7 } });
-    (window as any).experiment.available();
+    return window.__wikilinkIme.dispatches;
   });
+  expect(flushDispatches).toBe(1);
+  await page.evaluate(() => { (window as any).experiment.available(); });
   await expect(page.locator(ROW)).toHaveCount(1);
   await expect(page.locator(ROW)).toHaveText("notes/Alpha.md");
   expect(await page.evaluate(() => window.__wikilinkIme.refreshes)).toBe(1);
