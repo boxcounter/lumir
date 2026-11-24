@@ -17,7 +17,8 @@
 >   79 断言 PASS（33.7s），106 / 108 / 124 / 165 全 PASS；完整视觉
 >   `GATE RESULT: 15/15 PASS（SKIP 0）`，基线未更新；archive-check 1 条 MODIFIED / 19 段 PASS。
 >   旧实现的真机预跑红（tasks 1.5）未执行，以 Rust 先红与最终真机正证替代，未伪称覆盖。
-> - living spec 的改动仍以 delta 形式留在本 change 目录内，归档时并入，不提前改写。
+> - 实现与节点 2 材料已合并推送至 master（`497cc1a4`）；本次提交执行归档，living spec 已由
+>   归档包装器并入。
 
 ## Why
 
