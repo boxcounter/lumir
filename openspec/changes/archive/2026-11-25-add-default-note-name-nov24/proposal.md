@@ -16,6 +16,8 @@
 > - **独立复审 r4**：agent-374 对 `560a190e` 判 **clean / merge**，报告
 >   `.local/reviews/default-note-name-r4.md`；r1 的 P2 断言 / 文案问题已修，r2/r3 无新增问题。
 > - **tasks 19/19 全勾**；无基线批准需求（设置页相对 base 零改动，原 10 张基线不变）。
+> - **归档已完成**：归档提交 `4c55d94a`；包装器 `+1 added`、修链 0 处；`--archived` PASS
+>   （0 条 MODIFIED / 对比 0 段）。
 
 > 评审记录
 > 节点 1：Alex 2026-11-24 裁决原话「批准。」——方向为「可开启的小特性，新建文件时预填人类可读
@@ -103,3 +105,12 @@ Alex 2026-11-25 的决定把「要不要预填」从用户偏好收回到产品�
 5. **规格对账**：`node scripts/openspec-archive-check.mjs --change add-default-note-name-nov24`
    PASS；`openspec validate --all --strict` 40 passed / 0 failed；`scripts/docs-check.sh` PASS；
    `docs/backlog.md` 归档跟踪队列有且仅有一条本 change 条目。
+
+## 归档记录（归档后）
+
+- 归档提交：`4c55d94a`（`openspec(archive): archive add-default-note-name-nov24`）。
+- 包装器：`Specs updated successfully`（file-tree `+1 added`）；归档目录
+  `openspec/changes/archive/2026-11-25-add-default-note-name-nov24/`；归档后修链 0 处
+  （扫过 4 篇 Markdown / 0 条相对链接），`openspec-links: PASS（699 条）`。
+- `node scripts/openspec-archive-check.mjs --archived add-default-note-name-nov24`：PASS
+  （0 条 MODIFIED，对比 0 段；人工恢复 0 段，声明认领 0 段）。
