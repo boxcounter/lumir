@@ -108,6 +108,6 @@
 
 ## 7. 归档（节点 2）
 
-- [ ] 7.1 节点 2 五要件齐后归档；归档后跑 `--archived` 审计与链接检查，living spec 只由归档流程并入
-- [ ] 7.2 归档与基线落盘前不得放行 `move-harness-progress-to-output-tail-nov23`；完成后将新的 living
+- [x] 7.1 节点 2 五要件齐后归档；归档后跑 `--archived` 审计与链接检查，living spec 只由归档流程并入
+- [x] 7.2 归档与基线落盘前不得放行 `move-harness-progress-to-output-tail-nov23`；完成后将新的 living
       spec / CSS / idle 基线及 design §7 承接门禁交给后续 change，禁止沿用旧阶段色、gap 或空态偏移
