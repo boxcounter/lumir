@@ -3,9 +3,10 @@
 > 起草注记（非规格正文）：本 delta 按 r3.2 **混合调用方案**编写，节点 1 的 H1 已由 Alex 于
 > 2026-11-24 明确「批准 Skill 混合方案」通过。
 > 本 change 新增「Skill 的混合调用与入口策略」；「Skill 支持」补显式入口、双入口策略及索引 / 清单边界；
-> 「composer 草稿 v2 与一次性 v1 转换」升 v3（带选择引用）。两个 MODIFIED 块均按 living spec 原文整块
-> 复制再改，未要求删除的段落与场景逐字保留。交互与留存细节见 [design.md](../../design.md)，裁决点见
-> [proposal.md](../../proposal.md)。
+> 「composer 草稿 v2 与一次性 v1 转换」升 v3（带选择引用），底稿取 composer 归档后的 living 原文：
+> CRLF 共同出口、v2 / v1 的 `at: 0` 迁移、发送被拒合并与 composer 新增场景逐字承接。两个 MODIFIED 块
+> 均按 living spec 原文整块复制再改，未要求删除的段落与场景逐字保留。交互与留存细节见
+> [design.md](../../design.md)，裁决点见 [proposal.md](../../proposal.md)。
 
 ## ADDED Requirements
 
@@ -308,36 +309,32 @@ composer 内容 SHALL 作为当前 vault 的一份草稿自动保存与恢复；
 
 草稿的归属 SHALL 在出发时绑定：前端在装载 vault 时记下该 vault 的稳定 id，读、写、清除命令 MUST 携带它；后端 SHALL 只按携带的 id 解析落点，MUST NOT 读取当前打开的 vault。切 vault 之前发出的在途写无论何时执行 MUST 只落它出发时的 vault 的文件，MUST NOT 写进之后打开的 vault；在途读的结果 MUST 按装载世代作废，不得覆盖新 vault 的输入区或「已落盘」基准。写失败重试 SHALL 仍打出发时的归属 id。切换 vault 时旧 vault 的待写按既有纪律丢弃（由切换前的 flush 写走），其迟到失败 MUST NOT 回填新 vault 的待写、MUST NOT 改变新 vault 的「已落盘」基准。
 
-新草稿 SHALL 是 `{version:3,text,caret,cards,skills}`：text 是完整问题，caret 是 `[0,text.length]` 内 UTF-16 offset 或 null，cards 按 tray 顺序逐字段保存；skills 是显式选择引用数组，每项 `{name,from,to}`，from/to 是 `text` 内的 UTF-16 偏移，切片必须逐字节等于 `/名字`。读取时越界、切片不匹配或名字不合 `/` 调用 grammar 的引用 MUST 被丢弃，MUST NOT 影响草稿其余内容的恢复。skills MUST NOT 保存用户 / 模型调用策略快照；发送时 SHALL 按当前 Skill 策略重新判定。图片只存内容寻址名、源 mime 与可选宽高，MUST NOT 内联 base64；v3 合法往返必须逐字段还原（含 refs）。
+新草稿 SHALL 是 `{version:3,text,caret,cards,skills}`：text 是完整问题，caret 是 `[0,text.length]` 内 UTF-16 offset 或 null，cards 按**视觉顺序**逐项保存 `{card, at}`——`card` 是既有附件记录，`at` 是该卡的**精确 UTF-16 偏移**（不要求行首，`0 <= at <= text.length`）；skills 是显式选择引用数组，每项 `{name,from,to}`，from/to 是 `text` 内的 UTF-16 偏移，切片必须逐字节等于 `/名字`。读取时越界、切片不匹配或名字不合 `/` 调用 grammar 的引用 MUST 被丢弃，MUST NOT 影响草稿其余内容的恢复。skills MUST NOT 保存用户 / 模型调用策略快照；发送时 SHALL 按当前 Skill 策略重新判定。图片只存内容寻址名、源 mime 与可选宽高，MUST NOT 内联 base64；v3 合法往返必须逐字段还原（含 refs）。`id` 不写盘，恢复时按数组顺序重新编号。
 
-现存 v1 与 v2 都是迁移的具体消费者。读到合法 v1 时 SHALL 一次性转换：段落按原顺序以 `\n` 连接，未知块以可见 JSON 文本加入，卡片按相对顺序全部抽入 cards；段落 caret 精确映射，卡片 / 末尾边界映射到最近后续文本块起点，无后续则全文末尾；skills 为空。读到合法 v2 时 SHALL 保留 text / caret / cards、skills 为空。两者成功后 SHALL 立即经既有串行 store 写回 v3，此后只读 / 只写 v3；MUST NOT 双写、保留旧编辑路径或建立通用迁移平台。load 起始 SHALL 捕获编辑世代；读盘期间发生新编辑时 MUST 跳过旧迁移写回及 written 基准覆盖，保留当前 pending / written。迁移写一旦入串行链，后续编辑写 SHALL 排在其后，最终落盘必须是最新输入。损坏 v1 / v2 / v3 安静回空；迁移写失败不谎报已保存。
+**CRLF 归一放在所有版本解析 / 迁移完成后的共同出口**：CM 在 `EditorState.create` 时按 `/\r\n?|\n/` 分行并统一为 LF，原始 CRLF 坐标（caret / `at`）不能直接灌进 state。v1 / v2 / v3 SHALL 先各自解析 / 迁移成同形状草稿（`{text,caret,cards:[{card,at}]}`，仍是原始坐标），再统一把 `\r\n` / `\r` 归一为 `\n`，并用同一份原始 offset → 归一 offset 映射重定位 caret 与每张卡的 `at`。归一后的草稿 SHALL 同时用于**写回 v3**与**创建 `EditorState`**；MUST NOT 只归一文本而保留原始坐标，MUST NOT 让写回与 state 使用两份不同坐标。混合行界（`\r\n` / `\r` / `\n` 混用）按同一扫描处理。
 
-#### Scenario: v3 往返与合法 caret
+现存 v2 与 v1 都是迁移的具体消费者。读到合法 v2 时 SHALL 一次性转换：可见内容保留，**行尾及坐标按共同出口的统一映射归一**（不是字节级原样保留）；全部卡片落 `at: 0`（等价于 v2 的「卡片全在前」语义），caret 由原始偏移映射到归一文本坐标；skills 为空。读到合法 v1 时 SHALL 沿用现行转换（段落按原顺序以 `\n` 连接，未知块以可见 JSON 文本加入，卡片按相对顺序全部抽入 cards；段落 caret 精确映射，卡片 / 末尾边界映射到最近后续文本块起点，无后续则全文末尾），再全部落 `at: 0`，skills 为空。v1 / v2 转换成功后 SHALL 立即经既有串行 store 写回 v3，此后只读 / 只写 v3；MUST NOT 双写、保留旧编辑路径或建立通用迁移平台。load 起始 SHALL 捕获编辑世代；读盘期间发生新编辑时 MUST 跳过旧迁移写回及 written 基准覆盖，保留当前 pending / written。迁移写一旦入串行链，后续编辑写 SHALL 排在其后，最终落盘必须是最新输入。损坏 v1 / v2 / v3 安静回空；迁移写失败不谎报已保存。
 
-- **WHEN** 草稿包含多行文本、三类附件、显式选择引用和文本中部 caret，保存后重开同一 vault
-- **THEN** text / caret / cards / skills 逐字段恢复，图片引用不变且无 base64；失效引用被丢弃且不影响其余内容；
-  草稿不含调用策略快照，发送时按当前策略判定；撤销史不跨进程恢复
+发送被同步拒绝、而拒绝回包晚于用户的下一条输入时，输入区的合并 SHALL 保持「原文在前、当前在后」：文本为 `restored.text + current.text`，当前卡片的 anchor 平移 `restored.text.length`，再按精确偏移稳定排序；恢复侧的 skills 引用保持原偏移，当前侧 skills 引用同样平移 `restored.text.length`，合并后逐条按 v3 规则重新校验。MUST NOT 为对齐行首补换行、MUST NOT 钳到行首。精确偏移模型下，当前卡片平移到原文末尾后由块级 widget 在该偏移拆文本，自然落在原文之后、当前文字之前。当前侧为空态时 SHALL 原样返回 restored。
 
 #### Scenario: v2 往返与合法 caret
 
-- **WHEN** 现存 v2 草稿包含多行文本、三类附件和文本中部 caret，重开同一 vault
-- **THEN** text / caret / cards 逐字段恢复、图片引用不变且无 base64；skills 为空；盘上立即写回一份 v3（无 v2 双写）
+- **WHEN** 盘上是合法 v2 草稿，包含多行文本、三类附件和文本中部 caret，装载同一 vault 后重开
+- **THEN** text / caret / cards 逐字段保留（全部卡片落 `at: 0`，即 v2 的「卡片全在前」语义），skills 为空，图片引用不变且无 base64；读回后立即写回 v3，重新装载 v3 仍逐字段还原
 
 #### Scenario: v1 一次性转换不丢内容
 
 - **WHEN** 现存 v1 含交错段落、未知块、三类卡片与段落 / 卡片 / 末尾 caret
-- **THEN** 所有段落和未知块可见文本各出现一次，卡片相对顺序不变，caret 按合同映射且合法，skills 为空；
-  成功后盘上只写一份 v3，无双写
+- **THEN** 所有段落和未知块可见文本各出现一次，卡片相对顺序不变且全部落 `at: 0`，skills 为空，caret 按合同映射且合法；成功后盘上只写一份 v3，无双写
 
 #### Scenario: 发送与写失败保留语义
 
 - **WHEN** 发送成功、发送被能力闸拒绝，或草稿写盘失败
-- **THEN** 成功清空草稿；拒绝恢复发送前 text / caret / cards / skills 且草稿不变；写失败给 warning、
-  不阻断输入、不谎报已保存
+- **THEN** 成功清空草稿；拒绝恢复发送前 text / caret / cards / skills 且草稿不变；写失败给 warning、不阻断输入、不谎报已保存
 
 #### Scenario: 旧写失败不夺回新编辑的待写所有权
 
-- **WHEN** v1/v2 迁移写或普通 v3 旧写在途，新输入 flush 已入串行链，随后旧写失败、新写成功并再次 flush；对照组旧写失败期间无新编辑
+- **WHEN** v1 / v2 迁移写或普通 v3 旧写在途，新输入 flush 已入串行链，随后旧写失败、新写成功并再次 flush；对照组旧写失败期间无新编辑
 - **THEN** 前者再次 flush 不得写出旧内容，盘上逐字节保持新输入；对照组保留原待写并可在下一次 flush 成功重试
 
 #### Scenario: 迟到的旧写不串台
@@ -350,7 +347,32 @@ composer 内容 SHALL 作为当前 vault 的一份草稿自动保存与恢复；
 - **WHEN** vault-a 的草稿读已发出但在途，装载 vault-b 的读先完成，旧的读才返回
 - **THEN** 旧读结果整体作废（不返回内容、不铺进输入区），vault-b 的「已落盘」基准与盘上草稿不变
 
+#### Scenario: v3 往返与合法 caret
+
+- **WHEN** 草稿包含多行文本、三类卡片、行首与**行中**锚点、显式选择引用和文本中部 caret，保存后重开同一 vault
+- **THEN** text / caret / cards / skills 逐字段恢复，每张卡（含行中 anchor）与视觉顺序不变，图片引用不变且无 base64；失效引用被丢弃且不影响其余内容；草稿不含调用策略快照，发送时按当前策略判定；撤销史不跨进程恢复
+
+#### Scenario: CRLF v3 装载与坐标重映射
+
+- **WHEN** 盘上 v3 草稿的 text 是 `A\r\nB\r\nC`，caret 在 B 之后（原始 offset 4），一张卡片的 `at` 指向 C 行首（原始 offset 6）
+- **THEN** 创建 state 前文本归一为 `A\nB\nC`，caret 与 `at` 用同一映射重定位（分别变为 3 与 4）；恢复后的文本、caret、anchor 与 `composerBlocks()` 顺序全部正确，MUST NOT 把原始 CRLF 坐标直接灌进 state
+
+#### Scenario: CRLF v2 caret 归一
+
+- **WHEN** 盘上 v2 草稿的 text 是 `A\r\nB\r\nC`，caret 在 B 之后（原始 offset 4），cards 含一张卡片
+- **THEN** 迁移先得到 v3 形状（卡片 `at: 0`，caret 仍为原始 4），共同出口把文本归一为 `A\nB\nC`、caret 映射为 3；写回的 v3 与创建的 state 都用这份归一草稿，MUST NOT 把 caret 4 直接灌进 state
+
+#### Scenario: 混合行界 v1 归一
+
+- **WHEN** 现存 v1 的段落文本混用 `\r\n`、`\r`、`\n`（如 `A\r\nB`、`C\rD`、`E\nF`），caret 位于其中一个段落之后
+- **THEN** v1 转换后走共同出口：所有行界归一为 `\n`，caret 按同一原始 offset → 归一 offset 映射重定位，可见文本一段不丢；写回 v3 与创建 state 使用同一份归一坐标
+
 #### Scenario: 写失败重试仍落出发时的 vault
 
 - **WHEN** vault-a 的草稿写失败（人话 warning），随后用户在 vault-a 里再次 flush
 - **THEN** 重试携带的归属仍是 vault-a，成功后才更新 vault-a 的草稿；期间切换到的其他 vault 的草稿与待写不受影响
+
+#### Scenario: 发送被拒合并不丢卡片
+
+- **WHEN** 发送被拒的回包晚于用户的下一条输入：原文末尾无换行，当前侧已粘贴一张图片卡片
+- **THEN** 合并结果是「原文 + 当前文字」（MUST NOT 补换行），当前图片卡 anchor 平移原文长度后恰好落在原文末尾、当前文字之前；块级 widget 在该偏移拆文本，两边内容一张不丢，anchor 不需要是行首
