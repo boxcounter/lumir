@@ -2769,7 +2769,7 @@
 }
 .lumir-hp-skill-name {
   flex: none;
-  color: var(--text-1);
+  color: var(--text);
 }
 .lumir-hp-skill-description {
   min-width: 0;
