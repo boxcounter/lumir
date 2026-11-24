@@ -173,6 +173,12 @@ async function style(target: Locator, pseudo?: string) {
         wordBreak: s.wordBreak,
         animationName: s.animationName,
         textAlign: s.textAlign,
+        position: s.position,
+        top: s.top,
+        right: s.right,
+        bottom: s.bottom,
+        left: s.left,
+        order: s.order,
       };
     },
     pseudo ?? null,
@@ -500,11 +506,16 @@ test("Harness 阅读排版：共享非默认缩放只变字号与行高，⌘0 �
   await expect.poll(() => page.locator(".lumir-hp-transcript").evaluate((el) => getComputedStyle(el).fontSize)).toBe("15px");
 });
 
-test("Harness 阅读排版：空态与运行提示只改指定排版并留独立候选图", async ({ page }) => {
+test("Harness 阅读排版：空态与输出尾行继承排版并留独立候选图", async ({ page }) => {
   await openPanel(page, "light", EMPTY_RUNNING_STATE);
   const empty = page.locator(".lumir-hp-empty");
   await expect(empty).toBeVisible();
   expect(await style(empty)).toMatchObject({
+    position: "absolute",
+    top: "16px",
+    right: "16px",
+    bottom: "12px",
+    left: "16px",
     fontSize: "13px",
     lineHeight: "20.54px",
     padding: "24px",
@@ -513,31 +524,25 @@ test("Harness 阅读排版：空态与运行提示只改指定排版并留独立
   });
   const margins = await empty.evaluate((el) => {
     const s = getComputedStyle(el);
-    let declaredMargin = "";
-    for (const sheet of document.styleSheets) {
-      for (const rule of sheet.cssRules) {
-        if (rule instanceof CSSStyleRule && rule.selectorText === ".lumir-hp-empty") declaredMargin = rule.style.margin;
-      }
-    }
     return {
       top: parseFloat(s.marginTop),
       right: parseFloat(s.marginRight),
       bottom: parseFloat(s.marginBottom),
       left: parseFloat(s.marginLeft),
-      declaredMargin,
     };
   });
-  expect(margins.declaredMargin).toBe("auto");
-  expect(margins.top).toBeCloseTo(margins.bottom, 1);
-  expect(margins.left).toBeCloseTo(margins.right, 1);
-  expect(margins.top).toBeGreaterThan(0);
+  expect(margins).toEqual({ top: 0, right: 0, bottom: 0, left: 0 });
   await expectContrast(empty, parseColor(await token(page, "--agent-bg", "background-color")), 4.5);
   const stage = page.locator(".lumir-hp-stage");
   await expect(stage).toBeVisible();
   expect((await style(stage)).color).toBe(await token(page, "--text-2"));
   expect((await style(stage)).marginBottom).toBe("4px");
   await expectContrast(stage, parseColor(await token(page, "--agent-bg", "background-color")), 4.5);
-  expect((await style(page.locator(".lumir-hp-progress"))).padding).toBe("0px 8px");
+  expect(await style(page.locator(".lumir-hp-progress"))).toMatchObject({
+    order: "1",
+    marginTop: "-12px",
+    padding: "0px",
+  });
   expect((await style(page.locator(".lumir-hp-bar-fill"))).animationName).toBe("lumir-hp-bar-slide");
   await expectHarnessCandidate(page, "harness-typography-empty-running.png");
 });

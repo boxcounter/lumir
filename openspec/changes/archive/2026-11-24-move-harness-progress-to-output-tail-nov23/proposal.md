@@ -8,13 +8,17 @@
 >
 > - **节点 1（提案评审）已批准**：Alex 2026-11-24 在解释进度尾行方案后回复「同意。」，D1–D6 全部按
 >   本文件推荐值生效。批准只覆盖方向与裁决点，不代表本 change 已实现或已归档。
-> - 本 change 未进入实现；`tasks.md` 的实现项全部未勾是刻意的。本次提交做基线同步：审批前序
->   `fix-harness-approval-visibility-nov23` 已归档（`--archived` PASS），delta 按其 living「进度呈现」
->   整块重抄并保留全部审批 scenario；排版前序 `refine-harness-typography-nov23` 仍未归档，本 change
->   仍不得施工。
-> - 本次提交为**有序链基线更新**：审批归档后的 living 重抄与 scenario 补齐，不改变已评审通过的
->   尾行 / 排版合同，也不是产品行为变更。
-> - 本 change 只到提案层：living spec 的改动以 delta 形式留在本 change 目录内，归档时并入，不提前改写。
+> - 两个前序均已归档且 `--archived` PASS，排版新基线已获 Alex 批准落盘；本 change 已进入实现。
+> - delta 以两个前序归档后的 living「进度呈现」整块重抄，24 个既有 scenario 全部保留，再叠加尾行合同。
+> - living spec 的改动仍以 delta 形式留在本 change 目录内，归档时并入，不提前改写。
+> - **独立复审已放行**：final r2 对 `7bbd9010` 判 clean / merge；727 真机 1/1 PASS（40 断言、92.7s），
+>   88 / 97 / 104 相关场景均 PASS。
+> - **基线已获 Alex 明确批准**：仅更新审阅页中的 9 张三主题 × 三宽度 running 图与 empty-running，
+>   其余 98 张基线与容差不改；light-narrow 已做「新图 PASS → 旧图必 FAIL → 新图恢复 PASS」反向验证。
+> - **完整门禁已收口**：`LUMIR_VISUAL_PORT=4398 scripts/gate.sh visual` 为
+>   `GATE RESULT: 15/15 PASS（SKIP 0）`、退出码 0（1368 passed / 0 failed / 1 skipped）。
+> - **归档已完成**：归档提交 `44410018`；随后 `--archived` 审计 PASS（1 条 MODIFIED，对比 59 段；
+>   人工恢复 0 段，声明认领 0 段）。
 
 ## 前置门禁（硬）
 
@@ -22,16 +26,14 @@
 
 `fix-harness-approval-visibility-nov23` → `refine-harness-typography-nov23` → 本 change。
 
-1. **两个前序都先归档**：`fix-harness-approval-visibility-nov23` 已归档并 `--archived` PASS（归档
-   提交 `12a21a97`，审计记录 `ab6ef4ad`，合并 `bae7b47f`）；`refine-harness-typography-nov23` 仍未
-   归档。任一前序未归档、或 `node scripts/openspec-archive-check.mjs --archived <change-id>` 未 PASS
-   之前，本 change **不得进入实现**，也不得归档。
-2. **排版新基线先过 Alex**：`refine-harness-typography-nov23` 的候选视觉基线须经 Alex 逐张过目并
-   批准落盘；未批准前本 change 不得施工，也不得把候选图当正式基线。
-3. **delta 以两前序归档后的 living 为基线**：审批归档后的 living「进度呈现」已整块重抄进本 change
-   的 delta（全部审批 scenario 逐条保留，见 `specs/harness/spec.md` 的起草注记）；排版前序归档后
-   仍须复核该 requirement 未被改写并再次整块对账。MUST NOT 提前改写 living spec，也不得在未复核的
-   情况下直接归档。
+1. **两个前序都先归档**：`fix-harness-approval-visibility-nov23` 与
+   `refine-harness-typography-nov23` 均已归档，开工已分别复跑
+   `node scripts/openspec-archive-check.mjs --archived <change-id>` 并 PASS。
+2. **排版新基线先过 Alex**：`refine-harness-typography-nov23` 的 20 张候选视觉基线已经 Alex 逐张
+   过目、批准并落盘；本 change 不把这些批准扩大到自己的 running 候选图。
+3. **delta 以两前序归档后的 living 为基线**：living「进度呈现」已整块重抄进本 change 的 delta
+   （全部 24 个既有 scenario 逐条保留，见 `specs/harness/spec.md` 的起草注记）。MUST NOT 提前改写
+   living spec，也不得在未复核的情况下直接归档。
 4. **承接排版几何**（以 `refine-harness-typography-nov23` 归档后的 CSS / token 为准）：阶段行取
    `--text-2`；transcript gap 为 16px，尾行 4px 净间距公式为 `calc(var(--sp-2) - var(--sp-8))`；
    空态绝对定位四边 `top/right/left: var(--sp-8); bottom: var(--sp-6)`，并继承排版后的 13px/1.58、
@@ -51,14 +53,14 @@
 ### 现场
 
 harness 的「生成中进度」今天是挂在 transcript 滚动区**之外**、composer 之上的固定块：
-`src/harness-panel.ts:3927` 的 `panel.append(transcriptViewport, progress, taskArea, composerArea)`。
+施工前 `panel.append(transcriptViewport, progress, taskArea, composerArea)`。
 它由两件东西组成——阶段行（等待响应 / 正在生成回复 / 正在停止）与 3px 不定态条
-（`src/harness-panel.ts:3706-3718`），显隐只由相位翻一位 `progress.hidden`（`:5903`）。
+（`progress` / `stageLine` / `barTrack`），显隐只由相位翻一位 `progress.hidden`（`applySendPhase`）。
 
 位置带来的两个症状：
 
 1. **视口高度变化，阅读被拽动**。进度块显隐时 transcript 视口高度 ±约 28px（阶段行 + 条形 +
-   间距）。跟滚控制器里有一条历史现场就记着这个尺寸（`src/harness-scroll-lock.ts:148-155`：
+   间距）。跟滚控制器里有一条历史现场就记着这个尺寸（`src/harness-scroll-lock.ts` 施工前的 `echoTop` 注释：
    「发送后进度条占掉 28px 视口高」）。视口变矮后浏览器会夹取滚动位；脱离态上滚阅读时，
    轮次开始 / 结束会让阅读行轻微移动。移到尾行后，这类变化从「视口变矮」变成「内容变高」——
    跟滚模型必须把「布局变化」与「新内容」分开，否则尾行出现会被读成新内容、点亮假未读
@@ -75,10 +77,10 @@ harness 的「生成中进度」今天是挂在 transcript 滚动区**之外**�
 ### 关键事实（起草依据）
 
 - **等待期没有 assistant 元素**：`ensureStreamingMessage` 只在首个 `reasoning_chunk` / `tool_call` /
-  `text_chunk` 到达时才建流式泡（`src/harness-panel.ts:7606-7614`）；发送后、首个分片前，transcript
+  `text_chunk` 到达时才建流式泡（`ensureStreamingMessage`）；发送后、首个分片前，transcript
   里没有任何本轮 assistant 宿主。把进度塞进消息内部在这段没有落点。
 - **首个产出不一定是正文**：思考分片与工具调用都可能先于正文到达；现行代码只有 `text_chunk`
-  把 `stageWaiting` 翻假（`src/harness-panel.ts:8498-8503`），所以「先调工具、全程无正文」会一直
+  把 `stageWaiting` 翻假（施工前 `text_chunk` 分支），所以「先调工具、全程无正文」会一直
   停在 D381。阶段推进必须改为三者任一。
 - **中途接管也可能没有宿主**：进入快照报 `in_flight=true` 时，本轮可能尚无 assistant 元素；
   尾行方案对它天然成立。
@@ -86,7 +88,7 @@ harness 的「生成中进度」今天是挂在 transcript 滚动区**之外**�
   `gap: var(--sp-8)`（16px）与 `16px 16px 12px` 外侧 padding（`refine-harness-typography-nov23`），
   视觉序可由 `order` 控制；子项自身的 `padding` 会与容器左右 padding 叠加。
 - **空态判据按子节点数**：`syncEmptyHint()` 用 `transcript.childElementCount > 1` 判「有内容」
-  （`src/harness-panel.ts:6044-6049`）；尾行进入 transcript 后必须把这个判据改准，否则空态提示
+  （`syncEmptyHint`）；尾行进入 transcript 后必须把这个判据改准，否则空态提示
   会被误撤。
 
 ## What Changes
@@ -127,7 +129,7 @@ harness 的「生成中进度」今天是挂在 transcript 滚动区**之外**�
 | 生成中（含工具循环） | 显示，原地换字 | D382 正在生成回复… | 不定态滑动 |
 | 停止中（`stopping`） | 显示 | D400 正在停止… | **冻结**（无位移、无脉冲） |
 | 运行中待批（非接管） | 显示，原地换字 | 「等待批准…」（前置 change 提供） | 不定态滑动 |
-| 中途接管（进入快照 `in_flight=true`，无待批） | 重建后挂尾 | 新增「正在继续本轮…」（D972 候选，见 D3） | 不定态滑动 |
+| 中途接管（进入快照 `in_flight=true`，无待批） | 重建后挂尾 | 「正在继续本轮…」（D983，见 D3） | 不定态滑动 |
 | 中途接管 + 待批 | 重建后挂尾 | **「等待批准…」**（待批优先于接管，MUST NOT 读「正在继续本轮…」） | 不定态滑动 |
 | 正常结束 / 出错 / 用户停止 | **终态处理前先隐藏** | — | — |
 | 从历史恢复（不在途） | 不显示 | — | — |
@@ -202,7 +204,7 @@ Alex 2026-11-24 回复「同意。」，以下推荐值全部生效；批准原�
 |---|---|---|---|
 | **D1** | 进度放在哪 | **transcript 内的输出尾行**：文档流占位、跨状态同一元素、不遮挡、不抢布局 | 塞进 assistant 消息内部：视觉上更「属于这一轮」，但与消息定稿 / 工具块封板 / 快照重建耦合，等待期与中途接管期无宿主；浮层贴底：要补底 padding，改滚动几何 |
 | **D2** | 停止态条形 | **冻结**（`animation: none`，条形回到静态基准位） | 继续滑动：运动暗示「还在推进」，与「停止」语义相反；用户会误以为停止没生效 |
-| **D3** | 中途接管文案 | **新增一句「正在继续本轮…」**（拟取 D972，实现前按 `文案-Copy.md` 末位复核） | 复用 D382「正在生成回复…」：不新增文案，但接管期还没开始生成，读数不准确；且无法与普通生成区分 |
+| **D3** | 中途接管文案 | **新增一句「正在继续本轮…」**（实现取 D983；起草候选 D972 已被前序占用） | 复用 D382「正在生成回复…」：不新增文案，但接管期还没开始生成，读数不准确；且无法与普通生成区分 |
 | **D4** | 工具循环期文案 | **维持 D382**，工具细节归工具行 | 新增第三档「正在执行工具…」：与工具行重复，且要多一条状态与文案 |
 | **D5** | 是否保留 3px 不定态条 | **保留**（spec 现行要求；eink 靠明度表达） | 只留文字：更安静，但「处理中」的连续信号只剩文字，长工具循环的可感知性下降 |
 | **D6** | 视觉基线怎么处理 | **本次不 `--update`**：running 态只交候选截图，idle 基线相对排版归档后的新基线零漂移；确需更新时人肉裁决点先过 Alex | 机械 `--update`：违反基线纪律，且会把「位置变化」静默吞掉 |
@@ -225,11 +227,11 @@ D1–D5 是行为 / 观感取舍；D6 是既有流程的重申，列出来是为
     → 等待批准；脱离态待批 → 标题栏信号仍在、`scrollTop` 不变）；`tests/unit/harness-scroll-lock.test.ts`、新的纯模型单测、
     `tests/visual/scenes/m347-harness-composer.spec.ts`、`tests/visual/scenes/m638-harness-scroll-lock.spec.ts`；
     真机套件新增一条场景。
-  - `文案-Copy.md`：中途接管一句（D3 批准后取号）。
+  - `文案-Copy.md`：中途接管一句（D3 批准后取号，实现为 D983）。
 - 关联约束：
   - ADR 0002 第 6 条性能合同：尾行只在相位跃迁时改 DOM；流式分片路径零新增节点、零新增布局
     读取；不定态动画只作用于 `transform` / `opacity`。
-  - ADR 0004：节点 1 已批准（2026-11-24）；审批前序已归档，排版前序仍未归档，实现仍受该前置门禁约束。
+  - ADR 0004：节点 1 已批准（2026-11-24）；两个前序均已归档且审计 PASS，实现前置已满足。
   - 仓库信息卫生：视觉 / 真机 fixture 只用合成 vault 名与路径。
 
 ## 与相邻 change 的关系（有序链，后落）
@@ -240,16 +242,15 @@ D1–D5 是行为 / 观感取舍；D6 是既有流程的重申，列出来是为
   **已归档并 `--archived` PASS**（归档提交 `12a21a97`，审计记录 `ab6ef4ad`，合并 `bae7b47f`）；
   本 change 已按其归档后的 living 重抄「进度呈现」。
 - **第二前序**：`refine-harness-typography-nov23`（阅读密度、720px 阅读宽、任务文字 `--text-2`、
-  横线表、composer / 空态排版）。**仍未归档**；它必须紧随审批可见性之后归档，且其新视觉基线经
-  Alex 批准落盘；本 change 继承它的阶段行 `--text-2`、16px transcript gap 与 `16px 16px 12px`
-  外侧 padding、空态 13px/1.58 / `--text-2` / 24px padding。
+  横线表、composer / 空态排版）。**已归档且 `--archived` PASS**，其新视觉基线已经 Alex 批准落盘；
+  本 change 继承它的阶段行 `--text-2`、16px transcript gap 与 `16px 16px 12px` 外侧 padding、
+  空态 13px/1.58 / `--text-2` / 24px padding。
 - **本 change 的约束**：MODIFIED 块整块重抄**两个前序归档后**的 living（审批归档后已重抄一次；
   排版归档后复核并再次整块对账）；优先级 `stopping > approval > midTakeover > waiting/generating`；
   标题栏审批信号 MUST NOT 因尾行移入 transcript 而消失（design §9.7）。
 - **不合并**：两个前序各自解决已裁的审批可见性与排版问题，本 change 是位置决策；合并会污染
   裁决面与基线归属。
-- **取号**：前序 change 可能先占用 deck 新号；本 change 的 D3 候选号（起草时为 D972）在实现前
-  按 `文案-Copy.md` 末位复核，不硬占。
+- **取号**：前序已占用 D972–D982；实现前复核 deck 末位为 D982，本 change 的 D3 新句实际取 **D983**。
 
 ## 与 ADR 的关系
 

@@ -343,3 +343,71 @@ test("render 只在 {phase, unread} 值变化时被调用（创建期不主动�
   assert.deepEqual(s.rendered.at(-1), { phase: "detached", unread: true });
   assert.equal(s.rendered.length, 2);
 });
+
+// ── 非内容布局变化（进度尾行显隐）────────────────────────────────────────────
+
+test("layoutMutated：following 下尾行出现 / 消失各排一次贴底", () => {
+  const s = fakeSurface(at(0));
+  const follow = createFollowController(s);
+  follow.layoutMutated(28);
+  assert.equal(s.queued(), 1);
+  s.metrics = { scrollTop: 1500, clientHeight: 500, scrollHeight: 2028 };
+  s.runScheduled();
+  assert.deepEqual(s.writes, [1528]);
+
+  follow.layoutMutated(-28);
+  s.metrics = at(0);
+  s.runScheduled();
+  assert.deepEqual(s.writes, [1528, 1500]);
+  assert.equal(follow.phase(), "following");
+  assert.equal(follow.unread(), false);
+});
+
+test("layoutMutated：detached 下尾行单独显隐不假未读、不拽视口", () => {
+  const s = fakeSurface(at(400));
+  const follow = createFollowController(s);
+  follow.onScroll();
+  s.writes.length = 0;
+
+  s.metrics = { scrollTop: 1100, clientHeight: 500, scrollHeight: 2028 };
+  follow.layoutMutated(28);
+  follow.contentGrew();
+  assert.equal(follow.unread(), false, "尾行出现不是新内容");
+  s.metrics = { scrollTop: 1100, clientHeight: 500, scrollHeight: 2000 };
+  follow.layoutMutated(-28);
+  follow.contentGrew();
+  assert.equal(follow.unread(), false, "尾行消失也不是新内容");
+  s.runScheduled();
+  assert.deepEqual(s.writes, []);
+  assert.equal(s.metrics.scrollTop, 1100);
+  assert.equal(follow.phase(), "detached");
+});
+
+test("layoutMutated 危险次序：真实增长先于尾行隐藏时不得被布局补偿吞掉", () => {
+  const s = fakeSurface(at(400));
+  const follow = createFollowController(s);
+  follow.onScroll(); // H0 = 2000
+  s.writes.length = 0;
+
+  // H0 → +C（120px 真实内容）→ -P（28px 尾行隐藏）→ 布局补偿 → 内容判定。
+  s.metrics = { scrollTop: 1100, clientHeight: 500, scrollHeight: 2092 };
+  follow.layoutMutated(-28);
+  follow.contentGrew();
+  assert.equal(follow.unread(), true, "若直接把 2092 当新基线，120px 真实未读会被吞");
+  s.runScheduled();
+  assert.deepEqual(s.writes, []);
+  assert.equal(s.metrics.scrollTop, 1100);
+});
+
+test("layoutMutated：detached 基线钳到零且不改变既有未读", () => {
+  const s = fakeSurface({ scrollTop: 0, clientHeight: 500, scrollHeight: 10 });
+  const follow = createFollowController(s);
+  s.metrics = { scrollTop: 0, clientHeight: 500, scrollHeight: 2000 };
+  follow.onScroll();
+  s.metrics = { scrollTop: 0, clientHeight: 500, scrollHeight: 2100 };
+  follow.contentGrew();
+  assert.equal(follow.unread(), true);
+  follow.layoutMutated(-5000);
+  assert.equal(follow.unread(), true, "布局变化不得清掉真实未读");
+  assert.deepEqual(s.writes, []);
+});

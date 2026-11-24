@@ -497,3 +497,44 @@ test("发送最终几何：引用卡与纯文本发送都在同一 task 内贴�
   expect(after.buttonHidden, "发送后不出现回底钮").toBe(true);
   expect(Math.abs(after.scrollTop - after.max)).toBeLessThanOrEqual(1);
 });
+
+test("尾行布局变化：自动回合在 detached 下不拽视口、不假未读；following 仍贴底", async ({ page }) => {
+  await openPanel(page);
+  await primeTranscript(page);
+  await fire(page, { type: "done" });
+  await frames(page, 3);
+  await wheelOverTranscript(page, -300);
+  let m = await readScroll(page);
+  expect(m.buttonHidden, "本步前提：普通内容已脱离底部").toBe(false);
+  expect(m.unread, "脱离本身不产生未读").toBe(false);
+  const anchored = m.scrollTop;
+  const anchoredClientHeight = m.clientHeight;
+
+  // 不用普通发送：它会走 jumpToBottom 白名单，无法证明布局入口自身不拽视口。
+  await fire(page, { type: "auto_turn_started" });
+  await expect(page.locator(".lumir-hp-progress")).toBeVisible();
+  await frames(page, 2);
+  m = await readScroll(page);
+  expect(Math.abs(m.scrollTop - anchored), "尾行出现不得改变阅读位置").toBeLessThanOrEqual(1);
+  expect(m.clientHeight, "尾行只能改内容高度，不得再压缩 transcript 视口").toBe(anchoredClientHeight);
+  expect(m.unread, "尾行出现不是新内容").toBe(false);
+  expect(await page.locator(".lumir-hp-progress").evaluate((el) => el.parentElement?.classList.contains("lumir-hp-transcript") ?? false)).toBe(true);
+
+  await fire(page, { type: "done" });
+  await expect(page.locator(".lumir-hp-progress")).toBeHidden();
+  await frames(page, 2);
+  m = await readScroll(page);
+  expect(Math.abs(m.scrollTop - anchored), "尾行隐藏不得改变阅读位置").toBeLessThanOrEqual(1);
+  expect(m.unread, "尾行隐藏也不产生未读").toBe(false);
+
+  await page.locator(".lumir-hp-jumpbottom").click();
+  await fire(page, { type: "auto_turn_started" });
+  await expect(page.locator(".lumir-hp-progress")).toBeVisible();
+  await frames(page, 2);
+  m = await readScroll(page);
+  expect(Math.abs(m.scrollTop - m.max), "following 下尾行出现仍贴底").toBeLessThanOrEqual(1);
+  await fire(page, { type: "done" });
+  await frames(page, 2);
+  m = await readScroll(page);
+  expect(Math.abs(m.scrollTop - m.max), "following 下尾行隐藏仍贴底").toBeLessThanOrEqual(1);
+});

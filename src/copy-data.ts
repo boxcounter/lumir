@@ -2574,7 +2574,7 @@ const COPY_TABLE = {
     en: "Line numbers switched, but saving the config failed; after a restart it falls back to the value in the config file ({reason})",
   },
   // D976–D977：待批可见性（change fix-harness-approval-visibility-nov23）。D976 是相位 running
-  // 且当前会话有待决批准项时的阶段行（消费点 `applyStage`，键由 `stageCopyKey` 选择；省略号
+  // 且当前会话有待决批准项时的阶段行（消费点 `applyStage`，键由 `progressTailView` 选择；省略号
   // 形态同 D381 族）；D977 是 done / error 收尾时统一撤回未决批准项后工具行就地标注的结果词
   // （消费点 `withdrawPendingApprovals`；aborted 仍用 D383「已停止」，两者不混用）。
   D976: {
@@ -2592,6 +2592,10 @@ const COPY_TABLE = {
   D982: {
     zh: "Skill 选择元数据不合法，消息未发送（{reason}）",
     en: "The Skill selection metadata is invalid; the message was not sent ({reason})",
+  },
+  D983: {
+    zh: "正在继续本轮…",
+    en: "Continuing this turn…",
   },
 
   // D899–D927：设置面板的**装载期配置诊断**（M865，M858 finding 的第三条信封

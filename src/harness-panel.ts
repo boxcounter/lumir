@@ -101,6 +101,8 @@ import type { ComposerContent, PlacedAttachment } from "./harness-composer";
 import { createComposerImeCoordinator } from "./harness-composer-ime";
 import { currentLanguage, errorText, formatDate, formatRelative, onRelabel, t, tPlural } from "./copy";
 import type { CopyKey, Language } from "./copy";
+import { progressTailView } from "./harness-progress-tail";
+export { stageCopyKey } from "./harness-progress-tail";
 import {
   configGet,
   configSetValue,
@@ -1448,25 +1450,6 @@ export function reduceSendPhase(phase: SendPhase, event: SendEvent): SendPhase {
     case "finished":
       return "idle";
   }
-}
-
-/**
- * 阶段行文案键（change fix-harness-approval-visibility-nov23 design §3.2）：零 DOM 的纯选择器，
- * 优先级 **停止中 > 等待批准 > 等待响应 / 生成中** 只在这里写一次。
- *
- * - 待批档只在 `running` 成立：`idle` + 待决集合是陈旧数据（旧快照缺在途读数 / 终态后迟到），
- *   没有在途轮次可依附，MUST NOT 产出待批键；`stopping` 时用户已请求停止，先读 D400。
- * - `pending` 只来自面板的 `hasPendingApprovals()`（`pendingApprovals.size > 0`），MUST NOT 由
- *   事件种类、计时、文案或另一枚布尔推导。
- */
-export function stageCopyKey(
-  phase: SendPhase,
-  pending: boolean,
-  stageWaiting: boolean,
-): "D400" | "D976" | "D381" | "D382" {
-  if (phase === "stopping") return "D400";
-  if (phase === "running" && pending) return "D976";
-  return stageWaiting ? "D381" : "D382";
 }
 
 /**
@@ -3808,7 +3791,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // 前端不知道。eink 下转明度表达（见 css 的 keyframes 分叉）。
   const progress = document.createElement("div");
   progress.className = "lumir-hp-progress";
-  progress.hidden = true;
+  progress.setAttribute("hidden", "");
   const stageLine = document.createElement("div");
   stageLine.className = "lumir-hp-stage";
   const barTrack = document.createElement("div");
@@ -4024,7 +4007,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   taskList.className = "lumir-tp-list";
   taskArea.append(taskHead, taskList);
 
-  panel.append(transcriptViewport, progress, taskArea, composerArea);
+  panel.append(transcriptViewport, taskArea, composerArea);
 
   // ── 跟随滚动控制器（M644，change improve-harness-streaming-scroll design §2/§3）──────────
   // 判据与写底编排全在 `src/harness-scroll-lock.ts`（纯模型层，单一真源）：这里只是适配器——
@@ -4100,7 +4083,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  在事件过滤时就丢了，因此该轮终态到达时要按后端快照对账一次渲染面，把残缺的流式泡换成
    *  留存里的完整消息。`sent` / 终态 / 进入快照报不在途都清它。 */
   let midTakeover = false;
-  let stageWaiting = true; // 阶段指示：首个 text_chunk 到达前 = 「等待响应」，之后 = 「生成中」。
+  let stageWaiting = true; // 首个 reasoning / tool / text 产出前 = 「等待响应」，之后 = 「生成中」。
   /** 停止钩子（M348 对接面）：处理中点击发送钮（= 停止态）时调用。面板创建即接上真实
    *  handler（调 harness_abort，中断语义 = 「不再继续」，收口等后端 aborted 终态事件）；
    *  setStopHandler 保留给装配层/测试覆盖，未注册时点击只走状态机。
@@ -5232,7 +5215,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 发送钮 / 阶段指示按当前相位重取文案（running 时钮面是「停止」、进度条阶段行重渲）。
     // 相位取**当前 vault 的记录**（按 vault 键控之后唯一的一份投影）。
     renderedPhase = currentActivity().phase;
-    applySendPhase(renderedPhase);
+    applySendPhase(renderedPhase, true);
     // 活动状态文案（处理中 / 有新的回复 / 有失败结果）随语言重绘：可访问名与状态文本
     // 同源（change add-harness-activity-presence 任务 3.6）。
     applyActivityBadge();
@@ -6236,7 +6219,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  M351 图标化：钮面是两枚 SVG glyph（↑ 发送 / ■ 停止），D329/D378 落 title 与 aria-label
    *  ——textContent 赋值会抹掉 glyph 子节点，可读名不能再走钮面文本。
    *  `next` 由 [`dispatchActivity`] 从活动模型取出：本函数只落 DOM，MUST NOT 反写相位。 */
-  function applySendPhase(next: SendPhase): void {
+  function applySendPhase(next: SendPhase, relabelOnly = false): void {
     const running = next !== "idle";
     sendButton.classList.toggle("is-busy", running);
     const label = running ? t("D378") : t("D329");
@@ -6246,8 +6229,23 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     sendGo.toggleAttribute("hidden", running);
     sendStop.toggleAttribute("hidden", !running);
     sendButton.disabled = next === "stopping";
-    progress.hidden = !running;
-    if (running) applyStage();
+    if (relabelOnly) {
+      applyStage();
+      return;
+    }
+    const view = progressTailView({
+      phase: next,
+      pending: hasPendingApprovals(),
+      stageWaiting,
+      midTakeover,
+    });
+    const heightBefore = transcript.scrollHeight;
+    progress.hidden = !view.visible;
+    if (view.visible) ensureTailLast();
+    progress.dataset.phase = next;
+    // 只测量尾行显隐 / 置尾 / 相位形态；applyStage 的文案重施不进入这段几何账。
+    follow.layoutMutated(transcript.scrollHeight - heightBefore);
+    applyStage();
   }
 
   /**
@@ -6305,6 +6303,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         if (enterSnapshotApplies(prev, event)) {
           turnOpen = event.inFlight;
           midTakeover = event.inFlight;
+          if (event.inFlight) stageWaiting = false;
         }
         break;
       case "reset_view":
@@ -6425,14 +6424,24 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     applyActivityBadge();
   }
 
-  /** 阶段行施加（applySendPhase 的 running 分支调用）。文案键由纯选择器 [`stageCopyKey`] 决定
-   *  ——**停止中 > 等待批准 > 等待响应 / 生成中** 的优先级只在那一处写一次。待批档的文案值
-   *  是 D976「等待批准…」；`stopping` 第一时间换 D400「正在停止…」，停止反馈的即时性由前端
-   *  这半承担（后端收口前不再停在「等待响应 / 正在生成回复」的误读上，M374）。写 DOM 前比较
-   *  旧文本：同一待批集合期间的重复投递 / 工具行更新不产生新的 mutation。 */
+  /** 阶段文案的唯一 DOM 写点：只换文本，不触发布局、置尾或贴底。优先级由纯模型
+   *  [`progressTailView`] 单点给出：停止中 > 等待批准 > 中途接管 > 等待响应 / 生成中。 */
   function applyStage(): void {
-    const text = t(stageCopyKey(currentActivity().phase, hasPendingApprovals(), stageWaiting));
+    const view = progressTailView({
+      phase: currentActivity().phase,
+      pending: hasPendingApprovals(),
+      stageWaiting,
+      midTakeover,
+    });
+    const text = t(view.copyKey);
     if (stageLine.textContent !== text) stageLine.textContent = text;
+  }
+
+  /** 首个 reasoning / tool / text 任一有效产出都离开等待；流式路径只重施文案。 */
+  function markAssistantOutputStarted(): void {
+    if (!stageWaiting) return;
+    stageWaiting = false;
+    if (currentActivity().phase !== "idle") applyStage();
   }
 
   sendButton.addEventListener("click", () => {
@@ -6480,12 +6489,33 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   //   - 内容增长 → `follow.contentGrew()`（following 贴底、detached 只更新未读）；
   //   - 强制回底白名单（发送消息 / 快照重建 / 恢复会话 / 重新打开面板）→ `follow.jumpToBottom()`。
 
-  function syncEmptyHint(): void {
-    if (transcript.childElementCount === 0 && !transcript.contains(emptyHint)) {
-      transcript.append(emptyHint);
-    } else if (transcript.childElementCount > 1 && transcript.contains(emptyHint)) {
-      emptyHint.remove();
+  function ensureTailLast(): void {
+    if (progress.hidden) return;
+    if (progress.parentElement !== transcript || transcript.lastElementChild !== progress) {
+      transcript.append(progress);
     }
+  }
+
+  /** transcript 顶层追加的唯一入口；运行时兜底覆盖绕过本 helper 的追加。 */
+  function appendTranscriptNode(node: Node): void {
+    transcript.append(node);
+    ensureTailLast();
+  }
+
+  const transcriptTailObserver = new MutationObserver((records) => {
+    if (!records.some((record) => record.addedNodes.length > 0)) return;
+    ensureTailLast();
+  });
+  transcriptTailObserver.observe(transcript, { childList: true });
+
+  function transcriptHasContent(): boolean {
+    return Array.from(transcript.children).some((el) => el !== progress && el !== emptyHint);
+  }
+
+  function syncEmptyHint(): void {
+    const hasContent = transcriptHasContent();
+    if (!hasContent && !transcript.contains(emptyHint)) appendTranscriptNode(emptyHint);
+    else if (hasContent && transcript.contains(emptyHint)) emptyHint.remove();
   }
 
   // ── 消息 meta 行（M351，design §3.1/§4）：who（角色）+ when（时间读数）─────────────
@@ -6575,7 +6605,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
     el.append(body);
     if (source !== "") attachCopyButton(el, source);
-    transcript.append(el);
+    appendTranscriptNode(el);
     lastAssistantEl = null; // 用户消息开新轮：恢复路径的工具记录挂点作废
     syncEmptyHint();
     follow.jumpToBottom(); // 分流表 #1：用户发送 = 白名单动作，新消息必须在眼前
@@ -6688,7 +6718,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     el.className = "lumir-hp-tools";
     const host = streamingEl ?? lastAssistantEl;
     if (host !== null) host.append(el);
-    else transcript.append(el);
+    else appendTranscriptNode(el);
     activeTools = { el, rows: [], running: null };
     // 工具块落位后，其后的正文必须开新段（留在工具块之后）——currentSeg 封在这里：
     // 不清的话下一轮正文会继续追加进工具块之前的旧段，工具行被埋回消息末尾（M374 的
@@ -7385,7 +7415,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     body.textContent = summary;
     details.append(summaryEl, body);
     el.append(line, details);
-    transcript.append(el);
+    appendTranscriptNode(el);
     syncEmptyHint();
     follow.contentGrew();
   }
@@ -7409,7 +7439,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     label.className = "lumir-hp-error-text";
     label.textContent = text;
     el.append(label);
-    transcript.append(el);
+    appendTranscriptNode(el);
     lastErrorEl = el;
     lastErrorText = text;
     attachErrorRetryAction(el, retryTurnValue);
@@ -7486,7 +7516,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     btn.setAttribute("aria-label", t("D962"));
     btn.addEventListener("click", () => beginRetry(turn));
     row.append(label, btn);
-    transcript.append(row);
+    appendTranscriptNode(row);
     retryTailEl = row;
     syncEmptyHint();
     follow.contentGrew();
@@ -8226,7 +8256,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     streamingEl.className = "lumir-hp-msg lumir-hp-msg-assistant";
     streamingEl.append(createWhoLine("assistant", Date.now()));
     // 正文段与工具块按到达序懒建追加（who 行之后），见 textSegments 的注释。
-    transcript.append(streamingEl);
+    appendTranscriptNode(streamingEl);
     streamingText = "";
     syncEmptyHint();
   }
@@ -9043,7 +9073,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       });
       body.append(textEl, button);
       el.append(body);
-      transcript.append(el);
+      appendTranscriptNode(el);
       wakeNotice = { el, text: textEl, button };
       syncEmptyHint();
       follow.contentGrew(); // 分流表口径：自动提示不拽视口
@@ -9079,7 +9109,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       body.append(line);
     }
     el.append(head, body);
-    transcript.append(el);
+    appendTranscriptNode(el);
     syncEmptyHint();
     follow.contentGrew(); // 分流表 #12：后台完成通知不拽视口
   }
@@ -9092,7 +9122,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     body.className = "lumir-hp-notice-body";
     body.textContent = text;
     el.append(body);
-    transcript.append(el);
+    appendTranscriptNode(el);
     syncEmptyHint();
     follow.contentGrew(); // 分流表 #13：同上（兜底上屏）
   }
@@ -9143,15 +9173,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 缓冲首个正文的到达序 = 段创建的排序位次（M383：与思考块创建按 seq 合并落位）。
         if (text !== "" && chunkBuffer === "") pendingSegSeq = seq;
         chunkBuffer += text;
-        // 阶段指示推进：首个 chunk 到达 = 模型开始生成（「等待响应」→「生成中」）。
-        if (stageWaiting) {
-          stageWaiting = false;
-          if (currentActivity().phase !== "idle") applyStage();
-        }
+        markAssistantOutputStarted();
         scheduleFlush();
         return;
       }
       case "reasoning_chunk": {
+        markAssistantOutputStarted();
         // M383：同帧 text→think 交错时，先把已缓冲的正文落位（开段建出、序在思考之前）
         // 再登记本思考——否则思考后到达的正文会并进思考前的段，帧内事件序倒置（r1 评审 P2）。
         // 缓冲为空时不 flush（纯思考流的热路径不受影响）。
@@ -9178,6 +9205,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         return;
       }
       case "tool_call":
+        markAssistantOutputStarted();
         // 清单块挂当前 agent 消息（design §3.3）：工具先于首个 text_chunk 到达是常态
         // （模型先调工具后说话）——先立一条空 agent 消息，正文 chunk 随后开新段落在
         // 工具块之后（M374：工具行保持在它发生的文本段之前的原位）。
@@ -9408,11 +9436,21 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 停止不是失败：任何残留的重试动作都随这一轮一起失效（begin_turn 已清空后端 failed）。
         removeRetryActions();
         // 本轮被用户停止（M348）：中断语义是「不再继续」——已流式产出保留（上面的
-        // text_chunk 已落进流式泡），标注「已停止」，收口回 idle，
+        // text_chunk 已落进流式泡）。先收口回 idle 隐藏尾行，再标注「已停止」；
         // composer 立即可开新一轮。无产出（停止在首个 chunk 前）时补一条「Agent ·
         // 已停止」标记消息——被取消的轮次在消息流里显式封闭，不再读作「一个没有得到
         // 处理的问题」（M374；标记是 live 面：快照侧无对应留存记录，重载后不重建）。
         const el = finalizeStreamingMessage();
+        // 待决批准项随中断收回（design §5）：未决策的批准卡撤下、解壳回工具行——它们的
+        // 唯一出口（点击）已失效，后端那条通道已被 Withdrawn 关闭。统一撤回函数负责标
+        // D383「已停止」、清集合、使决策闭包失效；正常路径下 Withdrawn 的 done（turn_aborted
+        // 失败摘要）已先把行翻面为 is-fail，没翻面的（事件缺口）在撤回落点补翻，不留永恒
+        // 「等待批准」幻影行。撤回排在终态投影之前（先撤卡 / 清集合，再施加终态）。
+        withdrawPendingApprovals("aborted");
+        // 先施加终态隐藏尾行，再落「已停止」标记；aborted 不产生未读。
+        if (accounted !== null && prevActivity !== null) {
+          projectActivity(vault, accounted, prevActivity);
+        }
         if (el !== null) {
           attachStoppedMark(el);
         } else {
@@ -9420,19 +9458,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           marker.className = "lumir-hp-msg lumir-hp-msg-assistant";
           marker.append(createWhoLine("assistant", Date.now()));
           attachStoppedMark(marker);
-          transcript.append(marker);
+          appendTranscriptNode(marker);
           syncEmptyHint();
           follow.contentGrew(); // 分流表 #14：中断收口不拽视口
-        }
-        // 待决批准项随中断收回（design §5）：未决策的批准卡撤下、解壳回工具行——它们的
-        // 唯一出口（点击）已失效，后端那条通道已被 Withdrawn 关闭。统一撤回函数负责标
-        // D383「已停止」、清集合、使决策闭包失效；正常路径下 Withdrawn 的 done（turn_aborted
-        // 失败摘要）已先把行翻面为 is-fail，没翻面的（事件缺口）在撤回落点补翻，不留永恒
-        // 「等待批准」幻影行。撤回排在终态投影之前（先撤卡 / 清集合，再施加终态）。
-        withdrawPendingApprovals("aborted");
-        // `aborted` 不产生未读（D2：停止是用户自己按的，提醒他只是复述他刚做的事）。
-        if (accounted !== null && prevActivity !== null) {
-          projectActivity(vault, accounted, prevActivity);
         }
         if (takeover) fetchSnapshot("content");
         return;
@@ -9553,7 +9581,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         }
         // 中断轮留存的产出：标注「已停止」（M348，D383；status 缺省 = 正常完成不标）。
         if (record.status === "stopped") attachStoppedMark(el);
-        transcript.append(el);
+        appendTranscriptNode(el);
         lastAssistantEl = el; // 其后的 tool 记录挂进这条消息的清单块
       }
     } else if (role === "tool" && typeof record.name === "string") {
@@ -10738,7 +10766,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         sessionTitle = entry.title;
         applySessionName();
         // 恢复批次收尾落在末尾（与 restoreSnapshot 末尾同一句）：`appendSnapshotMessage` 的
-        // assistant 分支是裸 `transcript.append(el)`、不滚——恢复 transcript 以 assistant 收尾
+        // assistant 分支经顶层 helper 追加、不滚——恢复 transcript 以 assistant 收尾
         // （会话常态：末轮答复后用户尚未再提问）时少了这一句就停在最末 user 消息处、收尾回复
         // 折在视口外（M398 r1 P1）。user / tool 分支自带滚动不足以覆盖这个尾形态。
         follow.jumpToBottom(); // 分流表 #16：恢复历史会话必须从末尾读起（既有语义）
