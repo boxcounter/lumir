@@ -2,21 +2,23 @@
 
 - Change ID: `add-harness-web-fetch-search-nov24`
 - 日期: 2026-11-24
-- 状态: 提案草稿；方向已由 Alex「采纳建议」采纳，D1 默认批准粒度待节点 1 确认；禁止提前实现
+- 状态: r2 提案草稿；方向已由 Alex「采纳建议」采纳，D1 默认批准粒度与 D2 设置入口均待节点 1 确认；禁止提前实现
 
 ## 1. 结论与边界
 
-本 change 在**交互主会话**增加 `web_search` 与 `web_fetch`，由同一套工具信封、来源结构、
-安全校验与错误分类承载。DeepSeek 是第一个也是本期唯一 provider。后续 provider 只能实现同一合同，
-不得新增工具别名或另一套结果形状。
+本 change 建议在「设置 → 自动化 → 网页访问」提供默认关闭的总开关；只有
+`harness.web_access.enabled=true` 时，才在**交互主会话**注册 `web_search` 与 `web_fetch`。
+两件工具由同一套工具信封、来源结构、安全校验与错误分类承载。DeepSeek 是第一个也是本期唯一
+provider。后续 provider 只能实现同一合同，不得新增工具别名或另一套结果形状。
 
 请求分成两个平面，不能混谈：
 
 1. **目标预检平面**：Lumir 对目标站做有界 HEAD；必要时用 Range GET 复核 Content-Type。
    这里执行 URL、DNS、重定向与内容类型校验，不下载完整正文，也不携带 DeepSeek Authorization、
-   Cookie 或浏览器登录态。
+   Cookie 或浏览器登录态。client 必须显式 `no_proxy`，禁止系统 / 手动代理代连或代解析目标。
 2. **DeepSeek tools 平面**：Lumir 只向官方 `https://api.deepseek.com` 发 Search / Fetch API 请求。
-   Search 返回结构化来源，Fetch 返回 Markdown。tools API 的 3xx 不跟随，避免 Bearer 被重定向带走。
+   Search 返回结构化来源，Fetch 返回 Markdown。该 client 同样显式 `no_proxy`；tools API 的 3xx
+   不跟随并统一归 `web_provider_protocol_error`，避免代理或重定向带走 Bearer。
 
 DeepSeek Fetch 会在 provider 侧独立访问目标站。Lumir 无法观察其内部 DNS、连接 IP 或重定向链，
 因此不能声称提供端到端 SSRF / DNS-rebinding 保证。本设计保证的是：Lumir 自身不连接非法目标，
@@ -53,13 +55,16 @@ DeepSeek Fetch 会在 provider 侧独立访问目标站。Lumir 无法观察其�
 
 ### 2.2 共用信封与来源形状
 
-成功与失败都使用既有 `ToolOutput` 信封，并增加统一 Web 元数据：
+成功与失败都使用既有 `ToolOutput` 信封，并增加统一 Web 元数据。`provider` 与 `provider_id`
+均为 `string | null`：只有 provider 解析成功才填 `"deepseek"` 与实际配置映射键；未配置、配置歧义、
+自定义 base URL，以及解析前的参数 / 权限 / URL 拒绝都填 null，且 `attempts=0`。不得把
+`"deepseek"` 伪造成 provider id，也不得在多候选时任选一个。
 
 ```json
 {
   "ok": true,
   "provider": "deepseek",
-  "provider_id": "deepseek",
+  "provider_id": "deepseek-work",
   "operation": "search",
   "attempts": 1,
   "trust": "untrusted",
@@ -69,12 +74,12 @@ DeepSeek Fetch 会在 provider 侧独立访问目标站。Lumir 无法观察其�
 ```
 
 Search 另带 `query` 与 `results: WebSource[]`。Fetch 另带 `source: WebSource`。
-`WebSource` 字段固定如下；缺值用 `null`，不把「读不到」伪造成空字符串：
+`WebSource` 字段固定如下；除 title 外，可空字段缺值用 `null`，不把「读不到」伪造成空字符串：
 
 | 字段 | 类型 / 来源 |
 |---|---|
 | `url` | string。Search 保留 provider 结果 URL；Fetch 是本地预检后实际提交给 DeepSeek 的 URL，不伪造 final URL |
-| `title` | string。provider 未给标题时为空串，与官方 Fetch 口径一致 |
+| `title` | **始终为 string**。Fetch 未给标题时固定为空串 `""`，与官方 Fetch 口径一致；Search title 必须是 string，否则为协议错误 |
 | `snippet` / `summary` | string \| null。Search 映射官方字段；Fetch 为 null |
 | `content` | string \| null。Search 仅在 `need_content=true` 时保留正文；Fetch 为 Markdown 正文 |
 | `content_format` | `"markdown"` \| null。只有实际拿到 Markdown 正文时为 `"markdown"` |
@@ -91,7 +96,7 @@ Search 另带 `query` 与 `results: WebSource[]`。Fetch 另带 `source: WebSour
 {
   "ok": false,
   "provider": "deepseek",
-  "provider_id": "deepseek",
+  "provider_id": "deepseek-work",
   "operation": "fetch",
   "attempts": 1,
   "code": "web_http_error",
@@ -106,10 +111,12 @@ Search 另带 `query` 与 `results: WebSource[]`。Fetch 另带 `source: WebSour
 }
 ```
 
-`provider_code` / `provider_message` / `request_id` / `http_status` 只在真实存在时出现。
-`code` 是 Lumir 的稳定分类，权限与测试只读它，不按 provider 文案猜测。`message` 由 Lumir 生成；
-原始响应 body 不进入工具结果。`provider_message` 必须脱敏、限长，任何裁剪都加入
-`truncated_fields`。`attempts` 只计实际 DeepSeek tools 请求次数，本地预检不计入。
+未配置、配置歧义或解析前参数错误的同一信封则是 `provider:null, provider_id:null, attempts:0`；
+测试必须对这三类分别做精确 JSON 断言。`provider_code` / `provider_message` / `request_id` /
+`http_status` 只在真实存在时出现。`code` 是 Lumir 的稳定分类，权限与测试只读它，不按 provider
+文案猜测。`message` 由 Lumir 生成；原始响应 body 不进入工具结果。`provider_message` 必须脱敏、
+限长，任何裁剪都加入 `truncated_fields`。`attempts` 只计实际 DeepSeek tools 请求次数，
+本地预检不计入。
 
 ### 2.3 上下文与响应预算
 
@@ -136,8 +143,10 @@ API 字节上限与模型字符预算是两道独立闸：前者防内存与协�
 
 ### 3.1 无新增配置的确定性解析
 
-Web 工具仍在模型工具清单中注册；无配置时由执行返回 `web_provider_unconfigured`，而不是变成
-另一套「工具不存在」语义。每回合使用既有 `HarnessConfig` 快照，按以下顺序解析：
+`harness.web_access.enabled` 缺省为 `false`。缺省 / false 时 Web 工具不进入模型工具清单，
+幻觉调用按同一注册闸回送 `tool_unknown`，且不解析 provider、不产生网络请求。开启后才注册；
+此时无可用 provider 由执行返回 `web_provider_unconfigured`，而不是变成另一套「工具不存在」语义。
+每回合使用既有 `HarnessConfig` 快照，按以下顺序解析：
 
 1. 当前 active 条目是 `preset=deepseek`：只考察该条目。Key 非空且 base URL 为官方地址才可用；
    不可用即失败，MUST NOT 改用另一条 DeepSeek 配置。
@@ -172,6 +181,28 @@ Web 工具仍在模型工具清单中注册；无配置时由执行返回 `web_p
 无配置、配置歧义、自定义 base URL、参数 / URL / DNS 校验失败时，DeepSeek 请求数必须为 0，
 也不得产生 curl 子进程。
 
+### 3.3 网页访问设置与注册（D2 待确认）
+
+「设置 → 自动化 → 网页访问」是网络授权区，不是第五种自动 LLM 行为。它包含：
+
+- **总开关**：唯一新增键 `harness.web_access.enabled`，缺省 / false 为关闭。设置快照 / patch /
+  revision 均覆盖该键；开 / 关经既有 `settings_apply` 原子写通道，下一回合按新配置快照决定注册。
+  恢复默认 = 删键，页级还原同样删键，但不要求重启，也不顺带清空持久 origin。provider 增删 / 切换
+  不重置该键；关闭只隐藏工具，不删除 provider、持久 origin 或会话历史。
+- **provider 只读状态**：复用 §3.1 同一解析口，显示实际 provider id、官方 DeepSeek / 未配置 /
+  配置歧义 / 自定义 base URL 等状态。提供「前往模型接入」动作，选中对应 provider 表单；
+  未解析出条目时跳到模型接入的 DeepSeek 管理面。本区不显示 Key、不复制 provider 字段、
+  不提供第二 provider 选择器。
+- **持久 origin 列表**：只读既有 `harness.permissions.allow` 中规范 `web_fetch(origin)` 规则，
+  支持单独移除与「全部清空」。写入复用权限规则治理的原子写通道与 revision，不另建 origin 表。
+  删除只影响持久规则；会话内免问是另一层既有状态，不进该列表，其存活边界必须在 UI 说明。
+- **固定权限说明**：默认 Ask 不随开关变化。Search 只有「本会话后续搜索」记忆，持久
+  `web_search` allow 不生成也不生效；Fetch 的 origin 级会话 / 持久授权仍可独立管理。
+  `full_access` 不改变默认 Ask。
+
+本区与四个自动 LLM 开关并列但不改变它们的数量、顺序或归属。它只新增一个 Web 开关；
+provider / Key / endpoint 仍归模型接入，origin 仍归权限规则，不在网页访问区复制任何一项。
+
 ## 4. `web_read` 权限与批准粒度
 
 `web_read` 是权限分类，不是第三件工具，也不是新的权限模式。`web_search` / `web_fetch` 不加入
@@ -183,8 +214,8 @@ URL / DNS 校验在执行层，不成为用户 allow 或缓存可以跳过的第
 
 | 调用 | permission subject | 批准预览 | 会话记忆 / 持久 allow 粒度 |
 |---|---|---|---|
-| `web_search` | 完整 query | 完整 query、DeepSeek、query 外发与计费说明 | 工具级：覆盖本会话后续不同 query；持久规则为 `web_search` |
-| `web_fetch` | 规范化 origin（scheme + host + 有效 port） | 完整 URL、origin、DeepSeek 与目标站外发说明 | origin 级：规则形如 `web_fetch(https://example.com)`；不覆盖其它 origin |
+| `web_search` | 完整 query | 完整 query、DeepSeek、query 外发与计费说明 | 仅当前会话的工具级记忆；不生成、不生效持久 `web_search` allow |
+| `web_fetch` | 规范化 origin（scheme + host + 有效 port） | 完整 URL、origin、DeepSeek 与目标站外发说明 | origin 级会话记忆 / 持久规则 `web_fetch(https://example.com)`；不覆盖其它 origin |
 
 Fetch 的批准卡显示完整 URL，但规则只按 origin 授权，避免把 query / path 误当稳定身份。
 origin 规范化必须小写 scheme / host、省略默认 port、保留非默认 port，不含 userinfo、path、query 或
@@ -199,6 +230,7 @@ untrusted data，不是自动执行指令。
 基础参数形状与 URL scheme / userinfo 校验 SHALL 在批准预览之前完成，非法调用不得先产生一张
 携带凭据或无效目标的批准卡。完整 DNS / redirect / 内容类型校验仍在每次执行时进行。
 既有 deny 永远优先；显式 allow / 会话缓存只能减少批准点击，不能跳过 SSRF、内容类型、预算或密钥检查。
+Search 的持久 allow 即使用户手写也不生效，deny 则照常生效；Fetch 的持久 origin allow 才进入第 4 层。
 权限语义变更实现时，必须全量回扫既有验收场景的闸期望，而不只新增 Web 场景。
 
 ## 5. URL、重定向与 DNS 安全
@@ -215,7 +247,11 @@ untrusted data，不是自动执行指令。
 3. 对 host 的所有候选地址做有界连接时，只允许连接到已验证 IP，并保留原 host 的 Host 与 TLS SNI；
    禁止连接前再次由系统 resolver 自由选择地址。任一 DNS 答案在后续跳变时，下一跳重新执行全集校验。
 4. 校验与连接共用同一个「已验证地址集」，防止 check-then-connect 之间再次发生系统 DNS 解析。
-   不在错误中回显完整 DNS 答案或内部网络拓扑，只给稳定 code 与被拒绝的 host。
+   预检 client 必须显式 `no_proxy`，每个同源 hop 都不得重新继承 HTTP(S)_PROXY / ALL_PROXY /
+   NO_PROXY 或手动 Proxy。`no_proxy + 已验证地址集 + 原 Host / SNI + 手动逐跳 redirect` 是同一构造
+   不变量；代理可以绕过固定 IP，不能只靠 resolver override。错误中不回显完整 DNS 答案或内部网络拓扑。
+5. DeepSeek client 同样显式 `no_proxy`，不因共享构造便利而意外打开系统代理或自动 redirect。
+   两个 client 的 3xx / redirect 策略分别断言，不互相推定。
 
 ### 5.2 有界预检
 
@@ -303,7 +339,7 @@ LLM 请求的 wire 历史会携带它。若该后续 LLM 往返失败，显式�
 | `web_network_failed` / `web_timeout` / `web_cancelled` | 本地网络、超时、取消 |
 | `web_response_too_large` | DeepSeek API 响应超过 2 / 4 MiB |
 | `web_provider_protocol_error` | API 非 JSON、JSON 非法、字段形状不符、tools API 3xx |
-| `web_http_error` | 非 2xx；附 status、provider code / request id（如有）与 attempts |
+| `web_http_error` | 4xx / 5xx；附 status、provider code / request id（如有）与 attempts；3xx 走上一行且不跟随 |
 | `web_empty_content` | Fetch 没有可用 Markdown 正文 |
 
 `web_unsupported_content` 只在能确定内容类型时使用；DeepSeek 404 可能同时代表 URL 不可用、目标策略、
@@ -334,9 +370,36 @@ Search / Fetch 的 title、snippet、summary、content、provider_message、redi
 - `ToolContext` 需要携带本轮配置快照与取消读口；HTTP 等待 / 取消不得持会话锁。不得在 UI 层另发
   Web 请求，前端只渲染后端给出的预览与结果。
 - `ApprovalPreview` 增加单一 Web 预览载荷，事件与快照共用，不把完整 query / URL 只塞入 80 字摘要。
-- 不引入 DeepSeek SDK；优先复用现有 reqwest / serde。DNS 固定地址可用现有 HTTP client 的 resolve /
-  connector 能力实现，但若无法满足「校验地址与连接地址同一」，不得退化为普通 reqwest 自动解析。
-- 测试端点注入只在测试装配口存在，不能变成生产自定义 base URL 的隐性支持。
+- 不引入 DeepSeek SDK；优先复用现有 reqwest / serde。两个 HTTP client 的公共安全构造必须显式
+  `no_proxy`。DNS 固定地址可用现有 HTTP client 的 resolve / connector 能力实现，但若无法满足
+  「no_proxy + 校验地址与连接地址同一 + 原 Host / SNI」，不得退化为普通 reqwest 自动解析或系统代理。
+
+### 9.1 生产与隔离验收的装配边界
+
+生产装配只有 `DeepSeekWebProvider::official`：endpoint 由官方常量给出，配置只负责选择凭据，
+没有 endpoint 参数、loopback 白名单、代理开关或跳过 URL / DNS 校验的路径。生产 `WebTransport`
+与 `DnsResolver` 分别执行真实 HTTP 与系统 DNS，两个 client 都显式 `no_proxy`。
+
+隔离测试 / 真机验收使用独立的测试 provider / transport 装配，但复用同一 Web 核心的参数校验、
+DNS 全集检查、地址固定、redirect、预算、重试与错误分类：
+
+1. **DeepSeek**：测试 provider 构造器接收合成 endpoint，生产构造器没有该参数。合成服务记录真实
+   HTTP method / path / body / 状态序列 / 请求次数 / 读取字节数；LLM mock 只负责让模型发出确定的
+   工具调用，不能替代这些 Web HTTP 证据。
+2. **目标 DNS / connector**：合成 resolver 给 `target.test` 返回脚本化的公网身份；测试 connector
+   再把「已验证公网 IP + 原 host」映射到本地监听地址。生产同款全集校验与地址固定仍先执行，
+   不得为验收全局放行 loopback。rebinder 脚本可先给公网、再给私网，非法序列必须零连接。
+3. **HTTPS**：另用只含 `target.test` 的测试 CA / 证书与隔离 trust store 验证原 Host / SNI；
+   不关闭证书校验，不把系统根证书或真实浏览器凭据挂入。HTTP 用例不能冒充 SNI 证据。
+4. **激活边界**：注入只能由隔离验收专用 build / 装配显式激活；普通 `config.json`、环境变量、
+   真实 vault、生产 `pnpm tauri dev` 与发布构建都没有激活入口。反向断言包括：生产构造器拒绝自定义
+   endpoint、无测试 feature / 装配时本地映射不存在、生产 URL / DNS 拒绝规则不变。
+5. **代理反例**：本地同时启动代理与目标双服务，设置 HTTP(S)_PROXY / ALL_PROXY。正确实现只能经
+   测试 connector 到达已验证目标，代理零请求；恢复使用系统代理的错误实现必须能判红。DeepSeek
+   client 单独证明 `no_proxy + 3xx 不跟随 + Bearer 不泄漏`，不与预检结果互相代替。
+
+测试装配不是生产兼容层，也不改变「生产 official endpoint only」。它只替换网络边界的事实来源，
+不用 mock fixture 跳过真实 HTTP。
 
 ## 10. 验证矩阵
 
@@ -345,15 +408,21 @@ Search / Fetch 的 title、snippet、summary、content、provider_message、redi
 - 断言 POST path、Bearer、JSON 字段；Search 缺省 `count=5, need_content=false`，无 `ori_question` /
   `localization`；Fetch 只带预检后的 url。全程不打真实计费 API。
 - Search 结构化映射：URL / title / snippet / summary / content / site / date / authority / provider；
-  空 results 成功；need_content=false 后必须第二次 Fetch 才出现 Markdown。
+  空 results 成功；need_content=false 后必须第二次 Fetch 才出现 Markdown。Fetch 空标题固定 `""`，
+  其它可空字段才用 null。
+- 无配置、配置歧义、解析前参数错误分别精确断言 `provider:null, provider_id:null, attempts:0`；
+  成功及解析后错误才带实际 id。301 / 302 / 307 / 308 均零跳转、Bearer 不泄漏且只归
+  `web_provider_protocol_error`。
 - 逐字段、聚合与错误文本截断；`truncated_fields` 精确且不漏报。2 / 4 MiB 超限、非 JSON、坏 JSON、
   缺字段、非 JSON Content-Type、空 Fetch 正文都有独立反例。
 - 每个被声称覆盖的反例先证明旧实现 / 错误实现会 FAIL，不接受只检查子串或空数组的假绿。
 
 ### 10.2 权限、隐私与 fail closed
 
-- 三档模式 × search / fetch 默认均 Ask；deny > allow > cache；Search 工具级记忆、Fetch origin 记忆；
-  不同 origin 与跨源 redirect 重新问；`curl` 原矩阵不变。
+- 默认关闭不注册；开启后三档模式 × search / fetch 默认均 Ask；deny > allow > cache；Search 仅会话
+  记忆且持久 allow 不生效，Fetch origin 会话 / 持久记忆；不同 origin 与跨源 redirect 重新问；
+  `curl` 原矩阵不变。
+- 设置页 provider 显示与跳转不暴露 Key；origin 单独移除 / 全部清空复用权限写通道，不写第二份状态。
 - active DeepSeek 官方、active 非 DeepSeek + 唯一候选、多个候选、无 Key、active 自定义 base URL、
   非 active 自定义 base URL；无配置 / 歧义 / 自定义时零 HTTP、零 curl。
 - canary Key 出现在恶意 provider body / 目标 body / 错误 URL 中，扫描日志、panel、JSONL、wire、
@@ -364,6 +433,8 @@ Search / Fetch 的 title、snippet、summary、content、provider_message、redi
 - 非 HTTP(S)、userinfo、IP 变体、IPv6 / mapped、loopback、private、link-local、CGNAT、multicast、
   reserved、documentation、localhost / `.local`、DNS 失败、公私混合答案均拒绝。
 - 模拟 DNS 第一次公网、第二次私网；断言连接只使用已验证 IP，Host / SNI 不变，不在连接前重解析。
+- 本地代理与目标双服务在 HTTP(S)_PROXY / ALL_PROXY 下运行：预检只到已验证目标，代理零请求；
+  DeepSeek 也单独证明 `no_proxy`、3xx 不跟随与 Bearer 不泄漏；错误实现必须判红。
 - 同源 redirect 逐跳重验；跨源在连接新源之前返回 `web_redirect_requires_approval`；超过 5 次、
   相对 Location、scheme downgrade、带凭据 Location 都有反例；tools API 3xx 不跟随且不泄漏 Bearer。
 - HTML / 非 HTML / 未知 Content-Type、HEAD 失败后的有界 Range GET、忽略 Range 仍只读 4 KiB。
@@ -390,18 +461,28 @@ Search / Fetch 的 title、snippet、summary、content、provider_message、redi
   默认 Search 响应无正文，证明第二跳真实发生。
 - 页面含「忽略指令 / 自动批准 / 执行 curl / 修改权限」时仅作为字符串保留；权限配置与缓存不变，
   后续写 / 危险调用仍进闸。
-- 真机用本地合成 DeepSeek 与目标 HTTP 服务覆盖上述关键链路、redirect / DNS、超时取消与恢复；
-  不依赖公网。测试端点只经测试装配注入，不能借生产自定义 base URL 放行。
+- 真机按 §9.1 用隔离测试 provider / transport 与本地合成服务覆盖上述关键链路、redirect / DNS、
+  超时取消与恢复；记录真实 HTTP method / path / body / 状态序列 / 请求次数 / 读取字节数。
+  合成公网身份经脚本 resolver / connector 映射本地，HTTPS 用 `target.test` 测试 CA 与隔离 trust store；
+  不开生产自定义 endpoint 或 SSRF 例外。LLM mock 只驱动调用，不替代 Web HTTP 证据。
+- 反向断言普通配置 / 真实 vault / 生产构建无法激活注入，生产仍 official endpoint only 且 URL / DNS
+  拒绝规则不变。
 - 全量回扫既有验收场景的权限 / 批准期望；新增场景与 `COVERAGE.md` 随实现同 PR。
   动批准卡视觉面时跑结构断言与本地 `gate.sh visual`，基线更新仍须 Alex 过目。
 
 ## 11. 评审重点
 
-1. D1 是否在「默认所有档先问」与「搜索工具级 / 抓取 origin 级记忆」之间取得合适的隐私与点击成本。
-2. 本地预检会产生额外 HEAD / Range GET；它换来可验证的 redirect / DNS 安全，但也让目标站看到
+1. D1 是否在「默认所有档先问」与「Search 仅会话 / Fetch origin 级会话与持久记忆」之间取得合适的
+   隐私与点击成本；持久 Search 被明确排除。
+2. D2 的默认关闭、provider 只读跳转与 origin 集中撤销是否构成足够清晰的用户控制入口；本区不复制
+   Key / provider / origin 第二真源。
+3. 本地预检会产生额外 HEAD / Range GET；它换来可验证的 redirect / DNS 安全，但也让目标站看到
    Lumir 与 DeepSeek 两路访问。是否接受这一明确代价。
-3. DeepSeek 远端抓取的 DNS / redirect 不可观察；本设计只承诺本地防线与官方 provider 信任边界，
+4. `no_proxy` 是固定 IP 的一部分，不是可选网络优化；两个 client 都必须有系统代理反例。
+5. DeepSeek 远端抓取的 DNS / redirect 不可观察；本设计只承诺本地防线与官方 provider 信任边界，
    不承诺端到端 rebinding 防护。
-4. 多 DeepSeek 条目时不暗选，active 自定义 base URL 时不改投官方；这是有意的 fail-closed 可用性取舍。
-5. 仅 408 / 429 / 5xx 自动重试；本地 timeout 与 200 后本地解析失败不重试，优先避免重复计费。
-6. Web 仅交互主会话，cron / 子运行不扩权；`curl` 保留现有批准语义，不能成为静默旁路。
+6. 多 DeepSeek 条目时不暗选，active 自定义 base URL 时不改投官方；这是有意的 fail-closed 可用性取舍。
+7. 仅 408 / 429 / 5xx 自动重试；本地 timeout 与 200 后本地解析失败不重试，优先避免重复计费。
+8. Web 仅交互主会话，cron / 子运行不扩权；`curl` 保留现有批准语义，不能成为静默旁路。
+9. 隔离测试 transport 只替换网络事实来源，生产不能激活自定义 endpoint / loopback 例外；
+   LLM mock 与真实 Web HTTP 证据不得互相冒充。
