@@ -29,7 +29,7 @@
 
 - [x] 4.1 前端 unit、相关 visual、性能检查与 `scripts/gate.sh visual` 通过；不未经 Alex 过目更新像素基线。
 - [x] 4.2 真机验收场景通过；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过。
-- [ ] 4.3 独立 reviewer clean/merge、节点 2 五要件与归档跟踪记录齐备后独立归档；提交归档结果且 `--archived add-wikilink-suggestion-nov24` PASS，不设置 A 的归档先后门禁。
+- [x] 4.3 独立 reviewer clean/merge、节点 2 五要件与归档跟踪记录齐备后独立归档；提交归档结果且 `--archived add-wikilink-suggestion-nov24` PASS，不设置 A 的归档先后门禁。归档提交 `7991b9727f62896e925cb9bce884500f50a4e16d`；审计 PASS（0 条 MODIFIED、0 段，人工恢复 0、声明认领 0，2026-11-25T03:28:09+08:00）。
 
 ## 实施验证记录（不归档）
 

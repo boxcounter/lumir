@@ -58,3 +58,10 @@
    - 归档前 quick：`GATE RESULT: 13/13 PASS（SKIP 0）`（含前端单测 / tsc 与 Rust fmt / clippy / test）；证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/add-wikilink-suggestion-nov24/gate-quick-final.log`。
    - 真机 `866-wikilink-suggestion-nov24`：1/1 PASS、24 条断言、0 失败，证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-wikilink-suggestion-r2/`。r3 仅改测试探针和文档，不重复启动真机。
 5. **规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs --change add-wikilink-suggestion-nov24` PASS；本 change 只有 ADDED requirements，无 MODIFIED 段落可丢。`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 与 `bash scripts/docs-check.sh` 均 PASS；`docs/backlog.md` 归档跟踪队列有且仅有一条本 change 条目。放行方式：机器 + 独立评审放行（本节要件）。
+
+### 归档后
+
+- **归档提交**：`7991b9727f62896e925cb9bce884500f50a4e16d`（归档目录、新 living spec、Purpose、反向关联链接与队列记录一起提交）。
+- **包装器实际输出**：`wikilink-suggestion: create`，`Totals: + 5, ~ 0, - 0, → 0`；`Change 'add-wikilink-suggestion-nov24' archived as '2026-11-25-add-wikilink-suggestion-nov24'.`。CLI 报 `Task status: 16/17 tasks`，唯一未勾项为归档自身 4.3，已在审计 PASS 后补齐。
+- **修链与归档后校验**：包装器修归档内链接 1 处；另修关联 change 的反向指针 1 处，并补写新 capability 的 Purpose。归档后 `validate --all --strict` 为 38 passed / 0 failed，`openspec-links` 校验 699 条全部可达，`docs-check` PASS。
+- **`--archived` 审计**：`PASS（openspec/changes/archive/2026-11-25-add-wikilink-suggestion-nov24：0 条 MODIFIED，对比 0 段；人工恢复 0 段，声明认领 0 段）`，新建 capability 无归档前 living 基线；跑于 2026-11-25T03:28:09+08:00，日志 `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/add-wikilink-suggestion-nov24/archive-archived-audit.log`。
