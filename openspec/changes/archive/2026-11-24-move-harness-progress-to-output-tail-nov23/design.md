@@ -388,7 +388,8 @@ Alex 已明确「批准进度尾行基线」。本次只更新审阅页中的 10
 final r2 对 `7bbd9010` 判 clean / merge；727 真机 1/1 PASS、40 断言、92.7s，88 / 97 / 104 相关
 场景均 PASS。完整 `LUMIR_VISUAL_PORT=4398 scripts/gate.sh visual` 最终为
 `GATE RESULT: 15/15 PASS（SKIP 0）`、退出码 0（1368 passed / 0 failed / 1 skipped）。上述批准、真机与
-门禁证据共同满足节点 2 的独立验收面，不扩大 D6 的历史授权范围到其他基线。
+门禁证据共同满足节点 2 的独立验收面，不扩大 D6 的历史授权范围到其他基线。归档提交为 `44410018`，
+随后 `--archived` 审计 PASS（对比 59 段，人工恢复 0 段，声明认领 0 段）。
 
 ## 9. 风险与已知边界
 

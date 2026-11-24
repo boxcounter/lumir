@@ -17,6 +17,8 @@
 >   其余 98 张基线与容差不改；light-narrow 已做「新图 PASS → 旧图必 FAIL → 新图恢复 PASS」反向验证。
 > - **完整门禁已收口**：`LUMIR_VISUAL_PORT=4398 scripts/gate.sh visual` 为
 >   `GATE RESULT: 15/15 PASS（SKIP 0）`、退出码 0（1368 passed / 0 failed / 1 skipped）。
+> - **归档已完成**：归档提交 `44410018`；随后 `--archived` 审计 PASS（1 条 MODIFIED，对比 59 段；
+>   人工恢复 0 段，声明认领 0 段）。
 
 ## 前置门禁（硬）
 

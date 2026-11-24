@@ -222,8 +222,10 @@
 
 ## 10. 收尾
 
-- [ ] 10.1 `tasks.md` 全部勾选，未勾项就地写放弃理由（不删任务项、不留空勾）
+- [x] 10.1 `tasks.md` 全部勾选；1.6 的旧实现真机红未跑已就地说明（worker 未启动该轮真机），
+      其余未完成事项均已收口，不删任务项、不留空勾
 - [x] 10.2 已在 `docs/backlog.md` 的归档跟踪队列落一条本 change 记录（五要件齐待归档）
 - [x] 10.3 独立 reviewer final r2 判 clean / merge，verdict 绑定 `7bbd9010`；评审判断层未降档
-- [ ] 10.4 归档前逐条核对节点 2 五要件；归档走 `node scripts/openspec-archive.mjs <change-id>`，
-      归档提交后跑 `--archived` 审计至 PASS
+- [x] 10.4 已核对节点 2 五要件并归档（提交 `44410018`）；随后
+      `node scripts/openspec-archive-check.mjs --archived move-harness-progress-to-output-tail-nov23`
+      PASS（1 条 MODIFIED，对比 59 段；人工恢复 0 段，声明认领 0 段）
