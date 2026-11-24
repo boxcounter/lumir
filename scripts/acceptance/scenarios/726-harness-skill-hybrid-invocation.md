@@ -122,14 +122,10 @@ steps:
     do: click
     target: { role: AXButton, name: "个工具调用 · 全部完成" }
     expect:
-      - label: 禁手动工具行对应 acc-background
-        ax: { has: '/skill_load\s*acc-background/' }
-      - label: 禁手动工具行给出专用错误
-        ax: { has: "/error · skill_user_invocation_disabled/" }
-      - label: 非法工具行对应 acc-invalid
-        ax: { has: '/skill_load\s*acc-invalid/' }
-      - label: 非法工具行给出专用错误
-        ax: { has: "/error · skill_invocation_invalid/" }
+      - label: 禁手动工具行同时绑定 acc-background 与专用错误
+        ax: { has: "/skill_load name: acc-background · error · skill_user_invocation_disabled/" }
+      - label: 非法工具行同时绑定 acc-invalid 与专用错误
+        ax: { has: "/skill_load name: acc-invalid · error · skill_invocation_invalid/" }
 
   - name: 自动入口逐项调用（普通文本，不生成 refs）
     do: typeInNode
@@ -170,8 +166,8 @@ steps:
     waitFor:
       has: ["普通路径回合完成。"]
     expect:
-      - label: /tmp 用户消息只有原文，没有 lumir_skill part
-        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: '/"role":"user","content":\[\{"type":"input_text","text":"/tmp"\}\]/' }
+      - label: /tmp 用户消息只有带编辑器上下文的原文 part，没有任何 Skill ref
+        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: '/^.*"kind":"llm_request".*"content":\[{"text":"/tmp\\n\\n\[当前编辑器上下文：\\n文件：harness-note.md\\n视口（第 1-6 行）\]","type":"input_text"}\],"role":"user".*$/' }
 
   - name: 键入 /acc-d 并 ↓ 进入选择态（保留下方向键与 Enter 的真实候选选择）
     do: typeInNode
@@ -193,8 +189,8 @@ steps:
     expect:
       - label: 禁自动 Skill 仍可经真实候选显式注入
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-DEPLOY-BODY" }
-      - label: 显式段头与本地标记进入留存
-        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: '/\[已加载 Skill：acc-deploy\].*"lumir_skill":"acc-deploy"/' }
+      - label: 候选用户消息仅原文 part 与 acc-deploy part，本地标记、段头和正文同属后者
+        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: '/^.*"kind":"llm_request".*"content":\[{"text":"/acc-deploy \\n\\n\[当前编辑器上下文：\\n文件：harness-note.md\\n视口（第 1-6 行）\]","type":"input_text"},{"lumir_skill":"acc-deploy","text":"\[已加载 Skill：acc-deploy\]\\n---\\ndescription: 合成禁自动 Skill\\ndisable-model-invocation: true\\n---\\nACC-DEPLOY-BODY\\n","type":"input_text"}\],"role":"user".*$/' }
       - label: 显式正文仍不上屏
         ax: { not: "ACC-DEPLOY-BODY" }
 
@@ -219,35 +215,7 @@ steps:
       - label: 旧显式正文仍在历史
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-TMP-BODY" }
 
-  - name: 打开历史会话清单并真正恢复含显式 part + 自动工具结果的会话
-    do: click
-    target: { role: AXPopUpButton, nth: 0 }
-  - name: 等历史会话行出现
-    do: waitFor
-    waitFor:
-      has: ["/AXMenuItem \\(/"]
-    timeoutMs: 15000
-  - name: 恢复该会话（最后一条 llm_request.messages 原样灌回）
-    do: clickInNode
-    target: { role: AXMenuItem, nth: 0 }
-  - name: 等恢复回合完成
-    do: waitFor
-    waitFor:
-      has: ["历史恢复回合完成。"]
-    timeoutMs: 20000
-    expect:
-      - label: 恢复产生新会话且此刻只有恢复这一条请求，旧文件不得冒充证据
-        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", count: { pattern: '"kind":"llm_request"', exact: 1 } }
-      - label: 恢复产生的请求含旧显式正文
-        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-TMP-BODY" }
-      - label: 恢复产生的请求含旧自动工具结果
-        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-BACKGROUND-BODY" }
-      - label: 恢复面板不显示显式正文
-        ax: { not: "ACC-TMP-BODY" }
-      - label: 恢复面板也不显示自动工具正文
-        ax: { not: "ACC-BACKGROUND-BODY" }
-
-  - name: 恢复会话不代用户聚焦 composer，真实点击建立后续键入落点
+  - name: 策略变更后聚焦 composer，准备原会话的新自动调用
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
   - name: 策略变更后发起新的自动调用
@@ -269,6 +237,54 @@ steps:
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-TMP-BODY" }
       - label: 旧自动工具结果仍保留
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-BACKGROUND-BODY" }
+
+  - name: 打开历史会话清单并真正恢复含显式 part + 自动工具结果的会话
+    do: click
+    target: { role: AXPopUpButton, nth: 0 }
+  - name: 等含本轮引用的历史会话行出现
+    do: waitFor
+    waitFor:
+      has: ["/AXMenuItem \\(/tmp-acc/"]
+    timeoutMs: 15000
+    expect:
+      - label: 恢复目标是本轮 /tmp-acc 会话而不是无名序号项
+        node: { role: AXMenuItem, name: "/tmp-acc", present: true }
+      - shot: 03-恢复会话清单
+  - name: 恢复该会话（最后一条 llm_request.messages 原样灌回）
+    do: clickInNode
+    target: { role: AXMenuItem, name: "/tmp-acc", nth: 0 }
+  - name: 等恢复内容重建（恢复会话本身不发起模型回合）
+    do: waitFor
+    waitFor:
+      has: ["当前编辑器上下文："]
+    timeoutMs: 15000
+  - name: 恢复后真实点击 composer，准备产生恢复后的首个新请求
+    do: clickInNode
+    target: { role: AXTextArea, name: "问点什么" }
+  - name: 输入恢复后的新提问
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|resume" }
+    text: "resume"
+  - name: 发送恢复后的新回合
+    do: key
+    key: enter
+  - name: 等恢复后的新 session 收到响应（新会话 mock 游标从 0 开始，不借用源会话脚本位置）
+    do: waitForFile
+    waitForFile:
+      path: "env:harness/sessions/acc-hybrid/*.jsonl"
+      has: '"kind":"llm_response"'
+    timeoutMs: 20000
+    expect:
+      - label: 恢复产生新会话且此刻只有恢复这一条请求，旧文件不得冒充证据
+        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", count: { pattern: '"kind":"llm_request"', exact: 1 } }
+      - label: 恢复产生的请求含旧显式正文
+        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-TMP-BODY" }
+      - label: 恢复产生的请求含旧自动工具结果
+        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-BACKGROUND-BODY" }
+      - label: 恢复面板不显示显式正文
+        ax: { not: "ACC-TMP-BODY" }
+      - label: 恢复面板也不显示自动工具正文
+        ax: { not: "ACC-BACKGROUND-BODY" }
 ---
 
 本场景只证明 mock 链路下的注入、留存、投影、策略执行和发送行为，不证明真实模型会遵守索引提示。
