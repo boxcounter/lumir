@@ -15,8 +15,15 @@ const SKILLS = [
   { name: "acc-invalid", description: "非法", source: "vault", user_invocable: false, model_invocable: false, invocation_valid: false },
 ];
 
-async function setup(page: Page, draft: unknown = null, deferCatalog = false): Promise<void> {
-  await stubTauri(page, VAULT);
+type Theme = "light" | "dark" | "eink";
+
+async function setup(
+  page: Page,
+  draft: unknown = null,
+  deferCatalog = false,
+  theme?: Theme,
+): Promise<void> {
+  await stubTauri(page, theme === undefined ? VAULT : { ...VAULT, config: { theme } });
   await page.addInitScript(({ skills, providers, draft, deferCatalog }) => {
     const w = window as unknown as Record<string, any>;
     w.__sent = [];
@@ -236,3 +243,119 @@ test("⌃N/⌃P 单行边界与多行跨行均关闭候选且不消费", async (
     expect(keys.at(-1)?.prevented).toBe(false);
   }
 });
+
+
+// ── 浮层壳背景（Alex 2026-11-24 报告「skill 选择的背景似乎是透明的」） ──────────────
+// 合同：`docs/specs/design-tokens-v1.md` §使用规则 2——浮层壳 = `--preview-bg` + 1px
+// `--border` + `--shadow-raise`。`--preview-bg` 是**不透底**的色阶档（bg 层级最亮档），
+// 半透明或缺失即违反「浮层在内容之上」这条不变量：背后的正文会从浮层里读出来。
+//
+// 三主题期望值写死而不是拿 `var(--preview-bg)` 自比：token 缺失时两边会同时解析成透明，
+// 断言就在「透明 == 透明」上空转（REVIEW.md「读不到当成空」条）。取值来源：
+// `src/style.css` 的 token 层 / 同文档 §色彩 token 表。
+const PREVIEW_BG: Record<Theme, string> = {
+  light: "rgb(255, 255, 255)",
+  dark: "rgb(38, 39, 43)",
+  eink: "rgb(255, 255, 255)",
+};
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+/** 在菜单背后铺一层 test-only 的实底 + 大号文字（inset:0 覆盖整个 composer 区，
+ *  z-index 低于菜单的 40）。菜单只要不透底，这层的任何像素都不该进入菜单区域的截图。
+ *  两套配色之间的每个像素都不同，因此「换配色后菜单区域截图是否逐字节相同」就是
+ *  「底层有没有穿透」的判据——不依赖 z-index 读数，也不依赖背后恰好有什么产品内容。 */
+async function paintBleedProbe(page: Page, background: string, color: string): Promise<void> {
+  await page.evaluate(({ background, color }) => {
+    const area = document.querySelector<HTMLElement>(".lumir-hp-composer-area");
+    if (area === null) throw new Error("composer 区不在场");
+    let probe = area.querySelector<HTMLElement>(".skill-bleed-probe");
+    if (probe === null) {
+      probe = document.createElement("div");
+      probe.className = "skill-bleed-probe";
+      probe.setAttribute("aria-hidden", "true");
+      area.append(probe);
+    }
+    probe.style.cssText = [
+      "position:absolute",
+      "inset:0",
+      "z-index:0",
+      "pointer-events:none",
+      "overflow:hidden",
+      "word-break:break-all",
+      "font:700 22px/24px monospace",
+      "padding:4px",
+      `background:${background}`,
+      `color:${color}`,
+    ].join(";");
+    probe.textContent = "底层文字穿透探针 BLEEDPROBE ".repeat(120);
+  }, { background, color });
+}
+
+for (const theme of ["light", "dark", "eink"] as const) {
+  test(`Skill 候选浮层背景不透底：${theme} 下等于 --preview-bg 且底层文字不穿透`, async ({ page }) => {
+    await setup(page, null, false, theme);
+    await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe(theme);
+    // 指针先移开，避免菜单在指针下出现 hover 高亮，两张截图之间状态不一致。
+    await page.mouse.move(10, 10);
+    await page.keyboard.type("/acc");
+    const menu = page.locator(".lumir-hp-skill-menu");
+    await expect(menu).toBeVisible();
+    await expect(menu.locator("[role=option]")).toHaveCount(2);
+
+    const box = await menu.boundingBox();
+    if (box === null) throw new Error("skill 菜单没有布局盒");
+    // 只比面板内部：`r6` 圆角之外与 1px 边框（dark 档是半透明的）本来就不属于浮层的可见面，
+    // 它们露出底层是圆角 / 边框的语义，不是「背景透底」。内缩 10px 同时避开两者。
+    const inset = 10;
+    const clip = {
+      x: box.x + inset,
+      y: box.y + inset,
+      width: box.width - inset * 2,
+      height: box.height - inset * 2,
+    };
+    const shot = () => page.screenshot({ clip, animations: "disabled" });
+
+    // ① 像素判据（主判据）：菜单背后换一套高对比底色 + 文字，菜单区域截图必须逐字节相同。
+    await paintBleedProbe(page, "rgb(255, 0, 255)", "rgb(0, 255, 0)");
+    const magenta = await shot();
+    const magentaAgain = await shot();
+    expect(
+      sameBytes(magenta, magentaAgain),
+      `${theme}：同一底色下两次截图必须逐字节相同（仪器自证）`,
+    ).toBe(true);
+
+    await paintBleedProbe(page, "rgb(0, 255, 0)", "rgb(255, 0, 255)");
+    const green = await shot();
+    expect(
+      sameBytes(magenta, green),
+      `${theme}：换掉菜单背后的底色/文字后菜单像素必须不变（透底则这里必红）`,
+    ).toBe(true);
+
+    // 仪器反证：把浮层背景强制改回透明，同一组对比必须立刻见差异——证明探针确实在菜单
+    // 背后、且本判据看得见它（REVIEW.md「断言等价于子串」条：先造一个必须让它 FAIL 的输入）。
+    const override = await page.addStyleTag({
+      content: ".lumir-hp-skill-menu { background: transparent !important; }",
+    });
+    const transparent = await shot();
+    expect(
+      sameBytes(green, transparent),
+      `${theme}：强制透明后探针必须可见（否则判据没有区分度）`,
+    ).toBe(false);
+    await override.evaluate((el) => el.parentNode?.removeChild(el));
+
+    const restored = await shot();
+    expect(sameBytes(magenta, restored), `${theme}：撤掉强制透明后回到不透底`).toBe(true);
+
+    // ② 计算值判据：背景 = 该主题的 --preview-bg，且 alpha 必须为 1——钉住承载不透明性的
+    //    具体 token（像素判据只判「不透底」，判不出用了哪一档底色）。
+    const background = await menu.evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(background, `${theme}：浮层背景必须等于 --preview-bg`).toBe(PREVIEW_BG[theme]);
+    const alpha = background.startsWith("rgba(")
+      ? Number(background.slice(background.lastIndexOf(",") + 1, -1))
+      : 1;
+    expect(alpha, `${theme}：浮层背景必须完全不透明`).toBe(1);
+  });
+}
