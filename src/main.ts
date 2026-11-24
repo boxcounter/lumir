@@ -2,6 +2,7 @@ import { createShell } from "./shell";
 import { createEditor } from "./editor";
 import { isDocSession, textModeOf } from "./editor";
 import type { EditorHandle, EditorSession } from "./editor";
+import { linkSuggestionIsOpen, linkSuggestionIsSettling } from "./link-suggest";
 import { createImageViewer, imageModelineText } from "./image-viewer";
 import type { ImageInfo, ImageViewerHandle } from "./image-viewer";
 import type { EditorView } from "@codemirror/view";
@@ -1101,6 +1102,7 @@ const editor: EditorHandle = {
     forEachEditor((handle) => handle.setAttachmentProvider(provider)),
   setWikilinkResolver: (resolver) =>
     forEachEditor((handle) => handle.setWikilinkResolver(resolver)),
+  setLinkSuggestFiles: (files) => forEachEditor((handle) => handle.setLinkSuggestFiles(files)),
   setLightbox: (lightbox) => forEachEditor((handle) => handle.setLightbox(lightbox)),
   collectImages: (state, from, to) => activeEditor().collectImages(state, from, to),
   setTableFullscreen: (fullscreen) =>
@@ -1152,6 +1154,7 @@ const editor: EditorHandle = {
 // `setPathLinkIndex` 下发；面板只认可打开的文本类文件，过滤的判据在 `src/tree.ts` 的
 // `linkableVaultPaths`——单一实现，本文件只调用）。
 let vaultFilePaths: string[] = [];
+injectEach((handle) => handle.setLinkSuggestFiles(() => vaultFilePaths));
 /** 是否已有 vault 装载成功；onOpenVault 失败时据此决定空态还是浮条提示。 */
 let vaultLoaded = false;
 /** 已装载的 vault 根（`vaultLoaded` 为真时有效）：启动恢复有两条入口（完成信号与首次
@@ -3934,7 +3937,11 @@ const keymapContext = {
   // M277 的两条命令同款：`code-block.toggle-fullscreen` 在遮罩已开时恒真（toggle 关闭可达），
   // 否则要求命中一块代码块（caret 在块内或块的横滚容器持焦——容器持焦那条是 DOM 事实，
   // 与 tableFullscreenTarget 的入口 ① 同口径）；`block.copy` 要求命中一个可复制的块。
-  commandGate: (command: CommandId) => {
+  commandGate: (command: CommandId, event: KeyboardEvent) => {
+    if (
+      (command === "editor.cursor-up" || command === "editor.cursor-down") &&
+      linkSuggestionIsOpen(editor.view) && (linkSuggestionIsSettling(editor.view) || event.isComposing || event.keyCode === 229)
+    ) return false;
     if (command === "table.toggle-fullscreen") {
       return tableFullscreen.isOpen() || tableFullscreenTarget(editor.view) !== null;
     }

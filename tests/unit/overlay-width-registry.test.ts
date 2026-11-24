@@ -104,6 +104,12 @@ const REGISTRY: RegistryEntry[] = [
       "两处此前的形态是「无夹取」与「定值 200px」——2.13 档 + 320px pane 实测越界 85px / 名字裁 81%。",
   },
   {
+    tier: "list",
+    shape: "em-capped",
+    selectors: [".lumir-link-suggest"],
+    note: "行内 wikilink 候选：内容驱动 + 26em 上限，placeOverlay 的 list 档负责视口夹取。",
+  },
+  {
     tier: "exempt",
     shape: "bounded",
     selectors: [".ft-menu", ".tab-menu", ".toast-surface", ".lumir-toast", ".lumir-table-fs-panel", ".lumir-lightbox-img"],
@@ -300,7 +306,7 @@ test("浮层宽度注册表与源码双向对齐，且各档声明实际成立",
   );
 });
 
-test("注册表覆盖盘点出的全部浮层壳（16 个选择器）", () => {
+test("注册表覆盖盘点出的全部浮层壳（17 个选择器）", () => {
   const detected = [...floatingSelectors(rulesOf(realWorld()))].sort();
   assert.deepEqual(
     detected,
@@ -314,6 +320,7 @@ test("注册表覆盖盘点出的全部浮层壳（16 个选择器）", () => {
       ".lumir-hp-selpop",
       ".lumir-hp-sesspop",
       ".lumir-hp-skill-menu",
+      ".lumir-link-suggest",
       ".lumir-qo",
       ".lumir-toast",
       ".lumir-toc",

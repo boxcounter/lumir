@@ -53,6 +53,8 @@ experiment.bindNodeSet((language.language.parser as any).nodeSet);
 const { createEditor } = await import('../../../../src/editor');
 const editor = createEditor(document.querySelector('#editor')!, 'md', { base, extensions: [GFM, measure] });
 const view = editor.view;
+let linkSuggestPaths: readonly string[] = [];
+editor.setLinkSuggestFiles(() => linkSuggestPaths);
 function snapshot(tree: any, state: EditorState) {
   const nodes: unknown[] = [];
   tree.iterate({ enter(node: any) {
@@ -67,6 +69,7 @@ function snapshot(tree: any, state: EditorState) {
 }
 Object.assign(window, { experiment: {
   open(doc: string) { const start = performance.now(); editor.reloadSession(editor.activeSession(), doc, 'experiment.md'); timings.push(performance.now() - start); },
+  linkSuggest(paths: readonly string[]) { linkSuggestPaths = paths; },
   wikilink(status: 'resolved' | 'ambiguous' | 'unresolved', editable: boolean) {
     editor.setWikilinkResolver({ resolve: () => ({
       status,

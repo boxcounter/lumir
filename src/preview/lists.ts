@@ -6,6 +6,7 @@ import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { EDITOR_FONT_FAMILY_TOKEN } from "../typography";
 import { pointerPressFrame, revealSelection } from "./reveal-gate";
 import { t } from "../copy";
+import { scheduleCompositionSettle } from "../composition-settle";
 
 type Node = ReturnType<typeof syntaxTree>["topNode"];
 type Tree = ReturnType<typeof syntaxTree>;
@@ -607,8 +608,6 @@ const COMPOSITION_SETTLE = {
   slowRetryMs: 100,
   lowFreqAfterMs: 4000,
   lowFreqRetryMs: 250,
-  /** compositionend 派发时组合标志尚未归位的有界重试次数（8ms 间隔）。 */
-  composingRetries: 25,
   /** 源码形态与旧树判定冲突时，每拍推进对照解析的工作预算。
    *  这是**工作预算，不是硬耗时上限**：`advance()` 只在返回后才检查 deadline，单个不可
    *  抢占的解析块可能超出该数字（与 stepMs 同口径）。整份对照解析跨多拍推进，不设长度上限。 */
@@ -1270,36 +1269,6 @@ class ListLayout {
   }
 }
 
-const compositionSettleTimers = new WeakMap<EditorView, ReturnType<typeof setTimeout>>();
-
-/** compositionend 后延迟唤醒恢复链：CM 的 pending MutationRecord 可能在事件到达时还没
- *  flush（最终候选已写进 DOM、doc 尚未更新）。此时同步 `view.dispatch()` 会走
- *  `EditorView.update()` 的 `observer.clear()`，把 pending 记录丢掉——候选永久丢失。
- *  因此先等队列清空再 dispatch，并在执行时重读 `selection.main.head`（组合结束时的
- *  位置在 flush 前后会变）。 */
-function scheduleCompositionSettle(view: EditorView, attempt = 0): void {
-  const previous = compositionSettleTimers.get(view);
-  if (previous !== undefined) clearTimeout(previous);
-  compositionSettleTimers.set(view, setTimeout(() => {
-    compositionSettleTimers.delete(view);
-    if (!view.dom.isConnected) return;
-    const observer = (view as unknown as { observer?: { pendingRecords(): readonly unknown[] } }).observer;
-    const pending = observer ? observer.pendingRecords().length : -1;
-    if (pending > 0) {
-      // 记录还没被 CM flush：继续等。绝不在 pending 记录上 dispatch。
-      if (attempt < 200) scheduleCompositionSettle(view, attempt + 1);
-      return;
-    }
-    if (view.compositionStarted) {
-      // 组合标志由 CM 的 observer 在 compositionend 事件里清除；事件顺序竞态下可能晚于
-      // 本拍。丢掉本拍会让冻结期的旧装饰永久残留（删空后 marker 不回退），因此有界重试。
-      if (attempt < COMPOSITION_SETTLE.composingRetries) scheduleCompositionSettle(view, attempt + 1);
-      return;
-    }
-    view.dispatch({ effects: compositionSettled.of(view.state.selection.main.head) });
-  }, attempt === 0 ? 0 : 8));
-}
-
 export const listDecorations: Extension = [
   ViewPlugin.fromClass(ListLayout, { decorations: plugin => plugin.decorations }),
   EditorView.domEventHandlers({
@@ -1317,8 +1286,10 @@ export const listDecorations: Extension = [
       return false;
     },
     compositionend(_event, view) {
-      // 不在事件 handler 里同步 dispatch：见 scheduleCompositionSettle 的注释。
-      scheduleCompositionSettle(view);
+      // 等 pending MutationRecord flush 后重读最终 head，再经既有 effect 恢复列表。
+      scheduleCompositionSettle(view, "lists", () => {
+        view.dispatch({ effects: compositionSettled.of(view.state.selection.main.head) });
+      });
       return false;
     },
   }),
