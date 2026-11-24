@@ -1,11 +1,12 @@
 # Tasks: move-harness-progress-to-output-tail-nov23
 
 > 施工前提：节点 1 已批准——Alex 2026-11-24 回复「同意。」，D1–D6 全部按 `proposal.md` 推荐值生效。
-> 本次提交只做文档承接，实现项一律未勾；未勾项不删除，放弃的就地写理由。
+> 本次提交做基线同步与文档承接，实现项一律未勾；未勾项不删除，放弃的就地写理由。
 >
 > **硬前置（有序链）**：`fix-harness-approval-visibility-nov23` →
-> `refine-harness-typography-nov23` → 本 change。两个前序都归档且 `--archived` PASS、排版新视觉基线
-> 经 Alex 批准落盘之前，不得实现、不得归档（见 §0.6–0.11）。
+> `refine-harness-typography-nov23` → 本 change。审批前序已归档并 `--archived` PASS；排版前序仍未
+> 归档。两个前序都归档且 `--archived` PASS、排版新视觉基线经 Alex 批准落盘之前，不得实现、不得归档
+> （见 §0.6–0.11）。
 
 ## 0. 前置与红线
 
@@ -19,13 +20,16 @@
       未占用号（起草时末位 D971），实现前复核，避免与并行 change 撞号；**前序 change 可能先占用
       新号**，取号以其归档后的末位为准
 - [ ] 0.5 本 change **不执行**视觉基线 `--update`；running 态新像素只出候选截图（见 5.3）
-- [ ] 0.6 **硬前置①**：确认 `fix-harness-approval-visibility-nov23` 已归档，且
+- [x] 0.6 **硬前置①**：`fix-harness-approval-visibility-nov23` 已归档并
       `node scripts/openspec-archive-check.mjs --archived fix-harness-approval-visibility-nov23` PASS
+      （归档提交 `12a21a97`，审计记录 `ab6ef4ad`，合并 `bae7b47f`）
 - [ ] 0.7 **硬前置②**：确认 `refine-harness-typography-nov23` 已归档且
       `node scripts/openspec-archive-check.mjs --archived refine-harness-typography-nov23` PASS；
       其新视觉基线已经 Alex 逐张批准并落盘。任一未满足不得施工
 - [ ] 0.8 以**两个前序归档后**的 living「进度呈现」为基线，**整块重抄**本 change 的 MODIFIED 块
-      （`specs/harness/spec.md`）；MUST NOT 只写改动段、MUST NOT 用当前 living 直接改
+      （`specs/harness/spec.md`）；审批归档后已重抄一次（本次提交，24 个 living scenario 全部保留），
+      排版归档后仍须复核该 requirement 未被改写并再次整块对账；MUST NOT 只写改动段、MUST NOT 用
+      当前 living 直接改
 - [ ] 0.9 合并后的优先级写死为 `stopping > approval > midTakeover > waiting/generating`；
       `approval` 读前置 change 的 `pendingApprovals` 派生信号，不是新相位
 - [ ] 0.10 补集成断言：尾行在 transcript 内 + `enter_snapshot(in_flight=true) + pending` → 阶段行
@@ -37,6 +41,9 @@
 - [x] 0.12 文档承接（本次）：已把 Alex 2026-11-24 的批准事实、双前序归档前置、排版 CSS / 几何与
       「零漂移相对排版后基线」写进 proposal / design / tasks / spec delta；只改 docs，未动产品代码、
       测试、living spec、文案 deck 或视觉基线
+- [x] 0.13 基线同步（本次）：审批前序已归档且 `--archived` PASS；delta 已按其 living「进度呈现」
+      整块重抄，24 个 living scenario 全部保留并新增 19 个尾行 / 排版 scenario；未改 living spec。
+      排版前序仍未归档，0.7 / 0.8 保持未完成
 
 ## 1. 先红（测试先行，旧实现上必须红）
 

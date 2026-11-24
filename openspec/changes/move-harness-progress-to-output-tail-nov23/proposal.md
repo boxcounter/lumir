@@ -8,9 +8,12 @@
 >
 > - **节点 1（提案评审）已批准**：Alex 2026-11-24 在解释进度尾行方案后回复「同意。」，D1–D6 全部按
 >   本文件推荐值生效。批准只覆盖方向与裁决点，不代表本 change 已实现或已归档。
-> - 本 change 未进入实现；`tasks.md` 的实现项全部未勾是刻意的。本次提交只做文档承接：把已裁事实、
->   两个前序的归档前置与 `refine-harness-typography-nov23` 的排版几何写进 proposal / design /
->   tasks / spec delta。
+> - 本 change 未进入实现；`tasks.md` 的实现项全部未勾是刻意的。本次提交做基线同步：审批前序
+>   `fix-harness-approval-visibility-nov23` 已归档（`--archived` PASS），delta 按其 living「进度呈现」
+>   整块重抄并保留全部审批 scenario；排版前序 `refine-harness-typography-nov23` 仍未归档，本 change
+>   仍不得施工。
+> - 本次提交为**有序链基线更新**：审批归档后的 living 重抄与 scenario 补齐，不改变已评审通过的
+>   尾行 / 排版合同，也不是产品行为变更。
 > - 本 change 只到提案层：living spec 的改动以 delta 形式留在本 change 目录内，归档时并入，不提前改写。
 
 ## 前置门禁（硬）
@@ -19,13 +22,16 @@
 
 `fix-harness-approval-visibility-nov23` → `refine-harness-typography-nov23` → 本 change。
 
-1. **两个前序都先归档**：任一前序未归档、或 `node scripts/openspec-archive-check.mjs --archived
-   <change-id>` 未 PASS 之前，本 change **不得进入实现**，也不得归档。
+1. **两个前序都先归档**：`fix-harness-approval-visibility-nov23` 已归档并 `--archived` PASS（归档
+   提交 `12a21a97`，审计记录 `ab6ef4ad`，合并 `bae7b47f`）；`refine-harness-typography-nov23` 仍未
+   归档。任一前序未归档、或 `node scripts/openspec-archive-check.mjs --archived <change-id>` 未 PASS
+   之前，本 change **不得进入实现**，也不得归档。
 2. **排版新基线先过 Alex**：`refine-harness-typography-nov23` 的候选视觉基线须经 Alex 逐张过目并
    批准落盘；未批准前本 change 不得施工，也不得把候选图当正式基线。
-3. **delta 以两前序归档后的 living 为基线**：实现第一步是把两个前序归档后的 living「进度呈现」
-   **整块重抄**进本 change 的 delta；当前 delta 只是承接草案（见 `specs/harness/spec.md` 的起草
-   注记），不得直接当作最终基线，也不得提前改写 living spec。
+3. **delta 以两前序归档后的 living 为基线**：审批归档后的 living「进度呈现」已整块重抄进本 change
+   的 delta（全部审批 scenario 逐条保留，见 `specs/harness/spec.md` 的起草注记）；排版前序归档后
+   仍须复核该 requirement 未被改写并再次整块对账。MUST NOT 提前改写 living spec，也不得在未复核的
+   情况下直接归档。
 4. **承接排版几何**（以 `refine-harness-typography-nov23` 归档后的 CSS / token 为准）：阶段行取
    `--text-2`；transcript gap 为 16px，尾行 4px 净间距公式为 `calc(var(--sp-2) - var(--sp-8))`；
    空态绝对定位四边 `top/right/left: var(--sp-8); bottom: var(--sp-6)`，并继承排版后的 13px/1.58、
@@ -223,7 +229,7 @@ D1–D5 是行为 / 观感取舍；D6 是既有流程的重申，列出来是为
 - 关联约束：
   - ADR 0002 第 6 条性能合同：尾行只在相位跃迁时改 DOM；流式分片路径零新增节点、零新增布局
     读取；不定态动画只作用于 `transform` / `opacity`。
-  - ADR 0004：节点 1 已批准（2026-11-24）；实现仍受两个前序归档与排版基线批准的前置门禁约束。
+  - ADR 0004：节点 1 已批准（2026-11-24）；审批前序已归档，排版前序仍未归档，实现仍受该前置门禁约束。
   - 仓库信息卫生：视觉 / 真机 fixture 只用合成 vault 名与路径。
 
 ## 与相邻 change 的关系（有序链，后落）
@@ -231,14 +237,15 @@ D1–D5 是行为 / 观感取舍；D6 是既有流程的重申，列出来是为
 顺序固定为 `fix-harness-approval-visibility-nov23` → `refine-harness-typography-nov23` → 本 change。
 
 - **第一前序**：`fix-harness-approval-visibility-nov23`（待批状态 + 滚动区外审批信号 + 清算）。
-  它先归档；本 change 的实现与 delta 基线都必须等它归档且 `--archived` PASS。
+  **已归档并 `--archived` PASS**（归档提交 `12a21a97`，审计记录 `ab6ef4ad`，合并 `bae7b47f`）；
+  本 change 已按其归档后的 living 重抄「进度呈现」。
 - **第二前序**：`refine-harness-typography-nov23`（阅读密度、720px 阅读宽、任务文字 `--text-2`、
-  横线表、composer / 空态排版）。它必须紧随审批可见性之后归档，且其新视觉基线经 Alex 批准落盘；
-  本 change 继承它的阶段行 `--text-2`、16px transcript gap 与 `16px 16px 12px` 外侧 padding、
-  空态 13px/1.58 / `--text-2` / 24px padding。
-- **本 change 的约束**：MODIFIED 块整块重抄**两个前序归档后**的 living；优先级
-  `stopping > approval > midTakeover > waiting/generating`；标题栏审批信号 MUST NOT 因尾行移入
-  transcript 而消失（design §9.7）。
+  横线表、composer / 空态排版）。**仍未归档**；它必须紧随审批可见性之后归档，且其新视觉基线经
+  Alex 批准落盘；本 change 继承它的阶段行 `--text-2`、16px transcript gap 与 `16px 16px 12px`
+  外侧 padding、空态 13px/1.58 / `--text-2` / 24px padding。
+- **本 change 的约束**：MODIFIED 块整块重抄**两个前序归档后**的 living（审批归档后已重抄一次；
+  排版归档后复核并再次整块对账）；优先级 `stopping > approval > midTakeover > waiting/generating`；
+  标题栏审批信号 MUST NOT 因尾行移入 transcript 而消失（design §9.7）。
 - **不合并**：两个前序各自解决已裁的审批可见性与排版问题，本 change 是位置决策；合并会污染
   裁决面与基线归属。
 - **取号**：前序 change 可能先占用 deck 新号；本 change 的 D3 候选号（起草时为 D972）在实现前
