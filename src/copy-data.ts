@@ -2193,8 +2193,8 @@ const COPY_TABLE = {
     en: "Global · independent of the selected provider; adding, removing, or switching providers neither copies these switches nor changes their values",
   },
   D789: {
-    zh: "前四个开关是 harness.* 下的全局键，第五个是 editor.prefill_note_name；它们都不属于任何 provider。会话命名与图片命名的目标默认跟随当前 provider，可在各自开关旁单独指定 provider 与模型；每组目标只有一份全局键，每次触发只发往解析出的一个目标。",
-    en: "The first four switches are global harness.* keys and the fifth is editor.prefill_note_name; none of them belong to a provider. Naming targets follow the current provider by default, and each switch can target a specific provider and model; each target is a single global key and every trigger goes to exactly one resolved target.",
+    zh: "四个开关是 harness.* 下的全局键，不属于任何 provider。会话命名与图片命名的目标默认跟随当前 provider，可在各自开关旁单独指定 provider 与模型；每组目标只有一份全局键，每次触发只发往解析出的一个目标。",
+    en: "The four switches are global harness.* keys and belong to no provider. Naming targets follow the current provider by default, and each switch can target a specific provider and model; each target is a single global key and every trigger goes to exactly one resolved target.",
   },
   D790: { zh: "自动压缩", en: "Auto-compact" },
   D791: {
@@ -2900,25 +2900,12 @@ const COPY_TABLE = {
     zh: "关闭提示",
     en: "Close notification",
   },
-  // D984–D987：新建文件的默认名（change add-default-note-name-nov24）。D984 是预填值本身，
-  // 语言真源是 `<html lang>`（`t()`），编号后缀由 `uniqueNewNoteName` 一处拼；D985–D987 是
-  // 设置面板第五行（标题 / 一句行为说明 / 生效时机 + 敏感性）。说明里的示例名与 D984 同语言，
-  // 换语言后行文与预填值仍一致。
+  // D984：新建文件的默认名（change add-default-note-name-nov24；Alex 2026-11-25 裁决改为
+  // 始终启用，不设设置项）。语言真源是 `<html lang>`（`t()`），编号后缀由 `uniqueNewNoteName`
+  // 一处拼；消费方是 `src/tree.ts` 的 `beginCreate`。
   D984: {
     zh: "未命名笔记",
     en: "Untitled note",
-  },
-  D985: {
-    zh: "新建文件时预填默认名称",
-    en: "Prefill new file names",
-  },
-  D986: {
-    zh: "新建文件时预填「未命名笔记」并全选，直接输入即替换；与已有条目重名时自动编号（如「未命名笔记 2」）。",
-    en: "New files start with “Untitled note” selected, so typing replaces it; duplicate names are numbered automatically (e.g. “Untitled note 2”).",
-  },
-  D987: {
-    zh: "全局 · 下一次新建文件生效 · 不发起模型调用",
-    en: "Global · takes effect on the next new file · no model calls",
   },
 } satisfies Record<string, CopyEntry>;
 

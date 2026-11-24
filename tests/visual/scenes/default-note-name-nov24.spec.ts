@@ -1,11 +1,11 @@
 // change add-default-note-name-nov24：新建文件的默认名（DOM / 事件序列层）。
 //
 // 视觉门禁只负责 chromium 近似下的行为与几何；真机 WKWebView 下的同一合同由验收场景 728 覆盖。
-// 判据在 `src/tree.ts` 的 beginCreate 上：预填 / 全选 / 键入替换 / Enter 走既有创建链 /
-// Escape 不动磁盘 / 撞名递增 / 语言切换 / 其它命名链路不受影响。
+// 判据在 `src/tree.ts` 的 beginCreate 上：始终预填 / 全选 / 键入替换 / Enter 走既有创建链 /
+// Escape 不动磁盘 / 撞名递增 / 语言切换 / 其它命名链路不受影响。Alex 2026-11-25 裁决：不设
+// 配置开关，行为始终启用。
 //
-// 不截像素基线：本场景只做 DOM 断言，避免把「自动化节多一行」这类有意的形态变化混进本特性的
-// 证据面（基线更新是 Alex 的人肉裁决点）。
+// 不截像素基线：本场景只做 DOM 断言。
 
 import { expect, test, type Page } from "@playwright/test";
 import { DEMO_VAULT, fsMutations, stubTauri } from "./tauri-stub";
@@ -37,17 +37,8 @@ async function editState(page: Page): Promise<{ value: string; start: number | n
   });
 }
 
-test("开关关闭（键缺席）：新建文件输入框仍为空，行为与 change 之前一致", async ({ page }) => {
+test("始终预填：zh 默认名并全选，键入即整段替换，Escape 不落盘", async ({ page }) => {
   await stubTauri(page, { ...DEMO_VAULT, root: VAULT_ROOT });
-  await page.goto("/");
-
-  await beginCreate(page);
-  expect(await editState(page)).toEqual({ value: "", start: 0, end: 0 });
-  await expect(page.locator(".ft-item.is-new .ft-edit")).toHaveAttribute("placeholder", "未命名");
-});
-
-test("开关开启：预填 zh 默认名并全选，键入即整段替换，Escape 不落盘", async ({ page }) => {
-  await stubTauri(page, { ...DEMO_VAULT, root: VAULT_ROOT, config: { prefill_note_name: true } });
   await page.goto("/");
 
   await beginCreate(page);
@@ -69,8 +60,8 @@ test("开关开启：预填 zh 默认名并全选，键入即整段替换，Esca
   ).toEqual([]);
 });
 
-test("开关开启：Tab 不被接管（沿用既有的失焦取消）", async ({ page }) => {
-  await stubTauri(page, { ...DEMO_VAULT, root: VAULT_ROOT, config: { prefill_note_name: true } });
+test("始终预填：Tab 不被接管（沿用既有的失焦取消）", async ({ page }) => {
+  await stubTauri(page, { ...DEMO_VAULT, root: VAULT_ROOT });
   await page.goto("/");
 
   await beginCreate(page);
@@ -83,8 +74,8 @@ test("开关开启：Tab 不被接管（沿用既有的失焦取消）", async (
   ).toEqual([]);
 });
 
-test("开关开启：Enter 接受默认名，补 .md 落盘并自动打开，焦点落正文", async ({ page }) => {
-  await stubTauri(page, { ...DEMO_VAULT, root: VAULT_ROOT, config: { prefill_note_name: true } });
+test("始终预填：Enter 接受默认名，补 .md 落盘并自动打开，焦点落正文", async ({ page }) => {
+  await stubTauri(page, { ...DEMO_VAULT, root: VAULT_ROOT });
   await page.goto("/");
 
   await beginCreate(page);
@@ -99,12 +90,11 @@ test("开关开启：Enter 接受默认名，补 .md 落盘并自动打开，焦
   });
 });
 
-test("开关开启：同级已有默认名时自动编号，既有条目不被覆盖", async ({ page }) => {
+test("始终预填：同级已有默认名时自动编号，既有条目不被覆盖", async ({ page }) => {
   await stubTauri(page, {
     root: VAULT_ROOT,
     entries: COLLISION_ENTRIES,
     files: COLLISION_FILES,
-    config: { prefill_note_name: true },
   });
   await page.goto("/");
 
@@ -115,11 +105,11 @@ test("开关开启：同级已有默认名时自动编号，既有条目不被�
   await expect(page.locator('.tab.is-active')).toHaveAttribute("data-path", "docs/未命名笔记 3.md");
 });
 
-test("开关开启：界面语言 en 时预填 Untitled note", async ({ page }) => {
+test("始终预填：界面语言 en 时预填 Untitled note", async ({ page }) => {
   await stubTauri(page, {
     ...DEMO_VAULT,
     root: VAULT_ROOT,
-    config: { prefill_note_name: true, language: "en" },
+    config: { language: "en" },
   });
   await page.goto("/");
 
@@ -130,8 +120,8 @@ test("开关开启：界面语言 en 时预填 Untitled note", async ({ page }) 
   expect(state.end).toBe("Untitled note".length);
 });
 
-test("开关开启：新建子目录与重命名不受影响", async ({ page }) => {
-  await stubTauri(page, { ...DEMO_VAULT, root: VAULT_ROOT, config: { prefill_note_name: true } });
+test("始终预填：新建子目录与重命名不受影响", async ({ page }) => {
+  await stubTauri(page, { ...DEMO_VAULT, root: VAULT_ROOT });
   await page.goto("/");
 
   // 新建子目录：仍为空 + 既有占位。

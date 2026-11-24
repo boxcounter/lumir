@@ -73,15 +73,4 @@ mono_font_family: string | null,
  * 失败 → 走**整文件回落**（全部字段回默认 + 一条 warning，连 `last_vault` 一起丢）。
  * 代价与「为什么不发明逐字段类型容忍」见模块头。
  */
-font_size: number, 
-/**
- * 新建文件时是否预填默认名（change add-default-note-name-nov24）：`true` 时内联新建文件的
- * 输入框预填当前界面语言的默认名（`未命名笔记` / `Untitled note`）并全选；`false`（默认）
- * 保持空输入框的现状。只作用于内联新建文件的命名阶段，不改变后端创建语义、默认扩展名、
- * 撞名拒绝与忽略集判定。
- *
- * **键缺席 = 出厂 `false`**（与四个 `harness` 自动化开关的默认开相反：这是新建行为的偏好，
- * 默认不改变既有手感）。消费方是前端 `src/tree.ts` 的 `beginCreate`；本字段只经
- * `config_get` 送达，Rust 侧没有第二个消费者。
- */
-prefill_note_name: boolean, };
+font_size: number, };

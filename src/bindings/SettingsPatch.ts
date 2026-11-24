@@ -9,7 +9,7 @@ import type { ProviderEdit } from "./ProviderEdit";
  */
 export type SettingsPatch = { 
 /**
- * 设置面 revision（覆盖 provider 条目、active、五个开关、两个命名目标的 provider/model；
+ * 设置面 revision（覆盖 provider 条目、active、四个开关、两个命名目标的 provider/model；
  * **不含** `providers.<id>.model`）。
  */
 base_revision: string, active_provider?: FieldEdit<string>, providers: Array<ProviderEdit>, automation: AutomationPatch, naming?: NamingPatch, };

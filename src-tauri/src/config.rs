@@ -355,15 +355,6 @@ pub struct EditorConfig {
     /// 失败 → 走**整文件回落**（全部字段回默认 + 一条 warning，连 `last_vault` 一起丢）。
     /// 代价与「为什么不发明逐字段类型容忍」见模块头。
     pub font_size: f64,
-    /// 新建文件时是否预填默认名（change add-default-note-name-nov24）：`true` 时内联新建文件的
-    /// 输入框预填当前界面语言的默认名（`未命名笔记` / `Untitled note`）并全选；`false`（默认）
-    /// 保持空输入框的现状。只作用于内联新建文件的命名阶段，不改变后端创建语义、默认扩展名、
-    /// 撞名拒绝与忽略集判定。
-    ///
-    /// **键缺席 = 出厂 `false`**（与四个 `harness` 自动化开关的默认开相反：这是新建行为的偏好，
-    /// 默认不改变既有手感）。消费方是前端 `src/tree.ts` 的 `beginCreate`；本字段只经
-    /// `config_get` 送达，Rust 侧没有第二个消费者。
-    pub prefill_note_name: bool,
 }
 
 impl Default for EditorConfig {
@@ -377,7 +368,6 @@ impl Default for EditorConfig {
             font_family: None,
             mono_font_family: None,
             font_size: DEFAULT_FONT_SIZE,
-            prefill_note_name: false,
         }
     }
 }
@@ -1842,10 +1832,6 @@ struct RawEditorConfig {
     /// **本仓第一个数值字段**：`"font_size": "15"`（带引号）同样在解析期失败 → 整文件回落，
     /// 连 `last_vault` 一起丢（代价与替代形态见模块头「数值字段的打字代价」）。
     font_size: Option<f64>,
-    /// 新建文件时预填默认名（change add-default-note-name-nov24）：与折行三项同路——
-    /// 字段缺失 → `None` → `validate()` 回落到 `EditorConfig::default()`（`false`）；
-    /// 类型不符（`"prefill_note_name": "yes"`）在解析期失败 → 整文件回落（单测钉住）。
-    prefill_note_name: Option<bool>,
 }
 
 /// `[ui]` 表的解析镜像（restyle-ui-tokens-v1）。缺字段 → `None` → `validate()` 回落到
@@ -2711,13 +2697,6 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<ConfigDiagnostic>, Vec<CronTaskIs
     if let Some(value) = raw.editor.auto_indent {
         auto_indent = value;
     }
-    // 新建文件默认名（change add-default-note-name-nov24）：与 auto_indent 完全同形——缺字段
-    // 回落出厂 `false`（保持空输入框的现状）、不告警；类型不符在解析期整文件回落（单测钉住）。
-    // 本键不跟随任何别的键：默认值只由 `EditorConfig::default()` 决定。
-    let mut prefill_note_name = defaults.editor.prefill_note_name;
-    if let Some(value) = raw.editor.prefill_note_name {
-        prefill_note_name = value;
-    }
     // 排版三项（typography-and-zoom）：两项字体族**只挡空串 / 纯空白**（→ None = 沿用基线 +
     // warning），值的 CSS 合法性由前端 `CSS.supports` 判定（形状在此、语义在前端的既有分层）；
     // 字号按区间 [12, 32] 判定，越界回落默认 + warning（照 editor.mode 的模板）。
@@ -2887,7 +2866,6 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<ConfigDiagnostic>, Vec<CronTaskIs
                 font_family,
                 mono_font_family,
                 font_size,
-                prefill_note_name,
             },
             ui: UiConfig {
                 theme,
@@ -7571,37 +7549,5 @@ mod tests {
             value["harness"]["permissions"]["allow"],
             serde_json::json!(["cli(x *)"])
         );
-    }
-
-    #[test]
-    fn missing_prefill_note_name_takes_factory_false() {
-        // change add-default-note-name-nov24：键缺席 = 出厂关（保持新建文件输入框为空的现状），
-        // 不产生 warning。
-        let f = TempFile::new(r#"{"version":1,"editor":{"mode":"md"}}"#);
-        let snap = load_from(&f.0);
-        assert!(!snap.config.editor.prefill_note_name, "出厂默认关");
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
-    }
-
-    #[test]
-    fn explicit_prefill_note_name_is_loaded() {
-        let f = TempFile::new(r#"{"editor":{"prefill_note_name":true}}"#);
-        let snap = load_from(&f.0);
-        assert!(snap.config.editor.prefill_note_name);
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
-    }
-
-    #[test]
-    fn wrong_type_prefill_note_name_falls_back_entire_file() {
-        // 与 editor 其余布尔键同路：`Option<bool>` 类型不符在 serde 解析期失败 → 整文件回落，
-        // MUST NOT 出现「一部分字段按配置、一部分按默认」的混合态。
-        let f =
-            TempFile::new(r#"{"last_vault":"/tmp/vault","editor":{"prefill_note_name":"yes"}}"#);
-        let snap = load_from(&f.0);
-        assert_eq!(snap.config, AppConfig::default(), "整份配置应落回默认");
-        assert!(!snap.config.editor.prefill_note_name);
-        assert_eq!(snap.config.last_vault, None);
-        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
-        assert!(snap.warnings[0].contains("不是合法 JSON"));
     }
 }

@@ -295,7 +295,6 @@ function diagnosticSettingsSnapshot(): Record<string, unknown> {
       session_naming: flag,
       attachment_naming: flag,
       subagents: flag,
-      prefill_note_name: flag,
     },
     naming: { session: namingTarget, attachment: namingTarget },
     capabilities: {
@@ -316,7 +315,6 @@ function diagnosticSettingsSnapshot(): Record<string, unknown> {
       session_naming_enabled: true,
       attachment_naming_enabled: true,
       subagents_enabled: true,
-      prefill_note_name: false,
       model_window: 131072,
     },
     diagnostics: [

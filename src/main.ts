@@ -4020,11 +4020,6 @@ const bindingsPanel = createBindingsPanel({
 // **挂 `document.body` 而不是 `shell.root`**：spec 要求面板打开期间背景（编辑器 / 文件树 /
 // composer / modeline）整体 `inert`；面板若挂在 `#app` 里，`inert` 会连面板自己一起关掉。
 // 因此遮罩是 `#app` 的兄弟节点，`inertRoot` 指向 `#app`。
-// 新建文件默认名的运行期读数（change add-default-note-name-nov24）：启动时从 ConfigSnapshot
-// 读一次，设置面板保存成功后由 onApplied 回传的快照更新。唯一消费者是下面 createFileTree 的
-// `defaultNoteName` 回调——树不 import ipc，也不自行读配置。
-let prefillNoteNameEnabled = false;
-
 const settingsPanel = createSettingsPanel({
   mount: document.body,
   inertRoot: app,
@@ -4033,11 +4028,6 @@ const settingsPanel = createSettingsPanel({
   // 不引入全局配置状态层。
   onClosed: () => {
     void harnessPanel.refreshConfigSelection();
-  },
-  // 第五个自动化开关（editor.prefill_note_name）保存后立即生效：用保存返回的快照更新读数，
-  // 不再发第二次 config_get（同一份配置只读一次的口径）。
-  onApplied: (snapshot) => {
-    prefillNoteNameEnabled = snapshot.automation.prefill_note_name.value;
   },
 });
 
@@ -4376,9 +4366,6 @@ tree = createFileTree(shell.treeMount, {
   onContextMenu: (target, at) => treeMenu.open(target, at),
   // 内联编辑提交（重命名 / 新建共用）。
   onInlineEditSubmit: (request) => void submitInlineEdit(request),
-  // 新建文件的默认名（change add-default-note-name-nov24）：开关关闭时返回 undefined = 不预填，
-  // 行为与 change 之前逐字相同；默认名按当前界面语言取（t() 的唯一真源 `<html lang>`）。
-  defaultNoteName: () => (prefillNoteNameEnabled ? t("D984") : undefined),
   // 拖拽移动提交（M530）：动作在 moveTreeEntry；树只报 from → to（目标路径由树侧
   // moveTargetPath 一处拼接），成功的树收敛交给 watcher 回响。
   onMoveEntry: (from, to) => void moveTreeEntry(from, to),
@@ -4644,9 +4631,6 @@ consumeConfigSnapshot().then((snapshot) => {
   // 图片语义命名开关（change add-semantic-image-naming，design §1）：装载时读一次，粘贴时
   // 取快照（`semanticNamingEnabled` 是那唯一一份读数，见其声明处）。键缺席 = 出厂 true。
   semanticNamingEnabled = snapshot.config.harness.attachment_naming?.enabled ?? true;
-  // 新建文件默认名开关（change add-default-note-name-nov24）：键缺席 = 出厂 false（保持空
-  // 输入框的现状）；运行期翻转由设置面板保存后的 `onApplied` 承接，不在这里做第二处读取。
-  prefillNoteNameEnabled = snapshot.config.editor.prefill_note_name ?? false;
   // 折行口径（M180，change line-wrap-options；M247 起三项）：配置给的是**启动时的起点**——
   // 应用运行期的翻转由两条 `view.toggle-*` 命令承担，运行期 MUST NOT 回写这里（config.json 的
   // mtime 与内容在翻转前后逐字节不变）。放在 setMode 之后：mode 决定代码块内容级 class 有没有

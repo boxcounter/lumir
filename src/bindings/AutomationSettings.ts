@@ -2,11 +2,6 @@
 import type { AutomationFlag } from "./AutomationFlag";
 
 /**
- * 五个自动化开关：前四个是全局 `harness.*` 键，第五个是 `editor.prefill_note_name`
- *（change add-default-note-name-nov24）；都不属于任何 provider。
+ * 四个自动化开关（全局 `harness.*` 键，不属于任何 provider）。
  */
-export type AutomationSettings = { auto_compact: AutomationFlag, session_naming: AutomationFlag, attachment_naming: AutomationFlag, subagents: AutomationFlag, 
-/**
- * 新建文件时预填默认名（`editor.prefill_note_name`，默认**关**——与上面四项默认开相反）。
- */
-prefill_note_name: AutomationFlag, };
+export type AutomationSettings = { auto_compact: AutomationFlag, session_naming: AutomationFlag, attachment_naming: AutomationFlag, subagents: AutomationFlag, };

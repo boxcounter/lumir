@@ -266,4 +266,4 @@
 | 725 | `725-harness-approval-visibility` | 待批可见性：脱离态下批准卡到达仍有标题栏信号与未读；回底决策后清算；停止撤回无幻影 | full |
 | 726 | `726-harness-skill-hybrid-invocation` | Skill 混合调用：显式 refs 确定性注入 + 自动 skill_load 分控 + deny/非法 fail closed + 普通路径与草稿恢复 | core |
 | 727 | `727-harness-progress-tail` | 输出尾行：状态矩阵 / 工具先行 / 待批 / 停止 / 跨 vault 接管 / 空态与自动回合 detached | full |
-| 728 | `728-default-note-name` | 新建文件默认名：设置开关持久化、预填与全选、键入替换、Enter 接受、Escape 取消、撞名递增、焦点落正文 | full |
+| 728 | `728-default-note-name` | 新建文件默认名：始终预填并全选、键入替换、Enter 接受、Escape 取消、撞名递增、焦点落正文 | full |

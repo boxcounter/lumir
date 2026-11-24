@@ -53,7 +53,6 @@ token 形态注意：含 Alt 的组合按物理键 `KeyboardEvent.code` 判定�
 | `editor.code_block_wrap` | boolean | `false` | `true` / `false` | 启动装载读一次（改配置需重启）；运行期由 `view.toggle-code-block-wrap` 瞬态翻转，**不回写** | `config.rs:112` |
 | `editor.code_mode_line_wrap` | boolean | `false` | `true` / `false` | 启动装载读一次（改配置需重启）；运行期由 `view.toggle-line-wrap`（前台是 code 会话时）瞬态翻转，**不回写**（M247 新增） | `config.rs:124` |
 | `editor.auto_indent` | boolean | `true` | `true` / `false` | 启动装载读一次（改配置需重启）；**无运行期开关**（M272 新增） | `config.rs:136` |
-| `editor.prefill_note_name` | boolean | `false` | `true` / `false` | 启动装载读一次；设置面板「自动化」节保存后立即生效（运行期读数由保存返回的快照更新，不需重启） | `config.rs` 的 `EditorConfig.prefill_note_name` / `validate`（change add-default-note-name-nov24） |
 | `editor.font_family` | string \| null | `null`（沿用基线 `--font-sans`） | 任意 CSS `font-family` 值；**空串 / 纯空白**判为笔误 → 回落 `null` + warning | 启动装载读一次（本能力不做热重载，改字体需重启） | `config.rs:144` |
 | `editor.mono_font_family` | string \| null | `null`（沿用基线 `--font-mono`） | 同 `font_family` | 同上 | `config.rs:147` |
 | `editor.font_size` | number | `15` | 闭区间 `[12, 32]`，区间外回落 `15` + warning | 启动装载读一次；运行期由三条 `view.text-scale-*` 命令步进，**不回写** | `config.rs:155`、`:482-490` |
@@ -80,13 +79,6 @@ token 形态注意：含 Alt 的组合按物理键 `KeyboardEvent.code` 判定�
 所在行的行首空白）。`false` 时这两处回到裸换行；**md 的列表项 / 引用续行不受本键影响**——那是编辑器
 内核自带语言包的既有行为，关掉本键仍会续写标记（这是显式口径，不是漏实现）。本键没有运行期开关命令，
 也不跟随任何别的键：键缺席 = 出厂 `true`。
-
-`editor.prefill_note_name`（change add-default-note-name-nov24）管**新建文件时的默认名**：`true` 时
-内联新建文件（目录行菜单 / vault 根级菜单 / 空 vault 的新建入口共用同一条 `beginCreate` 链路）预填
-当前界面语言的默认名（zh `未命名笔记` / en `Untitled note`）并全选，输入框只含主文件名（不含 `.md`）；
-`false`（默认）保持空输入框的现状。与已有条目撞名时自动编号（`未命名笔记 2`…），用户自己输入的名字
-仍走既有撞名校验、不静默改名。它只影响命名阶段：后端创建语义、默认扩展名、撞名拒绝与忽略集判定不变；
-重命名 / 新建子目录 / wikilink 一键创建不受影响。本键没有独立键位命令，也不跟随任何别的键。
 
 字号的两项字体族只挡「空串 / 纯空白」，**值的 CSS 合法性由前端判定**（`CSS.supports`）——Rust 侧不复制
 一份 CSS 语法知识，与 `keys` 表「形状在 Rust、语义在前端」的分层同口径。
@@ -462,8 +454,7 @@ change 的 [design §9](../../openspec/changes/add-harness-subagents/design.md)�
 - **逐字段回落**：取值非法（如 `editor.mode` 写 `"weird"`、`log.level` 写 `"verbose"`、`font_size` 越界）
   只回退该字段到出厂默认 + 一条人话 warning，其余字段照常生效，**不得导致启动失败**（ADR 0002 §5）。
 - **整文件回落**：整份文件不是合法 JSON，或**字段类型不符**（如 `"line_wrap": "yes"`、
-  `"font_size": "15"`、`"code_mode_line_wrap": "yes"`、`"auto_indent": "yes"`、
-  `"prefill_note_name": "yes"`、`"ui": "dark"`、
+  `"font_size": "15"`、`"code_mode_line_wrap": "yes"`、`"auto_indent": "yes"`、`"ui": "dark"`、
   `"line_numbers": 2`、`"cron": "daily-log"`、`"cron": {"tasks": "daily-log"}`），
   则整份配置按出厂默认解释 +
   一条 warning（连 `last_vault` 一起丢）。这是既有解析模型的性质（不等同于逐字段回落），单测逐条钉住
@@ -525,9 +516,8 @@ patch，MUST NOT 用打开时的旧快照整份覆盖。
 - `harness.permission_mode` → 权限 chip 切换（`src/harness-panel.ts` 的 `selectPermissionMode`）；
 - `harness.permissions.allow` → 批准卡的「以后都允许」写规则、权限浮层的规则删除（`harness.rs:1787` / `:1816`）；
 - `cron.tasks` → **交互会话里的 agent 调度工具**注册 / 删除任务（§1.8.1；`cron.rs:1160` / `:1228`）；
-- **设置面板整笔 patch** → provider 增删改、`harness.provider`、五个自动化开关（`auto_compact` /
-  `session_naming.enabled` / `attachment_naming.enabled` / `subagents.enabled` /
-  `editor.prefill_note_name`）、两个命名目标的
+- **设置面板整笔 patch** → provider 增删改、`harness.provider`、四个自动化开关（`auto_compact` /
+  `session_naming.enabled` / `attachment_naming.enabled` / `subagents.enabled`）、两个命名目标的
   `provider` / `model`。删除 provider 时同一笔完成替代目标重定向（`harness.provider` 改写或删键、
   两个命名目标改指或删键）与对应 model 覆盖清除，中途任一校验失败时文件逐字节不变。
 

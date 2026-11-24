@@ -28,9 +28,9 @@ use ts_rs::TS;
 
 use crate::commands::CommandError;
 use crate::config::{
-    self, provider_id_valid, AppConfig, ConfigDiagnostic, DiagnosticSeverity, EditorConfig,
-    HarnessConfig, HarnessModelSpec, HarnessProviderConfig, ProviderPreset, WireApi,
-    FALLBACK_CONTEXT_WINDOW, MODEL_WINDOW_MAX, MODEL_WINDOW_MIN, RESERVED_PROVIDER_ID,
+    self, provider_id_valid, AppConfig, ConfigDiagnostic, DiagnosticSeverity, HarnessConfig,
+    HarnessModelSpec, HarnessProviderConfig, ProviderPreset, WireApi, FALLBACK_CONTEXT_WINDOW,
+    MODEL_WINDOW_MAX, MODEL_WINDOW_MIN, RESERVED_PROVIDER_ID,
 };
 
 // ---------------------------------------------------------------------------
@@ -188,8 +188,7 @@ pub struct AutomationFlag {
     pub explicit: bool,
 }
 
-/// 五个自动化开关：前四个是全局 `harness.*` 键，第五个是 `editor.prefill_note_name`
-///（change add-default-note-name-nov24）；都不属于任何 provider。
+/// 四个自动化开关（全局 `harness.*` 键，不属于任何 provider）。
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct AutomationSettings {
@@ -197,8 +196,6 @@ pub struct AutomationSettings {
     pub session_naming: AutomationFlag,
     pub attachment_naming: AutomationFlag,
     pub subagents: AutomationFlag,
-    /// 新建文件时预填默认名（`editor.prefill_note_name`，默认**关**——与上面四项默认开相反）。
-    pub prefill_note_name: AutomationFlag,
 }
 
 /// 命名目标 provider 选择器的一项（design §5）。
@@ -291,7 +288,6 @@ pub struct SettingsDefaults {
     pub session_naming_enabled: bool,
     pub attachment_naming_enabled: bool,
     pub subagents_enabled: bool,
-    pub prefill_note_name: bool,
     /// 未声明 `window` 时的保守回落值（tokens）。
     pub model_window: u64,
 }
@@ -397,7 +393,7 @@ pub enum ProviderEdit {
     },
 }
 
-/// 五个开关的 patch（每个键独立：`None` = 不动）。
+/// 四个开关的 patch（每个键独立：`None` = 不动）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export, export_to = "../../src/bindings/")]
@@ -410,9 +406,6 @@ pub struct AutomationPatch {
     pub attachment_naming: Option<FieldEdit<bool>>,
     #[ts(optional)]
     pub subagents: Option<FieldEdit<bool>>,
-    /// `editor.prefill_note_name`（change add-default-note-name-nov24）。
-    #[ts(optional)]
-    pub prefill_note_name: Option<FieldEdit<bool>>,
 }
 
 /// 一组命名目标的覆盖键编辑（design §6 / §10.2）：provider 先应用（换目标清 model），
@@ -443,7 +436,7 @@ pub struct NamingPatch {
 #[serde(deny_unknown_fields)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct SettingsPatch {
-    /// 设置面 revision（覆盖 provider 条目、active、五个开关、两个命名目标的 provider/model；
+    /// 设置面 revision（覆盖 provider 条目、active、四个开关、两个命名目标的 provider/model；
     /// **不含** `providers.<id>.model`）。
     pub base_revision: String,
     #[ts(optional)]
@@ -689,8 +682,6 @@ pub fn snapshot_at(path: &Path) -> SettingsSnapshot {
 
     let harness = effective.as_ref().map(|config| &config.harness);
     let raw = raw_harness(&value);
-    let raw_editor = value.get("editor").and_then(Value::as_object);
-    let editor = effective.as_ref().map(|config| &config.editor);
     let active = harness
         .and_then(|h| (!h.provider.is_empty()).then(|| h.provider.clone()))
         .or_else(|| raw_trimmed(raw, "provider"));
@@ -713,7 +704,7 @@ pub fn snapshot_at(path: &Path) -> SettingsSnapshot {
         providers,
         active,
         active_explicit,
-        automation: build_automation(raw, harness, raw_editor, editor),
+        automation: build_automation(raw, harness),
         naming,
         capabilities: capabilities(),
         defaults: settings_defaults(),
@@ -747,7 +738,7 @@ fn raw_naming_provider(value: &Value, kind: NamingKind) -> Option<String> {
     raw_trimmed(raw_naming_table(value, kind), "provider")
 }
 
-/// 设置面范围内的诊断：provider 条目 / active / 五个开关 / 两个命名表 + 文件级。
+/// 设置面范围内的诊断：provider 条目 / active / 四个开关 / 两个命名表 + 文件级。
 fn in_settings_scope(path: &str) -> bool {
     path == "harness.provider"
         || path == "harness.auto_compact"
@@ -755,7 +746,6 @@ fn in_settings_scope(path: &str) -> bool {
         || under(path, "harness.session_naming")
         || under(path, "harness.attachment_naming")
         || path == "harness.subagents.enabled"
-        || path == "editor.prefill_note_name"
 }
 
 fn build_providers(
@@ -1032,13 +1022,9 @@ fn raw_json_value(value: &Value) -> RawJsonValue {
 fn build_automation(
     raw: Option<&Map<String, Value>>,
     harness: Option<&HarnessConfig>,
-    raw_editor: Option<&Map<String, Value>>,
-    editor: Option<&EditorConfig>,
 ) -> AutomationSettings {
     let defaults = HarnessConfig::default();
     let harness = harness.unwrap_or(&defaults);
-    let editor_defaults = EditorConfig::default();
-    let editor = editor.unwrap_or(&editor_defaults);
     AutomationSettings {
         auto_compact: automation_flag(
             raw.and_then(|object| object.get("auto_compact")),
@@ -1057,10 +1043,6 @@ fn build_automation(
                 .and_then(Value::as_object)
                 .and_then(|table| table.get("enabled")),
             harness.subagents.enabled,
-        ),
-        prefill_note_name: automation_flag(
-            raw_editor.and_then(|object| object.get("prefill_note_name")),
-            editor.prefill_note_name,
         ),
     }
 }
@@ -1253,7 +1235,6 @@ fn settings_defaults() -> SettingsDefaults {
         session_naming_enabled: harness.session_naming.enabled,
         attachment_naming_enabled: harness.attachment_naming.enabled,
         subagents_enabled: harness.subagents.enabled,
-        prefill_note_name: EditorConfig::default().prefill_note_name,
         model_window: FALLBACK_CONTEXT_WINDOW,
     }
 }
@@ -1269,8 +1250,7 @@ const PROVIDER_REVISION_KEYS: [&str; 6] = [
 ];
 
 /// 设置面 revision（design §6.2）：sha256 over 规范化后的设置面键集合。覆盖 provider 条目、
-/// active、五个开关（前四个 `harness.*`，第五个 `editor.prefill_note_name`）、两个命名目标的
-/// provider **与** model（面板可编辑、删除也会清它们）；
+/// active、四个开关、两个命名目标的 provider **与** model（面板可编辑、删除也会清它们）；
 /// `Missing` 按空对象算、`Invalid` 不给 revision（调用方不计算）。
 fn revision_of(value: &Value) -> String {
     let harness = raw_harness(value);
@@ -1318,16 +1298,6 @@ fn revision_of(value: &Value) -> String {
         canonical.insert(table.to_string(), revision_naming_section(harness, table));
     }
     canonical.insert("subagents".to_string(), revision_subagents_section(harness));
-    // change add-default-note-name-nov24：第五个开关在 `[editor]` 表；外部改它同样必须判冲突。
-    canonical.insert(
-        "prefill_note_name".to_string(),
-        value
-            .get("editor")
-            .and_then(Value::as_object)
-            .and_then(|editor| editor.get("prefill_note_name"))
-            .cloned()
-            .unwrap_or(Value::Null),
-    );
     let serialized =
         serde_json::to_string(&Value::Object(canonical)).expect("规范化 patch 一定可序列化");
     format!("{:x}", Sha256::digest(serialized.as_bytes()))
@@ -1740,7 +1710,6 @@ fn check_automation(value: &Value, errors: &mut Vec<SettingsFieldError>) {
             "session_naming",
             "attachment_naming",
             "subagents",
-            "prefill_note_name",
         ],
         "automation",
         errors,
@@ -1750,7 +1719,6 @@ fn check_automation(value: &Value, errors: &mut Vec<SettingsFieldError>) {
         "session_naming",
         "attachment_naming",
         "subagents",
-        "prefill_note_name",
     ] {
         if let Some(edit) = object.get(key) {
             check_field_edit(edit, &format!("automation.{key}"), EditShape::Bool, errors);
@@ -2463,32 +2431,7 @@ fn apply_automation(
         }
         changes.field("harness.subagents.enabled");
     }
-    if let Some(edit) = &automation.prefill_note_name {
-        apply_editor_flag(value, "prefill_note_name", edit);
-        changes.field("editor.prefill_note_name");
-    }
     Ok(())
-}
-
-/// `[editor]` 表的单键布尔写入 / 删键（change add-default-note-name-nov24）。与
-/// `apply_harness_flag` 同形：`Reset` 只在表已存在时删键，不创建空表。
-fn apply_editor_flag(value: &mut Value, key: &str, edit: &FieldEdit<bool>) {
-    match edit {
-        FieldEdit::Set(enabled) => {
-            if !value.get("editor").is_some_and(Value::is_object) {
-                value["editor"] = Value::Object(Map::new());
-            }
-            value["editor"]
-                .as_object_mut()
-                .expect("上面刚填过 editor 对象")
-                .insert(key.to_string(), Value::Bool(*enabled));
-        }
-        FieldEdit::Reset => {
-            if let Some(editor) = value.get_mut("editor").and_then(Value::as_object_mut) {
-                editor.remove(key);
-            }
-        }
-    }
 }
 
 fn apply_harness_flag(
@@ -4303,80 +4246,5 @@ mod tests {
         assert!(outcome.snapshot.automation.auto_compact.value);
         assert!(!outcome.snapshot.automation.auto_compact.explicit);
         assert_eq!(outcome.warnings, outcome.snapshot.diagnostics);
-    }
-
-    #[test]
-    fn snapshot_reports_prefill_note_name_default_and_explicit() {
-        // change add-default-note-name-nov24：默认关（与四个 harness 开关默认开相反），
-        // 键缺席时显示「默认」，显式写 true 时 explicit 为真。
-        let dir = TempDir::new("prefill-snapshot");
-        dir.write("{}");
-        let defaults = snapshot(&dir);
-        assert!(!defaults.automation.prefill_note_name.value);
-        assert!(!defaults.automation.prefill_note_name.explicit);
-        assert!(!defaults.defaults.prefill_note_name);
-
-        dir.write(r#"{"editor":{"prefill_note_name":true}}"#);
-        let explicit = snapshot(&dir);
-        assert!(explicit.automation.prefill_note_name.value);
-        assert!(explicit.automation.prefill_note_name.explicit);
-    }
-
-    #[test]
-    fn patch_sets_and_resets_prefill_note_name() {
-        let dir = TempDir::new("prefill-patch");
-        dir.write("{}");
-        let outcome = apply(
-            &dir,
-            patch_with(
-                &dir,
-                serde_json::json!({"automation": {"prefill_note_name": {"kind": "set", "value": true}}}),
-            ),
-        );
-        assert_eq!(outcome.status, SettingsApplyStatus::Applied);
-        assert_eq!(
-            file_json(&dir)["editor"]["prefill_note_name"],
-            Value::Bool(true)
-        );
-        assert!(outcome.snapshot.automation.prefill_note_name.value);
-        assert!(outcome.snapshot.automation.prefill_note_name.explicit);
-
-        let outcome = apply(
-            &dir,
-            patch_with(
-                &dir,
-                serde_json::json!({"automation": {"prefill_note_name": {"kind": "reset"}}}),
-            ),
-        );
-        assert_eq!(outcome.status, SettingsApplyStatus::Applied);
-        assert!(
-            file_json(&dir)["editor"].get("prefill_note_name").is_none(),
-            "Reset 是删键，不是写回出厂 false"
-        );
-        assert!(!outcome.snapshot.automation.prefill_note_name.value);
-        assert!(!outcome.snapshot.automation.prefill_note_name.explicit);
-    }
-
-    #[test]
-    fn revision_tracks_prefill_note_name() {
-        // 面板打开后外部改了同一个键：本笔保存必须判冲突，而不是拿旧 revision 覆盖。
-        let dir = TempDir::new("prefill-revision");
-        dir.write("{}");
-        let patch = patch_with(
-            &dir,
-            serde_json::json!({"automation": {"prefill_note_name": {"kind": "set", "value": true}}}),
-        );
-        let mut value = file_json(&dir);
-        value["editor"] = serde_json::json!({"prefill_note_name": false});
-        dir.write(&serde_json::to_string_pretty(&value).unwrap());
-
-        let outcome = apply(&dir, patch);
-        assert_eq!(outcome.status, SettingsApplyStatus::Conflict);
-        assert_eq!(outcome.errors[0].code, "settings_revision_conflict");
-        assert_eq!(
-            file_json(&dir)["editor"]["prefill_note_name"],
-            Value::Bool(false),
-            "冲突时文件不动"
-        );
     }
 }

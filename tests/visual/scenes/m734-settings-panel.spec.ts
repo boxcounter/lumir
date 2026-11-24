@@ -141,14 +141,11 @@ function settingsSnapshot(overrides: Json = {}): Json {
     providers: withRefs,
     active,
     active_explicit: true,
-    automation: {
+    automation: (automationOverride as Json | undefined) ?? {
       auto_compact: { value: true, explicit: false },
       session_naming: { value: true, explicit: false },
       attachment_naming: { value: true, explicit: false },
       subagents: { value: true, explicit: false },
-      // change add-default-note-name-nov24：第五个开关默认关（与上面四个默认开相反）。
-      prefill_note_name: { value: false, explicit: false },
-      ...((automationOverride as Record<string, Json> | undefined) ?? {}),
     },
     naming: {
       session: namingTarget(withRefs, "session", {
@@ -178,7 +175,6 @@ function settingsSnapshot(overrides: Json = {}): Json {
       session_naming_enabled: true,
       attachment_naming_enabled: true,
       subagents_enabled: true,
-      prefill_note_name: false,
       model_window: 131072,
     },
     diagnostics: [],

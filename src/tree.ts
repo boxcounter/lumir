@@ -297,10 +297,6 @@ export interface FileTreeCallbacks {
   /** 内联编辑提交（重命名 / 新建共用同一形态）：装配层去调后端命令，结果经
    *  `endInlineEdit` 回到树上——只有装配层知道后端与 tab 联动。 */
   onInlineEditSubmit(request: InlineEditRequest): void;
-  /** 新建文件的默认名（change add-default-note-name-nov24）：返回 undefined = 不预填（开关
-   *  关闭 / 键缺席），否则是默认名基础（调用方按当前界面语言取值）。树只把它写进新建文件的
-   *  输入框并全选；提交路径、`.md` 补全与撞名校验一字不动。 */
-  defaultNoteName?(): string | undefined;
   /** 拖拽移动提交（M530）：`from` 被拖入 `to` 所在目录（`to` = `moveTargetPath(from, 目标目录)`；
    *  根落点（M538）的目标目录是 `""`，`to` 因此就是末段名本身）。
    *  装配层调后端命令并负责失败提示（toast）；**成功的收敛与改名同纪律**——唯一通道是
@@ -1150,15 +1146,12 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     wireEdit(state, siblings);
     input.setAttribute("aria-label", kind === "dir" ? NEW_DIR_INPUT_LABEL() : NEW_FILE_INPUT_LABEL());
     input.focus();
-    // 新建文件的默认名（change add-default-note-name-nov24）：只作用于 file，目录不预填。
-    // 输入框只含主文件名（不含 .md），因此全选 = 「只选主文件名」；提交时仍由
-    // withDefaultFileExtension 一处补扩展名。开关关闭（回调返回 undefined）时输入框保持空。
+    // 新建文件的默认名（change add-default-note-name-nov24；Alex 2026-11-25 裁决改为始终启用，
+    // 不设配置开关）：只作用于 file，目录不预填。输入框只含主文件名（不含 .md），因此全选 =
+    // 「只选主文件名」；提交时仍由 withDefaultFileExtension 一处补扩展名。重名按最终落盘名递增。
     if (kind === "file") {
-      const base = cb.defaultNoteName?.();
-      if (base !== undefined && base !== "") {
-        input.value = uniqueNewNoteName(base, siblings);
-        input.setSelectionRange(0, input.value.length);
-      }
+      input.value = uniqueNewNoteName(t("D984"), siblings);
+      input.setSelectionRange(0, input.value.length);
     }
   }
 

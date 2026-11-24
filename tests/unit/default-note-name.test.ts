@@ -1,4 +1,5 @@
-// change add-default-note-name-nov24：新建文件的默认名（纯逻辑层）。
+// change add-default-note-name-nov24：新建文件的默认名（纯逻辑层；Alex 2026-11-25 裁决
+// 改为始终启用，不设设置项）。
 //
 // 这一层只钉两件可脱离 DOM 判定的东西：
 //   1. `uniqueNewNoteName` 的撞名递增——判据必须落在**最终落盘名**（补 `.md` 之后）上，
