@@ -203,27 +203,29 @@ steps:
     expect:
       - label: 五份文件五行（源 A + 恢复行 + compact + C + B）
         ax: { count: { pattern: "/AXMenuItem \\(/", exact: 5 } }
-      - label: 恢复行与源行都读 A 的最后活动（1月5日各一行、共两行）——恢复行不因新文件创建而伪造新读数
-        ax: { count: { pattern: "/AXMenuItem \\(活动排序甲 1月5日\\)/", exact: 2 } }
+      - label: 已发送的恢复行读真实当前活动，只有源 A 行仍读 1月5日（沿链取最大值而非覆盖本文件新轮次）
+        ax: { count: { pattern: "/AXMenuItem \\(活动排序甲 1月5日\\)/", exact: 1 } }
+      - label: 恢复行显示本轮真实活动的相对时间
+        ax: { has: "/AXMenuItem \\(活动排序甲 (\\d+(秒|分钟|小时)前|现在)\\)/" }
       - shot: 02-恢复一行不置顶
 
-  - name: 行 0 的 × 进确认态——恢复后 C 仍最前（700000 的新文件没有越过 600000）
+  - name: 行 0 的 × 进确认态——行 0 是已发送恢复行（自己的真实活动最晚，不是恢复动作钉顶）
     do: click
     target: { role: AXButton, name: "^删除该会话$", nth: 0 }
     expect:
-      - label: 行 0 仍是 C（恢复动作不置顶）
-        ax: { not: "/AXMenuItem \\(活动排序丙/" }
+      - label: 隐藏行 0 后恢复行的相对时间消失
+        ax: { not: "/AXMenuItem \\(活动排序甲 (\\d+(秒|分钟|小时)前|现在)\\)/" }
 
   - name: 取消行 0 的确认态
     do: click
     target: { role: AXButton, name: "^取消$" }
 
-  - name: 行 1 的 × 进确认态——行 1 应是第一次恢复的分支（读 400000）
+  - name: 行 1 的 × 进确认态——行 1 是 C（恢复行真实活动之后，C 的 600000 仍居其次）
     do: click
     target: { role: AXButton, name: "^删除该会话$", nth: 1 }
     expect:
-      - label: 隐藏行 1 后仍有一行读 1月5日（源行）——证实行 1 也是 A 的活动读数
-        ax: { count: { pattern: "/AXMenuItem \\(活动排序甲 1月5日\\)/", exact: 1 } }
+      - label: C 的名字随行 1 消失
+        ax: { not: "/AXMenuItem \\(活动排序丙/" }
   - name: 取消行 1 的确认态
     do: click
     target: { role: AXButton, name: "^取消$" }
@@ -232,8 +234,8 @@ steps:
     do: click
     target: { role: AXButton, name: "^删除该会话$", nth: 2 }
     expect:
-      - label: 隐藏行 2 后仍有一行读 1月5日（恢复行）——证实行 2 也是 A 的活动读数
-        ax: { count: { pattern: "/AXMenuItem \\(活动排序甲 1月5日\\)/", exact: 1 } }
+      - label: 隐藏行 2（源 A）后不再有 1月5日行——恢复行已因真实请求推进到当前时间
+        ax: { count: { pattern: "/AXMenuItem \\(活动排序甲 1月5日\\)/", exact: 0 } }
   - name: 取消行 2 的确认态
     do: click
     target: { role: AXButton, name: "^取消$" }
@@ -269,9 +271,9 @@ steps:
     waitFor:
       has: ["活动排序丙"]
     timeoutMs: 15000
-  - name: 点源 A 行再次恢复（同名三行中第 2 行 = 源 A；行 1 是第一次恢复的分支）
+  - name: 点源 A 行再次恢复（行 0 是第一分叉、行 1 是 C、行 2 才是源 A）
     do: clickInNode
-    target: { role: AXMenuItem, name: "活动排序甲", nth: 1 }
+    target: { role: AXMenuItem, name: "活动排序甲", nth: 2 }
 
   - name: 等第二次恢复完成
     do: waitFor
@@ -308,8 +310,10 @@ steps:
     expect:
       - label: 六份文件六行（源 + 两个分叉 + compact + C + B）
         ax: { count: { pattern: "/AXMenuItem \\(/", exact: 6 } }
-      - label: 三个 A 行都读 1月5日（源 + 两个分叉，各自继承链上活动）
-        ax: { count: { pattern: "/AXMenuItem \\(活动排序甲 1月5日\\)/", exact: 3 } }
+      - label: 两个已发送分叉各有真实当前活动，只有源 A 行仍读 1月5日
+        ax: { count: { pattern: "/AXMenuItem \\(活动排序甲 1月5日\\)/", exact: 1 } }
+      - label: 两个分叉都有相对活动读数（本文件各自的真实轮次）
+        ax: { count: { pattern: "/AXMenuItem \\(活动排序甲 (\\d+(秒|分钟|小时)前|现在)\\)/", exact: 2 } }
       - shot: 04-两次恢复三分叉
 
   # ── 删除一个分叉：只影响该行 ────────────────────────────────────────────────
@@ -328,9 +332,9 @@ steps:
     waitFor:
       has: ["活动排序丙"]
     timeoutMs: 15000
-  - name: 点行 1 的 ×（最新分叉）进确认态
+  - name: 点行 0 的 ×（最新分叉）进确认态
     do: click
-    target: { role: AXButton, name: "^删除该会话$", nth: 1 }
+    target: { role: AXButton, name: "^删除该会话$", nth: 0 }
     expect:
       - label: 行内确认态出现
         ax: { has: "删除这段会话的本地留存？" }
@@ -344,8 +348,8 @@ steps:
       not: ["删除这段会话的本地留存？"]
     timeoutMs: 15000
     expect:
-      - label: 只剩五个 A 活动读数行中的两行（源 + 另一分叉仍读 1月5日）
-        ax: { count: { pattern: "/AXMenuItem \\(活动排序甲 1月5日\\)/", exact: 2 } }
+      - label: 删除第二分叉后只剩源 A 读 1月5日；另一分叉保留自己的当前活动
+        ax: { count: { pattern: "/AXMenuItem \\(活动排序甲 1月5日\\)/", exact: 1 } }
       - label: C 仍在（删除不联动其它行）
         ax: { has: "/AXMenuItem \\(活动排序丙/" }
       - label: B 仍在
@@ -375,14 +379,14 @@ steps:
     waitFor:
       has: ["活动排序丙"]
     timeoutMs: 15000
-  - name: 行 0 的 × 进确认态——若 sidecar 计入活动，A 会凭 900001 抢到行 0
+  - name: 行 0 的 × 进确认态——仍是第一分叉自己的真实活动；sidecar 不改变顺序
     do: click
     target: { role: AXButton, name: "^删除该会话$", nth: 0 }
     expect:
-      - label: 行 0 仍是 C（sidecar 不参与排序）
-        ax: { not: "/AXMenuItem \\(活动排序丙/" }
-      - label: 改为标题后 A 的两行仍读 1月5日（可见行里恰两行）
-        ax: { count: { pattern: "/AXMenuItem \\(活动排序甲 1月5日\\)/", exact: 2 } }
+      - label: 行 0 仍是第一分叉的相对活动（sidecar 不参与排序）
+        ax: { not: "/AXMenuItem \\(活动排序甲 (\\d+(秒|分钟|小时)前|现在)\\)/" }
+      - label: 改为标题后只有源 A 行读 1月5日
+        ax: { count: { pattern: "/AXMenuItem \\(活动排序甲 1月5日\\)/", exact: 1 } }
       - shot: 06-sidecar不排序
 
   # ── 在 B 里真实发送一轮：B 的最后活动由后端写成实际当前时间 → 到最前 ────────
@@ -463,14 +467,14 @@ steps:
     do: click
     target: { role: AXButton, name: "^取消$" }
 
-  - name: 行 1 的 × 进确认态——C 落到第二
+  - name: 行 1 的 × 进确认态——行 1 是第一分叉（B 的恢复行之后）
     do: click
     target: { role: AXButton, name: "^删除该会话$", nth: 1 }
     expect:
-      - label: 行 1 是 C（活动第二）
-        ax: { not: "/AXMenuItem \\(活动排序丙/" }
-      - label: A 的两行仍读 1月5日（都排在 B 之后）
-        ax: { count: { pattern: "/AXMenuItem \\(活动排序甲 1月5日\\)/", exact: 2 } }
+      - label: 隐藏行 1 后第一分叉的相对活动消失
+        ax: { not: "/AXMenuItem \\(活动排序甲 (\\d+(秒|分钟|小时)前|现在)\\)/" }
+      - label: 只有源 A 行仍读 1月5日
+        ax: { count: { pattern: "/AXMenuItem \\(活动排序甲 1月5日\\)/", exact: 1 } }
       - label: compact 仍读自己的 1月4日（不与 A 合并、不继承）
         ax: { has: "/AXMenuItem \\(活动排序甲 1月4日\\)/" }
       - shot: 08-B后-A仍400
@@ -599,14 +603,14 @@ steps:
     do: click
     target: { role: AXButton, name: "^取消$" }
 
-  - name: 行 1 的 × 进确认态——行 1 仍是 C
+  - name: 行 1 的 × 进确认态——行 1 仍是第一分叉（打开期间没有重排）
     do: click
     target: { role: AXButton, name: "^删除该会话$", nth: 1 }
     expect:
-      - label: C 的名字随行 1 消失（打开期间没有重排）
-        ax: { not: "/AXMenuItem \\(活动排序丙/" }
-      - label: A 仍读旧活动 1月5日（本层不因后台写入而更新）
-        ax: { count: { pattern: "/AXMenuItem \\(活动排序甲 1月5日\\)/", exact: 2 } }
+      - label: 隐藏行 1 后第一分叉的相对活动消失
+        ax: { not: "/AXMenuItem \\(活动排序甲 (\\d+(秒|分钟|小时)前|现在)\\)/" }
+      - label: 只有源 A 行仍读旧活动 1月5日（本层不因后台写入而更新）
+        ax: { count: { pattern: "/AXMenuItem \\(活动排序甲 1月5日\\)/", exact: 1 } }
   - name: 取消行 1 的确认态
     do: click
     target: { role: AXButton, name: "^取消$" }
@@ -631,16 +635,18 @@ steps:
     expect:
       - label: B 的恢复行仍最前（本轮真实发送的活动晚于 1000000000）
         ax: { has: "/AXMenuItem \\(活动排序乙 (\\d+(秒|分钟|小时)前|现在)\\)/" }
-      - label: 重开后两条 A 行都读 9月9日（恢复行沿 restored_from 链继承源文件的新活动）
-        ax: { count: { pattern: "/AXMenuItem \\(活动排序甲 9月9日\\)/", exact: 2 } }
+      - label: 重开后只有源 A 行读 9月9日；已发送分叉保留更晚的真实活动，不被祖先时间覆盖
+        ax: { count: { pattern: "/AXMenuItem \\(活动排序甲 9月9日\\)/", exact: 1 } }
       - label: 1月5日 计数为 0（两条 A 行都不再显示旧活动）
         ax: { count: { pattern: "/AXMenuItem \\(活动排序甲 1月5日\\)/", exact: 0 } }
-  - name: 行 1 的 × 进确认态——行 1 应是其中一条 A 行（行 0 是 B 的恢复行）
+  - name: 行 1 的 × 进确认态——行 1 是第一分叉（行 0 是 B 的恢复行）
     do: click
     target: { role: AXButton, name: "^删除该会话$", nth: 1 }
     expect:
-      - label: 隐藏行 1 后另一条 A 行仍读 9月9日（同值时两条相邻、都沿同一链）
-        ax: { count: { pattern: "/AXMenuItem \\(活动排序甲 9月9日\\)/", exact: 1 } }
+      - label: 隐藏行 1 后第一分叉相对活动消失；源 A 的 9月9日仍在
+        ax: { not: "/AXMenuItem \\(活动排序甲 (\\d+(秒|分钟|小时)前|现在)\\)/" }
+      - label: 源 A 的 9月9日仍在（后台新活动沿链参与，但不覆盖分叉更晚的轮次）
+        ax: { has: "/AXMenuItem \\(活动排序甲 9月9日\\)/" }
       - label: 1月5日 仍为 0（隐藏动作不制造旧读数）
         ax: { count: { pattern: "/AXMenuItem \\(活动排序甲 1月5日\\)/", exact: 0 } }
 ---
@@ -655,12 +661,13 @@ steps:
 
 1. **创建与活动相反**：C 创建最早但活动最晚 → 行 0；A 创建早、活动晚 → 在 B 之前；B 创建晚、
    活动早 → 行 3（A 与 compact 在中间）。
-2. **恢复不置顶**：恢复 A 后 C 仍在最前；源行与恢复行都读 A 的最后活动（1月5日）、相邻，
-   且都不越过活动更晚的 C。
-3. **分支**：从源行再次恢复 → 三个 A 行都读 1月5日；删除其中一个分叉只该行消失。
+2. **恢复活动时间**：没有自己的轮次时恢复文件沿 `restored_from` 链继承；真实发送后本文件
+   请求 / 响应时间参与同一 `max` 计算，因此恢复行按真实当前活动落位，C 与源 A 不被覆盖。
+3. **分支**：从源行再次恢复并发送 → 两个分叉各有真实当前活动，只有源 A 读 1月5日；删除其中
+   一个分叉只该行消失。
 4. **sidecar 不计入**：给 A 追加 `session_title` / `notice_delivered`（ts 远晚于 C）后顺序不变。
-5. **真实发送**：在 B 的恢复行里真实发送一轮（后端写实际当前时间）→ B 到最前；C 第二；
-   A 的两行仍读 1月5日、都排在 B 之后；compact 仍读 1月4日。
+5. **真实发送**：在 B 的恢复行里真实发送一轮（后端写实际当前时间）→ B 到最前；第一分叉其次；
+   只有源 A 读 1月5日，compact 仍读 1月4日。
 6. **缺时间**：所有信封缺 ts 的旧文件排在最后。
 7. **同名不合并**：两份无谱系关系的同名会话各占一行、时间格不同。
 8. **打开期间不重排**：浮层打开时后台写入 A 的新活动，本层不动；重开才更新。
@@ -679,8 +686,11 @@ steps:
   （2026-11-24 真机现场：隐藏行 0 后点 `nth:3` 找不到节点，而实际顺序与行名都正确）。
   `ax.count` 的命名 / 日期计数只在**时间格**与「标题栏 + 行」同名的场合用（日期不会出现在
   标题栏；活跃会话名会额外贡献一次同名命中，故此时用 count 而不是 not）。
-- **恢复行不置顶的可区分判据**：恢复行的创建时刻是运行期「现在」（远晚于 600000），若按创建
-  时刻排序它会到行 0；本场景判「行 0 仍是 C」与「A 的两行都读 1月5日」。
+- **恢复不置顶只适用于没有自己的轮次**：该不变量由 Rust 测试
+  `restored_file_inherits_chain_activity_and_does_not_pin_top` 直接覆盖。真机在本场景里先真实发送再
+  看清单，因此恢复行的本文件活动是最新轮次，必须按 `max(本文件, 祖先链)` 到最前；不能再沿用旧实现
+  「查看即写 sidecar、尚无本文件轮次」时的 1月5日 / C 居首期望。源 A 的固定日期与 compact 的独立日期
+  仍逐行精确判定，不把当前活动误当成恢复动作钉顶。
 - **compact 不沿链**：compact 与 A 同名（`session_title`），且创建 300000 < A 的活动 400000。
   若 compact 错沿链继承 A 的 400000，它会与 A 同值并按 id 倒序落到 A 上面（id `s300000` >
   `s100000`），行 1 就会变成 compact → 「隐藏行 1 后仍见 1月5日」必红。
@@ -692,8 +702,8 @@ steps:
 - **「后台推进 A」用 1000000000 而不是未来时间**：`sessionWhen` 对未来时间做 0 秒钳制
   （`Math.max(0, now - at)` ⇒ 「现在」），写 2000000000 会显示「现在」而不是某个短日期。
   场景要判「行时间格真的换成新活动的日期」，因此取一个仍高于全部历史值、但早于运行期
-  「现在」的固定值（1e9 = 2001-09-09 ⇒ 「9月9日」）；重开后两条 A 行都沿
-  `restored_from` 链读到它，`1月5日` 计数为 0。
+  「现在」的固定值（1e9 = 2001-09-09 ⇒ 「9月9日」）；重开后源 A 沿链读到它，已发送分叉保留更晚的
+  真实活动，`1月5日` 计数为 0。
 - **真实发送的唯一写盘点**：B 的恢复行首条消息触发惰性落盘；断言挂在发送之后（M535 的
   落盘时机口径，与场景 106 同）。
 

@@ -8,9 +8,25 @@ marker: "HNL-ALPHA"
 seed:
   registry:
     - { id: acc-lazy, path: $vault, lastOpenedAt: 1757000002000 }
-  envFiles:
-    - { path: harness/sessions/acc-lazy/s100000-lazy-a.jsonl, from: "$fixtures/lazy-restore-a.jsonl" }
-    - { path: harness/sessions/acc-lazy/s200000-lazy-b.jsonl, from: "$fixtures/lazy-restore-b.jsonl" }
+  harnessSessions:
+    - vaultId: acc-lazy
+      name: s100000-lazy-a.jsonl
+      raw: |
+        {"ts":100000,"payload":{"kind":"session_open","session_id":"s100000-lazy-a","vault_root":"$vault","opened_from":"new","provider":"mock","model":"mock-model","thinking":"high","system":"S","assembly":[]}}
+        {"ts":100001,"payload":{"kind":"llm_request","request":{"system":"S","messages":[{"role":"user","content":[{"type":"input_text","text":"甲问题"}]}]}}}
+        {"ts":100002,"payload":{"kind":"llm_response","text":"甲回答"}}
+        {"ts":100003,"payload":{"kind":"session_title","title":"查看甲","decision":"initial","reason":"first-turn"}}
+        {"ts":100004,"payload":{"kind":"subrun","run_id":"run-lazy-a","agent":"research","description":"甲后台任务","status":"completed","model":"mock-model","usage":{"input_tokens":1,"cached_tokens":0,"output_tokens":1}}}
+        {"ts":100005,"payload":{"kind":"notice_delivered","run_ids":["run-lazy-a"],"wake_batch":"batch-lazy-a","shown_at":100005}}
+    - vaultId: acc-lazy
+      name: s200000-lazy-b.jsonl
+      raw: |
+        {"ts":200000,"payload":{"kind":"session_open","session_id":"s200000-lazy-b","vault_root":"$vault","opened_from":"new","provider":"mock","model":"mock-model","thinking":"high","system":"S","assembly":[]}}
+        {"ts":200001,"payload":{"kind":"llm_request","request":{"system":"S","messages":[{"role":"user","content":[{"type":"input_text","text":"乙问题"}]}]}}}
+        {"ts":200002,"payload":{"kind":"llm_response","text":"乙回答"}}
+        {"ts":200003,"payload":{"kind":"session_title","title":"查看乙","decision":"initial","reason":"first-turn"}}
+        {"ts":200004,"payload":{"kind":"subrun","run_id":"run-lazy-b","agent":"research","description":"乙后台任务","status":"completed","model":"mock-model","usage":{"input_tokens":1,"cached_tokens":0,"output_tokens":1}}}
+        {"ts":200005,"payload":{"kind":"notice_delivered","run_ids":["run-lazy-b"],"wake_batch":"batch-lazy-b","shown_at":200005}}
 steps:
   - name: 打开 harness pane
     do: keys
@@ -18,6 +34,11 @@ steps:
   - name: 打开历史浮层查看 A
     do: click
     target: { role: AXPopUpButton, name: "新会话" }
+  - name: 等 A 的历史行出现
+    do: waitFor
+    waitFor:
+      has: ["/AXMenuItem \\(查看甲/"]
+    timeoutMs: 15000
   - name: 查看 A
     do: clickInNode
     target: { role: AXMenuItem, name: "查看甲" }
@@ -29,6 +50,11 @@ steps:
   - name: 切到 B
     do: click
     target: { role: AXPopUpButton, name: "查看甲" }
+  - name: 等 B 的历史行出现
+    do: waitFor
+    waitFor:
+      has: ["/AXMenuItem \\(查看乙/"]
+    timeoutMs: 15000
   - name: 查看 B
     do: clickInNode
     target: { role: AXMenuItem, name: "查看乙" }
@@ -40,6 +66,11 @@ steps:
   - name: 再切回 A
     do: click
     target: { role: AXPopUpButton, name: "查看乙" }
+  - name: 等 A 的历史行出现
+    do: waitFor
+    waitFor:
+      has: ["/AXMenuItem \\(查看甲/"]
+    timeoutMs: 15000
   - name: 查看 A
     do: clickInNode
     target: { role: AXMenuItem, name: "查看甲" }
@@ -63,6 +94,11 @@ steps:
   - name: 再查看 A
     do: click
     target: { role: AXPopUpButton, name: "新会话" }
+  - name: 等重启后 A 的历史行出现
+    do: waitFor
+    waitFor:
+      has: ["/AXMenuItem \\(查看甲/"]
+    timeoutMs: 15000
   - name: 查看 A
     do: clickInNode
     target: { role: AXMenuItem, name: "查看甲" }
