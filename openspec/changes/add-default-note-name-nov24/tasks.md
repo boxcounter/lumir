@@ -51,6 +51,8 @@
 - [x] 5.3 `openspec validate --all --strict`、`scripts/docs-check.sh`、
       `node scripts/acceptance/coverage.mjs --check`、`node scripts/acceptance/run.mjs --check`、
       以及 gate 内的 tsc / 语法静态项全部通过。
-- [ ] 5.4 提交实现（不含归档）；真机场景 728 由主会话在真机窗口执行，证据落
-      `.local/acceptance/`。
-      现状：实现已提交（commit 由主会话收口），场景 728 已随本 change 入库，**尚未在真机执行**。
+- [x] 5.4 提交实现（不含归档）；真机场景 728 在真机窗口执行，证据落 `.local/acceptance/`。
+      r2：`2026-11-24-default-note-name-r2`，**1/1 PASS**（启动 3.5s / 就绪 1.8s / 场景 24.1s；
+      off 空占位、on 预填全选、键入替换、Enter 正文焦点、Escape、撞名递增、自定义撞名、配置
+      持久化全部 PASS）。r1 的失败是场景可见性问题（目录段在视口上方），修法为 test-only
+      `do: scroll`，未改产品代码与断言。

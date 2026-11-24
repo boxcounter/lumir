@@ -45,6 +45,18 @@ steps:
         ax: { has: "default-name-sub" }
 
   # ── 关档基线 ────────────────────────────────────────────────────────────
+  - name: 把新建落点目录滚进树的可视区
+    do: scroll
+    # 文件树初始滚动位置被启动时打开的 note.md 带到文件段中部；目录段排序在文件之前，
+    # 因此 default-name-sub 落在视口上方（首跑 AX：y=-929）。do: scroll 的 dy 正数 = 向上滚
+    # （M669 真机标定）；一次给足量，滚到顶后目录段与 vault 名行都可见。
+    target: { x: 100, y: 400 }
+    dy: 120
+    wheel: true
+    settleMs: 600
+    expect:
+      - shot: 00-树滚动到落点
+
   - name: 开关关闭时新建文件：输入框为空、只有占位
     do: click
     target: { role: AXButton, name: "^default-name-sub$", button: right }
@@ -272,6 +284,13 @@ teardown:
 
 ## 已知边界（如实登记）
 
+- **文件树初始滚动位置（r1 真机现场）**：验收 vault 每次重置为全部 `.md` fixtures，树里文件很多；
+  启动时 `open: note.md` 会把树滚到文件段中部。目录段按 `byTreeOrder` 排序在文件之前，因此场景
+  新建的 `default-name-sub` 落在视口上方（r1 AX 读数 @207,-929），右键的**真实指针坐标**不可达，
+  首跑因此在第一个右键动作上 FAIL、后续 teardown 连锁红。修法是 test-only：在第一次右键前
+  `do: scroll`（`wheel: true` 真实 CGEvent 滚轮，`dy` 正数 = 向上滚，M669 标定）把目录段带回
+  视口；**没有放宽任何产品断言**。r2 真机 1/1 PASS，证据
+  `.local/acceptance/2026-11-24-default-note-name-r2/`。
 - **全选状态本身读不到**：WKWebView 的 AX 不暴露 input 的 selection range。本场景用「键入后
   输入框恰为键入值、且不含默认名」作区分性判据——若实现只把 caret 放在末尾，值会是
   `未命名笔记probe`，两条断言同时红。
