@@ -99,6 +99,16 @@ import {
   urlTitleReplacement,
 } from "./paste-url";
 import type { PasteUrlTitlePort, PendingUrlTitle } from "./paste-url";
+import {
+  acceptLinkSuggestion,
+  closeLinkSuggestion,
+  linkSuggestExtension,
+  linkSuggestKeyboardEvent,
+  linkSuggestRefresh,
+  linkSuggestionIsOpen,
+  linkSuggestionIsSettling,
+  moveLinkSuggestion,
+} from "./link-suggest";
 
 // 编辑器单内核双模式（ADR 0002 §2）：一个 CM6 内核、两种模式。
 // md = 高亮 + live preview 装饰层（src/preview/）；code = 仅高亮。
@@ -1491,6 +1501,8 @@ export interface EditorHandle {
    * 装饰层据此做三态渲染；null 时走降级渲染（不做语义判断）。
    */
   setWikilinkResolver(resolver: WikilinkResolver | null): void;
+  /** 注入与 Quick Open 相同的 vault 文件索引活读口；只用于行内 [[ 候选，不发 IPC。 */
+  setLinkSuggestFiles(files: () => readonly string[]): void;
   /**
    * 注入图片放大查看的遮罩（M184）；未注入（维护性调用 / 纯桩）时图片没有双击路径。
    */
@@ -1686,7 +1698,7 @@ function wrapExtensions(mode: EditorMode, settings: WrapSettings): Extension[] {
 }
 
 /**
- * 四个 Compartment 的**模块级单例**（M317 tasks 4.1，tower 裁决采 (a)，2026-10-03；r1 评审
+ * 五个 Compartment 的**模块级单例**（M317 tasks 4.1，tower 裁决采 (a)，2026-10-03；r1 评审
  * P1-1 补入 baseCompartment）。
  *
  * 为什么必须模块级：跨 pane 移动标签要把**同一份 `EditorState` 对象**迁到目标 pane 的视图上
@@ -1737,6 +1749,7 @@ const gutterCompartment = new Compartment();
  * `@codemirror/commands` 的模块级 StateField，reconfigure 不丢撤销栈——探针实测）。
  */
 const baseCompartment = new Compartment();
+const linkSuggestCompartment = new Compartment();
 
 /**
  * `editor.auto_indent` 的 TypeScript 侧出厂默认与 `Enter` 的命令体都在
@@ -1778,7 +1791,7 @@ export interface EditorCreateOptions {
 }
 
 export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md", markdownConfig: Parameters<typeof markdown>[0] = { base: markdownLanguage, extensions: [GFM] }, options: EditorCreateOptions = {}): EditorHandle {
-  // 四个 Compartment（mode / 折行 / gutter / 基础层）是**模块级共享**的，理由见其声明处（M317 4.1）。
+  // 五个 Compartment（mode / 折行 / gutter / 基础层 / wikilink 候选）是**模块级共享**的，理由见其声明处（M317 4.1）。
   // 前台会话「可编辑性」的**投影**：changeFilter 的闭包在 state 创建时就绑好了，只能读实例
   // 变量，所以真源放在会话上（EditorSession.editable），这里只是把它投给创建期闭包。
   // 唯一写入点是 syncProjection()，由激活 / 装载 / setMode 三处调用——不构成第二份真源。
@@ -1832,6 +1845,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   let contentWidth = DEFAULT_CONTENT_WIDTH;
   let provider: AttachmentProvider = createInvokeAttachmentProvider();
   let wikilinkResolver: WikilinkResolver | null = null;
+  let linkSuggestFiles: () => readonly string[] = () => [];
   /** 图片放大查看的遮罩（M184）：装配层注入，装饰层只经 PreviewContext 取用。 */
   let lightbox: ImageLightbox | null = null;
   /**
@@ -1904,6 +1918,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   /** 前台会话。`updateDirty` / `cleanDoc` / `currentPath` 这些原本的实例级单值
    *  一律改从它读，避免「内核以为在改 A、其实 view 显示的是 B」这类静默错配。 */
   let active: EditorSession;
+  const linkSuggest = linkSuggestExtension(
+    () => linkSuggestFiles(),
+    () => active?.mode === "md" && isDocSession(active),
+  );
   /** 导航行高亮（change add-path-line-target-highlight-nov02）的持有者与消退计时器。
    *  装饰存于各会话自己的 state；`view` 只是当前那一份的显示面，因此计时到点必须按**会话**
    *  清除（见 clearSessionLineHighlight），否则切标签后会把 null 派发到别的会话上、原会话的
@@ -2040,7 +2058,12 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       keymap.of([
         {
           key: "Enter",
-          run: (view) => enterWithAutoIndent(view, mode, autoIndent),
+          run: (view) => {
+            const event = linkSuggestKeyboardEvent(view);
+            if (mode === "md" && linkSuggestionIsOpen(view) && (linkSuggestionIsSettling(view) || (event !== undefined && (event.isComposing || event.keyCode === 229)))) return false;
+            if (mode === "md" && acceptLinkSuggestion(view, event)) return true;
+            return enterWithAutoIndent(view, mode, autoIndent);
+          },
         },
         {
           key: "Backspace",
@@ -2291,6 +2314,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   function modeAndWrapEffects(mode: EditorMode, path: string | undefined, editable: boolean): StateEffect<unknown>[] {
     return [
       modeCompartment.reconfigure(modeExtensions(mode, path, editable)),
+      linkSuggestRefresh.of(null),
       wrapCompartment.reconfigure(wrapExtensions(mode, wrap)),
     ];
   }
@@ -2492,7 +2516,11 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
    *  现取的。`state.update({ effects })` 不带 changes ⇒ 不制造撤销事件、不重新解析；history 是
    *  模块级 StateField，reconfigure 不丢撤销栈。 */
   function rebindEffects(mode: EditorMode, path: string | undefined, editable: boolean): StateEffect<unknown>[] {
-    return [...modeAndWrapEffects(mode, path, editable), baseCompartment.reconfigure(baseExtensions())];
+    return [
+      ...modeAndWrapEffects(mode, path, editable),
+      baseCompartment.reconfigure(baseExtensions()),
+      linkSuggestCompartment.reconfigure(linkSuggest),
+    ];
   }
 
   /**
@@ -2560,6 +2588,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         // 基础层（changeFilter + updateListener）：绑实例闭包，收进模块级共享的 baseCompartment，
         // 由 adoptSession 用目标实例的闭包重配（见 baseExtensions / rebindEffects 的 P1-1 说明）。
         baseCompartment.of(baseExtensions()),
+        linkSuggestCompartment.of(linkSuggest),
         // 折行口径（M180）：正文行（`lineWrapping`）与代码块行（内容级 class）两层的装配点。
         // 值取应用运行期的折行状态——新会话因此从**当前应用态**起步，而不是配置默认
         //（配置只是启动时喂进来的初值）：这正是 D1「应用级」与初稿「标签页级」的关键差异。
@@ -2724,10 +2753,12 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     "editor.focus-block-scroll": () => {
       focusBlockScroll(view);
     },
-    "editor.cursor-up": () => {
+    "editor.cursor-up": (event) => {
+      if (moveLinkSuggestion(view, -1, event)) return;
       moveCaretVertically(view, false);
     },
-    "editor.cursor-down": () => {
+    "editor.cursor-down": (event) => {
+      if (moveLinkSuggestion(view, 1, event)) return;
       moveCaretVertically(view, true);
     },
     "editor.cursor-forward": (event) => {
@@ -2928,6 +2959,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       const effects = clearPendingUrlTitleEffects(active.state);
       if (effects.length > 0) active.state = active.state.update({ effects }).state;
     }
+    closeLinkSuggestion(view);
     active = session;
     syncProjection();
     readyPath = session.path;
@@ -3139,6 +3171,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // 模式（含视图层可编辑性）与折行一起重配：代码块内容级 class 只在 md 模式有意义
       //（见 modeAndWrapEffects）。可编辑性不随模式漂移，取会话上那一份（active.editable）。
       view.dispatch({ effects: modeAndWrapEffects(mode, active.path, active.editable) });
+      if (mode !== "md") closeLinkSuggestion(view);
       // C3（change cursor-visibility-oct23）：切到 md 之后若编辑器仍聚焦，边界光标会显形
       //（code 模式下没有 frontmatter 检测场，normalizer 自然 no-op）。
       if (view.hasFocus) normalizeFrontmatterCaret(view);
@@ -3244,6 +3277,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         setSessionDirty(session, false);
         return;
       }
+      closeLinkSuggestion(view);
       readyPath = path;
       readyRequestId = requestId;
       const serial = ++readySerial;
@@ -3401,10 +3435,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       activate(blank);
     },
     adoptSession(session: EditorSession) {
-      // 跨实例接管（M317 4.1 + r1 评审 P1-1）：四个 Compartment 已提为模块级共享，因此**原
+      // 跨实例接管（M317 4.1 + r1 评审 P1-1）：五个 Compartment 已提为模块级共享，因此**原
       // state 对象整体迁入**（撤销史 / 语法树 / 选区 / 搜索查询等全部 StateField 随 state 走，
       // MUST NOT 重建——重建会清空撤销栈，与 design §6 冲突），随后用本实例的闭包**换绑**
-      // 模式 / 折行 / 基础层三处扩展：迁入的 state 带的仍是源实例的闭包，不回写就会让迁移会话
+      // 模式 / 折行 / 基础层 / wikilink 候选四处扩展：迁入的 state 带的仍是源实例的闭包，不回写就会让迁移会话
       // 在目标 pane 的编辑落到源实例前台会话（污染 + 丢编辑 + dirty 漏判，P1-1 的后果链）。
       // `state.update({ effects })` 不带 changes ⇒ 不制造撤销事件、不重新解析；history 是模块级
       // StateField，reconfigure 不丢撤销栈。
@@ -3438,6 +3472,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       readyRequestId = undefined;
       // 行高亮的装饰随会话作废；计时器与持有者先清，避免悬挂回调指向已丢弃的 state。
       clearLineHighlight();
+      closeLinkSuggestion(view);
       // 全部会话作废，只留一个未命名空文档（vault 切换 / 关闭）。旧会话对象随 GC 回收。
       sessions.length = 0;
       // mtime 缓存按路径索引，vault 换了同 rel 路径指向别的文件——随会话一起作废。
@@ -3464,6 +3499,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     setWikilinkResolver(next: WikilinkResolver | null) {
       wikilinkResolver = next;
       view.dispatch({ effects: previewRefresh.of(null) });
+    },
+    setLinkSuggestFiles(next: () => readonly string[]) {
+      linkSuggestFiles = next;
+      view.dispatch({ effects: linkSuggestRefresh.of(null) });
     },
     setLightbox(next: ImageLightbox | null) {
       lightbox = next;
