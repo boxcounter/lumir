@@ -4,6 +4,19 @@
 - 日期: 2026-11-24（初稿）；2026-11-25 按 Alex 新决定修订
 - 角色: Alex Lee（评审/裁决），AI agent（起草与实现）
 
+> **节点状态（先读这一段）**
+>
+> - **Alex 最终决定（2026-11-25）**：默认名**始终启用**，不设设置项——原话「去掉它吧，也就是
+>   默认文件名不需要设置项，默认就是这个行为。」`editor.prefill_note_name` 配置键、Raw /
+>   validate / settings snapshot / patch / revision / bindings 暴露、自动化节第五行与文案
+>   D985–D987 已全部删除；设置面板恢复四开关原样。
+> - **行为合同**：`create-file` 始终预填 D984 主名并全选；撞名递增、键入替换、Enter 接受、
+>   Escape 取消、正文焦点保持；create-dir / 重命名 / wikilink / 未命名内存文档不变。
+> - **节点 1**：Alex 2026-11-24「批准。」（初稿为可开关特性）；2026-11-25 新决定改为始终启用。
+> - **独立复审 r4**：agent-374 对 `560a190e` 判 **clean / merge**，报告
+>   `.local/reviews/default-note-name-r4.md`；r1 的 P2 断言 / 文案问题已修，r2/r3 无新增问题。
+> - **tasks 19/19 全勾**；无基线批准需求（设置页相对 base 零改动，原 10 张基线不变）。
+
 > 评审记录
 > 节点 1：Alex 2026-11-24 裁决原话「批准。」——方向为「可开启的小特性，新建文件时预填人类可读
 > 默认名并选中」。初稿据此刻了 `editor.prefill_note_name` 配置开关与设置面板第五行。
@@ -66,3 +79,27 @@ Alex 2026-11-25 的决定把「要不要预填」从用户偏好收回到产品�
    推荐接受这个边界，不为它引入一次目录枚举或异步等待。
 3. **旧配置键**：不迁移、不警告、不双读；`editor.prefill_note_name` 不再被消费（AGENTS.md
    「变更默认直接切断」）。
+
+## 节点 2 记录（归档前）
+
+五要件：
+
+1. **方案已批准**：Alex 2026-11-24「批准。」；2026-11-25 最终决定「去掉它吧，也就是默认文件名
+   不需要设置项，默认就是这个行为。」本 change 据此改为始终启用，无配置键 / 设置行 / 兼容层。
+2. **独立 reviewer clean / merge**：agent-374 对 `560a190e` 判 clean / merge（报告
+   `.local/reviews/default-note-name-r4.md`）。其后仅 proposal / tasks 节点 2 记录、backlog
+   跟踪与归档目录 / living spec 并入，无产品 / 测试代码改动。
+3. **tasks 完成**：`tasks.md` 19/19 全勾（1.1–1.3、2.1–2.5、3.1–3.4、4.1–4.4、5.1–5.3）。
+4. **门禁与真机证据**：
+   - quick：`GATE RESULT: 13/13 PASS（SKIP 0）`（exit 0），含 bindings-drift PASS。
+   - 完整视觉：`GATE PASS visual-regression 910s`；`gate.sh visual` 当时汇总
+     `GATE RESULT: 14/15 PASS（SKIP 0）`，唯一 FAIL 是 `bindings-drift` 的「重导出未 staged」
+     提示（非测试失败），staging 后 quick 中该项 PASS。
+   - 设置面板 `m734-settings-panel` 43/43 PASS（含原 10 张元素像素基线）；**无任何基线文件
+     改动，不需要 Alex 批准基线更新**。
+   - 真机 728：1/1 PASS / **28 断言**，总 29.1s（启动 8.1 / 就绪 2.5 / 场景 18.5），
+     `file.exact: ""` 两处 `0 字符逐字一致`；证据
+     `.local/acceptance/2026-11-25-default-note-name-always/`。
+5. **规格对账**：`node scripts/openspec-archive-check.mjs --change add-default-note-name-nov24`
+   PASS；`openspec validate --all --strict` 40 passed / 0 failed；`scripts/docs-check.sh` PASS；
+   `docs/backlog.md` 归档跟踪队列有且仅有一条本 change 条目。

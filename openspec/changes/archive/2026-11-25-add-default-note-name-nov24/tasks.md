@@ -50,6 +50,8 @@
 - [x] 5.1 相关单测、`scripts/gate.sh quick`、`openspec validate --all --strict`、
       `scripts/docs-check.sh`、`git diff` 审阅全绿。quick：`GATE RESULT: 13/13 PASS（SKIP 0）`；
       validate：40 passed / 0 failed；docs-check PASS。
-- [x] 5.2 完整视觉门禁（隔离端口 4281）通过：`GATE RESULT: 15/15 PASS（SKIP 0）`，
-      `visual-regression` PASS；设置页恢复四开关后**没有任何像素基线差异，未更新基线**。
+- [x] 5.2 完整视觉套件（隔离端口 4281）：`GATE PASS visual-regression 910s`；`gate.sh visual`
+      当时汇总 `GATE RESULT: 14/15 PASS（SKIP 0）`，唯一 FAIL 是 `bindings-drift` 的「重导出
+      未 staged」提示（非测试失败），staging 后 quick 中该项 PASS。设置面板 43/43（含原 10 张
+      元素基线），**无任何像素基线差异，未更新基线，不需要基线批准**。
 - [x] 5.3 提交新 tip（不含归档）；不更新基线。
