@@ -20,7 +20,8 @@
 > - **内存例外（2026-11-24）**：真实 release A/B 为 master 262.64MB、composer 267.75MB，二者均超
 >   250MB 门禁，composer 高 5.1MB；keypress median 9.60ms。Alex 明确「允许 composer 内存例外」，
 >   允许按功能证据合并归档，但不宣称内存验收通过，发布说明保留本地未达标与内存专项。
->   living spec 的改动仍以 delta 留在本目录，归档时并入，不提前改写。
+>   实现与节点 2 材料已合并推送至 master（`a539f52f`）；本次提交执行归档，living spec 已由
+>   归档包装器并入。
 
 ## 裁决记录（2026-11-23）
 
