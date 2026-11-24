@@ -57,3 +57,10 @@
    - 865 修正后的 quick：`GATE RESULT: 13/13 PASS（SKIP 0）`（exit 0）；证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/fix-wikilink-caret-reveal-nov24/gate-quick-865-r2.log`。
    - 真机 865：1/1 PASS，29 断言、0 失败、19.3s；证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-24-wikilink-caret-reveal-r2/`。首轮 mtime 推进来自场景自身两次显式 ⌘S，不是产品自动写盘；恢复原文后哈希相同而 mtime 合法变化，故 test-only 改在恢复保存后另记手势基线。AX 失败是 inline `AXStaticText` 无 bbox 的定位错误，test-only 改用 `AXTextArea` bbox 比例偏移。两项修正均未追加产品改动。
 5. **规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs --change fix-wikilink-caret-reveal-nov24` → `PASS（扫过 2 份 delta，3 条 MODIFIED，对比 67 段，无静默丢段）`；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 与 `bash scripts/docs-check.sh` 均 PASS；`docs/backlog.md` 归档跟踪队列有且仅有一条本 change 条目。放行方式：机器 + 独立评审放行（本节要件）。
+
+### 归档后
+
+- **归档提交**：`daf2b29a915d4fc7ce3d68745c7102ac898e4272`（归档目录、living spec、反向关联链接与队列记录一起提交）。
+- **包装器实际输出**：`editor-live-preview: update`、`wikilink-navigation: update`，`Totals: + 0, ~ 3, - 0, → 0`；`Change 'fix-wikilink-caret-reveal-nov24' archived as '2026-11-24-fix-wikilink-caret-reveal-nov24'.`，不是纯目录移动。CLI 报 `Task status: 16/17 tasks`，唯一未勾项为归档自身 4.3，已在审计 PASS 后补齐。
+- **修链读数**：包装器修归档内链接 2 处（关联 change 与渲染缺陷合同链接）；随后因活跃关联 change 的反向指针仍指向旧活跃目录，首次 `openspec-links` 报 1 条不可达。将该反向指针改到归档目录后，`openspec-links: PASS（校验 699 条相对链接，全部可达）`。
+- **`--archived` 审计**：`PASS（openspec/changes/archive/2026-11-24-fix-wikilink-caret-reveal-nov24：3 条 MODIFIED，对比 67 段；人工恢复 0 段，声明认领 0 段）`，跑于 2026-11-24T23:48:19+08:00；日志 `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/fix-wikilink-caret-reveal-nov24/archive-archived-audit.log`。
