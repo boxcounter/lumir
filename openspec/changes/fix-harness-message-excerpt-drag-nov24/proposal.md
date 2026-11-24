@@ -23,7 +23,7 @@
 - 不删除、跳过或放宽选区、浮动钮几何、卡片出处、序列化与 transcript 同构断言。
 - 不把固定坐标改成程序化 DOM 选区，不用 `select_text` 替代真实 CGEvent 拖选。
 - 不并行运行其他真机场景；本 change 的真机验证只跑 121。
-- 不归档；独立评审与节点 2 放行不在本任务内。
+- 不 merge / push；仅在本 change 五要件齐后归档，其他 change 不在范围内。
 
 ## Impact
 
@@ -31,3 +31,22 @@
 - 影响的代码/系统：仅 `scripts/acceptance/scenarios/121-harness-message-excerpt.md` 与本 change 制品。
 - 验证：场景静态检查、OpenSpec strict validate、`scripts/gate.sh quick`（含 docs-check）；消息摘录 Chromium 行为套件作产品侧对照，完整 121 WKWebView 真机为最终判据。
 - 关联约束：真实选区行为合同、固定布局坐标的重标定纪律，以及「证据未实际取得不得写成 PASS」。
+
+## 节点 2：归档放行记录（2026-11-24）
+
+**机器 + 独立评审放行（五要件）**：
+
+1. **方案已批准**：2026-11-24 任务书明确「test-only 则保持行为判据、产品缺陷则先不变量与修前红」并要求创建缺陷 change；本轮指令明确要求完成节点 2 与归档。实现未扩大产品行为面，`src/` 与 Rust 零改动。
+2. **独立 reviewer clean / merge**：agent-373 对 `fe04278a2264becb11c103e443135c8407192c1f` 结论 clean / merge，确认坐标与选区 / 摘录卡判据真实、无产品修复需要。
+3. **tasks 完成**：1.1–2.6 全部勾选；真实失败、诊断 A/B、最终 PASS、门禁与评审结论均已回填，无放弃项。
+4. **门禁与真机证据通过**：
+   - 修前两轮均为真实 0/1 FAIL，均在首次真实拖选、尚未到 composer locator：日志 `.local/missions/approval-visibility-nov24/acceptance-121-locator.log` 与 `acceptance-121-locator-r2.log`，证据 `.local/acceptance/2026-11-24-composer-locator-121*`。`baseline-r1` 是安装版实例导致的 exit 2 环境拒跑，MUST NOT 计入真实 FAIL。
+   - 诊断 `fix-r1` 为有效 0/1 FAIL（34.0s）：`AXfocusedWindow=true` 与编辑器焦点成立，旧坐标仍失败，排除 key-window；证据 `.local/acceptance/2026-11-24-message-excerpt-drag/fix-r1/`。
+   - 最终 `fix-r2`：121 **1/1 PASS、19 条断言、23.693s、exit 0**，首次与第二次真实选区、composer 第二问、transcript 同构和 wire 序列化均通过；证据 `.local/acceptance/2026-11-24-message-excerpt-drag/fix-r2/`。
+   - `node scripts/acceptance/run.mjs --check 121`：279 个场景静态校验通过；`scripts/visual/run.sh scenes/m423-message-excerpt.spec.ts`：8/8 PASS。
+   - `scripts/gate.sh quick`：**`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0**，日志 `.local/missions/message-excerpt-drag-nov24/gate-quick-final.log`。
+   - `git diff --name-only 8fdf14e0..fe04278a` 仅列场景与本 change 三份制品，无产品代码改动。
+5. **规格对账无丢段**：
+   - `node scripts/openspec-archive-check.mjs --change fix-harness-message-excerpt-drag-nov24`：`PASS（扫过 1 份 delta，0 条 MODIFIED，对比 0 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目）`。
+   - `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`：40 passed / 0 failed。
+   - `bash scripts/docs-check.sh`：PASS（含归档队列唯一、backlog 80/80、链接 699 条、验收契约与自测）；`git diff --check` 退出码 0。
