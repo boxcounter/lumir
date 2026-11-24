@@ -72,7 +72,7 @@ const PROJECT = functionBodyOf(PANEL_SOURCE, "projectActivity");
 const APPLY_ENTER = functionBodyOf(PANEL_SOURCE, "applyEnterSnapshot");
 const ATTACH_TASK = functionBodyOf(PANEL_SOURCE, "attachTaskApproval");
 const HANDLE = functionBodyOf(PANEL_SOURCE, "handleEvent");
-const SEND = functionBodyOf(PANEL_SOURCE, "send");
+const SEND = functionBodyOf(PANEL_SOURCE, "performSend");
 
 // ── 1. 单一判据：全仓只有 hasPendingApprovals 读集合大小 ─────────────────────
 
@@ -288,12 +288,12 @@ test("子运行待批不计入父会话：任务区卡不调待批重施", () =>
   assertNoMatch(ATTACH_TASK, /refreshApprovalSignal|pendingApprovals\.clear/, "父子两条呈现路径不互相触发");
 });
 
-// ── 5. 发送最终几何：只加在 send()，且只有一次 ─────────────────────────────
+// ── 5. 发送最终几何：只加在 performSend()，且只有一次 ─────────────────────
 
-test("send：beginSendActivity 之后按最终几何再回底一次（幂等；本文件内唯一一次跳底）", () => {
+test("performSend：beginSendActivity 之后按最终几何再回底一次（幂等；本文件内唯一一次跳底）", () => {
   const begin = SEND.indexOf("beginSendActivity(sendVault)");
   const jumps = [...SEND.matchAll(/follow\.jumpToBottom\(\)/g)];
-  assert.equal(jumps.length, 1, `send() 里只允许一次显式跳底（实际 ${jumps.length}）`);
+  assert.equal(jumps.length, 1, `performSend() 里只允许一次显式跳底（实际 ${jumps.length}）`);
   assert.notEqual(begin, -1, "乐观起点仍在");
   assert.ok((jumps[0].index ?? 0) > begin, "第二跳必须在相位 / 进度块落定之后");
 });
