@@ -18,8 +18,10 @@
 > - 本稿有一处**起草期发现**改变了调研建议的落点：面板打开（分栏）时标题栏 toggle 徽标是
 >   **隐藏的**（既有退让条款），所以「把同一状态同步进徽标」在用户正看着 transcript 时不成立。
 >   滚动区外的信号改落在标题栏 harness 段（`.lumir-hp-seg`）。见 D2 与「关键事实」。
-> - 本 change 只到提案层：living spec 的改动以 delta 形式留在本 change 目录内，归档时并入，
->   **不提前改写** `openspec/specs/harness/spec.md`。
+> - **实现与节点 2 材料（2026-11-24）**：最终 tip `7cde918f`，独立评审 r4 clean / merge；完整视觉
+>   `GATE RESULT: 15/15 PASS（SKIP 0）`，基线未更新。真机 725 与既有场景安排在 Alex 指定的
+>   11:32–13:32 窗口，PASS 后方可归档。
+> - 本 change 的 living spec 改动以 delta 形式留在本目录内，归档时并入，不提前改写。
 > - r1 独立评审 `needs-changes` 的六项已并入本稿：终态统一撤回与 stale 清理、enter 前置不变量、
 >   标题栏会话名链路可收缩、尾行 change 的硬前置门禁与优先级、detached 场景事件顺序、m384 的
 >   running 桩与不重复播报断言。

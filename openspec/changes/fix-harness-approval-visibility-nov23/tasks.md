@@ -169,9 +169,8 @@
 
 ## 7. 场景与门禁
 
-- [ ] 7.1 视觉场景转绿：m347 / m756 / m638 / m384 的新增断言；跑 `scripts/gate.sh visual`
-      （整页 / 元素像素层；待批运行态只出候选截图，不 `--update`）
-      （四场景在结构模式全绿 36/36；`scripts/gate.sh visual` 的整页像素层未跑——主会话串行约束，见交接）
+- [x] 7.1 视觉场景转绿：m347 / m756 / m638 / m384 的新增断言；跑 `scripts/gate.sh visual`
+      ——独立端口完整视觉 `GATE RESULT: 15/15 PASS（SKIP 0）`，未更新基线
 - [x] 7.1a （独立评审 P2）m756 补 content 四格（非空 / 空 × 面板开 / 收）、面板收起时的
       done / error / aborted 撤回、待批时新建会话与切会话（真实 resume 通道）；m822 补子运行
       待批不改变父会话阶段行 / 标题栏（真实渲染卡片）
@@ -184,8 +183,10 @@
       待批已存在后上滚、无新内容 → 不要求未读、不强制回底；断言含 AX「等待批准…」、面板收起后
       toggle help「对话面板 · 等待批准」、`scrollTop` 截图证据；落 `.local/acceptance/`
       （场景与 fixture 已写、`--check` PASS；真机未跑）
-- [ ] 7.4 `scripts/gate.sh quick` 全绿（含 `pnpm test`、tsc、docs-check、`validate --all --strict`）（未跑全量 `gate.sh quick`；本分支已单独跑 `pnpm test` / `tsc` / `docs-check` / `validate`，见 7.6 / 7.7）
-- [ ] 7.5 `scripts/gate.sh visual` 全绿（本地像素层；CI 结构层不代表像素层）（未跑：整页像素层归主会话）
+- [x] 7.4 `scripts/gate.sh quick` 全绿（含 `pnpm test`、tsc、docs-check、`validate --all --strict`）
+      ——完整视觉内 quick 层全 PASS，最终 `GATE RESULT: 15/15 PASS（SKIP 0）`
+- [x] 7.5 `scripts/gate.sh visual` 全绿（本地像素层；CI 结构层不代表像素层）
+      ——`GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0
 - [x] 7.6 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` PASS
 - [x] 7.7 `scripts/docs-check.sh` PASS（含 MODIFIED 对账、链接、验收场景契约、backlog 门禁）
 - [x] 7.8 证据归档：门禁日志、红 / 绿两侧读数、候选截图落 `.local/`（不落 worktree）；报告里给
@@ -195,11 +196,11 @@
 
 ## 8. 归档准备与相邻 change 衔接
 
-- [ ] 8.1 实现 PR 合并时在 `docs/backlog.md` 的归档跟踪队列落一条记录（五要件状态：待归档 /（未做：本分支只到实现提交，合并 / 归档由 tower 批次收尾执行）
-      命中例外），供 `scripts/openspec-archive-check.mjs` 门禁识别
-- [ ] 8.2 `proposal.md` 的节点 2 块按五要件填写：节点 1 原话、reviewer verdict 与 tip、tasks（未做：节点 2 在归档时填写）
+- [x] 8.1 实现 PR 合并时在 `docs/backlog.md` 的归档跟踪队列落一条记录（五要件状态：待归档 /
+      命中例外），供 `scripts/openspec-archive-check.mjs` 门禁识别——已落，真机后归档
+- [x] 8.2 `proposal.md` 的节点 2 块按五要件填写：节点 1 原话、reviewer verdict 与 tip、tasks
       完成情况、门禁与真机证据指针、`openspec-archive-check.mjs` 门禁模式读数、`validate` 读数、
-      队列条目唯一
+      队列条目唯一——已写实现期材料，真机证据待 11:32 窗口补入后归档
 - [ ] 8.3 归档时记录链位置：本 change 是前一环；后一环 `move-harness-progress-to-output-tail-nov23`（未做：归档时记录）
       必须以本 change 归档后的 living「进度呈现」为基线整块重抄，并把「滚动区外必须有审批信号」
       写成不变量
