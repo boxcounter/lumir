@@ -73,8 +73,13 @@ steps:
       - shot: 02-引用卡入composer
 
   - name: 写问题（卡片下一行）
+    # composer inline cards（master 已合并）后，卡片是 composer 内的 widget：AXTextArea 的
+    # label 仍是占位句「问点什么…」，旧的 tray 形态才会把卡片出处「Agent」读成 AX 名。
+    # 按 typeInNode 的硬口径并联「占位名 | 本轮注入文本」（M779）：注入前命中占位句，注入后
+    # 命中 value。卡片在 widget 里、插入后 composer 已聚焦，type_text 追加到文档末尾 = 卡片
+    # 之后；动作内部 N→N+1 回读继续证明文本真的落在 composer。
     do: typeInNode
-    target: { role: AXTextArea, name: "Agent|avis-quote" }
+    target: { role: AXTextArea, name: "问点什么|avis-quote" }
     text: "avis-quote"
   - name: 发送（携带引用卡）
     do: key
