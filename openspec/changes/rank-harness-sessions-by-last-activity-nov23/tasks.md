@@ -89,9 +89,10 @@
 
 ## 5. 真机验收
 
-- [ ] 5.1 新增真机场景（id / item 按 `scripts/acceptance/scenarios/` 当前最大值 +1 分配，不预占；
+- [x] 5.1 新增真机场景（id / item 按 `scripts/acceptance/scenarios/` 当前最大值 +1 分配，不预占；
       **场景已落 `scripts/acceptance/scenarios/724-harness-session-order.md`（item 724，`--check`
-      PASS；`raw` 的 `$vault` 记号替换随之落到 runner）；真机执行未做——本批任务口径不跑真机**；
+      PASS；`raw` 的 `$vault` 记号替换随之落到 runner）；**真机 PASS 33.7s**（2026-11-24，
+      证据 `.local/acceptance/2026-11-24-session-activity-sort/724-harness-session-order/`）；
       文件名建议 `harness-session-order`）。**预置文件的时间写死；真实发送用后端实际时间，不写死**：
       1. 合成 vault 预置 A（`created=100`、最后活动 `400`）、B（`created=200`、最后活动 `300`）、
          C（`created=50`、最后活动 `600`），以及一个同名 compact 文件（无 `restored_from`、
@@ -112,14 +113,17 @@
       11. 打开浮层前后核 JSONL sha256 / mtime 不变（只读）
 - [x] 5.2 **M392 不碰**：不做同批收口、不删 backlog 条目；本 change 的「恢复后两行」是显式行为，
       在场景与报告里写清，不把它当作缺陷或收口对象
-- [ ] 5.3 回扫既有场景 **106 / 108 / 124 / 165**（**只改了注释与边界注记**：106 补「行数判据在
-      724」、108 的排序口径改为最后活动、165 补行时间格说明；**真机回扫未跑**，124 仅确认不受影响）：106 的恢复步骤改为「两行都在、恢复行不越过
-      更晚活动」；108 的删除步骤补「源 + 恢复子文件」只删所选行、活跃拒删不变；124 的按 vault
-      过滤不受影响；165 的旧文件回落 / 不显示时间格逐字核对；跑一遍确认无红
-- [ ] 5.4 证据落 `.local/acceptance/<批次>/`（git 外）；FAIL 项逐条定位，不静默重跑
-      ——**未做**（未跑真机）
-- [ ] 5.5 证据目录用绝对路径 `ls` 一遍再写进报告（REVIEW.md「证据只在终端跑过」条）
-      ——**未做**（无真机证据目录；静态检查日志见 `.local/missions/session-activity-sort-nov24/`）
+- [x] 5.3 回扫既有场景 **106 / 108 / 124 / 165**（**只改了注释与边界注记**：106 补「行数判据在
+      724」、108 的排序口径改为最后活动、165 补行时间格说明）：**真机 106 / 108 / 124 / 165
+      全 PASS**（2026-11-24，同一产品 tip；证据 `.local/acceptance/2026-11-24-session-activity-sort/`
+      下四个场景目录）；106 的恢复步骤改为「两行都在、恢复行不越过更晚活动」；108 的删除步骤补
+      「源 + 恢复子文件」只删所选行、活跃拒删不变；124 的按 vault 过滤不受影响；165 的旧文件回落 /
+      不显示时间格逐字核对
+- [x] 5.4 证据落 `.local/acceptance/<批次>/`（git 外）；FAIL 项逐条定位，不静默重跑
+      ——`.local/acceptance/2026-11-24-session-activity-sort/`（含 106 / 108 / 124 / 165 / 724）
+- [x] 5.5 证据目录用绝对路径 `ls` 一遍再写进报告（REVIEW.md「证据只在终端跑过」条）
+      ——已用绝对路径 `ls` 核对上述目录；静态检查日志见
+      `.local/missions/session-activity-sort-nov24/`
 
 ## 6. 规格与文档
 
@@ -145,7 +149,7 @@
 - [ ] 7.4 `scripts/gate.sh visual` 通过（动过 `tests/visual/scenes/**`，必须本地跑）
       ——**未跑全量**；单跑 `scripts/visual/run.sh --grep m662` 3 passed（端口走
       `LUMIR_VISUAL_PORT=4174`，4173 被在途任务占用）
-- [ ] 7.5 真机场景 PASS；证据指针可 `ls`——**未跑**（本批任务口径不跑真机）
+- [x] 7.5 真机场景 PASS；证据指针可 `ls`——724 PASS（33.7s）；106 / 108 / 124 / 165 PASS
 - [x] 7.6 视觉基线未更新；如确需 `--update`，先送 Alex 过目
 
 ## 8. 信息卫生
@@ -162,6 +166,7 @@
 - [x] 9.2 在 `docs/backlog.md` 的归档跟踪队列落一条本 change 记录（五要件齐待归档 / 命中例外待裁）；
       不删 M392 条目
 - [ ] 9.3 交独立 reviewer；评审判断层不降档；verdict 绑定当前 tip
-      ——由 tower 在批次收尾执行
+      ——已评审 `65dcfd2e`（needs-changes：P1-1 / P1-2 / P2-1，均已修复并真机 PASS）；
+      新 tip 需复审，由 tower 在批次收尾执行
 - [ ] 9.4 归档前逐条核对节点 2 五要件；归档走 `node scripts/openspec-archive.mjs <change-id>`，
       归档提交后跑 `--archived` 审计至 PASS——由 tower 在批次收尾执行
