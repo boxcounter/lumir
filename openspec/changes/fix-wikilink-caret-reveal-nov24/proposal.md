@@ -3,10 +3,10 @@
 - Change ID: `fix-wikilink-caret-reveal-nov24`
 - 日期: 2026-11-24
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
-- 有序链：第 1 环；后续为 [`add-wikilink-suggestion-nov24`](../add-wikilink-suggestion-nov24/proposal.md)。两环可同批完成节点 1 评审，但必须分别实现、验证与归档，本环先归档。
+- 关联 change：[`add-wikilink-suggestion-nov24`](../add-wikilink-suggestion-nov24/proposal.md)。两者可同批完成节点 1 评审，但无行为或归档硬依赖；按真实文件冲突排程，分别独立验收与归档。
 
 > 评审记录
-> 节点 1：待 Alex 裁决。本环唯一行为取舍见「待裁决点」；推荐方案已完整写入 design 与 spec delta，未获批准前不进入实现。
+> 节点 1：待 Alex 裁决。独立评审 r1 为 needs-changes；本稿已闭合修饰键分流与真实拖选手势问题，等待 r2。推荐方案已完整写入 design 与 spec delta，未获批准前不进入实现。
 
 ## Why
 
@@ -17,18 +17,20 @@
 ## What Changes
 
 - 普通 `[[…]]` 复用 `touchesSource`：光标或选区触及源码 span 时撤下 replace、显露完整原文；移开后恢复三态渲染。进入后允许逐字素移动与编辑，不把整条链接作为一个原子步。
-- 普通 wikilink widget 复用 `enterReplacedSource` 的指针入口：主键点击后编辑器持焦、源码显露、落点钳在 target / alias 源码区内；`EditorState.readOnly` 时不进入、不改选区。
+- 普通 wikilink widget 仅在**无修饰主键**入口复用 `enterReplacedSource`。Meta / Ctrl 在 helper 之前直接让开：Meta 由既有 view-dom 链接跟随处理，Ctrl 交回既有系统次级点击路径；二者均不得先执行编辑入口的 `preventDefault`、选区 dispatch、显露或聚焦。
+- 指针编辑采用明确的两次手势：第一次无修饰 click 或 drag 只进入源码，第一次 drag 不承诺产生选区；第二次在已显露源码上拖选 target / alias，选区严格等于用户拖出的源码范围，不外扩定界符。`EditorState.readOnly` 时不进入。
 - pending 原本就显示源码；pending → resolved / ambiguous / unresolved 的异步完成不得重新遮住正在编辑的 span。无 resolver 的降级显示与 Rust 解析、跳转、歧义和未创建语义不变。
 - 修订 `editor-caret` C6：只有没有显露判据的隐藏 inline 区间才按方向钳到可见边界；有显露判据的区间必须允许内部落点与逐字素编辑。
 - 整条替换 `editor-live-preview` 中「标准 Markdown 链接」和「指针选区外扩」两个 requirement 的旧边界表述，并修改 `wikilink-navigation` 的三态显示 requirement。wikilink 仍不属于指针选区语法外扩集合；改变的是源码显露，不是选区外扩。
-- 回扫并改准旧测试与注释，新增覆盖状态、入口、方向、span 形态和上下文的属性矩阵；所有非编辑入口继续保证文档逐字节不变。
+- 回扫并改准旧测试与注释，新增覆盖状态、修饰键、入口、方向、两次拖选、span 形态和上下文的属性矩阵；所有非编辑入口继续保证文档逐字节不变。
 
 ## Non-goals
 
 - 不引入 `EditorView.atomicRanges`，不把 wikilink 做成一步跨过的原子对象。
-- 不改变 wikilink 词法、Rust 解析、三态、Mod-Click 跳转、锚点、显式 ⌘⏎ 创建或 unresolved 样式。
+- 不改变 wikilink 词法、Rust 解析、三态、Meta-Click 跳转、Ctrl-Click 系统次级点击、锚点、显式 ⌘⏎ 创建或 unresolved 样式。
+- 不支持从渲染 widget 的首次 drag 直接拖出 alias 选区；该手势只进入源码，精确拖选由第二次手势完成。
 - 不改变 `![[…]]`、附件、图片、unsupported 提示的渲染与指针行为。
-- 不实现 `[[` 候选、创建候选行或任何自动打开行为；这些属于有序链下一环。
+- 不实现 `[[` 候选、创建候选行或任何自动打开行为；这些属于关联的 B change，而非本 change 的前置或后续归档条件。
 - 不改变标准链接、公式、列表 marker 的既有编辑语义，不改写源文件格式。
 
 ## Impact
