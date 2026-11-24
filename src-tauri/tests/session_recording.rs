@@ -2599,7 +2599,11 @@ fn every_session_file_yields_exactly_one_row() {
     );
 
     let list = list_sessions(&f.scope()).unwrap();
-    assert_eq!(list.len(), 2, "每份 JSONL 恰好一行（不折叠源文件）：{list:?}");
+    assert_eq!(
+        list.len(),
+        2,
+        "每份 JSONL 恰好一行（不折叠源文件）：{list:?}"
+    );
     let mut ids: Vec<&str> = list.iter().map(|s| s.session_id.as_str()).collect();
     ids.sort_unstable();
     assert_eq!(ids, ["s100-aaaaaa", "s700-child1"], "精确 session id 集");
@@ -2640,7 +2644,9 @@ fn source_and_restored_rows_delete_independently() {
     runtime.delete_session(&f.scope(), "s100-aaaaaa").unwrap();
     let list = list_sessions(&f.scope()).unwrap();
     assert_eq!(
-        list.iter().map(|s| s.session_id.as_str()).collect::<Vec<_>>(),
+        list.iter()
+            .map(|s| s.session_id.as_str())
+            .collect::<Vec<_>>(),
         ["s700-child1"],
         "删除源只影响源文件，子文件仍列出"
     );
@@ -2700,7 +2706,9 @@ fn sidecar_records_do_not_count_as_activity() {
 
     let list = list_sessions(&f.scope()).unwrap();
     assert_eq!(
-        list.iter().map(|s| s.session_id.as_str()).collect::<Vec<_>>(),
+        list.iter()
+            .map(|s| s.session_id.as_str())
+            .collect::<Vec<_>>(),
         ["s50-bbbbbb", "s100-aaaaaa"],
         "sidecar 的 ts 不参与活动时间：{list:?}"
     );
@@ -2751,7 +2759,9 @@ fn failed_and_aborted_turns_count_request_ts() {
 
     let list = list_sessions(&f.scope()).unwrap();
     assert_eq!(
-        list.iter().map(|s| s.session_id.as_str()).collect::<Vec<_>>(),
+        list.iter()
+            .map(|s| s.session_id.as_str())
+            .collect::<Vec<_>>(),
         ["s100-aaaaaa", "s200-bbbbbb", "s50-cccccc"],
         "失败轮 / 停止轮按请求 ts 计入活动时间：{list:?}"
     );
@@ -2787,7 +2797,9 @@ fn missing_timestamps_sort_last_without_fabricated_reading() {
 
     let list = list_sessions(&f.scope()).unwrap();
     assert_eq!(
-        list.iter().map(|s| s.session_id.as_str()).collect::<Vec<_>>(),
+        list.iter()
+            .map(|s| s.session_id.as_str())
+            .collect::<Vec<_>>(),
         ["s50-bbbbbb", "s900-aaaaaa"],
         "无值者排最后（即使 id 前缀更新）：{list:?}"
     );
@@ -2846,7 +2858,9 @@ fn compact_file_does_not_inherit_source_activity() {
     let list = list_sessions(&f.scope()).unwrap();
     assert_eq!(list.len(), 2, "compact 与源各占一行、同名不合并：{list:?}");
     assert_eq!(
-        list.iter().map(|s| s.session_id.as_str()).collect::<Vec<_>>(),
+        list.iter()
+            .map(|s| s.session_id.as_str())
+            .collect::<Vec<_>>(),
         ["s100-aaaaaa", "s350-compact"],
         "compact 按自身创建时刻（350）落位，活动时间不继承源的 400：{list:?}"
     );
