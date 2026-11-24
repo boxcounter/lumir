@@ -2,7 +2,7 @@
 
 - Change ID: `add-harness-skill-slash-invocation-nov23`
 - 日期: 2026-11-24（r3.2，拒绝判据限定到各自被拒入口）
-- 状态: **待节点 1 批准 H1**；本文件不构成施工依据
+- 状态: **节点 1 已批准 H1**（Alex 2026-11-24「批准 Skill 混合方案」）；本文件构成施工依据
 - 读者: Alex（裁决面）、实现 agent（施工依据）、reviewer（判据面）
 
 ## 1. 目标与边界
