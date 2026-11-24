@@ -248,8 +248,50 @@ transcript 内的输出尾行；它的 design §9.7 已承认「脱离态看不�
 不需要 ADR：只改一个 capability 的呈现状态、一个滚动区外的可见信号与发送路径的一处幂等回底；
 不改技术选型、不改分层、不改后端协议。
 
-## 节点 2（归档时填写）
+## 节点 2（归档记录）
 
-归档前按五要件记录：节点 1 批准依据、reviewer verdict 与 tip、tasks 完成情况、门禁与真机证据
-指针（`.local/`）、规格对账读数；归档后追加归档提交 hash、包装器输出与 `--archived` PASS 时间。
-本 change 是有序链的前一环，记录里写清链位置与后一环（`move-harness-progress-to-output-tail-nov23`）。
+**放行方式：机器 + 独立评审放行（`docs/process/openspec-workflow.md`「节点 2」五要件）。**
+归档前读数时间：2026-11-24 11:43 +0800（Asia/Shanghai）。
+
+### 归档前五要件
+
+1. **方案已批准**：Alex 2026-11-24 对整条提案明确「同意」；D1–D6 按推荐值生效（见本文件「节点状态」）。
+   实现期无静默扩 scope；r1–r4 评审发现的 P1/P2 均在同一 change 内收口。
+2. **独立 reviewer clean / merge**：r4 复审 **`clean/merge`**，评审 tip
+   **`7cde918f332fbd3af0c274785592d999f43614fc`**，报告
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/approval-visibility-nov24/review.md`。
+   r4 之后只有两个 **test-only 验收场景**提交，不改产品 / 测试行为、不新增合同：
+   `ec12558438a3e38c4a9f64a933e544b624ea503b`（composer inline cards 后的 `typeInNode` locator）与
+   `983cad9336871521f85d983e9ba67329d1ff1738`（重开面板白名单回底后的回底步骤顺序）。
+   r4 复跑：`pnpm test` 1899/1899、五场景结构 60/60、三套 tsc、`git diff --check` 通过。
+3. **tasks 完成或放弃理由**：全部勾选。真机红侧的 1.8 / 1.9 放弃旧实现红跑（11:32–13:32 窗口
+   只用于最终验收，未保留旧构建），理由与替代证据就地写在 tasks；不虚报真机红。
+4. **门禁与真机证据**：
+   - 完整视觉：`GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0，基线未更新
+     （`/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/approval-visibility-nov24/gate-visual-final.log`）。
+   - r4 单测 1899/1899、五场景结构 60/60、三套 tsc；rebase 后当前单测 1900/1900。
+   - 真机首轮：10 个选中场景中 88 / 97 / 104a / 104b / 110 / 151 / 188 / 253 / 49（252）全 PASS；
+     725 FAIL（composer inline cards 后旧 locator `Agent|avis-quote` 过期）。日志
+     `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/approval-visibility-nov24/acceptance-725-related.log`，
+     证据 `.local/acceptance/2026-11-24-approval-visibility/`。
+   - 725 r2：越过输入定位后，在「点浮钮回底」FAIL——重开面板走 `attachTo` 既有白名单强制回底，
+     浮钮按合同退场；场景顺序错误，非产品回归。日志 `.../acceptance-725-r2.log`，证据
+     `.local/acceptance/2026-11-24-approval-visibility-r2/`。
+   - 725 r3（test-only 修正 `ec125584` + `983cad93` 后）：**PASS 1/1，33.8s**。日志
+     `.../acceptance-725-r3.log`，证据 `.local/acceptance/2026-11-24-approval-visibility-r3/`。
+5. **规格对账无丢段**：
+   - `node scripts/openspec-archive-check.mjs --change fix-harness-approval-visibility-nov23`：
+     `PASS（扫过 1 份 delta，1 条 MODIFIED，对比 5 段，无静默丢段；归档队列 0 项已完成 change 均有唯一条目）`。
+   - `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`：`39 passed, 0 failed`。
+   - `bash scripts/docs-check.sh`：PASS（含归档对账、链接、验收场景契约与 backlog 门禁）。
+   - `git diff --check`：通过。归档跟踪队列条目唯一（`docs/backlog.md`）。
+
+### 有序链位置
+
+本 change 是有序链的**前一环**；后一环 `move-harness-progress-to-output-tail-nov23` 尚未实现，
+其 tasks 已带硬前置门禁：必须以本 change 归档后的 living「进度呈现」为基线整块重抄，并把
+「滚动区外必须有审批信号」写成不变量（见本文件「与相邻 change 的关系」）。
+
+### 归档后
+
+（归档提交后追加：归档提交 hash、包装器输出 / 修链读数、`--archived` PASS 与时间。）

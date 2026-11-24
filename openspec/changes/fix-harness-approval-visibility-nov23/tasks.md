@@ -71,12 +71,15 @@
       `m423-message-excerpt.spec.ts` 的选择 / 点击流程），在同一页面 task 内点击发送并立即读
       `{ scrollTop, max }`——旧实现必红（差值 ≥ 约 28px）；同时断言 quote card 确实移除、进度块
       确实显示、回声基准已刷新；再等两帧断言仍贴底、浮钮 hidden；保留旧实现红侧读数
-- [ ] 1.8 真机场景骨架先落（步骤表见 7.3），旧实现跑出预期红：待批时 AX 读不到「等待批准…」、
+- [x] 1.8 真机场景骨架先落（步骤表见 7.3），旧实现跑出预期红：待批时 AX 读不到「等待批准…」、
       面板收起后 toggle help 仍读「处理中」
-      （未跑：真机由主会话串行安排；场景文件已随本分支落，见 7.3）
-- [ ] 1.9 在旧实现上跑 1.1–1.8 并留红：日志与证据落 `.local/`（结构场景的「无待批不显示」旧实现
+      （**旧实现真机红侧放弃**：Alex 指定窗口只用于最终验收，未保留旧构建；红侧由单测导入红 /
+      视觉修前 10 条红 / 发送几何 28px 红（`.local/missions/approval-visibility-nov24/red/`）
+      与 725 首轮、r2 的真实失败证据承担；最终 r3 PASS，见 7.3）
+- [x] 1.9 在旧实现上跑 1.1–1.8 并留红：日志与证据落 `.local/`（结构场景的「无待批不显示」旧实现
       天然绿，不作红判据）
-      （未跑真机红；单测红与四个视觉场景的修前红日志已落 `.local/missions/approval-visibility-nov24/red/`）
+      （**旧实现真机红侧放弃**，理由同 1.8；单测导入红 / 视觉修前红 / 发送几何 28px 红日志在
+      `.local/missions/approval-visibility-nov24/red/`，不以真机红冒充已跑）
 - [x] 1.10 窄段几何：在 m756 里把标题栏段压窄（取固定项之和以上、但不足以容纳长会话名的宽度）
       并注入长会话名，断言 `.lumir-hp-seg-status` 与 `.lumir-hp-seg-new` 的矩形都在段矩形内、
       `.lumir-hp-sname` 宽度较无待批时确实变小且省略号生效；旧实现（链路 `flex:none`）必红
@@ -174,15 +177,19 @@
 - [x] 7.1a （独立评审 P2）m756 补 content 四格（非空 / 空 × 面板开 / 收）、面板收起时的
       done / error / aborted 撤回、待批时新建会话与切会话（真实 resume 通道）；m822 补子运行
       待批不改变父会话阶段行 / 标题栏（真实渲染卡片）
-- [ ] 7.2 既有真机场景回扫：88 / 97 / 104 / 110 / 151 / 188 / 252 / 253 的闸 / 阶段行 / 活动状态
+- [x] 7.2 既有真机场景回扫：88 / 97 / 104 / 110 / 151 / 188 / 252 / 253 的闸 / 阶段行 / 活动状态
       期望逐条核对；过期期望就地改准（不改的也留一条核对记录）；新增 done / error 撤卡的场景
       期望逐条改准
-      （未跑：真机回扫由主会话串行安排）
+      ——首轮 10 选中场景中 88 / 97 / 104a / 104b / 110 / 151 / 188 / 253 / 49（252）全部 PASS；
+      唯一失败是 725（首轮 typeInNode locator、r2 回底步骤时序），两轮 test-only 后 r3 PASS。
+      日志 `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/approval-visibility-nov24/acceptance-725-related.log`
 - [x] 7.3 新增真机场景一条（编号按套件当前最大值 +1，实现时分配）：引用卡 → 发送 → **先上滚**
       → 待批到达 → 标题栏信号 / 未读 → 回底 → 采纳 → 第二条待批 → 停止撤回；补一条对照：
       待批已存在后上滚、无新内容 → 不要求未读、不强制回底；断言含 AX「等待批准…」、面板收起后
       toggle help「对话面板 · 等待批准」、`scrollTop` 截图证据；落 `.local/acceptance/`
-      （场景与 fixture 已写、`--check` PASS；真机未跑）
+      （场景与 fixture 已写；首轮 725 因 composer inline cards 后的 AX locator 过期、r2 因
+      重开面板白名单回底后再找浮钮而 FAIL，两次 test-only 修正 `ec125584` / `983cad93` 后
+      **r3 PASS 1/1（33.8s）**；证据 `.local/acceptance/2026-11-24-approval-visibility-r3/`）
 - [x] 7.4 `scripts/gate.sh quick` 全绿（含 `pnpm test`、tsc、docs-check、`validate --all --strict`）
       ——完整视觉内 quick 层全 PASS，最终 `GATE RESULT: 15/15 PASS（SKIP 0）`
 - [x] 7.5 `scripts/gate.sh visual` 全绿（本地像素层；CI 结构层不代表像素层）
@@ -197,12 +204,12 @@
 ## 8. 归档准备与相邻 change 衔接
 
 - [x] 8.1 实现 PR 合并时在 `docs/backlog.md` 的归档跟踪队列落一条记录（五要件状态：待归档 /
-      命中例外），供 `scripts/openspec-archive-check.mjs` 门禁识别——已落，真机后归档
+      命中例外），供 `scripts/openspec-archive-check.mjs` 门禁识别——已落；真机 r3 PASS 后归档
 - [x] 8.2 `proposal.md` 的节点 2 块按五要件填写：节点 1 原话、reviewer verdict 与 tip、tasks
       完成情况、门禁与真机证据指针、`openspec-archive-check.mjs` 门禁模式读数、`validate` 读数、
-      队列条目唯一——已写实现期材料，真机证据待 11:32 窗口补入后归档
-- [ ] 8.3 归档时记录链位置：本 change 是前一环；后一环 `move-harness-progress-to-output-tail-nov23`（未做：归档时记录）
+      队列条目唯一——节点 2 五要件已填（见 proposal）；真机 r3 PASS 后归档
+- [x] 8.3 归档时记录链位置：本 change 是前一环；后一环 `move-harness-progress-to-output-tail-nov23`
       必须以本 change 归档后的 living「进度呈现」为基线整块重抄，并把「滚动区外必须有审批信号」
-      写成不变量
+      写成不变量（链位置已记入 proposal 节点 2；后一环未实现，其 tasks 已有硬前置门禁）
 - [ ] 8.4 归档后跑 `node scripts/openspec-archive-check.mjs --archived fix-harness-approval-visibility-nov23`（未做：归档后执行）
       并取得 PASS，把归档提交 hash、包装器输出、修链读数与审计时间追加进节点 2 块
