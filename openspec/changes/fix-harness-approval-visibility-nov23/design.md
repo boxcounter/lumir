@@ -215,6 +215,11 @@ function refreshApprovalSignal(): void {
   路径的明确限制，MUST NOT 假装精确。无 call_id 的旧事件同样只有 FIFO，**不承诺重复 done
   幂等**。有 call_id 的同一调用重复 done 幂等（`consumed`；快照项首次认领后升级 call_id，
   后续同 id done 同样幂等）。
+- **同 turn 内 call_id 复用（r3 评审）**：后端只在单个 `TurnOutput` 内按 call_id 去重，工具
+  循环可在同一 turn 内复用 id。`tool_call started` 因此是**新调用的权威起点**：它 SHALL 让该
+  id 的旧配对（consumed 的 exact 项与已升级的 FIFO 项）退役，旧 transcript 行保留不删，新行
+  重新建立 started 身份；`doneCallIds` 只在 `done` 路径写入、在新 started 与终态 / 清面清掉，
+  保证本代重复 done 幂等而不吞下一代。旧行 MUST NOT 被改写。
 - **配对表清理（r2 评审）**：终态撤回 MUST NOT 因 `pendingApprovals` 已空而早退——已消费记录
   及其 DOM 引用必须在**正常终态**与**新一轮开始**时无条件清掉，否则跨轮累积并扩大未来
   call_id 碰撞时的误配对面。`sent` / `auto_turn_started` 在上一相位为空闲时无条件清 stale。

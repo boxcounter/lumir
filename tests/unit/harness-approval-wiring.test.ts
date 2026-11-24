@@ -179,7 +179,11 @@ test("已决策调用按真实调用身份配对 done（r2 评审）：started c
   const SETTLE = functionBodyOf(PANEL_SOURCE, "settleApprovalRecord");
   // 生产身份链：approval id 是 ap-N，done 是模型 call_id；bridge = 被升级的那条 started 行。
   assert.match(PANEL_SOURCE, /const startedCallIds = new WeakMap<HTMLElement, string>\(\)/);
-  assert.match(PANEL_SOURCE, /if \(callId !== null\) startedCallIds\.set\(row, callId\)/);
+  assert.match(
+    PANEL_SOURCE,
+    /retireSettledApprovalCall\(callId\);\s*startedCallIds\.set\(row, callId\)/,
+    "新 started 先退役旧配对，再登记新行身份",
+  );
   assert.match(APPROVAL, /callId = startedCallIds\.get\(row\)/);
   assert.match(
     APPROVAL,
@@ -195,6 +199,13 @@ test("已决策调用按真实调用身份配对 done（r2 评审）：started c
     /settledApprovalQueue\.get\(name\) \?\? \[\]\)\s*\.filter\(\(entry\) => !entry\.consumed\)/,
   );
   assert.match(PANEL_SOURCE, /slot\.callId === null/, "快照项首次被 done 认领后升级 call_id");
+  assert.match(PANEL_SOURCE, /retireSettledApprovalCall\(callId\)/, "新 started 必须退役同 id 的旧配对");
+  assert.match(PANEL_SOURCE, /doneCallIds\.delete\(callId\)/, "退役同时清本代 done 幂等标记");
+  assert.match(
+    PANEL_SOURCE,
+    /if \(status === "done" && callId !== null\) doneCallIds\.add\(callId\)/,
+    "done 幂等标记只在 done 路径写入（started 不得把自己标成已收口）",
+  );
   assert.match(APPROVAL, /arrivalSeq: \(approvalArrivalSeq \+= 1\)/, "待批到达序在 appendApproval 分配");
   assert.match(SETTLE, /arrivalSeq: pending\.arrivalSeq/, "决策记录带到达序");
   assert.match(

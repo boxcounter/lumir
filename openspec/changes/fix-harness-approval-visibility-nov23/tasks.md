@@ -136,6 +136,10 @@
       call_id 的重复 done 幂等；无 call_id 的旧事件只有 FIFO、不承诺幂等。配对表在正常终态与
       新一轮无条件清理。m384 用真实 `ap-N ≠ call_...` 覆盖同名 / 异名 / 反序 / 成功失败 /
       重复 done 不消费下一项、快照 FIFO、终态后新旧 call_id 碰撞
+- [x] 5.1d （独立评审 r3）`tool_call started` 作为新调用权威起点：退役同 call_id 的旧
+      consumed / FIFO 配对（旧 transcript 行保留），`doneCallIds` 只在本代内幂等；m384 补
+      同 turn 内 id 复用（B 免批准 / B 也需批准）用例，覆盖旧记录不吞新 done、旧行不改、
+      重复新 done 幂等
 - [x] 5.1b `sent` / `auto_turn_started` 在置 `turnOpen` 前、且上一相位为 `idle` 时无条件清 stale
       （集合为空也要清配对表）；处理中的轮次不清合法待批；`appendApproval` 在**函数入口**判
       `idle` 并直接返回

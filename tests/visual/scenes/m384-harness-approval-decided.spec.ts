@@ -617,3 +617,102 @@ test("正常终态后清理配对表：新一轮复用同一 call_id 不被陈�
   const newRow = page.locator(".lumir-hp-tool-row.is-fail").last();
   await expect(newRow.locator(".lumir-hp-tool-out")).toContainText("新一轮失败");
 });
+
+// ── r3：同一 turn 内 call_id 复用（无整轮 done 间隔）────────────────────────────────
+//
+// 后端只在单个 TurnOutput 内按 call_id 去重；工具循环连续消费多个 output，同一 turn 内可以
+// 再次出现相同 call_id。`tool_call started` 因此是**新调用的权威起点**：它必须让该 id 的旧
+// consumed / FIFO 配对退役（旧 transcript 行保留），否则新调用的 done 会命中旧 tombstone
+// 直接 return，running 行永不收口。
+
+async function approveAThenStartB(
+  page: Page,
+  options: { bNeedsApproval: boolean },
+): Promise<{ aRow: ReturnType<Page["locator"]>; bRow: ReturnType<Page["locator"]> }> {
+  await openEmptyRunningPanel(page);
+  // A：批准 → 完成（同一 turn 继续，不发整轮 done）。
+  await startAndRequestApproval(page, {
+    callId: "call_same_turn",
+    approvalId: "ap-a",
+    tool: "cli_run",
+    args: { argv: ["echo", "A"] },
+  });
+  await page.locator('button[data-act="approve"]').click();
+  await fire(page, { type: "tool_call", name: "cli_run", status: "done", summary: "完成", call_id: "call_same_turn" });
+  const aRow = page.locator(".lumir-hp-tool-row").filter({ hasText: "echo A" });
+  await expect(aRow).toHaveClass(/is-done/);
+
+  // B：同一 call_id 的新一代调用；按需走批准闸。
+  if (options.bNeedsApproval) {
+    await startAndRequestApproval(page, {
+      callId: "call_same_turn",
+      approvalId: "ap-b",
+      tool: "cli_run",
+      args: { argv: ["echo", "B"] },
+    });
+    await expect(page.locator(".lumir-hp-tool-row.is-running")).toHaveCount(1);
+    await page.locator('button[data-act="approve"]').click();
+  } else {
+    await fire(page, {
+      type: "tool_call",
+      name: "cli_run",
+      status: "started",
+      summary: "{\"command\":\"echo\",\"args\":[\"B\"]}",
+      call_id: "call_same_turn",
+    });
+    await expect(page.locator(".lumir-hp-tool-row.is-running")).toHaveCount(1);
+  }
+  const bRow = page.locator(".lumir-hp-tool-row").filter({ hasText: "echo B" });
+  return { aRow, bRow };
+}
+
+test("同 turn 内 call_id 复用（B 免批准）：旧 consumed 不吞新 done，旧行不改，重复新 done 幂等", async ({
+  page,
+}) => {
+  const { aRow, bRow } = await approveAThenStartB(page, { bNeedsApproval: false });
+  await fire(page, {
+    type: "tool_call",
+    name: "cli_run",
+    status: "done",
+    summary: "failed · io: B 同轮失败",
+    call_id: "call_same_turn",
+  });
+
+  // 新行收口：running 退场、失败归属 B；旧 A 行保持「已采纳」不被改写。
+  await expect(page.locator(".lumir-hp-tool-row.is-running")).toHaveCount(0);
+  await expect(bRow).toHaveClass(/is-fail/);
+  await expect(bRow.locator(".lumir-hp-tool-out")).toContainText("B 同轮失败");
+  await expect(aRow).toHaveClass(/is-done/);
+  await expect(aRow.locator(".lumir-hp-tool-out")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-termwrap .lumir-hp-tool-row")).toHaveCount(1);
+
+  // 重复新的 done 幂等：不新建行、不改 A / B。
+  await fire(page, {
+    type: "tool_call",
+    name: "cli_run",
+    status: "done",
+    summary: "failed · io: B 同轮失败",
+    call_id: "call_same_turn",
+  });
+  await expect(page.locator(".lumir-hp-tool-row")).toHaveCount(2);
+  await expect(aRow).toHaveClass(/is-done/);
+  await expect(bRow).toHaveClass(/is-fail/);
+});
+
+test("同 turn 内 call_id 复用（B 也需批准）：新一代配对覆盖旧记录，A 行不被改写", async ({ page }) => {
+  const { aRow, bRow } = await approveAThenStartB(page, { bNeedsApproval: true });
+  await fire(page, {
+    type: "tool_call",
+    name: "cli_run",
+    status: "done",
+    summary: "failed · io: B 再次失败",
+    call_id: "call_same_turn",
+  });
+
+  await expect(bRow).toHaveClass(/is-fail/);
+  await expect(bRow.locator(".lumir-hp-tool-out")).toContainText("B 再次失败");
+  await expect(aRow).toHaveClass(/is-done/);
+  await expect(aRow.locator(".lumir-hp-tool-out")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-tool-row.is-running")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-termwrap .lumir-hp-tool-row")).toHaveCount(2);
+});

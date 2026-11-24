@@ -6576,9 +6576,26 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  后端顺序执行，done 正常也按调用序到达；同名 **反序** done 无法从现成事件区分调用身份，
    *  归属可能与执行顺序相反——这是快照恢复路径的已知限制（design §4），MUST NOT 假装精确。 */
   const settledApprovalQueue = new Map<string, SettledApprovalCall[]>();
+  /** 本代已收口 done 的调用身份：重复 done 幂等（含免批准调用——它们不进 settled 表）。
+   *  新 `started` 与终态 / 清面都会清掉对应项。 */
+  const doneCallIds = new Set<string>();
   function clearSettledApprovalCalls(): void {
     settledApprovalCalls.clear();
     settledApprovalQueue.clear();
+    doneCallIds.clear();
+  }
+  /** `tool_call started` 是**新调用的权威起点**：同一 call_id 再次出现（后端只在单个
+   *  `TurnOutput` 内去重，工具循环可在同一 turn 内复用 id）时，该 id 的旧配对（consumed
+   *  的 exact 项与已升级的 FIFO 项）必须退役，否则新调用的 done 会先命中旧 tombstone
+   *  直接 return，新的 running 行永不收口。旧 transcript 行是历史，保留不删；只清配对表。 */
+  function retireSettledApprovalCall(callId: string): void {
+    settledApprovalCalls.delete(callId);
+    doneCallIds.delete(callId);
+    for (const [name, queue] of settledApprovalQueue) {
+      const kept = queue.filter((entry) => entry.callId !== callId);
+      if (kept.length === 0) settledApprovalQueue.delete(name);
+      else if (kept.length !== queue.length) settledApprovalQueue.set(name, kept);
+    }
   }
 
   /** 步骤行追加 / 翻转（M406 人话化版）：started 追加 running 行（名徽章 + 人话化参数）；
@@ -7028,6 +7045,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
     // 已决策调用的 done 判定先于 ensureToolsBlock：命中时不建行，也不该为被抑制的 done 开新块。
     if (status === "done") {
+      // 同一调用身份的重复 done 幂等（启动新一代 started 时已清掉该 id，故这里只拦本代重复）。
+      if (callId !== null && doneCallIds.has(callId)) {
+        follow.contentGrew();
+        return;
+      }
       const exact = callId !== null ? settledApprovalCalls.get(callId) : undefined;
       const slot =
         exact ??
@@ -7060,6 +7082,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
             text.append(document.createTextNode(" "), outEl);
           }
         }
+        if (callId !== null) doneCallIds.add(callId);
         follow.contentGrew();
         return;
       }
@@ -7073,7 +7096,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         createToolText(name, humanizeToolArgs(name, summary), undefined, toolPathTargetsOf(name, summary)),
       );
       startedArgs.set(row, summary);
-      if (callId !== null) startedCallIds.set(row, callId);
+      if (callId !== null) {
+        // 新 started = 该 id 的新一代调用：先让旧配对退役，再登记新行身份。
+        retireSettledApprovalCall(callId);
+        startedCallIds.set(row, callId);
+      }
       block.el.append(row);
       block.rows.push(row);
       block.running = row;
@@ -7111,6 +7138,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       block.el.append(row);
       block.rows.push(row);
     }
+    if (status === "done" && callId !== null) doneCallIds.add(callId);
     syncEmptyHint();
     follow.contentGrew();
   }
