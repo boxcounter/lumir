@@ -1,6 +1,6 @@
 # harness 增量规格
 
-> 起草注记（非规格正文）：本 delta 按 r3 **混合调用方案**编写，节点 1 的 H1 尚待 Alex 批准。
+> 起草注记（非规格正文）：本 delta 按 r3.2 **混合调用方案**编写，节点 1 的 H1 尚待 Alex 批准。
 > 本 change 新增「Skill 的混合调用与入口策略」；「Skill 支持」补显式入口、双入口策略及索引 / 清单边界；
 > 「composer 草稿 v2 与一次性 v1 转换」升 v3（带选择引用）。两个 MODIFIED 块均按 living spec 原文整块
 > 复制再改，未要求删除的段落与场景逐字保留。交互与留存细节见 [design.md](../../design.md)，裁决点见
@@ -19,9 +19,12 @@
 保持现有 frontmatter / 无 frontmatter 首行兜底，另加 invocation 字段），不把正文作为调用结果投递；该读取
 发生在权限与入口策略判定之前，属于既有索引行为，MUST NOT 被虚称为零 IO。200KB 上限 SHALL 只约束执行期正文
 加载，MUST NOT 被用来暗示发现期只读 frontmatter 或只读前 200KB。调用执行期正文加载 SHALL 在权限与策略
-放行后调用共享正文加载器，把正文投递到用户消息 part 或工具结果。权限 deny、禁自动、禁手动或非法元数据
-时的拒绝保证 SHALL 是执行期正文加载器未被调用且各输出面无正文，MUST NOT 被表述为发现期也未读取任何
-Skill 文件。发现期只读 frontmatter 的优化不在本 change 内，后续优化 MUST NOT 改变索引行为。
+放行后调用共享正文加载器，把正文投递到用户消息 part 或工具结果。某一入口因权限 deny、入口策略或非法
+元数据被拒绝时，拒绝保证 SHALL 只约束该入口：其执行期正文加载器未被调用、对应输出面无正文，MUST NOT
+被表述为发现期也未读取任何 Skill 文件，也 MUST NOT 扩大到另一放行入口。deny 与非法元数据 SHALL 拒绝
+两个入口；禁自动 SHALL 只拒绝自动入口并保留显式正文 marker 正向对照；禁手动 SHALL 只拒绝显式入口并保留
+自动工具结果正文 marker 正向对照。发现期只读 frontmatter 的优化不在本 change 内，后续优化 MUST NOT 改变
+索引行为。
 
 **默认与分控**：每个 Skill 缺省 SHALL 同时允许用户显式选择与模型自主调用。SKILL.md frontmatter SHALL
 支持且只支持以下两个 Lumir 调用策略字段：`disable-model-invocation`（缺省 `false`，为 `true` 时禁止模型
@@ -165,16 +168,18 @@ Skill 内容引发的 `cli_run`；invocation policy MUST NOT 替代或放宽权�
 
 #### Scenario: 禁自动但允许显式
 
-- **WHEN** `acc-deploy` 声明 `disable-model-invocation: true`，模型调用 `skill_load("acc-deploy")`；
-  随后用户从候选显式选择该 Skill 并发送
-- **THEN** 发现期已取得索引与策略元数据；模型调用返回 `skill_model_invocation_disabled`，执行期正文
-  加载器未被调用，SKILL.md 与目录内其他文件均无正文进入工具结果；用户显式路径在权限放行时正常注入全文
+- **WHEN** 含唯一 body marker 的 `acc-deploy` 声明 `disable-model-invocation: true`，模型调用
+  `skill_load("acc-deploy")`；随后用户从候选显式选择该 Skill 并发送
+- **THEN** 发现期已取得索引与策略元数据；模型调用返回 `skill_model_invocation_disabled`，仅自动入口的
+  执行期正文加载器未被调用，SKILL.md 与目录内其他文件均无正文 marker 进入工具结果；用户显式入口仍调用
+  加载器，`input` / `llm_request.messages` / provider wire 均有 body marker
 
 #### Scenario: 禁手动但允许自动
 
-- **WHEN** `acc-background` 声明 `user-invocable: false`，用户打开候选；模型随后自主调用
-  `skill_load("acc-background")`
-- **THEN** 该 Skill 不出现在候选，索引仍列出并标注禁手动；模型自主调用按既有工具结果取得全文
+- **WHEN** 含唯一 body marker 的 `acc-background` 声明 `user-invocable: false`，用户打开候选并尝试经旧
+  引用显式发送；模型随后自主调用 `skill_load("acc-background")`
+- **THEN** 该 Skill 不出现在候选，索引仍列出并标注禁手动；仅显式入口的执行期正文加载器未被调用，
+  `input` / `llm_request.messages` / provider wire 无 marker；自动入口仍调用加载器且工具结果有 body marker
 
 #### Scenario: 旧引用不能绕过禁手动
 

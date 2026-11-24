@@ -18,8 +18,8 @@
 - [ ] 0.8 若实现期发现需要重写既有自动工具历史、在重试 / 恢复时重新执行显式注入，或为字段增加兼容别名，
       停下上报；这些都超出 H1 的批准范围
 - [ ] 0.9 读取边界：发现期可按现状整份读入 SKILL.md 解析元数据，发生在权限 / 策略前；拒绝路径只承诺
-      执行期正文加载器未调用与各输出面无正文。不得写「任何 Skill 文件零读取」断言，不在本 change 夹带
-      发现期只读 frontmatter 优化
+      各自被拒入口的执行期正文加载器未调用与对应输出面无正文，另一放行入口保留正文正向对照。不得写
+      「任何 Skill 文件零读取」断言，不在本 change 夹带发现期只读 frontmatter 优化
 
 ## 1. 先红（测试先行，旧实现上必须红）
 
@@ -40,10 +40,17 @@
       `deny = ["skill_load(<name>)"]`，分别在 `read_only` / `vault_write` / `full_access` 三档、
       显式 / 自动两入口下：执行期正文加载器调用计数为零；显式的 `input` / `llm_request.messages` /
       provider wire 无正文；自动工具结果无正文；同配置未命中 deny 的名字正常加载
-- [ ] 1.6a Rust 反例：fixture 的 SKILL.md 含唯一 body marker。先运行 `discover_skills` 并断言 description /
-      策略已成功解析，证明发现期读取已发生；再分别施加 deny、禁自动、禁手动、非法元数据。断言执行期
-      正文加载器未调用，显式 `input` / `llm_request.messages` / provider wire 与自动工具结果均无 marker。
-      不得断言或暗示发现期零 IO，不得用删除目录 / 整文件不可读冒充这个反例
+- [ ] 1.6a Rust 反例矩阵：fixture 的 SKILL.md 含唯一 body marker。先运行 `discover_skills` 并断言
+      description / 策略已成功解析，证明发现期读取已发生；再分别施加以下条件并按入口断言：
+      ① deny：显式与自动两入口的执行期正文加载器均未调用，显式 `input` / `llm_request.messages` /
+      provider wire 与自动工具结果均无 marker；
+      ② 禁自动：仅自动入口加载器未调用、工具结果无 marker；显式入口仍加载，`input` /
+      `llm_request.messages` / provider wire 均有 marker；
+      ③ 禁手动：仅显式入口加载器未调用，显式 `input` / `llm_request.messages` / provider wire 无 marker；
+      自动 `skill_load` 仍加载且工具结果有 marker；
+      ④ 非法元数据：两入口均 fail closed，加载器均未调用，两个输出面均无 marker。
+      不得把禁自动 / 禁手动的负向断言扩大到另一放行入口；不得断言或暗示发现期零 IO，不得用删除目录 /
+      整文件不可读冒充这个反例
 - [ ] 1.7 Rust 单测：wire 剥离（三个 client 的 wire body 不含 `lumir_skill`，正文仍在；无图片、
       仅用户文本 + 技能 part 也剥离，且不解析附件目录）
 - [ ] 1.8 Rust 单测：投影与命名素材（`panel_text_of_content` / 恢复面板 / `turn_user_text` /
