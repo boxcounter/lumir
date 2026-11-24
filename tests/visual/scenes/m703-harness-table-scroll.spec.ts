@@ -23,7 +23,7 @@ const VAULT: VaultFixture = {
   links: {},
 };
 
-/** 4 列宽表：自然宽 ≈ 580px，1:1 分栏（pane ≈ 481 / body ≈ 463）下必然横向溢出。 */
+/** 4 列宽表：自然宽明显超过 1:1 分栏下约 448.5px 的正文阅读宽，必然横向溢出。 */
 const WIDE = [
   "| 名称 | 说明 | 状态 | 备注 |",
   "| --- | --- | --- | --- |",
@@ -290,10 +290,10 @@ test("宽 pane：同一张表不再溢出，仍按固有宽呈现、不被拉满
   await openPanel(page);
   const g = await tableGeometry(page, "WIDE-甲");
   expect(g.wrapperScrollWidth, "宽 pane 下不应有横向溢出").toBe(g.wrapperClientWidth);
-  // 固有宽而非拉伸：三者的宽度一致且明显小于 pane 正文宽。
+  // 固有宽而非拉伸：三者同宽且小于 720px 正文上限；无溢出已经排除被拉满的形态。
   expect(Math.abs(g.wrapper.width - g.table.width)).toBeLessThanOrEqual(1);
   expect(Math.abs(g.slot.width - g.table.width)).toBeLessThanOrEqual(1);
-  expect(g.table.width).toBeLessThan(g.body.width - 100);
+  expect(g.table.width).toBeLessThan(g.body.width);
   expect(g.transcriptScrollWidth).toBe(g.transcriptClientWidth);
 });
 

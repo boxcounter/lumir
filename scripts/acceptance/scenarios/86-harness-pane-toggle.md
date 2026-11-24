@@ -31,6 +31,8 @@ steps:
     do: keys
     keys: ["cmd+shift+a"]
     expect:
+      # 排版证据：空态 13px/1.58、--text-2 与 24px padding；composer 15px/1.58、
+      # 12px 16px 16px 外侧与 48px 最小高。720px 只限消息，不改变 pane 开合或比例。
       - shot: 02-harness-pane-打开
       - label: 自动分栏成立（D368 分隔条在位）
         ax: { has: "分隔条" }

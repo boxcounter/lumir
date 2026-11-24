@@ -446,18 +446,18 @@
   position: relative;
 }
 
-/* ── transcript：消息流（底 padding sp-2 对齐原型 .h-transcript——末条消息与 composer
-   区之间的余量由 composer-area 的 padding 接续） ─────────────────────────────── */
+/* ── transcript：消息流（refined-rows-720：15px/1.58、16px 外侧与消息节奏；
+   底 padding sp-6 与 composer-area 的 padding 接续） ────────────────────────── */
 .lumir-hp-transcript {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--sp-4) var(--sp-4) var(--sp-2);
+  padding: var(--sp-8) var(--sp-8) var(--sp-6);
   display: flex;
   flex-direction: column;
-  gap: var(--sp-4);
-  font-size: calc(var(--fs-ui) * var(--lumir-hp-scale, 1));
-  line-height: var(--lh-ui);
+  gap: var(--sp-8);
+  font-size: calc(var(--fs-body) * var(--lumir-hp-scale, 1));
+  line-height: var(--lh-chat);
   /* 消息摘录浮动钮的定位基准（change harness-message-excerpt design §7）：钮挂在本容器内，
      与选区内容一起滚动（scrollTop 折算进定位）。abspos 子节点不参与 flex 布局。 */
   position: relative;
@@ -519,25 +519,29 @@
 }
 .lumir-hp-empty {
   margin: auto;
-  padding: var(--sp-6);
-  color: var(--text-3);
-  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
-  line-height: var(--lh-ui);
+  padding: var(--sp-10);
+  color: var(--text-2);
+  font-size: calc(var(--fs-ui) * var(--lumir-hp-scale, 1));
+  line-height: var(--lh-chat);
   text-align: center;
 }
 /* who meta 行（M351，原型 .who/.when）：角色 + 相对时间同行，micro 字号 + semibold +
-   宽字距 + 三级色——视觉上降档于正文（meta chrome）；when 回常规字重字距。 */
+   宽字距；角色取二级色保证任务身份可读，when 回常规字重字距并保留三级色。 */
 .lumir-hp-who {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  margin-bottom: var(--sp-1);
+  margin-bottom: var(--sp-2);
   font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
   font-weight: var(--fw-semibold);
   letter-spacing: 0.05em;
   color: var(--text-3);
 }
+.lumir-hp-role {
+  color: var(--text-2);
+}
 .lumir-hp-when {
+  color: var(--text-3);
   font-weight: var(--fw-regular);
   letter-spacing: 0;
 }
@@ -558,7 +562,7 @@
    （light/dark = --sel 实底，M370 裁决不动；eink 见下一条），不再靠压暗正文——正文
    是内容本体，降档是 meta 文本的手段，用在这里正是「看不清」的根因。 */
 .lumir-hp-msg-user > .lumir-hp-body {
-  padding: var(--sp-3) var(--sp-4);
+  padding: var(--sp-4) var(--sp-6);
   background: var(--sel);
   border: 1px solid var(--border-soft);
   border-radius: var(--r6);
@@ -578,7 +582,10 @@
 .lumir-hp-msg-assistant {
   align-self: stretch;
   min-width: 0;
-  word-break: break-word;
+}
+.lumir-hp-msg-assistant .lumir-hp-body {
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 /* Markdown 块的纵向节奏（挂 body 体，M351——who 行不吃块节奏；面板是 chrome 表面，
    字号走 shell 阶梯，不碰 --editor-* token） */
@@ -598,18 +605,7 @@
 .lumir-hp-msg-assistant .lumir-hp-body h4 { font-size: calc(var(--fs-h4) * var(--lumir-hp-scale, 1)); }
 .lumir-hp-msg-assistant .lumir-hp-body h5 { font-size: calc(var(--fs-h5) * var(--lumir-hp-scale, 1)); }
 .lumir-hp-msg-assistant .lumir-hp-body h6 { font-size: calc(var(--fs-h6) * var(--lumir-hp-scale, 1)); }
-.lumir-hp-msg-assistant .lumir-hp-body h1:first-child,
-.lumir-hp-msg-assistant .lumir-hp-body h2:first-child,
-.lumir-hp-msg-assistant .lumir-hp-body h3:first-child,
-.lumir-hp-msg-assistant .lumir-hp-body h4:first-child,
-.lumir-hp-msg-assistant .lumir-hp-body h5:first-child,
-.lumir-hp-msg-assistant .lumir-hp-body h6:first-child,
-.lumir-hp-msg-assistant .lumir-hp-body p:first-child,
-.lumir-hp-msg-assistant .lumir-hp-body ul:first-child,
-.lumir-hp-msg-assistant .lumir-hp-body ol:first-child,
-.lumir-hp-msg-assistant .lumir-hp-body pre:first-child,
-.lumir-hp-msg-assistant .lumir-hp-body blockquote:first-child,
-.lumir-hp-msg-assistant .lumir-hp-body table:first-child {
+.lumir-hp-msg-assistant .lumir-hp-body > :first-child {
   margin-top: 0;
 }
 .lumir-hp-msg-assistant .lumir-hp-body p,
@@ -618,19 +614,20 @@
 .lumir-hp-msg-assistant .lumir-hp-body pre,
 .lumir-hp-msg-assistant .lumir-hp-body blockquote,
 .lumir-hp-msg-assistant .lumir-hp-body table {
-  margin: var(--sp-2) 0;
+  margin: var(--sp-4) 0;
 }
-.lumir-hp-msg-assistant .lumir-hp-body p:last-child,
-.lumir-hp-msg-assistant .lumir-hp-body ul:last-child,
-.lumir-hp-msg-assistant .lumir-hp-body ol:last-child,
-.lumir-hp-msg-assistant .lumir-hp-body pre:last-child,
-.lumir-hp-msg-assistant .lumir-hp-body blockquote:last-child,
-.lumir-hp-msg-assistant .lumir-hp-body table:last-child {
+.lumir-hp-msg-assistant .lumir-hp-body > :last-child {
   margin-bottom: 0;
 }
 .lumir-hp-msg-assistant .lumir-hp-body ul,
 .lumir-hp-msg-assistant .lumir-hp-body ol {
-  padding-left: var(--sp-9);
+  padding-left: var(--sp-10);
+}
+.lumir-hp-msg-assistant .lumir-hp-body li + li {
+  margin-top: var(--sp-1);
+}
+.lumir-hp-msg-assistant .lumir-hp-body li p {
+  margin: var(--sp-2) 0;
 }
 .lumir-hp-msg-assistant .lumir-hp-body blockquote {
   padding-left: var(--sp-4);
@@ -643,7 +640,8 @@
   margin: var(--sp-4) 0;
 }
 .lumir-hp-msg-assistant .lumir-hp-body table {
-  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  font-size: calc(var(--fs-ui) * var(--lumir-hp-scale, 1));
+  line-height: var(--lh-ui);
 }
 /* 面板表格的**结构**（合并边框 / 边框 / 内边距 / 表头字重）挂在 `.lumir-hp-table` 类上，
    不挂 `.lumir-hp-body` 祖先链（M634）：全屏遮罩深克隆的是 `<table>` 本身，克隆脱离 body
@@ -661,11 +659,13 @@
 }
 .lumir-hp-table th,
 .lumir-hp-table td {
-  padding: var(--sp-1) var(--sp-3);
-  border: 1px solid var(--border-soft);
+  padding: var(--sp-3) var(--sp-5);
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
   text-align: left;
 }
 .lumir-hp-table th {
+  border-bottom-color: var(--border);
   font-weight: var(--fw-semibold);
 }
 /* 表格的局部横滚容器（与正文 `.cm-lp-table-scroll` 同一份宽度合同）：块级、以包含块为
@@ -717,9 +717,9 @@
 /* 代码块：浅底区块（--code-bg）；eink 翻转为白底黑框（规则⑤——light/dark 靠浅底区分，
    eink 无灰底可用） */
 .lumir-hp-codeblock {
-  padding: var(--sp-3) var(--sp-4);
+  padding: var(--sp-5) var(--sp-6);
   background: var(--code-bg);
-  border-radius: var(--r6);
+  border-radius: var(--r8);
   overflow-x: auto;
   font-family: var(--font-mono);
   font-size: calc(var(--fs-ui-s) * var(--lumir-hp-scale, 1));
@@ -762,10 +762,10 @@
 }
 /* 纵向节奏（M634）：块被 slot 包住后 `pre:first-child` / `table:last-child` 这类结构选择器
    对所有块都成立，块自己的 margin 不再能表达「消息首末块贴边」。因此块的 margin 在 slot 内
-   归零，由 slot 承担——规则值与上面 `.lumir-hp-body pre / table` 那条逐值相同（sp-2，首末贴 0）。
+   归零，由 slot 承担——规则值与上面 `.lumir-hp-body pre / table` 那条逐值相同（sp-4，首末贴 0）。
    M703 起表格多一层横滚容器，归零链路跟着穿透 wrapper 与 wrapper 内的表本身。 */
 .lumir-hp-msg-assistant .lumir-hp-body .lumir-hp-block-slot {
-  margin: var(--sp-2) 0;
+  margin: var(--sp-4) 0;
 }
 .lumir-hp-msg-assistant .lumir-hp-body .lumir-hp-block-slot:first-child {
   margin-top: 0;
@@ -780,8 +780,8 @@
 }
 
 /* ── 工具调用清单（M351，原型屏 4 .tools；Alex 2026-10-06 裁决还原清单形态）：上下
-   hairline 夹出的区块，挂在 agent 消息内（body 之后）。步骤行 24px 高：done = ✓（ok 色）、
-   running = 脉冲圆点（--run）。轮次结束 ≥2 行折叠为一行摘要钮（可展开回看）。 ────── */
+   hairline 夹出的区块，挂在 agent 消息内（body 之后）。步骤行最小 28px、高度随内容：
+   done = ✓（ok 色）、running = 脉冲圆点（--run）。轮次结束 ≥2 行折叠为一行摘要钮（可展开回看）。 ── */
 .lumir-hp-tools {
   margin: var(--sp-2) 0 0;
   padding: var(--sp-2) 0;
@@ -792,7 +792,8 @@
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  height: 24px;
+  height: auto;
+  min-height: 28px;
   font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   color: var(--text-2);
 }
@@ -800,7 +801,7 @@
   display: none;
 }
 /* 步骤行文本：M368 起成功行带调用参数摘要（后端 summarize_args，可长到 80 字符）——
-   单行走省略号，别把固定 24px 的行高撑破。flex 子项要能收缩（min-width: 0）才吃得到
+   单行走省略号，截断只落在参数摘要。flex 子项要能收缩（min-width: 0）才吃得到
    text-overflow；原「成功」这类短摘要逐像素不变。完整摘要仍在 DOM / AX 里（读屏可读）。 */
 .lumir-hp-tool-text {
   min-width: 0;
@@ -841,7 +842,7 @@
   color: var(--text);
 }
 .lumir-hp-tool-out {
-  color: var(--text-3);
+  color: var(--text-2);
 }
 /* 终态格（已采纳/已拒绝 · 相对时间）与详情入口：flex:none 永不裁（截断只落参数摘要——
    「保住终态词」与 M373「只截 model 名，保住 effort」同一纪律）。 */
@@ -1055,7 +1056,7 @@
 
 /* ── 批准闸：结构档边框的卡片（未决项不自动超时，唯一的出口是点击） ────────── */
 .lumir-hp-approval {
-  padding: var(--sp-3) var(--sp-4);
+  padding: var(--sp-5) var(--sp-6);
   background: var(--content-bg);
   border: 1px solid var(--border);
   border-radius: var(--r6);
@@ -1072,23 +1073,23 @@
   margin-top: 1px;
   font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   font-weight: var(--fw-regular);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 /* 模型自述的用途句（M406/M407 契约 purpose 字段）：命令 / diff 上方的阅读辅助行——
    次级灰小号字，不抢命令原文的视觉重心（信任边界：原文永远完整可见）。 */
 .lumir-hp-approval-purpose {
-  margin: 0 0 var(--sp-2);
+  margin: 0 0 var(--sp-4);
   font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   color: var(--text-2);
 }
 /* 判定依据行（M459，change add-approval-decision-reason）：这次调用**为什么**进闸——层级由 Rust
    判定管线产出、随批准请求事件与 `harness_state` 快照两条通道到达（前端只按 kind 取文案）。位置在
    问句行之下、用途句与命令之上（先回答「为什么问我」，再看要批准什么）；随决策随卡退场。信息副行：
-   字号取 meta 档、色取次级灰（--text-3，弱于用途句的 --text-2 与命令原文），不抢命令的视觉重心。 */
+   字号取 meta 档、色取任务型次级文字 --text-2，保证批准依据可读。 */
 .lumir-hp-approval-basis {
-  margin: 0 0 var(--sp-2);
+  margin: 0 0 var(--sp-4);
   font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
-  color: var(--text-3);
+  color: var(--text-2);
 }
 /* 定时任务批准卡（change add-cron-conversational-registration design §6.3）：判定依据行之后、
    按钮之前的任务要素块。两列键值——键名右对齐次级灰（复用判定依据行的 color token）、值等宽；
@@ -1127,15 +1128,15 @@
 /* vault_delete 的后果说明（M414，design §5.1）：路径之下的次级灰一行——「移入系统废纸篓、
    可恢复」是这次批准的真实后果，让人知道批准不等于不可恢复。 */
 .lumir-hp-approval-note {
-  margin: 0 0 var(--sp-2);
+  margin: 0 0 var(--sp-4);
   font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
-  color: var(--text-3);
+  color: var(--text-2);
 }
 .lumir-hp-diff,
 .lumir-hp-argv {
   max-height: 240px;
   overflow: auto;
-  margin: 0 0 var(--sp-2);
+  margin: 0 0 var(--sp-4);
   padding: var(--sp-2) var(--sp-3);
   background: var(--code-bg);
   border-radius: var(--r4);
@@ -1188,7 +1189,7 @@
   display: block;
   width: 100%;
   box-sizing: border-box;
-  margin-bottom: var(--sp-2);
+  margin-bottom: var(--sp-4);
   padding: var(--sp-2) var(--sp-3);
   border: 1px solid var(--border);
   border-radius: var(--r4);
@@ -1212,7 +1213,8 @@
   gap: var(--sp-3);
 }
 .lumir-hp-approval-actions button {
-  padding: var(--sp-2) var(--sp-5);
+  min-height: 32px;
+  padding: var(--sp-2) var(--sp-6);
   border-radius: var(--r4);
   font: inherit;
   font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
@@ -1297,7 +1299,7 @@
 /* ── 上下文 chip（M370 起在 composer 区顶部：横线之下、composerBox 之上——发送前可核对
    的读数与输入同区，Alex 2026-10-07）：描边 chip（eink 规则⑥同形——本就描边、无底色，
    eink 只把描边提到结构档）；单行省略，全文在 title。水平余量归零（composerArea 自带
-   sp-4 侧 padding），底部留 sp-2 与 composerBox 的间距。 ─────────────────────────── */
+   sp-8 侧 padding），底部留 sp-2 与 composerBox 的间距。 ─────────────────────────── */
 .lumir-hp-chip {
   margin: 0 0 var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
@@ -1325,7 +1327,7 @@
 .lumir-hp-composer-area {
   flex: none;
   margin-top: var(--sp-2);
-  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+  padding: var(--sp-6) var(--sp-8) var(--sp-8);
   border-top: 1px solid var(--border);
 }
 .lumir-hp-composer-box {
@@ -1817,7 +1819,7 @@
 .lumir-hp-stage {
   margin-bottom: 4px;
   font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
-  color: var(--text-3);
+  color: var(--text-2);
 }
 .lumir-hp-bar {
   height: 3px;
@@ -1863,6 +1865,12 @@
    编辑器那颗钮（挂 .editor-pane）不受影响，M345 基线零漂移。 */
 .lumir-hp-transcript > .quote-gesture-btn {
   width: max-content;
+}
+
+/* 720px 只限制 transcript 的直接消息子项；窄 pane 自然占满，宽 pane 左对齐不居中。
+   pane、composer 与其外侧不获得该上限。 */
+.lumir-hp-transcript > .lumir-hp-msg {
+  max-inline-size: var(--layout-review-measure);
 }
 
 /* ── 消息复制钮（M347）：hover 浮现在消息右上角与 who 行同高（键盘可达：focus 也显形）。
@@ -1926,24 +1934,23 @@
 /* ── 输入区（M343 混排编辑区，change add-harness-quote-cards design §2/§5）：
    contenteditable div，顶层仅 .lumir-hp-qcard（原子卡片）/ .lumir-hp-qpara（问题段落）
    两类块，无卡片时退化为纯文本输入。M351 起自身不带边框/底色/圆角——由外层
-   composer-box 承担（原型 .h-box：focus-within 出强调框），padding 对齐原型
-   （sp-3 sp-4 sp-1：底部余量让给控制行）。 ─────────────────────────────────── */
+   composer-box 承担（原型 .h-box：focus-within 出强调框），输入与 transcript 共用
+   15px/1.58；底部余量让给控制行。 ─────────────────────────────────────────── */
 .lumir-hp-composer {
   position: relative;
   flex: 1 1 auto;
   min-width: 0;
-  /* 单行最小高度 = 原型 .h-box textarea 的 44px（M361 2.1/2.2）：空态与首行输入态同高，
-     输入不再「变矮」；行在 44px 内容区内靠上留白，空态光标与占位有原型同款的呼吸感。 */
-  min-height: 44px;
+  /* 空态与首行输入态同高；48px 最小高不随共享字号倍率二次放大。 */
+  min-height: 48px;
   max-height: 150px;
   overflow-y: auto;
-  padding: var(--sp-3) var(--sp-4) var(--sp-1);
+  padding: var(--sp-5) var(--sp-6) var(--sp-2);
   border: none;
   background: none;
   color: var(--text);
   font: inherit;
-  font-size: calc(var(--fs-ui) * var(--lumir-hp-scale, 1));
-  line-height: var(--lh-ui);
+  font-size: calc(var(--fs-body) * var(--lumir-hp-scale, 1));
+  line-height: var(--lh-chat);
   word-break: break-word;
   cursor: text;
 }
@@ -1951,14 +1958,14 @@
   outline: none;
 }
 /* 占位：JS 在「无卡片且唯一空段落」时挂 .is-empty（contenteditable 的 :empty 不可靠——
-   浏览器会塞 <br> 或空段落占位）。绝对定位压在首行行位（= 光标位，padding sp-3 sp-4）：
+   浏览器会塞 <br> 或空段落占位）。绝对定位压在首行行位（= 光标位，padding sp-5 sp-6）：
    占位不占独立行——旧实现占位自占一行，空态比输入态高出一行、光标掉到第二行（M361 2.1/2.2）。 */
 .lumir-hp-composer.is-empty::before {
   content: attr(data-placeholder);
   position: absolute;
-  top: var(--sp-3);
-  left: var(--sp-4);
-  color: var(--text-3);
+  top: var(--sp-5);
+  left: var(--sp-6);
+  color: var(--text-2);
   pointer-events: none;
 }
 /* 问题段落：软换行（⇧Enter 的 \n）按原样渲染（pre-wrap），序列化取 textContent 因此守恒。 */

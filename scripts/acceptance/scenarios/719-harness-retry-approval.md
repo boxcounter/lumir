@@ -73,6 +73,8 @@ steps:
         file: { path: retry-del-b.md, unchangedSince: del-b }
       - label: mtime 也不变（没有偷偷写一次）
         file: { path: retry-del-b.md, mtimeUnchangedSince: del-b }
+      # 排版证据：第二次批准卡的依据与后果为 --text-2；卡体 10/12px、决策段 8px、
+      # 按钮最小 32px。第二次批准与完成态行为判据不变。
       - shot: 02-第二次批准
   - name: 采纳删除 B
     do: click

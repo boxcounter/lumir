@@ -51,6 +51,8 @@ steps:
         ax: { has: "TABLE-SCROLL-末列-甲" }
       - label: 表头在场
         ax: { has: "名称" }
+      # 排版证据：面板表格 13px/1.5、cell 6/10px；仅横线（表头 --border、数据行
+      # --border-soft）。固有宽、cell 单行与局部横滚不变，几何机器判据仍归 m703。
       - shot: 01-宽表初始态
 
   - name: 让窗口成为 key window（真实正文单击，滚轮注入的前台前提）
