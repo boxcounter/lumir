@@ -2,14 +2,15 @@
 
 - Change ID: `add-harness-web-fetch-search-nov24`
 - 日期: 2026-11-24
-- 状态: r2 提案草稿；方向已由 Alex「采纳建议」采纳，D1 默认批准粒度与 D2 设置入口均待节点 1 确认；禁止提前实现
+- 状态: r2 提案草稿；D1「默认允许所有」与 D2「设置 → 自动化 → 网页访问」均已获 Alex 批准；禁止提前实现
 
 ## 1. 结论与边界
 
-本 change 建议在「设置 → 自动化 → 网页访问」提供默认关闭的总开关；只有
-`harness.web_access.enabled=true` 时，才在**交互主会话**注册 `web_search` 与 `web_fetch`。
-两件工具由同一套工具信封、来源结构、安全校验与错误分类承载。DeepSeek 是第一个也是本期唯一
-provider。后续 provider 只能实现同一合同，不得新增工具别名或另一套结果形状。
+本 change 在「设置 → 自动化 → 网页访问」提供总开关与批准策略：`harness.web_access.enabled`
+缺省为 `true`，`harness.web_access.approval` 缺省为 `allow_all`，因此两件工具默认在**交互主会话**
+注册并直接执行。用户可全局关闭或改为 `ask`。两件工具由同一套工具信封、来源结构、安全校验与
+错误分类承载。DeepSeek 是第一个也是本期唯一 provider。后续 provider 只能实现同一合同，
+不得新增工具别名或另一套结果形状。
 
 请求分成两个平面，不能混谈：
 
@@ -143,9 +144,10 @@ API 字节上限与模型字符预算是两道独立闸：前者防内存与协�
 
 ### 3.1 无新增配置的确定性解析
 
-`harness.web_access.enabled` 缺省为 `false`。缺省 / false 时 Web 工具不进入模型工具清单，
-幻觉调用按同一注册闸回送 `tool_unknown`，且不解析 provider、不产生网络请求。开启后才注册；
-此时无可用 provider 由执行返回 `web_provider_unconfigured`，而不是变成另一套「工具不存在」语义。
+`harness.web_access.enabled` 缺省为 `true`，因此 Web 工具默认进入模型工具清单。显式 false 时
+不注册，幻觉调用按同一注册闸回送 `tool_unknown`，且不解析 provider、不产生网络请求。
+`harness.web_access.approval` 缺省为 `allow_all`，只决定默认 Allow 还是 Ask，不改变注册条件。
+无可用 provider 由执行返回 `web_provider_unconfigured`，而不是变成另一套「工具不存在」语义。
 每回合使用既有 `HarnessConfig` 快照，按以下顺序解析：
 
 1. 当前 active 条目是 `preset=deepseek`：只考察该条目。Key 非空且 base URL 为官方地址才可用；
@@ -174,63 +176,59 @@ API 字节上限与模型字符预算是两道独立闸：前者防内存与协�
   Authorization、请求体或 Key 时，也只能留下 `[REDACTED]`。测试用唯一 canary 覆盖全部留存面。
 - tools API 不跟随 3xx；目标预检请求不携带 DeepSeek Key、Cookie、 vault 内容或浏览器凭据。
 - Search query 会发给 DeepSeek；Fetch URL 会发给 DeepSeek，并会由 Lumir 预检与 DeepSeek 抓取发往
-  目标站。批准卡必须完整显示 query / URL、provider id 与这段外发说明。工具成功 / 失败结果也保留
-  完整 query / URL，供自动放行后的审计；不能只靠 80 字工具行摘要满足可见性。
+  目标站。默认 Allow 下不弹批准卡，工具行与成功 / 失败结果仍完整保留 query / URL、provider id、
+  费用与 untrusted 说明，供审计；不能只靠 80 字工具行摘要满足可见性。用户改为 `ask` 后，
+  批准卡必须显示同样的完整输入、双路外发与费用说明。
 - `provider_id` 是会话已有的配置身份，可用于审计；API Key 本身永远不是审计字段。
 
 无配置、配置歧义、自定义 base URL、参数 / URL / DNS 校验失败时，DeepSeek 请求数必须为 0，
 也不得产生 curl 子进程。
 
-### 3.3 网页访问设置与注册（D2 待确认）
+### 3.3 网页访问设置与注册（D2 已批准）
 
 「设置 → 自动化 → 网页访问」是网络授权区，不是第五种自动 LLM 行为。它包含：
 
-- **总开关**：唯一新增键 `harness.web_access.enabled`，缺省 / false 为关闭。设置快照 / patch /
-  revision 均覆盖该键；开 / 关经既有 `settings_apply` 原子写通道，下一回合按新配置快照决定注册。
-  恢复默认 = 删键，页级还原同样删键，但不要求重启，也不顺带清空持久 origin。provider 增删 / 切换
-  不重置该键；关闭只隐藏工具，不删除 provider、持久 origin 或会话历史。
+- **总开关与批准策略**：`harness.web_access.enabled` 缺省 `true`，`harness.web_access.approval`
+  缺省 `allow_all`，可选 `ask`。设置快照 / patch / revision 均覆盖两键；改动经既有
+  `settings_apply` 原子写通道，下一回合生效。恢复默认 = 删键，页级还原同样删键，但不要求重启，
+  也不清空 origin deny。provider 增删 / 切换不重置它们；关闭只隐藏工具，不删除 provider、deny
+  或会话历史。
 - **provider 只读状态**：复用 §3.1 同一解析口，显示实际 provider id、官方 DeepSeek / 未配置 /
   配置歧义 / 自定义 base URL 等状态。提供「前往模型接入」动作，选中对应 provider 表单；
   未解析出条目时跳到模型接入的 DeepSeek 管理面。本区不显示 Key、不复制 provider 字段、
   不提供第二 provider 选择器。
-- **持久 origin 列表**：只读既有 `harness.permissions.allow` 中规范 `web_fetch(origin)` 规则，
-  支持单独移除与「全部清空」。写入复用权限规则治理的原子写通道与 revision，不另建 origin 表。
-  删除只影响持久规则；会话内免问是另一层既有状态，不进该列表，其存活边界必须在 UI 说明。
-- **固定权限说明**：默认 Ask 不随开关变化。Search 只有「本会话后续搜索」记忆，持久
-  `web_search` allow 不生成也不生效；Fetch 的 origin 级会话 / 持久授权仍可独立管理。
-  `full_access` 不改变默认 Ask。
+- **origin deny 列表**：只读既有 `harness.permissions.deny` 中规范 `web_fetch(origin)` 规则，
+  默认空。支持新增封禁、单独移除 deny 与「全部清空」。写入复用权限规则治理的原子写通道与
+  revision，不另建 origin 表。移除 / 清空只影响 deny：在默认 `allow_all` 下恢复允许，在 `ask`
+  下恢复 Ask；不得暗中重置 approval。
+- **审计说明**：默认 Allow 不再逐次弹卡，但本区与工具结果持续展示 query / URL、provider、费用、
+  双路外发与 untrusted 提示。`allow_all` 表示用户选择了默认执行策略，不表示网页可以修改授权。
 
-本区与四个自动 LLM 开关并列但不改变它们的数量、顺序或归属。它只新增一个 Web 开关；
-provider / Key / endpoint 仍归模型接入，origin 仍归权限规则，不在网页访问区复制任何一项。
+本区与四个自动 LLM 开关并列但不改变它们的数量、顺序或归属。provider / Key / endpoint 仍归
+模型接入，origin deny 仍归权限规则，不在网页访问区复制任何一项。
 
 ## 4. `web_read` 权限与批准粒度
 
 `web_read` 是权限分类，不是第三件工具，也不是新的权限模式。`web_search` / `web_fetch` 不加入
-`READ_TOOLS`，因此在 D1 推荐值下，`read_only` / `vault_write` / `full_access` 的模式默认均为 Ask。
-`full_access` 不代表「可以向任意外网静默发数据并产生费用」。
+`READ_TOOLS` 的通用只读集合，而由 `harness.web_access.approval` 单独决定默认层：
+`allow_all`（默认）在所有权限模式下直接 Allow，`ask` 才进入批准闸。`enabled=false` 时工具不注册，
+不存在权限判定。
 
-既有五层判定顺序不变：deny > vault 写重定向 > 危险黑名单 > allow > 模式默认 / 会话缓存。
-URL / DNS 校验在执行层，不成为用户 allow 或缓存可以跳过的第六层；每次执行与每次重定向都重验。
+Web 判定顺序为 deny > 既有硬层 > `web_access.approval`；deny 永远优先。Web 不使用 allow 规则或
+会话缓存来派生另一套授权模型，也不生成 Web 专用持久 allow / 免问动作。其它工具的 allow / 缓存
+语义不变。URL / DNS / redirect / 内容类型 / 预算 / 密钥检查在执行层，任何 approval 值都不得跳过。
 
-| 调用 | permission subject | 批准预览 | 会话记忆 / 持久 allow 粒度 |
+| 调用 | permission subject | 默认行为 | origin deny |
 |---|---|---|---|
-| `web_search` | 完整 query | 完整 query、DeepSeek、query 外发与计费说明 | 仅当前会话的工具级记忆；不生成、不生效持久 `web_search` allow |
-| `web_fetch` | 规范化 origin（scheme + host + 有效 port） | 完整 URL、origin、DeepSeek 与目标站外发说明 | origin 级会话记忆 / 持久规则 `web_fetch(https://example.com)`；不覆盖其它 origin |
+| `web_search` | 完整 query | 默认直接执行并保留完整 query / provider / 费用 / untrusted 审计；`ask` 时才显示完整批准预览 | 不支持按搜索词推断 origin；工具级 deny 仍可按既有规则拒绝 |
+| `web_fetch` | 规范化 origin（scheme + host + 有效 port） | 默认直接执行并保留完整 URL / provider / 费用 / untrusted 审计；`ask` 时才显示完整批准预览 | `web_fetch(https://example.com)` 在每次初始调用与每跳重定向重新判定 |
 
-Fetch 的批准卡显示完整 URL，但规则只按 origin 授权，避免把 query / path 误当稳定身份。
-origin 规范化必须小写 scheme / host、省略默认 port、保留非默认 port，不含 userinfo、path、query 或
-fragment。Search 的「本会话不再问」必须在按钮上明确写成「本会话的后续网页搜索」，Fetch 必须显示
-具体 origin，不能只写「同类操作」。
+Fetch origin 规范化必须小写 scheme / host、省略默认 port、保留非默认 port，不含 userinfo、path、
+query 或 fragment。跨 origin 重定向不是新工具调用，不另开批准：先校验 Location 的 scheme / 凭据 /
+host，再检查目标 origin deny；未封禁则继续 DNS / 连接 / 内容类型校验，全部通过后可执行。
+被封禁目标在任何 approval 值下都返回 `permission_denied`，且不连接该 origin、不调用 DeepSeek。
 
-跨 origin 重定向不继承原 origin 的批准。预检发现跨 origin Location 时，在语法与凭据校验后返回
-`web_redirect_requires_approval` 和完整 `redirect_url`，不 DNS、不连接新 origin、不调用 DeepSeek。
-模型如继续，应以该 URL 新发一次 `web_fetch`，由新 origin 的批准闸处理。`redirect_url` 本身仍是
-untrusted data，不是自动执行指令。
-
-基础参数形状与 URL scheme / userinfo 校验 SHALL 在批准预览之前完成，非法调用不得先产生一张
-携带凭据或无效目标的批准卡。完整 DNS / redirect / 内容类型校验仍在每次执行时进行。
-既有 deny 永远优先；显式 allow / 会话缓存只能减少批准点击，不能跳过 SSRF、内容类型、预算或密钥检查。
-Search 的持久 allow 即使用户手写也不生效，deny 则照常生效；Fetch 的持久 origin allow 才进入第 4 层。
+基础参数形状与 URL scheme / userinfo 校验在可选批准预览之前完成，非法调用不产生携带凭据的批准卡。
 权限语义变更实现时，必须全量回扫既有验收场景的闸期望，而不只新增 Web 场景。
 
 ## 5. URL、重定向与 DNS 安全
@@ -262,8 +260,9 @@ Search 的持久 allow 即使用户手写也不生效，deny 则照常生效；F
 - 只接受 `text/html` 与 `application/xhtml+xml`（可带参数）。明确非 HTML 返回
   `web_unsupported_content`；Content-Type 缺失或冲突且 Range GET 仍无法判定返回
   `web_content_type_unknown`。两者都提示可另行选择 curl，但不自动执行。
-- 相对 Location 按当前 URL 解析；每跳重新做 scheme / userinfo / host 校验。同源（scheme + host +
-  有效 port 相同）才继续 DNS 与连接；跨源走 §4 的重新批准结果。超过 5 次为 `web_redirect_limit`。
+- 相对 Location 按当前 URL 解析；每跳重新做 scheme / userinfo / host 与 origin deny 校验。
+  跨 origin 不是新工具调用、不另开批准；目标未封禁才继续 DNS 与连接。超过 5 次为
+  `web_redirect_limit`。
 - 预检通过后才调用 DeepSeek Fetch，发送最后一个已验证的同源 URL。预检的 HEAD / Range GET 与
   DeepSeek 的抓取可能产生两次目标访问，这是获得本地安全校验的代价，须在评审与验收中显式承认。
 
@@ -302,7 +301,7 @@ DeepSeek API 没返回远端 final URL、连接 IP 或 redirect chain，因此 L
 | 200 后响应过大、Content-Type 非 JSON、JSON 非法 / 形状不符 | 否 | `web_response_too_large` / `web_provider_protocol_error` |
 | Search 200 空数组 | 否 | 成功空结果，不视为错误 |
 | Fetch 200 空 Markdown | 否 | `web_empty_content`；官方不计费，但仍不自动重试 |
-| 目标预检任何失败 / 重定向需批准 | 否 | 对应 `web_*` code；DeepSeek attempts=0 |
+| 目标预检任何失败 / origin deny | 否 | 对应 `web_*` code 或 `permission_denied`；DeepSeek attempts=0 |
 
 退避优先尊重有界 `Retry-After`（上限 2 秒）；缺失时使用 250ms、1s 的指数序列。测试注入时钟，
 不做分钟级实睡。429 的账号 / 域名限额不因重试而绕过，超过上限即把错误回送模型。
@@ -334,7 +333,6 @@ LLM 请求的 wire 历史会携带它。若该后续 LLM 往返失败，显式�
 | `web_url_blocked` | scheme / userinfo / host / IP 非允许目标 |
 | `web_dns_failed` / `web_dns_blocked` | DNS 失败或任一答案非全局单播 |
 | `web_redirect_limit` | 重定向超过 5 次 |
-| `web_redirect_requires_approval` | 跨 origin，附 `redirect_url`，未连接新 origin、未请求 DeepSeek |
 | `web_unsupported_content` / `web_content_type_unknown` | 明确非 HTML / 无法确认 HTML |
 | `web_network_failed` / `web_timeout` / `web_cancelled` | 本地网络、超时、取消 |
 | `web_response_too_large` | DeepSeek API 响应超过 2 / 4 MiB |
@@ -356,7 +354,8 @@ Search / Fetch 的 title、snippet、summary、content、provider_message、redi
   真正的授权仍只来自既有权限配置与用户批准通道。
 - 不得自动触发 curl、写文件、修改权限、二次 Fetch 或新 provider 请求。后续模型调用必须重新经过
   同一工具循环、预算、权限与安全校验。
-- 不得因网页包含批准话术而隐藏批准卡或改变审批文案。批准卡只由实际工具参数与配置生成。
+- 不得因网页包含批准话术而改变 `approval`、origin deny 或审批文案。默认 Allow 来自用户配置，
+  可选批准卡只由实际工具参数与配置生成。
 
 工具 description 与系统固定段都要写明这条优先级；测试放入恶意网页指令，断言它原样保留为数据，
 后续危险 / 写工具仍按原权限模式进闸，配置与批准缓存不变。
@@ -419,10 +418,11 @@ DNS 全集检查、地址固定、redirect、预算、重试与错误分类：
 
 ### 10.2 权限、隐私与 fail closed
 
-- 默认关闭不注册；开启后三档模式 × search / fetch 默认均 Ask；deny > allow > cache；Search 仅会话
-  记忆且持久 allow 不生效，Fetch origin 会话 / 持久记忆；不同 origin 与跨源 redirect 重新问；
-  `curl` 原矩阵不变。
-- 设置页 provider 显示与跳转不暴露 Key；origin 单独移除 / 全部清空复用权限写通道，不写第二份状态。
+- 默认 `enabled=true, approval=allow_all` 注册并直接执行；三档权限模式都不逐次 Ask。
+  `enabled=false` 不注册；`approval=ask` 才进批准闸；deny 恒优先，Web allow / 会话缓存不参与授权。
+- 设置页 provider 显示与跳转不暴露 Key；origin deny 新增、单独移除 / 全部清空复用权限写通道，
+  不写第二份状态。默认清空即 allow all，ask 下清空则回到 Ask，approval 不被暗改。
+- 完整 query / URL、provider、费用与 untrusted 审计在默认无批准卡时仍存在；`curl` 原矩阵不变。
 - active DeepSeek 官方、active 非 DeepSeek + 唯一候选、多个候选、无 Key、active 自定义 base URL、
   非 active 自定义 base URL；无配置 / 歧义 / 自定义时零 HTTP、零 curl。
 - canary Key 出现在恶意 provider body / 目标 body / 错误 URL 中，扫描日志、panel、JSONL、wire、
@@ -435,8 +435,9 @@ DNS 全集检查、地址固定、redirect、预算、重试与错误分类：
 - 模拟 DNS 第一次公网、第二次私网；断言连接只使用已验证 IP，Host / SNI 不变，不在连接前重解析。
 - 本地代理与目标双服务在 HTTP(S)_PROXY / ALL_PROXY 下运行：预检只到已验证目标，代理零请求；
   DeepSeek 也单独证明 `no_proxy`、3xx 不跟随与 Bearer 不泄漏；错误实现必须判红。
-- 同源 redirect 逐跳重验；跨源在连接新源之前返回 `web_redirect_requires_approval`；超过 5 次、
-  相对 Location、scheme downgrade、带凭据 Location 都有反例；tools API 3xx 不跟随且不泄漏 Bearer。
+- 每跳 redirect 都重验 scheme / 凭据 / DNS / origin deny；跨源未封禁时无需重批准即可继续，
+  被封禁时零连接、零 DeepSeek；超过 5 次、相对 Location、scheme downgrade、带凭据 Location
+  都有反例；tools API 3xx 不跟随且不泄漏 Bearer。
 - HTML / 非 HTML / 未知 Content-Type、HEAD 失败后的有界 Range GET、忽略 Range 仍只读 4 KiB。
 
 ### 10.4 超时、取消与计费边界
@@ -452,7 +453,7 @@ DNS 全集检查、地址固定、redirect、预算、重试与错误分类：
   下一请求；多调用仍保持全部 call 项在全部 output 项之前。
 - 仅凭 JSONL 恢复后，query / URL、来源字段、错误与 truncated 标记不丢；恢复充分性测试不依赖 sidecar。
 - Web 成功或实际请求后失败 → 后续 LLM 失败 → 显式重试：messages 与失败请求相同，Web HTTP 次数不增，
-  工具结果不重复；重试成功后的新 Web 调用仍重新批准 / 校验。
+  工具结果不重复；重试成功后的新 Web 调用仍按当前 approval / deny 与全部硬校验执行。
 - Web 工具内部 attempt 重试只重发当前 HTTP 请求，不重放同批其它工具。
 
 ### 10.6 search → fetch、untrusted content 与真机
@@ -472,10 +473,10 @@ DNS 全集检查、地址固定、redirect、预算、重试与错误分类：
 
 ## 11. 评审重点
 
-1. D1 是否在「默认所有档先问」与「Search 仅会话 / Fetch origin 级会话与持久记忆」之间取得合适的
-   隐私与点击成本；持久 Search 被明确排除。
-2. D2 的默认关闭、provider 只读跳转与 origin 集中撤销是否构成足够清晰的用户控制入口；本区不复制
-   Key / provider / origin 第二真源。
+1. D1 已批准 `enabled=true, approval=allow_all`：复审重点是默认直接执行是否仍完整保留 query / URL、
+  provider、费用与 untrusted 审计，而不是重新引入逐次批准。
+2. D2 已批准网页访问入口：复审全局关闭 / Ask、origin deny 单项恢复与全部清空是否复用同一权限规则
+  与 revision，且不暗改 approval、不复制 Key / provider / origin 第二真源。
 3. 本地预检会产生额外 HEAD / Range GET；它换来可验证的 redirect / DNS 安全，但也让目标站看到
    Lumir 与 DeepSeek 两路访问。是否接受这一明确代价。
 4. `no_proxy` 是固定 IP 的一部分，不是可选网络优化；两个 client 都必须有系统代理反例。

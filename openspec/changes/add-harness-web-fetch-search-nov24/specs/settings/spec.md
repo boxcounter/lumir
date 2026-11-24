@@ -15,7 +15,7 @@
 自动 LLM 开关的数量、顺序或归属。其余配置键（主题、语言、字号、折行、栏宽、权限模式与规则、
 vault 忽略规则、键位、cron、日志等级、`editor.*`）MUST NOT 在本面板渲染、MUST NOT 在本面板写回
 ——本面板不是配置总览，也不是通用 schema 表单。唯一例外是「网页访问」区展示与管理既有
-`web_fetch(origin)` 持久 allow；其它权限模式与规则仍不得在本面板渲染或写回。
+`web_fetch(origin)` deny；其它权限模式与规则仍不得在本面板渲染或写回。
 
 面板 SHALL 是**单页两节**：两节自上而下排布，MUST NOT 引入 TAB、分段导航或侧边栏；MUST NOT
 渲染编辑器 / 权限设置页，也 MUST NOT 为未做的设置留空壳入口。
@@ -54,8 +54,8 @@ MUST NOT 静默丢弃草稿。
 - **WHEN** 按 `⌘,` 打开设置面板
 - **THEN** 面板内只有「模型接入」与「自动化」两节；模型接入里能看到 provider 列表与选中项的
   编辑表单，自动化节能看到四个自动 LLM 开关、其内联目标选择与独立的「网页访问」区；主题、语言、
-  字号、权限、忽略规则、键位、cron 等配置 MUST NOT 出现在面板里，除 `web_fetch(origin)` 外不渲染
-  权限规则；面板没有 TAB / 侧边导航，也没有编辑器 / 权限设置页或点不开的空壳入口
+  字号、权限、忽略规则、键位、cron 等配置 MUST NOT 出现在面板里，除 `web_fetch(origin)` deny 外
+  不渲染权限规则；面板没有 TAB / 侧边导航，也没有编辑器 / 权限设置页或点不开的空壳入口
 
 #### Scenario: provider 列表与表单联动
 
@@ -105,31 +105,38 @@ MUST NOT 静默丢弃草稿。
 ### Requirement: 网页访问设置
 
 设置面板的自动化节 SHALL 另含独立的「网页访问」网络授权区，不改变四个自动 LLM 开关的数量、
-顺序或归属。该区 SHALL 提供 `harness.web_access.enabled` 总开关，缺省 / false 为关闭；只有显式
-`true` 才注册 `web_search` / `web_fetch`。设置快照 / patch / revision SHALL 把该键纳入同一覆盖，
-开关 SHALL 经既有 `settings_apply` 原子写通道在下一回合生效，provider 增删 / 切换不重置它。
-恢复默认 = 删键，页级还原默认同样删除该键但不要求重启；页级还原 MUST NOT 顺带清空持久 origin，
-origin 清空只能经下面的独立动作。关闭只隐藏工具，MUST NOT 删除 provider、持久 origin 或历史。
+顺序或归属。该区 SHALL 提供 `harness.web_access.enabled`（缺省 `true`）与
+`harness.web_access.approval`（缺省 `allow_all`，可选 `ask`）。默认 SHALL 注册并直接执行
+`web_search` / `web_fetch`；显式 `enabled=false` 才不注册，`approval=ask` 才进入批准闸。
+设置快照 / patch / revision SHALL 覆盖两键，改动 SHALL 经既有 `settings_apply` 原子写通道在下一回合
+生效，provider 增删 / 切换不重置它们。恢复默认 = 删键，页级还原同样删键且不要求重启；
+页级还原 MUST NOT 顺带清空 origin deny。关闭只隐藏工具，MUST NOT 删除 provider、deny 或历史。
 
 网页访问区 SHALL 复用 Web provider 的同一解析口，只读显示实际 provider id、官方 DeepSeek / 未配置 /
 配置歧义 / 自定义 base URL 等状态。它 SHALL 提供「前往模型接入」动作并选中对应 provider 表单；
 未解析出条目时跳回模型接入的 DeepSeek 管理面。该区 MUST NOT 显示或复制 API Key、provider 配置或
 endpoint，也 MUST NOT 提供第二 provider 选择器。
 
-网页访问区 SHALL 列出既有 `harness.permissions.allow` 中规范的 `web_fetch(origin)` 持久规则，
-支持单独移除与「全部清空」。写入 SHALL 复用权限规则治理的原子写通道与 revision，MUST NOT 另建
-origin 表、复制规则到 `web_access`、误删 deny 或其它工具规则。列表只含持久 origin；会话内免问
-SHALL 有独立边界说明，不混入该列表，移除 / 清空不重写会话历史。
+网页访问区 SHALL 列出既有 `harness.permissions.deny` 中规范的 `web_fetch(origin)`，默认空，
+并支持新增封禁、单独移除 deny 与「全部清空」。写入 SHALL 复用权限规则治理的原子写通道与 revision，
+MUST NOT 另建 origin 表、复制规则到 `web_access` 或误删其它规则。移除 / 清空只影响 deny：
+在默认 `allow_all` 下恢复允许，在 `ask` 下恢复 Ask，MUST NOT 暗中重置 approval 或重写会话历史。
 
-默认 Ask SHALL 固定，不随总开关或 `full_access` 改变。Search 免问 SHALL 只存在当前会话，
-持久 `web_search` allow MUST NOT 生成或生效；Fetch 的 origin 级会话 / 持久授权 SHALL 可独立管理。
-该区 SHALL 显示上述费用与数据外发提示，不得把「启用网页访问」描述成「全部网页请求自动允许」。
+默认 Allow SHALL NOT 被表述为网页可以修改授权。该区与工具结果 SHALL 持续显示 query / URL、provider、
+费用、Lumir 预检 + DeepSeek 双路外发与 untrusted 提示；只有 `approval=ask` 时才显示批准卡。
+Web 专用持久 allow / 免问动作 MUST NOT 作为本区状态生成，origin 例外只来自上述 deny 规则。
 
-#### Scenario: 默认关闭与显式开启
+#### Scenario: 默认启用与全局关闭
 
-- **WHEN** `harness.web_access.enabled` 缺省或为 false，随后用户在网页访问区显式开启并保存
-- **THEN** 缺省 / false 时两件工具不注册且零网络请求；开启后的下一回合才注册，配置仍无可用
-  DeepSeek 时调用返回 `web_provider_unconfigured`，不自动产生请求
+- **WHEN** `harness.web_access.enabled` 与 `.approval` 均缺省，随后用户显式关闭 Web
+- **THEN** 缺省为 `enabled=true, approval=allow_all`，两件工具注册并直接执行；关闭后的下一回合
+  不注册、幻觉调用 `tool_unknown` 且零网络请求，provider / origin deny / 历史保持不动
+
+#### Scenario: 切换 Ask 不改变硬边界
+
+- **WHEN** 用户把 approval 从缺省 `allow_all` 改为 `ask`，随后再恢复默认
+- **THEN** Ask 时批准预览显示完整 query / URL、provider、双路外发与费用；恢复默认删除该键并回到
+  直接执行。两种策略都继续执行 no_proxy、URL / DNS / redirect、预算、密钥与重试校验
 
 #### Scenario: provider 只读显示并跳回模型接入
 
@@ -137,15 +144,15 @@ SHALL 有独立边界说明，不混入该列表，移除 / 清空不重写会�
 - **THEN** 模型接入选中同一条目，网页访问区不显示或复制 Key / endpoint，也不存在第二 provider
   选择器；解析状态与工具执行使用同一结果
 
-#### Scenario: origin 单独移除与全部清空
+#### Scenario: origin deny 单独移除与全部清空
 
-- **WHEN** 权限 allow 含两个 `web_fetch(origin)` 规则、一个 `web_search` 规则及一条 deny，用户先移除
-  一个 origin，随后清空剩余 origin
-- **THEN** 两次都经既有权限写通道精确删除目标 `web_fetch` 规则，deny 与其它工具规则不变；
-  `web_search` 不作为可授权项展示，其持久 allow 不生效，且不产生第二份 origin 状态
+- **WHEN** 权限 deny 含两个 `web_fetch(origin)` 规则及其它工具规则，用户先移除一个 origin，
+  随后清空剩余 origin
+- **THEN** 两次都经既有权限写通道精确删除目标 deny，其它规则不变；默认 `allow_all` 下恢复允许，
+  `ask` 下恢复 Ask，approval 不被暗改，且不产生第二份 origin 状态
 
-#### Scenario: Search 免问仅会话
+#### Scenario: 默认无批准卡但审计完整
 
-- **WHEN** 用户在 Search 批准卡选择本会话不再问，随后打开网页访问区或新会话
-- **THEN** 设置区只显示 Fetch 持久 origin，不把 Search 会话记忆落成规则；新会话 Search 恢复默认 Ask，
-  网页访问区始终说明默认 Ask 固定而非全量自动允许
+- **WHEN** approval 缺省为 `allow_all`，模型连续搜索并抓取多个 origin
+- **THEN** 不出现逐次批准卡，跨 origin 经完整硬校验与 deny 判定后直接执行；工具行 / 结果仍保留
+  完整 query / URL、provider、费用与 `trust:"untrusted"`，设置区不会把该行为描述为网页可改授权
