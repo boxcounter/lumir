@@ -100,6 +100,174 @@ MUST NOT 静默丢弃草稿。
   `config.json` 逐字节不变，重新打开时开关按已保存值显示为开；面板干净时点「取消」直接关闭、
   不出现确认；保存请求进行中「取消」禁用
 
+### Requirement: 设置写通道
+
+设置面板 SHALL 使用窄接口读写，MUST NOT 复用「前端取整份配置 → 改 → 整份写回」的形态。
+
+读 SHALL 为一份只含设置面的快照，至少区分：provider 条目（id / 预设 / 可用状态 / 引用面）、
+键缺席（跟随默认）与键显式存在、raw 文件值与装载后的生效值（`wire_api` 的 raw SHALL 是文件里
+的原 JSON 值，生效方言另给 `effective.wire_api`）、API Key 的「已配置」状态（不含完整值）、
+当前使用项、两个命名目标的解析结果、`harness.web_access.enabled` / `.approval` 的 raw 与生效值、
+Web Invalid 诊断及实际 provider 状态、`harness.permissions.deny` 中规范 `web_fetch(origin)` 列表、
+文件状态（缺失 / 可解析 / 不可解析）。快照 SHALL 在顶层携带 `revision`：所有非 Invalid 快照都有
+（文件缺失把文件视为空对象、按同一 revision 算法计算，首次接入也能填 `base_revision`），
+Invalid 时为空、保存禁用。快照 SHALL 同时下发前端需要的默认值与能力矩阵（预设的官方 Base URL /
+支持的 Wire 档 / 是否要求 Key / 缺省 Wire、`window` 上下限、id 字符集与保留 id、Web approval 枚举），
+前端 MUST NOT 复制这些常量或取值区间。
+
+写 SHALL 为一次强类型 patch：字段类型在 IPC 边界由 Rust 结构定义，未知字段 SHALL 被拒绝；
+patch SHALL 只携带本次改动的字段，MUST NOT 携带整份配置。patch SHALL 支持三类 provider 编辑：
+添加（id + 预设）、更新（Key / 模型清单 / Base URL / Wire 方言）、删除（含替代目标与命名
+目标重定向）；`harness.provider` SHALL 可作为同一笔 patch 的一部分设置或删除。patch SHALL 另
+支持两个命名目标的 `provider` / `model` 覆盖键（写入或删键）：删 provider 键 = 跟随当前、
+删 model 键 = 用目标 provider 的生效模型；写入的 provider SHALL 是合法、非 `mock`、未被装载期
+忽略的条目，写入的 model SHALL 在目标 provider 的清单内；换 provider SHALL 清除该组 model
+覆盖（同一笔里显式写入的 model 按新目标校验）。开关关闭 MUST NOT 使 patch 删除或清空这两个
+键。同一笔 patch 中，添加项的 id MUST NOT 等于本笔删除项的 id（id 复用 SHALL 拆成两次保存，
+MUST NOT 依赖处理顺序）。patch SHALL 支持 `harness.web_access.enabled` 与 `.approval` 的写入 /
+删键（删键分别回到 true / allow_all），并支持 `add_origin` / `remove_origin` / `clear_origins`
+操作既有 `harness.permissions.deny` 中规范 `web_fetch(origin)`；origin 操作 MUST NOT 改 allow、
+其它 deny 或未知 / 非规范规则，权限表错形状 MUST NOT 被静默重置为空。校验 SHALL 以 Rust 的
+装载期校验为唯一来源；前端 MUST NOT 在 TypeScript 里复制窗口区间、枚举表、id 规则或互斥关系，
+只做输入整形（数字输入、trim、按能力矩阵置灰选项）。
+
+保存 SHALL 在配置写锁内完成「严格读文件 → 校验 revision → 应用 patch（添加 / 更新 / 删除 /
+重定向 / active / 命名目标 / 开关 / Web 两键 / origin deny）→ 以装载同一路径重新解析并校验 →
+原子写」这一整段，MUST NOT 出现 check-then-write 窗口。文件缺失按空对象处理；文件不是合法 JSON、
+或结构解析在装载期会触发整文件回落时，保存 SHALL 被拒绝（面板只读并给出解析错误位置），
+MUST NOT 在不可 round-trip 的文件上写入。权限 writer SHALL 支持 deny 的新增、精确删除与定向清空；
+`clear_origins` 只清规范 `web_fetch(origin)`，不得把整个 deny 数组清空。
+
+保存 SHALL 满足**非回归**判据：把 patch 合并到当前 raw JSON 后，以装载同一路径解析并校验；
+**任何**与 patch 改动路径相交的阻断级诊断 SHALL 拒绝整笔保存（不看 baseline 是否已有同一条；
+`window: 0 → 10000001` 这类「非法换另一种非法」同样拒绝），文件逐字节不变，错误回填到具体
+字段。baseline 只豁免**未改路径**上的既有诊断：未改路径的坏值不阻塞本次改动。已有
+`web_access_config_invalid` 时，显式写入合法 Web 值 SHALL 可作为修复保存；非法 Web patch SHALL
+拒绝且文件不变。阻断级词表 SHALL 由 Rust 单一维护，MUST NOT 由前端判定。
+
+patch SHALL 携带设置面 revision（覆盖 provider 条目、`harness.provider`、四个自动化开关与
+两个命名目标的 provider / model 键、`harness.web_access.enabled` / `.approval`，以及
+`harness.permissions.allow` / `deny`；不覆盖由 chip 写回的 `providers.<id>.model`）；锁内现读的
+revision 不一致时 SHALL 返回 `settings_revision_conflict`，文件逐字节不变，由用户选择重新载入或
+以本页为准。以本页为准 SHALL 在当前文件上重新应用同一 patch，MUST NOT 用打开时的旧快照整份覆盖。
+
+模型清单整表保存时，提交项 SHALL 按 `id` 与当前 raw 清单匹配，并保留该项上除
+`id` / `effort` / `vision` / `window` 之外的未知子键；`id` 被重命名时 SHALL 视为新条目
+（旧键不跟随）。provider 条目里不在 patch 路径上的未知键、以及文件里其他节的未知键 SHALL
+原样保留。装载期被忽略的非法 provider 条目 MUST NOT 因其他条目的保存而被删除或改写。
+
+保存成功 SHALL 返回最新快照；面板 SHALL 以返回值重建草稿基线，MUST NOT 以本地推测值充当
+已保存状态。保存成功 MUST NOT 被表述为「已生效」：面板 SHALL 按每个字段的生效时机提示
+（provider 条目 / 当前使用项 / 自动压缩 / 子代理 / Web 两键与 origin deny = 下一回合；
+会话命名开关 = 下一次评估触发点，结果异步落盘；图片命名开关 = 关→开需重启、开→关立即；
+两个命名目标 = 下一次评估触发点 / 下一次粘贴）。MUST NOT 写「每轮生成」或「下一轮必定生效」。
+
+保存请求进行中，面板 SHALL 禁用全部编辑控件（输入 / 选择 / 开关 / 命名目标选择 / 模型行增删 /
+添加 provider / 删除 / 设为当前使用 / 逐项恢复默认 / 页级还原 / 底栏「取消」），MUST NOT 允许请求期间的编辑被返回
+快照覆盖；保存完成（成功或进入需修正）后 SHALL 解锁。
+
+#### Scenario: 越界窗口被拒绝且文件不变
+
+- **WHEN** 把某模型的 `window` 改为 `0`（或大于 10,000,000）并保存
+- **THEN** 保存返回「需要修正」；`window` 控件标 `aria-invalid` 并显示原因；`config.json`
+  逐字节不变；修正为合法值后保存成功
+
+#### Scenario: 非法换另一种非法也被拒绝
+
+- **WHEN** 文件里某项 `window` 已是 `0`，用户把同一项改为 `10000001` 并保存
+- **THEN** 保存被拒、文件逐字节不变；MUST NOT 因为「baseline 已有同一条诊断」而放行
+
+#### Scenario: 非法改合法可以保存
+
+- **WHEN** 文件里某项 `window` 已是 `0`，用户把同一项改为 `262144` 并保存
+- **THEN** 保存成功，该键被写为合法值
+
+#### Scenario: 未改路径的既有非法项不阻塞无关开关
+
+- **WHEN** provider A 已有一个越界 `window`，用户只切换 provider B 的某个自动化开关并保存
+- **THEN** 保存成功；provider A 的坏值原样留在文件里（不被本次 patch 触碰）
+
+#### Scenario: 文件缺失也能首次保存
+
+- **WHEN** `config.json` 不存在，打开设置面板、添加一个 provider（合成 Key + 合法模型）并保存
+- **THEN** 快照带一个按空对象计算的 revision；保存成功并创建文件；MUST NOT 因「没有 revision」
+  而无法保存
+
+#### Scenario: raw wire_api 与生效值分开
+
+- **WHEN** 文件里某 provider 的 `wire_api` 是闭集合外的字符串（如 `"chat"`）
+- **THEN** 快照的 raw 值仍是 `"chat"`，生效方言为该预设的缺省值并在面板上标注；保存该字段后
+  文件被写为选中值
+
+#### Scenario: 未知字段被拒绝
+
+- **WHEN** patch 里出现设置面结构未定义的字段（模拟前端 bug）
+- **THEN** 命令拒绝该 patch，文件不变；MUST NOT 静默忽略未知字段
+
+#### Scenario: 外部修改触发冲突
+
+- **WHEN** 面板打开后，用另一个编辑器改了 `providers.kimi-work.models`，再在面板里保存一个
+  自动化开关
+- **THEN** 保存返回冲突、文件不动；面板显示「配置文件已在外部修改」并给「重新载入」与
+  「仍然保存」两个动作；选「重新载入」后显示外部值
+
+#### Scenario: 未知子键不被旧版 UI 洗掉
+
+- **WHEN** 文件里某模型项除四个已知字段外还有一个未知键，用户只改了同一项的 `window` 并保存
+- **THEN** 保存后该未知键仍在原项上（按 `id` 匹配保留）；provider 条目上的未知键同样保留
+
+#### Scenario: 添加、删除与重定向在同一笔里原子完成
+
+- **WHEN** 用户删除当前使用的 `kimi-work`，同时添加 `kimi-personal` 并选择它作为替代目标，
+  再把会话命名改为跟随当前，然后保存
+- **THEN** 整笔保存成功：旧条目删除、新条目写入、`harness.provider` 指向新条目、
+  `session_naming.provider` 键删除；中途任何一项校验失败时文件逐字节不变（不出现只删了旧
+  条目或只切了 active 的半状态）
+
+#### Scenario: 半配置被阻断
+
+- **WHEN** 给某 provider 填入 Key、但模型清单为空，点保存
+- **THEN** 保存被拒，错误指向该 provider 并给两条出路（添加至少一个模型 / 清除 Key）；
+  文件不变
+
+#### Scenario: 文件不可解析时只读
+
+- **WHEN** `config.json` 含一个类型错误导致整文件回落（如 `"font_size": "15"`），打开设置面板
+- **THEN** 面板显示解析错误与文件路径，保存禁用、字段只读；点击保存不会写入任何内容
+
+#### Scenario: 并发保存只有一笔落地
+
+- **WHEN** 两个保存请求以同一个 revision 并发到达
+- **THEN** 只有一笔写入成功，另一笔返回冲突；文件不出现丢键或半合并
+
+#### Scenario: 保存中编辑控件禁用
+
+- **WHEN** 点击保存、请求尚未返回
+- **THEN** 全部输入 / 选择 / 开关 / 命名目标选择 / 模型行增删 / 添加 / 删除 / 设为当前使用 /
+  页级还原 / provider 切换均为禁用或只读，「取消」（关闭）也禁用；保存完成后解锁；MUST NOT 出现「请求期间的编辑被
+  返回快照覆盖」或「仍有未落盘修改却显示已保存」
+
+#### Scenario: Web 与 origin 并发 revision 冲突不覆盖
+
+- **WHEN** 两个设置快照取同一 revision，A 修改 `web_access.approval`，B 新增 / 删除 / 清空 origin，
+  两笔 `settings_apply` 以该 revision 并发到达
+- **THEN** 只有一笔成功，另一笔返回 `settings_revision_conflict`；revision 已推进，失败方文件逐字节
+  不变，不出现 approval 被旧快照覆盖、deny 半合并或清空非目标规则；以本页为准只在当前文件重应用 patch
+
+#### Scenario: deny 单项删除与定向清空保留其它规则
+
+- **WHEN** deny 含两个规范 `web_fetch(origin)`、其它工具 deny 与未知 / 非规范项，allow 非空，
+  用户先 `remove_origin` 再 `clear_origins`
+- **THEN** 第一次只删目标 origin，第二次只清剩余规范 Fetch origin；allow、其它 deny 与未知 / 非规范项
+  原样保留，权限表不被重置为空，成功快照带新 revision
+
+#### Scenario: 非法 Web 配置合法修复与非法 patch 拒绝
+
+- **WHEN** 文件已有 `web_access_config_invalid` 及 provider / origin deny，用户先提交非法 approval，
+  再改为合法 `ask` 保存
+- **THEN** 非法 patch 被拒且文件不变；合法修复成功且只改 Web 键，provider 与 origin deny 保留，
+  不得变成 enabled=true / allow_all 或清空 deny
+
 ## ADDED Requirements
 
 ### Requirement: 网页访问设置
@@ -111,6 +279,9 @@ MUST NOT 静默丢弃草稿。
 设置快照 / patch / revision SHALL 覆盖两键，改动 SHALL 经既有 `settings_apply` 原子写通道在下一回合
 生效，provider 增删 / 切换不重置它们。恢复默认 = 删键，页级还原同样删键且不要求重启；
 页级还原 MUST NOT 顺带清空 origin deny。关闭只隐藏工具，MUST NOT 删除 provider、deny 或历史。
+只有表 / 键缺失才使用上述默认值；整表错形状、enabled 非布尔、approval 非字符串 / 未知枚举 SHALL
+显示 `web_access_config_invalid`，安全读数为 enabled=false / ask，不注册、零请求，provider、origin
+deny 与其它配置不变。用户以显式合法值修复前 MUST NOT 变成 enabled=true / allow_all。
 
 网页访问区 SHALL 复用 Web provider 的同一解析口，只读显示实际 provider id、官方 DeepSeek / 未配置 /
 配置歧义 / 自定义 base URL 等状态。它 SHALL 提供「前往模型接入」动作并选中对应 provider 表单；
@@ -118,12 +289,16 @@ MUST NOT 静默丢弃草稿。
 endpoint，也 MUST NOT 提供第二 provider 选择器。
 
 网页访问区 SHALL 列出既有 `harness.permissions.deny` 中规范的 `web_fetch(origin)`，默认空，
-并支持新增封禁、单独移除 deny 与「全部清空」。写入 SHALL 复用权限规则治理的原子写通道与 revision，
-MUST NOT 另建 origin 表、复制规则到 `web_access` 或误删其它规则。移除 / 清空只影响 deny：
-在默认 `allow_all` 下恢复允许，在 `ask` 下恢复 Ask，MUST NOT 暗中重置 approval 或重写会话历史。
+并支持新增封禁、单独移除 deny 与「全部清空」。这些操作 SHALL 统一走 `settings_apply` patch 的
+`add_origin` / `remove_origin` / `clear_origins`，与 Web 两键共用 snapshot / revision 和同一写锁，
+MUST NOT 另建 origin 表、复制规则到 `web_access` 或误改 allow / 其它 deny / 非规范规则。
+清空只清规范 `web_fetch(origin)`；权限表错形状不得被静默重置为空。revision 冲突 SHALL 返回
+`settings_revision_conflict` 且文件逐字节不变。移除 / 清空只影响 deny：在默认 `allow_all` 下恢复允许，
+在 `ask` 下恢复 Ask，MUST NOT 暗中重置 approval 或重写会话历史。
 
 默认 Allow SHALL NOT 被表述为网页可以修改授权。该区与工具结果 SHALL 持续显示 query / URL、provider、
-费用、Lumir 预检 + DeepSeek 双路外发与 untrusted 提示；只有 `approval=ask` 时才显示批准卡。
+费用、Lumir 预检 + DeepSeek 双路外发与 untrusted 提示；只有 `approval=ask` 时才显示批准卡，
+其依据 SHALL 为独立 `WebAccessPolicy{approval:"ask"}`，不得复用 `ModeDefault` 或 full_access 档释义。
 Web 专用持久 allow / 免问动作 MUST NOT 作为本区状态生成，origin 例外只来自上述 deny 规则。
 
 #### Scenario: 默认启用与全局关闭
@@ -137,6 +312,12 @@ Web 专用持久 allow / 免问动作 MUST NOT 作为本区状态生成，origin
 - **WHEN** 用户把 approval 从缺省 `allow_all` 改为 `ask`，随后再恢复默认
 - **THEN** Ask 时批准预览显示完整 query / URL、provider、双路外发与费用；恢复默认删除该键并回到
   直接执行。两种策略都继续执行 no_proxy、URL / DNS / redirect、预算、密钥与重试校验
+
+#### Scenario: 非法配置可见且 fail closed
+
+- **WHEN** 文件已有 provider 与 origin deny，随后出现 `enabled:"yes"`、`approval:"always"` 或整表为字符串
+- **THEN** 网页访问区显示 `web_access_config_invalid`，安全读数为 enabled=false / ask，不注册、零请求；
+  provider 与 deny 不变，不得静默改为 enabled=true / allow_all；显式合法值修复后才恢复注册
 
 #### Scenario: provider 只读显示并跳回模型接入
 

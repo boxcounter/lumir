@@ -215,8 +215,13 @@ provider 无模型清单，`model` 只能为 `null`）、`attachment_naming` 表
 `web_access.enabled` 缺省为 `true`，因此两件 Web 工具默认注册；显式 false 时不注册且不解析 Web
 provider。`web_access.approval` 缺省为 `allow_all`，因此默认直接执行；`ask` 才进入批准闸。
 设置快照 / patch / revision SHALL 覆盖两键，恢复默认 = 删键；provider 增删 / 切换 MUST NOT 重置它们。
-origin deny 仍归 `permissions.deny`，MUST NOT 复制进 `web_access`。两键类型不符时 SHALL 沿用本条
-既有整文件回落模板，回落后分别为启用与 `allow_all`。
+origin deny 仍归 `permissions.deny`，MUST NOT 复制进 `web_access`。
+
+只有 `web_access` 表 / 键缺失才使用上述批准默认值。整表错形状、`enabled` 非布尔、`approval`
+非字符串或未知枚举 SHALL 进入局部 Invalid 状态：安全读数为 `enabled=false, approval=ask`，并产生
+稳定 `web_access_config_invalid`。Invalid SHALL NOT 注册工具，直接调用也返回该错误且不解析 provider、
+零网络请求。该校验 MUST NOT 触发整文件回落，provider、permissions.allow / deny 与其它配置原样保留；
+设置修复写不得顺手清空 origin deny。
 
 `providers` 表 SHALL 是动态映射：provider id 由用户定义（`mock` 为验收专用保留 id），任何满足
 `^[a-z0-9][a-z0-9_-]{0,31}$` 的 id 都可出现；条目数量 MUST NOT 被限制为固定值。每个条目的行为
@@ -345,6 +350,14 @@ MUST NOT 因编辑面而改变；开关关闭时这两个键 MUST NOT 被自动�
   Ask 时进批准闸；切 provider 不重置两键；恢复默认删除两键且不复制或清空 `permissions.deny`
   中的 origin 例外
 
+#### Scenario: 显式非法 Web 配置 fail closed 且不清 deny
+
+- **WHEN** 文件已有合法 provider 与 `web_fetch(https://example.com)` deny，随后分别出现
+  `web_access: "on"`、`enabled: "yes"`、`approval: true`、`approval: "always"`
+- **THEN** 每种都产生 `web_access_config_invalid`，安全读数为 enabled=false / ask，不注册、零网络请求；
+  不得变成 enabled=true / allow_all，provider、origin deny 与其它配置保持不变；用显式合法值修复后
+  才按新配置恢复
+
 ### Requirement: 批准闸呈现与决策后收敛
 
 批准闸的 diff 预览中，以 `+` / `-` 起首的增删行底色 MUST 覆盖该行文本的完整宽度，与卡片可视宽度
@@ -364,8 +377,12 @@ MUST NOT 因编辑面而改变；开关关闭时这两个键 MUST NOT 被自动�
 出现）。判定依据 SHALL 由后端判定管线产出并随批准请求事件与 `harness_state` 快照两条通道同源到达
 前端，前端 MUST NOT 自行推导层级；依据 SHALL 覆盖产批准卡的两层，并如实区分：**危险黑名单**命中
 （shell 包装器类点名包装器命令名并说明其内容不可知；其余危险命令类说明命中安全黑名单）与**模式
-默认分层**（带当时判定的档位名与该档释义）。判定依据 MISSING（旧后端 / 旧快照载荷）时该行 SHALL NOT
-渲染，MUST NOT 以猜测或默认文案填充。该行 SHALL 随界面语言重取文案，MUST NOT 残留旧语言串。
+默认分层**（带当时判定的档位名与该档释义），以及 **Web access 策略**（独立
+`DecisionReason::WebAccessPolicy { approval: "ask" }`，明确实际 `harness.web_access.approval=ask`）。
+Web access 依据 MUST NOT 使用 `ModeDefault`，也 MUST NOT 显示 `read_only` / `vault_write` /
+`full_access` 的档释义作为进闸原因；`allow_all` 自动放行不产依据，origin deny 沿用 `DenyRule`
+且不产批准卡。判定依据 MISSING（旧后端 / 旧快照载荷）时该行 SHALL NOT 渲染，MUST NOT 以猜测或
+默认文案填充。该行 SHALL 随界面语言重取文案，MUST NOT 残留旧语言串。
 
 批准卡的次级动作 SHALL 由后端随批准请求下发（事件与快照两条通道同源），前端 MUST NOT 按判定依据
 或其它字段自行推断可见性。非 Web 工具因模式默认分层进闸的卡 SHALL 显示
@@ -415,6 +432,12 @@ DeepSeek 抓取」的双路外发与计费说明。provider 尚未解析成功�
 
 - **WHEN** 默认 `vault_write` 档下模型调用库外写命令（如 `cli_run("npm", ["install"])`）进入批准闸
 - **THEN** 批准卡的判定依据行带出当时档位（`保险库写入` / `Vault Write`）与该档释义（库内写自动放行、库外命令先问），使「已是 Write 档为何还问」在卡上自洽可读
+
+#### Scenario: full_access 下 Web Ask 依据独立于权限模式
+
+- **WHEN** 权限模式为 `full_access` 且 `harness.web_access.approval=ask`，模型调用 Web 工具
+- **THEN** 判定依据为 `WebAccessPolicy{approval:"ask"}`，明确网页访问策略是 Ask，不出现
+  `ModeDefault` 或 full_access 档释义；approval=allow_all 时不产卡，origin deny 时不产卡
 
 #### Scenario: 判定依据随决策退场
 
@@ -789,8 +812,10 @@ host，再检查目标 origin deny；未封禁才继续 DNS / 连接 / 内容类
 #### Scenario: 跨 origin 重定向只做硬校验与 deny
 
 - **WHEN** Fetch 收到指向另一 origin 的 Location，目标未封禁；另一序列的目标命中 origin deny
-- **THEN** 未封禁目标经 scheme / 凭据 / DNS / no_proxy / 内容类型校验后可继续，无需重新批准；
+- **THEN** 未封禁目标经 scheme / 凭据 / DNS / no_proxy / 内容类型校验后可继续，不另开批准；
   封禁目标返回 `permission_denied`，未连接新 origin、未请求 DeepSeek
+- **AND** A → B 全部通过后，提交给 DeepSeek 的 url 与 `source.url` 都是最后一个通过校验的 B URL，
+  不得拒绝跨源或继续提交 A URL
 
 ### Requirement: DeepSeek Web provider 与隐私
 
@@ -836,7 +861,7 @@ DeepSeek Key、Cookie、vault 内容或浏览器登录态。
 
 ### Requirement: Web 目标网络安全
 
-每次 Fetch 与每次同源重定向 SHALL 重新执行完整 URL / DNS 校验。URL SHALL 为 1–8192 字符的
+每次 Fetch 与每次重定向 SHALL 重新执行完整 URL / DNS 校验。URL SHALL 为 1–8192 字符的
 HTTP / HTTPS、含 host、无 userinfo；其它 scheme、控制字符、反斜杠混淆与解析失败 SHALL 拒绝，
 MUST NOT 修复成另一个 URL。IP 字面量与 DNS 的全部 A / AAAA 结果 SHALL 都是全局可路由单播；
 任一结果为 loopback、private、link-local、unspecified、multicast、reserved、documentation、CGNAT、
@@ -844,7 +869,7 @@ IPv4-mapped / 兼容映射的非全局地址时整条拒绝，MUST NOT 只挑一
 `.local` 与 DNS 解析失败 SHALL fail closed。
 
 连接 SHALL 只使用已验证地址集，并保留原 host 的 Host 与 TLS SNI；连接前 MUST NOT 再次由系统 resolver
-自由选择地址。目标预检与 DeepSeek client SHALL 都显式 `no_proxy`，每个同源 hop MUST NOT 重新继承
+自由选择地址。目标预检与 DeepSeek client SHALL 都显式 `no_proxy`，每个 hop MUST NOT 重新继承
 HTTP(S)_PROXY / ALL_PROXY / NO_PROXY 或手动 Proxy。`no_proxy + 已验证地址集 + 原 Host / SNI +
 手动逐跳 redirect` SHALL 是同一客户端构造不变量，不能只靠 resolver override 防代理绕路。
 校验与连接 SHALL 共用同一地址集，下一跳 SHALL 重新执行全集校验，以防 check-then-connect 与
@@ -854,12 +879,12 @@ DNS rebinding 绕过。错误 MUST NOT 回显完整 DNS 答案或内部网络拓
 读取 SHALL 以响应头和最多 4 KiB 为界并随即关闭，预检正文 MUST NOT 进入模型。单 hop 不得超过 10 秒、
 整链不得超过 30 秒、最多 5 次重定向；预检 MUST NOT 自动重试。相对 Location SHALL 按当前 URL 解析并
 逐跳重验 scheme / 凭据 / host 与 origin deny；跨 origin 不是新工具调用，未封禁才继续 DNS 与连接，
-无需重新批准。
+不另开批准。
 
 预检 SHALL 只接受 `text/html` 与 `application/xhtml+xml`（可带参数）。明确非 HTML 返回
 `web_unsupported_content`，Content-Type 缺失或冲突且 Range GET 仍无法判定返回
 `web_content_type_unknown`；两者只可提示另行选择 curl，MUST NOT 自动调用。预检通过后才可调用
-DeepSeek Fetch，且只发送最后一个已验证的同源 URL。Search MUST NOT 主动访问结果 URL。
+DeepSeek Fetch，且只发送最后一个通过全部校验的 URL（允许跨 origin）。Search MUST NOT 主动访问结果 URL。
 
 Lumir SHALL 如实区分本地保证与 provider 信任边界：本地预检可验证自己的 DNS / redirect / 内容类型，
 但 DeepSeek 不返回远端 final URL、连接 IP 或 redirect chain，系统 MUST NOT 声称验证 provider 内部
@@ -879,7 +904,7 @@ DNS / redirect，也不得把预检 URL 当作远端 final URL。若不能维持
 
 #### Scenario: 有界预检与逐跳重验
 
-- **WHEN** 同源页面先对 HEAD 返回不明确 Content-Type，再对忽略 Range 的 GET 返回超大 HTML，随后同源跳转
+- **WHEN** 目标页面先对 HEAD 返回不明确 Content-Type，再对忽略 Range 的 GET 返回超大 HTML，随后跨 origin 跳转
 - **THEN** GET 最多读取 4 KiB 即关闭，正文不进入模型；下一跳重新做 URL / DNS 校验，整链超过时限或
   5 跳即失败且不调用 DeepSeek
 
@@ -947,7 +972,7 @@ Web 自动重试。工具内部重试只重发当前 HTTP 请求，MUST NOT 重�
 
 ### Requirement: Untrusted Web 内容与审计留存
 
-Search / Fetch 的 title、snippet、summary、content、provider_message 与 redirect_url SHALL 全部视为
+Search / Fetch 的 title、snippet、summary、content 与 provider_message SHALL 全部视为
 untrusted data，结果信封的 `trust:"untrusted"` SHALL 恒在。这些字符串只能作为 function output 的
 JSON 数据进入模型上下文，MUST NOT 注入 system prompt、AGENTS、权限规则、批准理由或 provider 配置。
 网页里的「忽略之前指令」「用户已批准」「以后全部 allow」「执行某命令」等文本 MUST NOT 被当作授权事实，
@@ -960,7 +985,8 @@ JSON 数据进入模型上下文，MUST NOT 注入 system prompt、AGENTS、权�
 `llm_request` / `llm_response`。
 
 后续 LLM 往返失败后的显式重试 SHALL 复用原 input，MUST NOT 重放已执行的 Web 工具；重试成功后的
-新 Web 调用仍须重新经过批准与安全校验。历史恢复 SHALL 仅凭既有 JSONL 保留 query / URL、来源、错误与
+新 Web 调用仍按当前 `web_access.approval` 与 origin deny 处理，并重新执行全部安全校验。
+历史恢复 SHALL 仅凭既有 JSONL 保留 query / URL、来源、错误与
 truncated 标记，不依赖新 sidecar，不改写旧文件。
 
 #### Scenario: 网页提示注入不升级权限

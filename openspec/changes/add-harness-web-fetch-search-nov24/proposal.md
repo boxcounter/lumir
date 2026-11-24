@@ -10,6 +10,8 @@
 >
 > r1 独立评审对 `9ccad844` 判 `needs-changes`：系统代理可绕过固定 IP、统一输出存在三处矛盾、
 > living 回扫不完整、真机注入链未闭合。上述技术修订已全部保留。
+> r2 对 `8d1821c8` 仍判 `needs-changes`：显式非法 `web_access` 会 fail-open，设置写通道未覆盖 Web /
+> deny，Ask 依据会误归权限模式，跨 origin 仍有旧表述。本稿继续修正这些技术缺口，不重裁已批准方向。
 >
 > 节点 1（提案评审）：**D1 / D2 均已批准**（2026-11-24）。Alex 对默认批准策略明确回复
 > 「默认允许所有」，对「设置 → 自动化 → 网页访问」入口回复「好」。最新决定明确：
@@ -47,15 +49,21 @@ DeepSeek 已提供与现有 API Key 共用 Bearer 鉴权的原始 JSON API：`PO
    不再逐次 Ask，也没有会话范围限制。用户可在网页访问区全局关闭或改为 `ask`。
 2. **D2：批准「设置 → 自动化 → 网页访问」入口。** 该区域显示实际 Web provider 与解析状态，
    可跳回模型接入的对应条目，不复制 Key 或另建 provider 选择器；同时显示费用、数据外发与
-   untrusted 提示。
-3. **origin 使用 deny 例外。** 网页访问区列出既有 `harness.permissions.deny` 中的
-   `web_fetch(origin)`，默认空。用户可单独移除 deny 或全部清空；在默认 `allow_all` 下即恢复允许，
-   在 `ask` 下则回到 Ask。写回复用现有权限规则 / revision，不另建 origin 状态。
-4. **批准卡退出默认路径，但审计不退出。** 只有用户显式选择 `ask` 时才进入批准闸；工具行、结果、
-   panel / JSONL / wire 始终保留完整 query / URL、provider id、attempts、费用相关错误与
-   `trust:"untrusted"`。Ask 预览继续展示完整输入、双路外发与费用说明，不增加默认免问动作。
-5. **跨 origin 重定向不再重批准。** 每一跳仍须通过 scheme / 凭据 / DNS / IP / `no_proxy` /
-   内容类型校验，origin deny 也必须重新判定；全部通过后可继续执行，不再返回重批准错误。
+   untrusted 提示。只有键缺失使用批准默认值；显式非法 `web_access` 表 / 字段产生
+   `web_access_config_invalid`，按 `enabled=false` 与保守 `ask` 处理，不注册、零请求，且不清空
+   provider、origin deny 或其它配置。
+3. **origin 使用 deny 例外，写通道同锁闭合。** 网页访问区列出既有 `harness.permissions.deny`
+   中的 `web_fetch(origin)`，默认空。`settings_apply` 的 snapshot / patch / revision 同时覆盖
+   `enabled` / `approval` 与 origin deny；patch 支持 add / remove / clear origins，在同一写锁内
+   校验 revision、精确改 deny、重载校验并原子写。清空只清规范 Fetch origin，不改 allow、其它 deny
+   或非规范规则；冲突返回 `settings_revision_conflict`，文件逐字节不变。
+4. **批准卡退出默认路径，但审计不退出，Ask 依据独立。** 只有用户显式选择 `ask` 时才进入批准闸；
+   判定依据使用独立的 `WebAccessPolicy`，明确实际 `approval=ask`，不套用 `ModeDefault` 或
+   `full_access` 档释义。工具行、结果、panel / JSONL / wire 始终保留完整 query / URL、provider id、
+   attempts、费用相关错误与 `trust:"untrusted"`。
+5. **跨 origin 不另开批准。** 每一跳仍须通过 scheme / 凭据 / DNS / IP / `no_proxy` /
+   内容类型校验，origin deny 也必须重新判定；全部通过后把最后一跳 URL 提交 DeepSeek。
+   `source.url` 是最后一个通过全部校验的 URL（允许跨 origin），不保留已退场的重定向输出字段。
 6. **统一上下文预算与审计字段。** `count`、标题 / 摘要 / 正文 / 错误文本、API 响应字节数均有硬上限；
    顶层 `truncated` 与 `truncated_fields` 明示任何裁剪。来源保留 URL、标题、摘要、站点、日期、
    权威性与 provider；错误保留稳定内部 code、HTTP status、provider code、request id 与尝试次数。
@@ -91,7 +99,7 @@ DeepSeek 已提供与现有 API Key 共用 Bearer 鉴权的原始 JSON API：`PO
 
 | # | Alex 原话 | 已批准施工口径 |
 |---|---|---|
-| D1 | 「默认允许所有」 | 默认 `enabled=true, approval=allow_all`；Search / Fetch 不再逐次 Ask，跨 origin 在完整硬校验后可继续，无需重批准；审计与硬边界不变 |
+| D1 | 「默认允许所有」 | 默认 `enabled=true, approval=allow_all`；Search / Fetch 不再逐次 Ask，跨 origin 在完整硬校验后可继续，不另开批准；审计与硬边界不变 |
 | D2 | 「好」（针对「设置 → 自动化 → 网页访问」） | 默认启用；可全局关闭、改回 Ask、封禁或恢复 origin；origin 管理为 deny 例外（默认空），单项移除 / 全部清空复用现有权限规则与 revision |
 
 D1 / D2 已批准，不再列默认批准策略裁决点。以下 fail-closed 硬边界不属于 allow_all 的放宽面：
@@ -119,8 +127,8 @@ D1 / D2 已批准，不再列默认批准策略裁决点。以下 fail-closed �
 - **specs**：`harness` 修改「配置节 [harness]」「Skill 支持」「工具循环」「权限机制」
   「批准闸呈现与决策后收敛」「Skill 的混合调用与入口策略」，新增统一 Web 工具、访问策略、
   provider 与隐私、目标安全、可靠性、untrusted content 与真实 HTTP 验收装配合同；
-  `harness-subagents` 保持子运行闭集合；`settings` 修改「设置面板的形态与范围」并新增
-  「网页访问设置」。
+  `harness-subagents` 保持子运行闭集合；`settings` 修改「设置面板的形态与范围」「设置写通道」
+  并新增「网页访问设置」。
 - **实现期代码面**：`harness.web_access.enabled` / `.approval` 与工具注册、现有 deny 规则、
   按需批准预览、现有 DeepSeek provider 配置解析、有界 `no_proxy` HTTP 与 DNS / redirect 校验、
   工具结果留存、设置页 provider 跳转与 deny origin 管理；不新增 provider SDK 或第二份 origin 状态。
