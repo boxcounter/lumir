@@ -5,8 +5,12 @@ tier: full
 title: 行内 [[ 候选：过滤 / 键鼠接受 / Escape / 空态 / 特殊扩展名与零隐式写入
 fixtures: [wikilink-suggestion-source.md, notes/Alpha.md, notes/alphabet.md, notes/readme.markdown, foo.md, foo.md.md]
 open: wikilink-suggestion-source.md
-marker: "[[al"
+marker: '\[\[al'
 steps:
+  - name: 建立正文焦点，确保 opener 查询位于编辑器内
+    do: focusWindow
+    click: true
+
   - name: 记录源文档磁盘基线
     do: record
     file: wikilink-suggestion-source.md
@@ -31,6 +35,9 @@ steps:
   - name: 接受当前候选
     do: key
     key: "enter"
+  - name: 左移进入新增链接的源码，核对完整插入文本
+    do: key
+    key: "left"
     expect:
       - label: 文档插入所选完整路径
         editor: { has: "[[notes/alphabet.md]]" }
@@ -50,9 +57,17 @@ steps:
       - label: 候选重新打开
         ax: { has: "Alpha.md" }
 
-  - name: 主键点击 Alpha 行，编辑器接受而不打开目标
-    do: click
-    target: { role: "AXStaticText", name: "Alpha.md" }
+  - name: 等候选行完成本拍渲染
+    do: settle
+
+  - name: 主键按下并抬起 Alpha 行，编辑器接受而不打开目标
+    do: drag
+    target: { x: 500, y: 190 }
+    dx: 0
+    dy: 0
+  - name: 左移进入鼠标所接受链接的源码
+    do: key
+    key: "left"
     expect:
       - label: 鼠标接受完整路径
         editor: { has: "[[notes/Alpha.md]]" }
@@ -86,12 +101,14 @@ steps:
     channel: cgevent
   - name: 输入不存在名称
     do: type
-    text: "[[missing"
+    text: "[[no-such-note-xyz"
+  - name: 等零命中浮层完成本拍渲染
+    do: settle
     expect:
       - label: 既有零命中文案在场
         ax: { has: "/没有匹配的条目|No matching items/" }
       - label: 候选层不创建 missing.md
-        file: { path: missing.md, exists: false }
+        file: { path: no-such-note-xyz.md, exists: false }
       - label: 空态也不写源文件
         file: { path: wikilink-suggestion-source.md, unchangedSince: 源文档基线, mtimeUnchangedSince: 源文档基线 }
 
@@ -102,9 +119,16 @@ steps:
   - name: 输入重复扩展名查询
     do: type
     text: "[[foo.md."
-  - name: 选择 foo.md.md 并接受
-    do: click
-    target: { role: "AXStaticText", name: "foo.md.md" }
+  - name: 等重复扩展名候选行完成本拍渲染
+    do: settle
+  - name: 主键按下并抬起 foo.md.md 行，接受重复扩展名目标
+    do: drag
+    target: { x: 500, y: 190 }
+    dx: 0
+    dy: 0
+  - name: 左移进入重复扩展名链接的源码
+    do: key
+    key: "left"
     expect:
       - label: 插入完整实际文件名 foo.md.md
         editor: { has: "[[foo.md.md]]" }
@@ -118,4 +142,4 @@ steps:
 
 本场景只覆盖真实 WKWebView 的打开 / 过滤 / 方向键 / Enter / Escape / 鼠标接受、空态、完整路径插入与磁盘字节。候选列表 DOM 的精确 active 项、caret 位于 `]]` 外、Link/Image/代码/frontmatter 排除、IME pending MutationRecord 时序、万文件性能与三主题几何分别由 `tests/unit/link-suggest.test.ts`、`tests/visual/scenes/wikilink-suggestion.spec.ts` 和 Rust `wikilink_suggestion_full_path_round_trip_matrix` 覆盖。
 
-截图 `00-keyboard-candidates` 用于 Alex 抽审浮层是否被裁切；不声称 AX 能读出浮层几何。场景会修改合成 vault 中文档的内存态但不保存，磁盘 `wikilink-suggestion-source.md` 必须始终保持基线；`missing.md` 不得出现。目标文件只读，创建仍归既有显式 ⌘⏎ 动作，不由候选触发。
+截图 `00-keyboard-candidates` 用于 Alex 抽审浮层是否被裁切；不声称 AX 能读出浮层几何。场景会修改合成 vault 中文档的内存态但不保存，磁盘 `wikilink-suggestion-source.md` 必须始终保持基线；`no-such-note-xyz.md` 不得出现。目标文件只读，创建仍归既有显式 ⌘⏎ 动作，不由候选触发。

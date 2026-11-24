@@ -81,8 +81,9 @@ test("鼠标 mousedown 接受不抢焦点；再次打开后点击外部只关闭
   const doc = "[[al";
   await openDoc(page, doc);
   const second = page.locator(ROW).nth(1);
+  await select(page, 3);
   await second.dispatchEvent("mousedown", { button: 0, bubbles: true, cancelable: true });
-  expect(await readDocument(page)).toBe("[[notes/alphabet.md]]");
+  expect(await readDocument(page)).toBe("[[notes/alphabet.md]]l");
   expect(await focused(page)).toBe(true);
 
   await page.keyboard.press("Backspace");

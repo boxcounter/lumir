@@ -28,11 +28,11 @@
 ## 4. 验证与归档
 
 - [x] 4.1 前端 unit、相关 visual、性能检查与 `scripts/gate.sh visual` 通过；不未经 Alex 过目更新像素基线。
-- [ ] 4.2 真机验收场景通过；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过。
+- [x] 4.2 真机验收场景通过；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过。
 - [ ] 4.3 独立 reviewer clean/merge、节点 2 五要件与归档跟踪记录齐备后独立归档；提交归档结果且 `--archived add-wikilink-suggestion-nov24` PASS，不设置 A 的归档先后门禁。
 
 ## 实施验证记录（不归档）
 
 - 修前红：新增 Node 测试因 `src/link-suggest.ts` 不存在而失败；新增 visual 11/11 FAIL（候选未实现，IME 229 被旧 Enter 路径消费）。Rust 真实解析矩阵 1/1 PASS，用于冻结完整路径插入语义。
 - 修后绿：`tests/unit/link-suggest.test.ts` + 滚动注册表 23/23 PASS；最终结构下新增 visual 15/15 PASS，覆盖键鼠、IME、特殊路径、三主题、证书失效与源文档不变。完整 quick `GATE RESULT: 13/13 PASS（SKIP 0）`；完整 visual `GATE RESULT: 15/15 PASS（SKIP 0）`（视觉回归 1449 passed / 1 skipped），未更新基线。
-- 真机场景 `866-wikilink-suggestion-nov24` 已新增并 `CHECK PASS`，覆盖表 287 场景一致；真实 WKWebView 执行留待主会话串行窗口，当前不宣称真机已验。
+- 真机场景 `866-wikilink-suggestion-nov24` 已新增并 `CHECK PASS`，覆盖表 287 场景一致；2026-11-25 真实 WKWebView 最终 1/1 场景 PASS、24 条断言、0 失败（24.5s），证据 `.local/acceptance/2026-11-25-wikilink-suggestion-r2/`。接受复核只固定 opener，允许查询内 caret 移动，索引与唯一解析证书不变。

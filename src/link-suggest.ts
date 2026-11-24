@@ -265,10 +265,7 @@ class LinkSuggestView {
       composing: this.view.compositionStarted,
       allowUnavailableSyntax: this.state !== null,
     });
-    if (
-      trigger === null || trigger.queryFrom !== state.trigger.queryFrom ||
-      trigger.head !== state.trigger.head || trigger.query !== state.trigger.query
-    ) {
+    if (trigger === null || trigger.queryFrom !== state.trigger.queryFrom) {
       this.refresh();
       return false;
     }
