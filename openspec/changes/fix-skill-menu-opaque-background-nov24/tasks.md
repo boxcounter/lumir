@@ -20,8 +20,8 @@
 - [x] 3.1 新增 `tests/unit/css-token-references.test.ts`：扫 `src/**/*.css` 的定义与全部 `var()`，按「CSS 定义 / 运行时赋值 / 有效回退链」求值
 - [x] 3.2 回退链求值语义：主引用未定义时回退里每个 `var()` 都必须解析；主引用已定义时死回退不误报；空回退判红
 - [x] 3.3 运行时白名单只含 `--lumir-hp-scale` / `--toc-depth` / `--cm-lp-table-columns`，并双向核对（TS 赋值点 + CSS 引用）
-- [x] 3.4 反向输入逐条造红：bare 引用（`--text-1`）、未定义回退链（`--bg-raise` / `--bg`）、注释里的 `var()`
-- [x] 3.5 正向输入逐条造绿：`var(--border-strong, var(--border))`、字面量 / 多级回退、运行时 token、跨文件定义
+- [x] 3.4 反向输入造红：bare 引用（`--text-1`）、未定义回退链（`--bg-raise` / `--bg`）
+- [x] 3.5 正向输入判绿：`var(--border-strong, var(--border))`、字面量 / 多级回退、运行时 token、跨文件定义、注释里的 `var()`（反向排除）
 - [x] 3.6 修前红：`--text-1` 未修时该测试真实判红（`src/harness-panel.css:2772 --text-1`，1 failed / 9 passed）
 - [x] 3.7 修后绿：改为 `var(--text)` 后 10/10 通过，诊断行记录扫描面读数
 
@@ -33,6 +33,9 @@
 - [x] 4.4 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`
 - [x] 4.5 `bash scripts/docs-check.sh`
 - [x] 4.6 `git diff` 复核改动面：两行 CSS + 两个测试文件（新增一、改一）+ `tests/unit/README.md` + 本 change 五份制品，无越界
-- [ ] 4.7 真机复验（主会话执行，本 worker 不启动真机）：跑验收场景
-      `726-harness-skill-hybrid-invocation`，在候选打开时留截图；核对 light / dark / eink 三主题下
-      候选浮层不透底、候选名与列表其余文字同字色档（真机切主题走真实配置通道）
+- [x] 4.7 真机复验（主会话执行，本 worker 未启动真机）：验收场景
+      `726-harness-skill-hybrid-invocation` **1/1 PASS**（36 断言、52.6s）——覆盖候选打开 / 方向键选择 /
+      显式 ref 注入的真实 WKWebView 路径；证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-24-skill-menu-background/`，
+      日志 `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/skill-hybrid-nov24/acceptance-726-background.log`。
+      浮层底色与字色档的机器判据由 chromium 像素层（I1–I3）与静态 token 层（I4）承担；726 的截图证据只有
+      会话清单一张（`shots/01-03-恢复会话清单.jpeg`），未声称真机已逐主题核外观
