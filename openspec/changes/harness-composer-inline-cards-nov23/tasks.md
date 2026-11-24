@@ -279,7 +279,7 @@
 - [x] 12.1 `tasks.md` 全部勾选；未勾项就地写放弃理由（不删任务项、不留空勾）
 - [x] 12.2 `proposal.md` 节点状态块按实情更新（**不得把待批写成已批**）
 - [x] 12.3 `docs/backlog.md` 归档跟踪队列落一条本 change 记录（五要件齐待归档 / 命中例外待裁）
-- [x] 12.4 交独立 reviewer；verdict 绑定当前 tip——r4 clean / merge 绑定
-      `2ec927d8fed756e511a0e59168c3984d9b8d22aa`
+- [x] 12.4 交独立 reviewer；verdict 绑定当前 tip——r6 clean / merge 绑定
+      `fd72c2ae862ad1a3f9f43af2b20097e65d7015a4`；集成视觉 1338 passed / 1 skipped
 - [ ] 12.5 归档前逐条核对节点 2 五要件；归档走 `node scripts/openspec-archive.mjs <change-id>`，
       归档提交后跑 `--archived` 审计至 PASS（archive-check 已 PASS，性能读数收口后执行归档）

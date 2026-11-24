@@ -13,9 +13,10 @@
 > - **节点 1（提案评审）已通过（2026-11-23）**：Alex 依据「按推荐执行」及完成的方案评审批准
 >   进入实现。本次通过只确认「按已批准值写成的方案可施工」，不重裁 B0–B5。
 > - 视觉基线是**人肉裁决点**：`--update` 前候选截图必须先给 Alex 过目，未批不得 update。
-> - **节点 2 材料已备（2026-11-24）**：最终 rebase tip `2ec927d8`；独立评审 r4 clean / merge；
->   八组真机 8/8 PASS（185.5s）；quick 与完整视觉均为 `GATE RESULT: 15/15 PASS（SKIP 0）`；
->   三主题候选经 Alex 批准且无需重截基线；archive-check 12 条 MODIFIED / 92 段 PASS。
+> - **节点 2 材料已备（2026-11-24）**：最终集成 tip `fd72c2ae`；独立评审 r6 clean / merge；
+>   八组真机 8/8 PASS（185.5s）；quick 与完整视觉均为 `GATE RESULT: 15/15 PASS（SKIP 0）`
+>   （集成视觉 1338 passed / 1 skipped）；三主题候选经 Alex 批准且无需重截基线；archive-check
+>   12 条 MODIFIED / 92 段 PASS。
 > - **内存例外（2026-11-24）**：真实 release A/B 为 master 262.64MB、composer 267.75MB，二者均超
 >   250MB 门禁，composer 高 5.1MB；keypress median 9.60ms。Alex 明确「允许 composer 内存例外」，
 >   允许按功能证据合并归档，但不宣称内存验收通过，发布说明保留本地未达标与内存专项。
