@@ -140,7 +140,7 @@ function refreshApprovalSignal(): void {
 2. `decide`：`pendingApprovals.delete` + `settleApprovalRecord` 之后。
 3. **终态统一撤回**：新增 `withdrawPendingApprovals(reason)`——撤卡、恢复工具行并标注未执行
    （done / error；新增文案键，实现期取号）/ 已停止（aborted，沿用 D383）、清空集合、使决策闭包
-   失效、`settledAwaitingDone = null`；`done` / `error` / `aborted` 三个终态分支在内容收口
+   失效、`settledApprovalCalls.clear()`；`done` / `error` / `aborted` 三个终态分支在内容收口
    （finalize / 未完成 / 已停止标记）之后、`dispatchActivity(terminal)` **之前**各调一次
    （与 aborted 现状同序；`aborted` 用同一函数替换现有内联循环，标签保持 D383，不改既有观感）。
    `aborted` 的「已停止标记 vs terminal」先后若随后续尾行 change 调整，撤回 MUST 仍保持在
@@ -205,6 +205,11 @@ function refreshApprovalSignal(): void {
   在第一次 `delete` 后就假设已清空。**实现期发现并修复**：`appendApproval` 复用
   `block.running` 时会把上一条已挂的 `.lumir-hp-pend` 壳整体 `replaceWith` 掉，第一项的卡在第
   二项到达时静默消失；现在已在待决壳里的行会另起一行（同一工具块尾部），两张卡各自可决策。
+- **决策后 done 配对（独立评审 P1）**：已决策待收尾的调用按**调用身份**（批准请求 id = 后端
+  `call_id`）存放在 `settledApprovalCalls`，MUST NOT 用可覆盖的单槽 + 工具名——两项都决策后槽会
+  被后一项覆盖，先到的 done 会消费错槽（同名时把 A 的失败贴到 B 行），后到的 done 找不到槽就新建
+  重复行。done 按 `call_id` 精确消费；`consumed` 让重复 done 幂等；无 `call_id` 的旧事件才退回
+  同名未消费项 FIFO。回归场景见 m384 的两条「多待批全部决策后 done」用例。
 - **不自动超时**：待批不会因时间退场；只有上述出口会清算。
 - **快照是地板**：进入 / 对账快照的 `pending_approvals` 是待决集合的唯一重建依据；前端 MUST NOT
   保留「上一份快照里有过待批」的记忆来补状态。
@@ -336,6 +341,11 @@ follow.jumpToBottom();
 | 终态对账空 / 非空 × 面板开 / 收 | 接线 | m756：先以 `in_flight:true` 进入（`midTakeover=true`），再 fire done / error 触发 `content` 对账；快照返回非空 / 空列表 × 面板开 / 收 → 相位 idle、阶段行隐藏、toggle 按 idle / 未读档；非空列表不复活卡 | 新场景（如可达） |
 | 阈值 / 跟滚语义不变 | `tests/unit/harness-scroll-lock.test.ts` 全绿 | m638 既有 1–9 条全绿 | 既有跟随手感 |
 | 语言 / 主题 | 选择器 | m347 / m756：zh ↔ en 重取；eink 无彩色 | 截图 |
+
+**实现期补测（独立评审 P2，2026-11-24）**：m756 的 content 对账按四格逐一建独立页面（非空 /
+空列表 × 面板开 / 收），终态撤回补面板收起时的 done / error / aborted；待批时新建会话与切会话
+走真实 DOM（后者经真正的 resume 回执）；m822 真实渲染子运行批准卡并断言父会话阶段行 / 段状态词 /
+toggle 不变。上述均为行为断言，不再是读源接线声明。
 
 **先红后绿**：实现前先在旧实现上跑新增断言并留红（阶段行待批 / 段状态 / toggle 状态 / 脱离态
 信号 / 发送同 task 贴底至少各一条）。结构场景的「无待批不显示」旧实现天然绿，不作红判据。

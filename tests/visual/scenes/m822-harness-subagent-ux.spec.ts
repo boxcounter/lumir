@@ -627,3 +627,34 @@ test("后台失败保留到「知道了」；多行时列表自身滚动", async
   await expect(page.locator('.lumir-tp-run[data-run="r1"]')).toHaveCount(0);
   await expect(page.locator(".lumir-tp-run")).toHaveCount(2);
 });
+
+// ── 子运行待批不计入父会话（change fix-harness-approval-visibility-nov23 design §4）──────
+//
+// 子运行透传的批准卡由任务区承载，且当前会话未必在等该决策。真实渲染一张子运行卡，父会话
+// 的阶段行 / 段状态词 / toggle 状态 MUST NOT 翻成「等待批准」（D416）。
+test("子运行待批不改变父会话的阶段行与标题栏状态", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarness(page);
+  await openPane(page);
+  await startTurn(page);
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("等待响应…");
+
+  const diff = "--- a/harness-note.md\n+++ b/harness-note.md\n@@ -1 +1 @@\n-旧行\n+新行";
+  await fire(page, started("run_sub_1", "子运行写文件"));
+  await fire(page, {
+    type: "approval_request",
+    id: "call_sub_1",
+    tool: "vault_patch",
+    diff,
+    source: { kind: "subrun", run_id: "run_sub_1", agent: "research", description: "子运行写文件" },
+  });
+
+  // 子运行卡在任务区（父会话 transcript 不出现待决壳）。
+  await expect(page.locator(".lumir-tp-ask")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
+  // 父会话状态不因子运行待批而改变：阶段行仍是等待响应、段状态词不显示、toggle 仍是处理中。
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("等待响应…");
+  await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
+  await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("处理中");
+  await expect(page.locator(".lumir-hp-toggle")).toHaveAttribute("title", "对话面板 · 处理中");
+});

@@ -125,9 +125,12 @@
 - [x] 5.1 新增 `refreshApprovalSignal()`（design §3.3）：`phase !== idle` 时 `applyStage()`；
       无条件 `applyActivityBadge()`
 - [x] 5.1a 新增 `withdrawPendingApprovals(reason)`：撤卡、恢复工具行并按 reason 标注（done / error
-      → 新文案「未执行」；aborted → D383「已停止」）、清集合、失效决策、`settledAwaitingDone = null`；
+      → 新文案「未执行」；aborted → D383「已停止」）、清集合、失效决策、`settledApprovalCalls.clear()`；
       `done` / `error` / `aborted` 在 `dispatchActivity(terminal)` 前各调一次（`aborted` 用同一函数
       替换内联循环）
+- [x] 5.1c （独立评审 P1）`settledAwaitingDone` 单槽改为 `settledApprovalCalls`：按 `pending.id`
+      （= 后端 `call_id`）配对，`consumed` 让重复 done 幂等；无 `call_id` 的旧事件退回同名未消费项
+      FIFO。m384 新增「多待批全部决策后 done」同名 / 异名 / 正反序 / 成功失败 / 重复 done 用例
 - [x] 5.1b `sent` / `auto_turn_started` 在置 `turnOpen` 前、且上一相位为 `idle` 时，若集合非空则清
       stale；处理中的轮次不清合法待批；`appendApproval` 在**函数入口**判 `idle` 并直接返回
       （MUST NOT 先建流式泡 / 工具块、不落卡、不入集合）
@@ -159,6 +162,9 @@
 - [ ] 7.1 视觉场景转绿：m347 / m756 / m638 / m384 的新增断言；跑 `scripts/gate.sh visual`
       （整页 / 元素像素层；待批运行态只出候选截图，不 `--update`）
       （四场景在结构模式全绿 36/36；`scripts/gate.sh visual` 的整页像素层未跑——主会话串行约束，见交接）
+- [x] 7.1a （独立评审 P2）m756 补 content 四格（非空 / 空 × 面板开 / 收）、面板收起时的
+      done / error / aborted 撤回、待批时新建会话与切会话（真实 resume 通道）；m822 补子运行
+      待批不改变父会话阶段行 / 标题栏（真实渲染卡片）
 - [ ] 7.2 既有真机场景回扫：88 / 97 / 104 / 110 / 151 / 188 / 252 / 253 的闸 / 阶段行 / 活动状态
       期望逐条核对；过期期望就地改准（不改的也留一条核对记录）；新增 done / error 撤卡的场景
       期望逐条改准

@@ -171,8 +171,24 @@ test("withdrawPendingApprovals：撤卡 / 标未执行或已停止 / 清集合 /
   assert.match(WITHDRAW, /const labelKey = reason === "aborted" \? "D383" : "D977"/, "aborted 沿用「已停止」，done / error 标「未执行」");
   assert.match(WITHDRAW, /t\(labelKey\)/, "标签在落 DOM 时才取文案");
   assert.match(WITHDRAW, /pendingApprovals\.clear\(\)/, "清空集合（决策闭包随之失效）");
-  assert.match(WITHDRAW, /settledAwaitingDone = null/, "清 done 抑制槽");
+  assert.match(WITHDRAW, /settledApprovalCalls\.clear\(\)/, "清已决策待收 done 的配对表");
   assert.match(WITHDRAW, /refreshApprovalSignal\(\)/, "撤完之后重施，避免幻影状态");
+});
+
+test("已决策调用按调用身份配对 done（P1 评审）：pending.id 为键、callId 消费、重复 done 幂等", () => {
+  const SETTLE = functionBodyOf(PANEL_SOURCE, "settleApprovalRecord");
+  assert.match(
+    SETTLE,
+    /settledApprovalCalls\.set\(pending\.id, \{ name: pending\.tool, row, approved, consumed: false \}\)/,
+    "决策记录必须按批准请求 id（= 后端 call_id）入表，供 done 精确配对",
+  );
+  assert.match(
+    PANEL_SOURCE,
+    /callId !== null\s*\n\s*\? settledApprovalCalls\.get\(callId\)/,
+    "done 必须按调用身份取配对（不能按工具名消费可覆盖的单槽）",
+  );
+  assert.match(PANEL_SOURCE, /if \(slot\.consumed\)/, "重复 done 读到已消费即幂等");
+  assertNoMatch(PANEL_SOURCE, /settledAwaitingDone/, "旧的单槽变量必须删除（多待批会被后一项覆盖）");
 });
 
 test("终态：done / error / aborted 都在施加终态之前走同一撤回函数", () => {

@@ -399,3 +399,102 @@ test("待批状态：running 桩下正断言等待批准；两项逐个清算；
     { request_id: "call_multi_2", approved: true, reason: null },
   ]);
 });
+
+// ── P1（independent review d43ba3d9）：多待批全部决策后的 done 配对 ────────────────────
+//
+// 现场：`settledAwaitingDone` 是单槽，两张卡都决策后槽被后一项覆盖。先到的 done 按工具名
+// 消费错槽（同名时把 A 的失败贴到 B 行），后到的 done 找不到槽就新建一条工具行——同一调用
+// 出现重复行。判据：两个已决调用的 done 按**调用身份**（call_id = 批准请求 id）配对，
+// 成功 / 失败归属正确、行数恰好两条、重复 done 幂等。
+
+/** 打开空待批的 running 面板（`__pendingApprovalList = []`），供 live 多卡场景用。 */
+async function openEmptyRunningPanel(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    (window as unknown as Record<string, unknown>).__pendingApprovalList = [];
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("等待响应…");
+}
+
+async function decideBothApprovals(page: Page): Promise<void> {
+  await page.locator('button[data-act="approve"]').first().click();
+  await expect(page.locator('button[data-act="approve"]')).toHaveCount(1);
+  await page.locator('button[data-act="approve"]').first().click();
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-termwrap .lumir-hp-tool-row")).toHaveCount(2);
+}
+
+test("多待批全部决策后 done：同名工具按调用身份配对，失败不贴错行，重复 done 幂等", async ({
+  page,
+}) => {
+  await openEmptyRunningPanel(page);
+  await fire(page, { type: "approval_request", id: "call_same_a", tool: "cli_run", argv: ["echo", "A"] });
+  await fire(page, { type: "approval_request", id: "call_same_b", tool: "cli_run", argv: ["echo", "B"] });
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(2);
+  await decideBothApprovals(page);
+
+  const rows = page.locator(".lumir-hp-termwrap .lumir-hp-tool-row");
+  const rowA = rows.filter({ hasText: "echo A" });
+  const rowB = rows.filter({ hasText: "echo B" });
+
+  // 先到的 done 是 A 且执行失败；B 后到且成功。旧实现把 A 的失败贴到 B 的终态行，再为 B
+  // 新建第三行。
+  await fire(page, {
+    type: "tool_call",
+    name: "cli_run",
+    status: "done",
+    summary: "failed · io: A 写盘失败",
+    call_id: "call_same_a",
+  });
+  await fire(page, { type: "tool_call", name: "cli_run", status: "done", summary: "完成", call_id: "call_same_b" });
+
+  await expect(rowA).toHaveClass(/is-fail/);
+  await expect(rowA.locator(".lumir-hp-tool-out")).toContainText("A 写盘失败");
+  await expect(rowB).not.toHaveClass(/is-fail/);
+  await expect(rowB.locator(".lumir-hp-tool-out")).toHaveCount(0);
+  // 行数恰好两条：不再为已决策调用新建行。
+  await expect(page.locator(".lumir-hp-tool-row")).toHaveCount(2);
+
+  // 重复 done（同一调用身份）幂等：不新建行、不改归属。
+  await fire(page, {
+    type: "tool_call",
+    name: "cli_run",
+    status: "done",
+    summary: "failed · io: A 写盘失败",
+    call_id: "call_same_a",
+  });
+  await expect(page.locator(".lumir-hp-tool-row")).toHaveCount(2);
+  await expect(rowA).toHaveClass(/is-fail/);
+  await expect(rowB).not.toHaveClass(/is-fail/);
+});
+
+test("多待批全部决策后 done：异名工具反序到达仍按身份配对，成功不建重复行", async ({ page }) => {
+  await openEmptyRunningPanel(page);
+  await fire(page, { type: "approval_request", id: "call_x1", tool: "vault_patch", diff: DIFF });
+  await fire(page, { type: "approval_request", id: "call_x2", tool: "cli_run", argv: ["echo", "B"] });
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(2);
+  await decideBothApprovals(page);
+
+  const rows = page.locator(".lumir-hp-termwrap .lumir-hp-tool-row");
+  const patchRow = rows.filter({ hasText: "harness-note.md" });
+  const cliRow = rows.filter({ hasText: "echo B" });
+
+  // 反序：B（cli_run）先成功，A（vault_patch）后失败。旧实现会把 A 的 done 当成无主调用，
+  // 新建一条失败行，A 的终态行保持「已采纳」。
+  await fire(page, { type: "tool_call", name: "cli_run", status: "done", summary: "完成", call_id: "call_x2" });
+  await fire(page, {
+    type: "tool_call",
+    name: "vault_patch",
+    status: "done",
+    summary: "failed · patch_conflict: 文件已被改动",
+    call_id: "call_x1",
+  });
+
+  await expect(patchRow).toHaveClass(/is-fail/);
+  await expect(patchRow.locator(".lumir-hp-tool-out")).toContainText("文件已被改动");
+  await expect(cliRow).not.toHaveClass(/is-fail/);
+  await expect(page.locator(".lumir-hp-tool-row")).toHaveCount(2);
+});

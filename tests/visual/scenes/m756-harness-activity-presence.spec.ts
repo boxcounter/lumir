@@ -742,47 +742,187 @@ test("终态撤回：done / error 标未执行、aborted 标已停止，下一�
   }
 });
 
-test("content 对账不复活待批（非空 / 空列表 × 面板开 / 收）", async ({ page }) => {
-  // ① 中途接管（enter in_flight:true），终态后 content 快照仍返回非空列表：相位 idle 下不复活。
+/** content 对账的一格：进入档位（in_flight:true）→（可选）打开面板 → 等调用方发终态。
+ *  `open` = 终态发生前面板是否打开（决定 displayed / 未读档）。每个格子一个独立页面（测试
+ *  各自 `goto`）——同一页面 reload 会恢复上次布局，文件树不可见，点击会在等可见上超时。 */
+async function openContentCell(
+  page: Page,
+  options: { open: boolean; pending: Array<Record<string, unknown>> },
+): Promise<void> {
   await stubTauri(page, VAULT);
-  await stubHarnessActivity(page, { inFlight: true, pendingApprovals: PENDING_ONE });
-  await openActivityPanel(page);
-  await expect(page.locator(".lumir-hp-pend")).toHaveCount(1);
-  const beforeTerminal = await page.evaluate(
+  await stubHarnessActivity(page, { inFlight: true, pendingApprovals: options.pending });
+  await page.goto("/");
+  await page.locator('.ft-row[title="activity-note.md"]').click();
+  if (options.open) {
+    await page.locator(".lumir-hp-toggle").click();
+    await expect(page.locator(".lumir-harness")).toBeVisible();
+  }
+}
+
+/** 发终态并等 content 对账快照落地（调用次数严格增加）。 */
+async function fireTerminalAndWaitSnapshot(page: Page): Promise<void> {
+  const before = await page.evaluate(
     () => (window as unknown as { __harnessStateCalls: number }).__harnessStateCalls,
   );
   await fire(page, { type: "done" });
   await page.waitForFunction(
-    (before) =>
-      ((window as unknown as { __harnessStateCalls: number }).__harnessStateCalls ?? 0) > before,
-    beforeTerminal,
+    (mark) =>
+      ((window as unknown as { __harnessStateCalls: number }).__harnessStateCalls ?? 0) > mark,
+    before,
   );
+}
+
+test("content 对账 · 非空列表 + 面板开：相位 idle 下不复活待批", async ({ page }) => {
+  await openContentCell(page, { open: true, pending: PENDING_ONE });
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("等待批准…");
+  await fireTerminalAndWaitSnapshot(page);
   await expect(page.locator(".lumir-hp-send")).toHaveAttribute("aria-label", "发送");
   await expect(page.locator(".lumir-hp-stage")).toBeHidden();
   await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
   await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("");
   await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
   await expect(page.locator(".lumir-hp-approval")).toHaveCount(0);
+});
 
-  // ② 面板收起 + 空列表：同一口径（收起期间 done 产生未读，但绝不产生待批状态）。
-  await page.reload();
-  await page.locator('.ft-row[title="activity-note.md"]').click();
-  await page.evaluate(() => {
-    (window as unknown as { __pendingApprovals: unknown[] }).__pendingApprovals = [];
-  });
-  const beforeSecond = await page.evaluate(
-    () => (window as unknown as { __harnessStateCalls: number }).__harnessStateCalls,
-  );
-  await fire(page, { type: "done" });
-  await page.waitForFunction(
-    (before) =>
-      ((window as unknown as { __harnessStateCalls: number }).__harnessStateCalls ?? 0) > before,
-    beforeSecond,
-  );
+test("content 对账 · 非空列表 + 面板收：未读回复在场，重开无卡", async ({ page }) => {
+  await openContentCell(page, { open: false, pending: PENDING_ONE });
+  const toggle = page.locator(".lumir-hp-toggle");
+  await expect(toggle).toHaveAttribute("title", "对话面板 · 等待批准");
+  await fireTerminalAndWaitSnapshot(page);
+  await expect(toggle).toHaveAttribute("data-activity", "reply");
+  await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("有新的回复");
+  await expect(toggle).toHaveAttribute("title", "对话面板 · 有新的回复");
+  await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
+  // 重开：非空列表不复活卡或待批状态。
+  await toggle.click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-approval")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-stage")).toBeHidden();
+  await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("");
+});
+
+test("content 对账 · 空列表 + 面板开：终态后无待批状态", async ({ page }) => {
+  await openContentCell(page, { open: true, pending: [] });
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("等待响应…");
+  await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
+  await fireTerminalAndWaitSnapshot(page);
+  await expect(page.locator(".lumir-hp-send")).toHaveAttribute("aria-label", "发送");
+  await expect(page.locator(".lumir-hp-stage")).toBeHidden();
+  await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
+  await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("");
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
+});
+
+test("content 对账 · 空列表 + 面板收：未读回复在场，不产生待批状态", async ({ page }) => {
+  await openContentCell(page, { open: false, pending: [] });
+  await expect(page.locator(".lumir-hp-toggle")).toHaveAttribute("title", "对话面板 · 处理中");
+  await fireTerminalAndWaitSnapshot(page);
   await expect(page.locator(".lumir-hp-toggle")).toHaveAttribute("data-activity", "reply");
   await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("有新的回复");
   await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
   await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
+});
+
+test("终态撤回（面板收起）：done / error / aborted 都不留「等待批准」幻影", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarnessActivity(page, { inFlight: false, pendingApprovals: [] });
+  const cases = [
+    { terminal: { type: "done" }, activity: "reply", word: "有新的回复", label: "未执行" },
+    { terminal: { type: "error", code: "llm_upstream", message: "上游炸了" }, activity: "failure", word: "有失败结果", label: "未执行" },
+    { terminal: { type: "aborted" }, activity: "idle", word: "", label: "已停止" },
+  ] as const;
+  for (const item of cases) {
+    await openActivityPanel(page);
+    await startLocalTurn(page, `收起后收尾：${item.label}`);
+    await fire(page, { type: "approval_request", id: `call_closed_${item.label}`, tool: "vault_patch", diff: APPROVAL_DIFF });
+    await expect(page.locator(".lumir-hp-stage")).toHaveText("等待批准…");
+    // 收起后终态到达：卡在摘出的 DOM 里被撤回，标题栏按未读档呈现。
+    await page.keyboard.press("Meta+Shift+A");
+    await expect(page.locator(".lumir-harness")).toBeHidden();
+    await fire(page, item.terminal);
+    await expect(page.locator(".lumir-hp-toggle")).toHaveAttribute("data-activity", item.activity);
+    await expect(page.locator(".lumir-hp-toggle-status")).toHaveText(item.word);
+    await expect(page.locator(".lumir-hp-toggle-status")).not.toHaveText("等待批准");
+    await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
+
+    // 重开：无卡、无待批状态；工具行按原因标结果词。
+    await page.keyboard.press("Meta+Shift+A");
+    await expect(page.locator(".lumir-harness")).toBeVisible();
+    await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
+    await expect(page.locator(".lumir-hp-approval")).toHaveCount(0);
+    await expect(page.locator(".lumir-hp-stage")).toBeHidden();
+    await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
+    await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("");
+    const failRow = page.locator(".lumir-hp-tool-row.is-fail").last();
+    await expect(failRow.locator(".lumir-hp-tool-out")).toContainText(item.label);
+  }
+});
+
+test("待批时新建会话：待决集合清空，新会话无待批状态", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarnessActivity(page, { inFlight: true, pendingApprovals: PENDING_ONE });
+  await openActivityPanel(page);
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("等待批准…");
+
+  await page.locator(".lumir-hp-seg-new").click();
+  await expect(page.locator(".lumir-hp-msg")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-approval")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-stage")).toBeHidden();
+  await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
+  await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("");
+});
+
+test("待批时切会话：旧会话的待决不进入新视图", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarnessActivity(page, { inFlight: true, pendingApprovals: PENDING_ONE });
+  // 会话清单 / 恢复通道（与 m460 同形）：恢复后的会话报空闲、无待批。
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, any>;
+    const inner = w.__TAURI_INTERNALS__.invoke;
+    w.__resumed = [] as string[];
+    w.__afterResume = false;
+    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
+      if (cmd === "harness_list_sessions") {
+        return [{ session_id: "s-old", title: "旧会话", first_user_text: null, ts: 1759912345 }];
+      }
+      if (cmd === "harness_resume_session") {
+        w.__resumed.push(args.session_id);
+        w.__afterResume = true;
+        return { session_token: 2, messages: [] };
+      }
+      if (cmd === "harness_state" && w.__afterResume) {
+        return JSON.stringify({
+          messages: [],
+          usage: { ctx_pct: 0, cache_pct_session: 0, has_usage: false },
+          pending_approvals: [],
+          warn_ctx_pct: 85,
+          thinking: { level: "high", supported: true },
+          in_flight: false,
+        });
+      }
+      return inner(cmd, args);
+    };
+  });
+  await openActivityPanel(page);
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("等待批准…");
+
+  await page.locator(".lumir-hp-session").click();
+  await page.locator(".lumir-hp-sesspop-history").first().click();
+  await expect(page.locator(".lumir-hp-msg")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-approval")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-stage")).toBeHidden();
+  await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
+  await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("");
+  expect(
+    await page.evaluate(() => (window as unknown as { __resumed: string[] }).__resumed),
+  ).toEqual(["s-old"]);
 });
 
 test("窄段 + 长会话名：状态词与加号钮都在段内，会话名先收缩", async ({ page }) => {

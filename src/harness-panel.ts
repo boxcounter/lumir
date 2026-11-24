@@ -6526,12 +6526,23 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  恢复路径没有 started 行，故没有条目。 */
   const startedArgs = new WeakMap<HTMLElement, string>();
 
-  /** 批准决策后的 done 抑制槽（M406 单行生命周期）：决策把 running 行就地收敛为终态行，
-   *  同一调用的 done 事件随后到达时不再建行（同一调用两份留痕正是本批收敛要消的形态）。
-   *  按名匹配 + 单槽：工具循环顺序执行，同一时刻至多一个已决待收尾的调用。批准了但执行
-   *  失败（失败形状摘要）时把失败文本追加为该行尾注并翻失败态——决策词（已采纳）保留，
-   *  执行结果如实补记。 */
-  let settledAwaitingDone: { name: string; row: HTMLElement; approved: boolean } | null = null;
+  /** 已决策待收 done 的调用（M406 单行生命周期 → change fix-harness-approval-visibility-nov23
+   *  P1：**按调用身份配对**）。决策把 running 行就地收敛为终态行，同一调用的 done 事件随后
+   *  到达时不再建行（同一调用两份留痕正是本批收敛要消的形态）。
+   *
+   *  键 = 批准请求 id（后端 `approval_request.id` 就是该工具的 `call_id`，turn.rs 的
+   *  `"id": call.call_id`）。MUST NOT 退回「单槽 + 工具名」：同块多待批、逐项决策时后一项会
+   *  覆盖前一项，先到的 done 按名消费错槽（同名时把 A 的失败贴到 B 行），后到的 done 找不到槽
+   *  就新建一条工具行。`consumed` 让重复 done 幂等（读到已消费即 no-op，不建第二行）；
+   *  无 `call_id` 的旧事件才退回同名未消费项 FIFO。批准了但执行失败（失败形状摘要）时把失败
+   *  文本追加为该行尾注并翻失败态——决策词（已采纳）保留，执行结果如实补记。 */
+  interface SettledApprovalCall {
+    name: string;
+    row: HTMLElement;
+    approved: boolean;
+    consumed: boolean;
+  }
+  const settledApprovalCalls = new Map<string, SettledApprovalCall>();
 
   /** 步骤行追加 / 翻转（M406 人话化版）：started 追加 running 行（名徽章 + 人话化参数）；
    *  done 翻 block.running 行——失败（TOOL_FAILED_SUMMARY 形状）→ is-fail + ✕ + 失败摘要
@@ -6978,25 +6989,35 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       follow.contentGrew();
       return;
     }
-    // 抑制槽判定先于 ensureToolsBlock：槽命中时不建行，也不该为被抑制的 done 开新块。
-    if (status === "done" && settledAwaitingDone !== null && settledAwaitingDone.name === name) {
-      const slot = settledAwaitingDone;
-      settledAwaitingDone = null;
-      if (slot.approved && TOOL_FAILED_SUMMARY.test(summary)) {
-        // 批准了但执行失败：终态行翻失败态 + 失败文本尾注（决策词「已采纳」不动）。
-        slot.row.classList.replace("is-done", "is-fail");
-        const ic = slot.row.querySelector(".lumir-hp-tool-ic");
-        if (ic !== null) ic.replaceWith(createToolIcon("fail"));
-        const text = slot.row.querySelector(".lumir-hp-tool-text");
-        if (text !== null) {
-          const outEl = document.createElement("span");
-          outEl.className = "lumir-hp-tool-out";
-          outEl.textContent = `· ${summary}`;
-          text.append(document.createTextNode(" "), outEl);
+    // 已决策调用的 done 判定先于 ensureToolsBlock：命中时不建行，也不该为被抑制的 done 开新块。
+    if (status === "done") {
+      const slot =
+        callId !== null
+          ? settledApprovalCalls.get(callId)
+          : [...settledApprovalCalls.values()].find((entry) => entry.name === name && !entry.consumed);
+      if (slot !== undefined) {
+        if (slot.consumed) {
+          // 重复 done（同一调用身份；无身份的旧事件重复投递）幂等：不再建行、不改归属。
+          follow.contentGrew();
+          return;
         }
+        slot.consumed = true;
+        if (slot.approved && TOOL_FAILED_SUMMARY.test(summary)) {
+          // 批准了但执行失败：终态行翻失败态 + 失败文本尾注（决策词「已采纳」不动）。
+          slot.row.classList.replace("is-done", "is-fail");
+          const ic = slot.row.querySelector(".lumir-hp-tool-ic");
+          if (ic !== null) ic.replaceWith(createToolIcon("fail"));
+          const text = slot.row.querySelector(".lumir-hp-tool-text");
+          if (text !== null) {
+            const outEl = document.createElement("span");
+            outEl.className = "lumir-hp-tool-out";
+            outEl.textContent = `· ${summary}`;
+            text.append(document.createTextNode(" "), outEl);
+          }
+        }
+        follow.contentGrew();
+        return;
       }
-      follow.contentGrew();
-      return;
     }
     const block = ensureToolsBlock();
     if (status === "started") {
@@ -7327,7 +7348,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    * （已采纳/已拒绝 · 相对时间戳）；待决卡整体退场（置灰按钮会被误读为「还没处理完」，
    *  Alex 2026-10-08 实证），卡的 diff/argv 移进默认折叠的 .lumir-hp-term-body 可展开
    *  回看；拒绝附原因时原因行就地可见（D408）。决策后不再另存工具行：同一调用的 done
-   *  事件到达时经 settledAwaitingDone 抑制槽吞掉（批准了但执行失败则补记失败尾注）。 */
+   *  事件到达时按调用身份经 settledApprovalCalls 吞掉（批准了但执行失败则补记失败尾注）。 */
   function settleApprovalRecord(
     pending: PendingApproval,
     approved: boolean,
@@ -7410,7 +7431,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       if (index >= 0) block.rows[index] = term;
       if (block.running === row) block.running = null;
     }
-    settledAwaitingDone = { name: pending.tool, row, approved };
+    settledApprovalCalls.set(pending.id, { name: pending.tool, row, approved, consumed: false });
 
     decidedApprovals.set(pending.id, {
       id: pending.id,
@@ -7458,7 +7479,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       }
     }
     pendingApprovals.clear();
-    settledAwaitingDone = null;
+    settledApprovalCalls.clear();
     refreshApprovalSignal();
   }
 
@@ -9601,6 +9622,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     imageThumbCache.prune();
     pendingApprovals.clear();
     decidedApprovals.clear();
+    settledApprovalCalls.clear();
     // 清面（换会话 / 切 vault / 新会话 / 终态对账清面共用）：集合清空后重施一次，否则标题栏 /
     // 阶段行可能停在上一视图的「等待批准」幻影上（相位随后的复位会再施加一次，幂等）。
     refreshApprovalSignal();
@@ -9631,7 +9653,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 轮次闸门不在这里写：`resetView` 的 reset_view 投影是它的
     // 唯一写入口（tasks 2.5：闸门与相位同源收口，分散写会出现「相位收口了、闸门还开着」）。
     activeTools = null;
-    settledAwaitingDone = null;
     lastAssistantEl = null;
     lastErrorEl = null;
     lastErrorText = "";
