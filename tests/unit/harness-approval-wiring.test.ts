@@ -241,7 +241,11 @@ test("快照：待决列表重放结束后无条件重施（列表为空是幻�
 
 test("进入快照自身不清面（清理由构造 / resetView 的前置不变量承担）", () => {
   assertNoMatch(APPLY_ENTER, /clearTranscriptSurface|pendingApprovals\.clear/, "enter 不得内联清面");
-  assertNoMatch(functionBodyOf(PANEL_SOURCE, "fetchActivitySnapshot"), /clearTranscriptSurface|pendingApprovals\.clear/);
+  assertNoMatch(
+    functionBodyOf(PANEL_SOURCE, "fetchActivitySnapshot"),
+    /clearTranscriptSurface|pendingApprovals\.clear/,
+    "只读相位快照也不得内联清面",
+  );
 });
 
 test("子运行待批不计入父会话：任务区卡不调待批重施", () => {
