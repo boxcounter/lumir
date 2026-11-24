@@ -7,7 +7,8 @@
 > 节点状态：已 rebase 到 `origin/master@dd33d1fc`（含 hybrid Skill），产品 CSS、Chromium 场景与
 > 真机截图说明已实现。图片卡 badge 已恢复可见；m440 / m454 的 24px 外层宽差与 8 个 glyph 色像素分别记录。
 > m347 的 19 像素已证明来自 chip、composer 聚焦框与 placeholder 的背景透入，浮层隔离图逐字节一致，
-> 改列额外基线裁决项而非产品阻塞。最终视觉复跑、真机复跑与 Alex 基线批准仍未完成，change 尚未归档。
+> 改列额外基线裁决项而非产品阻塞。最终 `gate.sh visual` 已复跑，10 个失败全部落在 §8.1 / §8.2 / §8.4；
+> 真机复跑与 Alex 基线批准仍未完成，change 尚未归档。
 > 节点 1（提案评审）：**已批准**——Alex 2026-11-24 回复「批准」，采用 `refined-rows-720` 及
 > D1–D7 推荐值。候选像素基线生成后仍须 Alex 逐张过目；未获明确批准前 MUST NOT 执行
 > `--update` / `--update-snapshots`，也不得把候选图转成正式基线。

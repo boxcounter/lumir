@@ -4,8 +4,8 @@
 > 0.6 / 5.2 仅登记已完成的前置修复。已 rebase 到 `origin/master@dd33d1fc`（含 hybrid Skill）。
 > 图片卡 badge 已恢复可见；m440 / m454 的 24px 外层宽差与 8 个 glyph 色像素分别记录。
 > m347 的 19 像素已证明为背景透入，隔离图逐字节一致，改列额外基线裁决项而非产品阻塞。
-> 候选基线必须经 Alex 过目，未批准不得 `--update` / `--update-snapshots`。八场景真机复跑由主会话串行执行，
-> 本实现提交不预写其结果。
+> 最终 `gate.sh visual` 已复跑，10 个失败全部落在 §8.1 / §8.2 / §8.4。候选基线必须经 Alex 过目，
+> 未批准不得 `--update` / `--update-snapshots`。八场景真机复跑由主会话串行执行，本实现提交不预写其结果。
 > 有序链硬门禁：`fix-harness-approval-visibility-nov23` → 本 change →
 > `move-harness-progress-to-output-tail-nov23`。0.5 / 0.6 未完成时 §1–§7 全部不得施工；
 > 本 change 未归档、基线未批准落盘前，后续尾行 change 同样不得施工。
@@ -93,9 +93,9 @@
 ## 6. 门禁、基线裁决与证据
 
 - [x] 6.1 跑前端单测、根 / 单测 / 视觉 tsc、`scripts/gate.sh quick`；照抄 `GATE RESULT` 原文与退出码
-- [ ] 6.2 跑本地 `scripts/gate.sh visual`（含像素）；照抄 `GATE RESULT` 原文与退出码。CI 结构层不能替代
+- [x] 6.2 跑本地 `scripts/gate.sh visual`（含像素）；照抄 `GATE RESULT` 原文与退出码。CI 结构层不能替代
       本地像素层，未获 Alex 批准前只保留 actual / candidate，不更新正式基线
-- [ ] 6.3 将 design §8.1 的 7 张既有候选与 §8.2 的 9 张新增候选逐张交 Alex；§8.3 的不应变化清单同时
+- [x] 6.3 将 design §8.1 的 7 张既有候选与 §8.2 的 9 张新增候选逐张交 Alex；§8.3 的不应变化清单同时
       核对。获得明确批准后才允许统一更新，未批准即保持基线不动并如实报告视觉门禁结果
 - [ ] 6.4 若 Alex 批准基线：统一更新后核对全部受影响整页基线时间戳，复跑视觉门禁；做一次有区分度的
       反向验证后还原，禁止调容差或零碎更新
