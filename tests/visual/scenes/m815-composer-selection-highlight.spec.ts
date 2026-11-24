@@ -33,7 +33,7 @@ async function openFixture(page: Page, text: string, cards: ComposerAttachment[]
       if (cmd === "harness_read_image") return "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFElEQVR4nGP8z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg==";
       return invoke(cmd, args);
     };
-  }, { version: 3, text, caret: text.length, cards: cards.map((card) => ({ card, at: 0 })) });
+  }, { version: 3, text, caret: text.length, cards: cards.map((card) => ({ card, at: 0 })), skills: [] });
   await page.goto("/");
   await page.locator('.ft-row[title="selection-fixture.md"]').click();
   await page.locator(".lumir-hp-toggle").click();

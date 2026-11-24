@@ -25,21 +25,21 @@
 
 | 事实 | 位置 |
 |---|---|
-| `discover_skills` 双根发现、vault 覆盖 user、按名字升序；名字无 grammar 限制 | `src-tauri/src/harness/context.rs:331-371` |
-| `SkillEntry { name, description, dir }`；发现期当前用 `fs::read_to_string` 读入整份 SKILL.md，再只提取 description | `context.rs:320-326`、`:354-356`、`:373-399` |
-| 索引在会话建立 / 新会话 / 压缩时装配一次 | `context.rs:15-20`、`:258-276` |
-| `skill_load` 的名称 / 路径校验、200KB 上限、读取与错误回执 | `src-tauri/src/harness/tools.rs:1211-1291` |
-| 回合开始重新发现 Skill，并交给 `ToolContext` | `src-tauri/src/harness/turn.rs:602-614` |
+| `discover_skills` 双根发现、vault 覆盖 user、按名字升序；名字无 grammar 限制 | `src-tauri/src/harness/context.rs:412-455` |
+| `SkillEntry { name, description, source, invocation, dir }`；发现期当前用 `fs::read_to_string` 读入整份 SKILL.md，再只提取元数据 | `context.rs:326-368`、`:441-447`、`:458-526` |
+| 索引在会话建立 / 新会话 / 压缩时装配一次 | `context.rs:15-20`、`:258-290` |
+| `skill_load` 的名称 / 路径校验、200KB 上限、共享执行期正文加载与错误回执 | `src-tauri/src/harness/tools.rs:1217-1336` |
+| 回合开始重新发现 Skill，显式注入后交给 `ToolContext` | `src-tauri/src/harness/turn.rs:597-665`、`:690-703` |
 | `skill_load` 读类放行，deny 优先；权限主体取技能名 | `permissions.rs:107-113`；`tools.rs:439-453` |
-| 发送契约 `parts_json` + `context_json` | `harness.rs:1631-1645` |
-| 用户消息入队与面板文本共用附件投影 | `turn.rs:568-592`；`attachments.rs:366-471` |
+| 发送契约 `parts_json` + `context_json` + 必填 `skills_json`；清单命令复用发现结果 | `harness.rs:1695-1749` |
+| 用户消息入队与面板文本共用附件投影 | `turn.rs:684-728`；`attachments.rs:369-474` |
 | `lumir_label` 本地字段在 wire 前剥离、面板忽略 | `attachments.rs:300-340`、`:409-433` |
 | 重试只校验 `input_len`、不重写内容 | `harness.rs:388-437` |
 | 恢复灌回最后一条 `llm_request.messages`，不重新装配 system | `harness.rs:658-729`、`:1373-1497` |
 | 压缩开新逻辑会话，输入历史由摘要替换 | `harness/session.rs:1123` |
-| composer keydown：IME 闸门 → 撤销 → `mod` 提前 return → Enter 发送 | `harness-panel.ts:9569-9600` |
-| `⌃N` / `⌃P` 行移动；单行末尾可原地不动 | `src/keys.ts:634-635`；`harness-composer.ts:376-391` |
-| 草稿 v2 / v1 转换 | `src/quote-card.ts:326-410` |
+| composer keydown：IME 闸门 → 撤销 → ⌃N/P 关候选不消费 → `mod` 提前 return → 候选键态 → Enter 发送 | `harness-panel.ts:9963-10032` |
+| `⌃N` / `⌃P` 行移动；单行末尾可原地不动 | `src/keys.ts:634-635`；`harness-composer.ts:470-485` |
+| 草稿 v3 / v2 / v1 归一 | `src/quote-card.ts:314-491` |
 | Escape 层栈与浮层摆放 | `src/escape-router.ts:102-146`；`src/overlay-placement.ts:121` |
 
 ### 2.1 两阶段读取定义（全文档统一术语）

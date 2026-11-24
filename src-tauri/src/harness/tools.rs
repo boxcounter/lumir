@@ -1217,12 +1217,82 @@ struct SkillArgs {
 /// skill_load 内容上限（SKILL.md 是教模型用法的文本，远超此上限基本是读错文件）。
 const SKILL_MAX_BYTES: u64 = 200 * 1024;
 
+#[cfg(test)]
+static SKILL_CONTENT_LOADS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+#[cfg(test)]
+static SKILL_CONTENT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+pub(crate) fn skill_content_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    SKILL_CONTENT_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
+#[cfg(test)]
+pub(crate) fn reset_skill_content_load_count() {
+    SKILL_CONTENT_LOADS.store(0, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(test)]
+pub(crate) fn skill_content_load_count() -> usize {
+    SKILL_CONTENT_LOADS.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// 两个入口共用的执行期正文加载器。发现期元数据读取不经过这里；拒绝路径测试
+/// 因而只计数本函数，不虚称整个发现过程零 IO。
+pub(crate) fn load_skill_file(skill: &SkillEntry, file: &str) -> ToolOutput {
+    #[cfg(test)]
+    SKILL_CONTENT_LOADS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let relative = Path::new(file);
+    if relative.is_absolute()
+        || relative.components().any(|c| {
+            matches!(
+                c,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return ToolOutput::err(
+            "skill_path_escape",
+            format!("skill_load 的文件必须限定在技能目录内：{file}"),
+        );
+    }
+    let target = skill.dir.join(relative);
+    let metadata = match std::fs::metadata(&target) {
+        Ok(metadata) if metadata.is_file() => metadata,
+        _ => {
+            return ToolOutput::err(
+                "skill_file_missing",
+                format!("技能 {} 里没有文件 {file}", skill.name),
+            )
+        }
+    };
+    if metadata.len() > SKILL_MAX_BYTES {
+        return ToolOutput::err(
+            "skill_too_large",
+            format!("{file} 超过 {}KB 上限", SKILL_MAX_BYTES / 1024),
+        );
+    }
+    match std::fs::read_to_string(&target) {
+        Ok(content) => ToolOutput::ok(serde_json::json!({
+            "name": skill.name,
+            "file": file,
+            "content": content,
+        })),
+        Err(e) => ToolOutput::err("skill_read_failed", format!("读取 {file} 失败：{e}")),
+    }
+}
+
+pub(crate) fn load_explicit_skill(skill: &SkillEntry) -> ToolOutput {
+    load_skill_file(skill, "SKILL.md")
+}
+
 fn skill_load(args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
     let input = match parse_args::<SkillArgs>(args) {
         Ok(input) => input,
         Err(output) => return output,
     };
-    // 名称即单段目录名：带路径分隔符 / .. / 隐藏项即拒（spec「路径逃逸拒绝」场景）。
     if input.name.is_empty()
         || input.name.starts_with('.')
         || input.name.contains('/')
@@ -1248,46 +1318,19 @@ fn skill_load(args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
             ),
         );
     };
-    let file = input.file.as_deref().unwrap_or("SKILL.md");
-    // file 限定在 Skill 目录内：逐段校验，拒绝绝对路径与 ..
-    let relative = Path::new(file);
-    if relative.is_absolute()
-        || relative.components().any(|c| {
-            matches!(
-                c,
-                Component::ParentDir | Component::RootDir | Component::Prefix(_)
-            )
-        })
-    {
+    if !skill.invocation.valid {
         return ToolOutput::err(
-            "skill_path_escape",
-            format!("skill_load 的文件必须限定在技能目录内：{file}"),
+            "skill_invocation_invalid",
+            format!("技能 {} 的调用元数据非法", input.name),
         );
     }
-    let target = skill.dir.join(relative);
-    let metadata = match std::fs::metadata(&target) {
-        Ok(metadata) if metadata.is_file() => metadata,
-        _ => {
-            return ToolOutput::err(
-                "skill_file_missing",
-                format!("技能 {} 里没有文件 {file}", input.name),
-            )
-        }
-    };
-    if metadata.len() > SKILL_MAX_BYTES {
+    if !skill.invocation.model_invocable {
         return ToolOutput::err(
-            "skill_too_large",
-            format!("{file} 超过 {}KB 上限", SKILL_MAX_BYTES / 1024),
+            "skill_model_invocation_disabled",
+            format!("技能 {} 只允许用户显式选择", input.name),
         );
     }
-    match std::fs::read_to_string(&target) {
-        Ok(content) => ToolOutput::ok(serde_json::json!({
-            "name": input.name,
-            "file": file,
-            "content": content,
-        })),
-        Err(e) => ToolOutput::err("skill_read_failed", format!("读取 {file} 失败：{e}")),
-    }
+    load_skill_file(skill, input.file.as_deref().unwrap_or("SKILL.md"))
 }
 
 #[derive(Deserialize)]
@@ -2807,6 +2850,7 @@ mod tests {
 
     #[test]
     fn skill_load_confined_to_skill_root() {
+        let _counter_lock = skill_content_test_lock();
         let (root, policy) = fixture_vault("skill");
         std::fs::create_dir_all(root.join(".agents/skills/demo")).unwrap();
         std::fs::write(root.join(".agents/skills/demo/SKILL.md"), "demo body").unwrap();
@@ -3235,5 +3279,92 @@ mod tests {
             got.contains("/usr/bin") || got.contains("/bin"),
             "缺基本目录：{got}"
         );
+    }
+
+    struct HomeGuard(Option<std::ffi::OsString>);
+    impl Drop for HomeGuard {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+
+    fn fixture(name: &str) -> (std::path::PathBuf, IgnorePolicy, Vec<SkillEntry>, HomeGuard) {
+        let root =
+            std::env::temp_dir().join(format!("lumir-skill-policy-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let home = HomeGuard(std::env::var_os("HOME"));
+        std::env::set_var("HOME", root.join("home"));
+        for (skill, frontmatter) in [
+            ("default", ""),
+            ("user-only", "disable-model-invocation: true\n"),
+            ("model-only", "user-invocable: false\n"),
+            ("invalid", "disable-model-invocation: yes\n"),
+        ] {
+            let dir = root.join(".agents/skills").join(skill);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("SKILL.md"),
+                format!("---\ndescription: {skill}\n{frontmatter}---\nBODY-MARKER-{skill}"),
+            )
+            .unwrap();
+            std::fs::write(dir.join("extra.txt"), format!("EXTRA-MARKER-{skill}")).unwrap();
+        }
+        let defaults = crate::config::VaultConfig::default();
+        let policy = IgnorePolicy::load(&root, &[".gitignore".to_string()], &defaults.ignore);
+        let skills = super::super::context::discover_skills(&root);
+        assert_eq!(skills.len(), 4, "发现期必须已读取 description 与策略");
+        (root, policy, skills, home)
+    }
+
+    #[test]
+    fn automatic_policy_has_positive_control_and_no_body_on_rejection() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let (root, policy, skills, _home) = fixture("matrix");
+        let ctx = ToolContext {
+            root: &root,
+            policy: &policy,
+            skills: &skills,
+            cron: None,
+        };
+        let _counter_lock = skill_content_test_lock();
+        reset_skill_content_load_count();
+        for name in ["default", "model-only"] {
+            let out = skill_load(&serde_json::json!({"name": name}), &ctx);
+            assert!(out.succeeded(), "{out:?}");
+            assert!(out.value["content"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("BODY-MARKER-{name}")));
+        }
+        assert_eq!(skill_content_load_count(), 2);
+
+        for name in ["user-only", "invalid"] {
+            for args in [
+                serde_json::json!({"name": name}),
+                serde_json::json!({"name": name, "file": "extra.txt"}),
+            ] {
+                let before = skill_content_load_count();
+                let out = skill_load(&args, &ctx);
+                assert!(!out.succeeded());
+                assert_eq!(
+                    out.value["code"],
+                    if name == "invalid" {
+                        "skill_invocation_invalid"
+                    } else {
+                        "skill_model_invocation_disabled"
+                    }
+                );
+                assert!(!out.value.to_string().contains("MARKER"));
+                assert_eq!(
+                    skill_content_load_count(),
+                    before,
+                    "被拒自动入口不得调用执行期加载器"
+                );
+            }
+        }
+        let _ = std::fs::remove_dir_all(root);
     }
 }

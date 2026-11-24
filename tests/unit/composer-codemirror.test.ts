@@ -29,7 +29,7 @@ const message: ComposerAttachment = { kind: "msgquote", card: { role: "assistant
 const placed = (id: number, card: ComposerAttachment, anchor = 0) => ({ id, card, anchor });
 
 function stateWith(text = "问题", caret: number | null = text.length, cards: Array<ReturnType<typeof placed>> = []) {
-  return createComposerState({ text, caret, cards });
+  return createComposerState({ text, caret, cards, skills: [] });
 }
 
 test("附件 insert/remove 与文本共享同一个 undo/redo", () => {
@@ -100,6 +100,6 @@ test("createComposerState 恢复 caret 与 placed cards，并清空 history", ()
   assert.equal(restored.selection.main.head, 2);
   assert.deepEqual(restored.field(composerAttachmentsField), state.field(composerAttachmentsField));
   assert.equal(composerUndo(restored), restored);
-  const clamped = createComposerState({ text: "x", caret: 99, cards: [] });
+  const clamped = createComposerState({ text: "x", caret: 99, cards: [], skills: [] });
   assert.equal(clamped.selection.main.head, 1);
 });

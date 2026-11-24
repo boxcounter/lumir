@@ -260,13 +260,15 @@ fn register_failed<C: RunContext>(
 /// `harness_new_session` 又被 busy 挡住——该 vault 的 harness 到 app 重启前全瘫。
 /// `catch_unwind` 兜底：panic 路径发 error 事件并照常释放 busy（会话锁已改为
 /// poison 容忍，恐慌后仍可取回）。
-pub fn run_turn(
-    app: tauri::AppHandle,
+#[allow(clippy::too_many_arguments)] // 发送与 cron 共用的线程入口；显式技能名是本轮输入的一部分。
+pub fn run_turn<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     runtime: Runtime,
     scope: VaultScope,
     config: HarnessConfig,
     parts: impl Into<DeliveryInput>,
     context_section: Option<String>,
+    skill_names: Vec<String>,
     origin: TurnOrigin,
 ) {
     run_turn_inner(
@@ -277,6 +279,7 @@ pub fn run_turn(
         TurnInput::User {
             parts: parts.into(),
             context_section,
+            skill_names,
         },
         origin,
     );
@@ -285,8 +288,8 @@ pub fn run_turn(
 /// 显式重试的线程入口（change add-harness-turn-retry-nov23 design §4.2 第 7 条）：
 /// `begin_retry` 已消费 `failed` 并 `begin_turn`（相位 Running），本函数**MUST NOT** 再调
 /// `acquire_turn`。线程体与发送路径同一份实现（sink / client / catch_unwind / release / title）。
-pub fn run_turn_resume(
-    app: tauri::AppHandle,
+pub fn run_turn_resume<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     runtime: Runtime,
     scope: VaultScope,
     config: HarnessConfig,
@@ -303,8 +306,8 @@ pub fn run_turn_resume(
 }
 
 /// `run_turn` 与 `run_turn_resume` 共用的线程体。
-fn run_turn_inner(
-    app: tauri::AppHandle,
+fn run_turn_inner<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     runtime: Runtime,
     scope: VaultScope,
     config: HarnessConfig,
@@ -432,8 +435,29 @@ pub fn run_turn_for(
     context_section: Option<String>,
     client: &mut dyn LlmClient,
 ) {
-    // 与生产入口同一份播种（`run_turn` 的注释即契约）：单测 / 子运行驱动的轮次也吃同一份
-    // 「本轮生效规则」，不给测试面留一条不同的判定路径。
+    run_turn_for_with_skills(
+        sink,
+        runtime,
+        scope,
+        config,
+        parts,
+        context_section,
+        Vec::new(),
+        client,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn run_turn_for_with_skills(
+    sink: &dyn EventSink,
+    runtime: &Runtime,
+    scope: &VaultScope,
+    config: &HarnessConfig,
+    parts: impl Into<DeliveryInput>,
+    context_section: Option<String>,
+    skill_names: Vec<String>,
+    client: &mut dyn LlmClient,
+) {
     runtime.seed_permissions(&config.permissions);
     let mut ctx = SessionContext::new(sink, runtime, scope, config);
     let _ = run_turn_core_with_mode(
@@ -442,6 +466,7 @@ pub fn run_turn_for(
         TurnInput::User {
             parts: parts.into(),
             context_section,
+            skill_names,
         },
         TurnOrigin::Interactive,
         client,
@@ -493,6 +518,7 @@ pub(crate) enum TurnInput {
     User {
         parts: DeliveryInput,
         context_section: Option<String>,
+        skill_names: Vec<String>,
     },
     Preloaded {
         /// 通知文本（标题素材；自动回合不触发自动命名）。
@@ -527,6 +553,103 @@ impl TurnOrigin {
     }
 }
 
+pub const EXPLICIT_SKILL_HEADER_PREFIX: &str = "[已加载 Skill：";
+
+fn explicit_skill_text(name: &str, content: &str) -> String {
+    format!("{EXPLICIT_SKILL_HEADER_PREFIX}{name}]\n{content}")
+}
+
+fn emit_explicit_skill_error<C: RunContext>(ctx: &mut C, name: &str, output: ToolOutput) {
+    let call_id = format!("explicit-skill-{name}");
+    let summary = format!("name: {name}");
+    ctx.sink().emit(events::tool_call(
+        "skill_load",
+        "started",
+        &summary,
+        &call_id,
+    ));
+    let status = if output.value["code"].as_str() == Some("permission_denied") {
+        "denied"
+    } else {
+        "error"
+    };
+    let result_summary = summarize_result(status, &output);
+    ctx.sink().emit(events::tool_call(
+        "skill_load",
+        "done",
+        &result_summary,
+        &call_id,
+    ));
+    let _ = ctx.with_session(|session| {
+        session.push_panel(PanelMessage {
+            role: "tool".into(),
+            text: Some(output.value.to_string()),
+            summary: Some(result_summary),
+            name: Some("skill_load".into()),
+            status: Some(status.into()),
+            reasoning: None,
+            decision: None,
+            ts: jsonl::unix_secs_now(),
+        });
+    });
+}
+
+fn explicit_skill_parts<C: RunContext>(
+    ctx: &mut C,
+    skills: &[super::context::SkillEntry],
+    names: &[String],
+) -> Vec<serde_json::Value> {
+    let mut seen = std::collections::HashSet::new();
+    let mut parts = Vec::new();
+    for name in names {
+        if !super::context::explicit_skill_name_valid(name) || !seen.insert(name.clone()) {
+            continue;
+        }
+        let Some(skill) = skills.iter().find(|skill| skill.name == *name) else {
+            continue;
+        };
+        let args = serde_json::json!({"name": name});
+        let verdict = ctx.decide("skill_load", name, &args);
+        if verdict.decision != Decision::Allow {
+            let message = denied_message("skill_load", name, verdict.reason.as_ref());
+            emit_explicit_skill_error(ctx, name, ToolOutput::err("permission_denied", message));
+            continue;
+        }
+        if !skill.invocation.valid {
+            emit_explicit_skill_error(
+                ctx,
+                name,
+                ToolOutput::err(
+                    "skill_invocation_invalid",
+                    format!("技能 {name} 的调用元数据非法"),
+                ),
+            );
+            continue;
+        }
+        if !skill.invocation.user_invocable {
+            emit_explicit_skill_error(
+                ctx,
+                name,
+                ToolOutput::err(
+                    "skill_user_invocation_disabled",
+                    format!("技能 {name} 不允许用户显式调用"),
+                ),
+            );
+            continue;
+        }
+        let output = tools::load_explicit_skill(skill);
+        let Some(content) = output.value["content"].as_str() else {
+            continue;
+        };
+        parts.push(serde_json::json!({
+            "type": "input_text",
+            "text": explicit_skill_text(name, content),
+            "lumir_skill": name,
+        }));
+    }
+    parts
+}
+
 pub(crate) fn run_turn_core_with_mode<C: RunContext>(
     ctx: &mut C,
     config: &HarnessConfig,
@@ -542,14 +665,17 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
     let mut resumed_user_text: Option<String> = None;
     let mut parts: Option<DeliveryInput> = None;
     let mut context_section: Option<String> = None;
+    let mut skill_names: Vec<String> = Vec::new();
     match input {
         TurnInput::User {
             parts: user_parts,
             context_section: user_context,
+            skill_names: user_skills,
         } => {
             ctx.begin_user_turn();
             parts = Some(user_parts);
             context_section = user_context;
+            skill_names = user_skills;
         }
         TurnInput::Preloaded { user_text } => preloaded = Some(user_text),
         TurnInput::Resume { user_text } => resumed_user_text = Some(user_text),
@@ -565,12 +691,18 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
         .clone()
         .or_else(|| resumed_user_text.clone())
         .unwrap_or_default();
+    let root = ctx.vault_root().to_path_buf();
+    let skills = super::context::discover_skills(&root);
     if let Some(parts) = parts {
+        let explicit_parts = explicit_skill_parts(ctx, &skills, &skill_names);
         let context_section_for_session = context_section.clone();
         let enqueue = ctx.with_session(|s| {
             let parts =
                 super::attachments::apply_context_section(parts.0, context_section.as_deref());
-            let item = super::attachments::user_item_of_parts(&parts);
+            let mut item = super::attachments::user_item_of_parts(&parts);
+            if let Some(content) = item["content"].as_array_mut() {
+                content.extend(explicit_parts);
+            }
             let panel_text = item["content"]
                 .as_array()
                 .and_then(|content| super::attachments::panel_text_of_content(content))
@@ -600,9 +732,7 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
     let panel_base = ctx.with_session(|s| s.panel_len()).unwrap_or(0);
 
     // 工具执行面在回合开始时取一次快照（vault 根 / 忽略策略都是回合级事实）。
-    let root = ctx.vault_root().to_path_buf();
     let policy = ctx.ignore_policy().clone();
-    let skills = super::context::discover_skills(&root);
     // 调度工具端口在回合开始时取一次（与工具定义快照同刻）：交互路径有、交接契约槽位与
     // 子运行没有。`Arc` 由这里持有，`ToolContext` 只借它的 trait object。
     let cron_port = ctx.cron_port();
@@ -1962,9 +2092,9 @@ pub(crate) fn run_auto_turn_acquired(
 }
 
 /// AppHandle 事件发射（真机路径；payload 是 JSON 对象，m303 零改动接入）。
-pub(crate) struct TauriEventSink(pub(crate) tauri::AppHandle);
+pub(crate) struct TauriEventSink<R: tauri::Runtime>(pub(crate) tauri::AppHandle<R>);
 
-impl EventSink for TauriEventSink {
+impl<R: tauri::Runtime> EventSink for TauriEventSink<R> {
     fn emit(&self, payload: serde_json::Value) {
         use tauri::Emitter;
         let _ = self.0.emit(events::EVENT_NAME, payload);
@@ -1976,14 +2106,14 @@ impl EventSink for TauriEventSink {
 ///
 /// `forward` 为 `None` = 无人值守运行槽：事件**不**发往面板（其 transcript 不属于用户当前
 /// 会话）；为 `Some` 时照旧转发（交互槽位行为一字不变）。
-struct TerminalSink {
+struct TerminalSink<R: tauri::Runtime> {
     /// 弱引用（见 `run_turn` 构造点）：运行实例结束后终态无处可记，静默跳过即可
     /// （此时也没有回执消费者）。
     runtime: super::WeakRuntime,
-    forward: Option<TauriEventSink>,
+    forward: Option<TauriEventSink<R>>,
 }
 
-impl EventSink for TerminalSink {
+impl<R: tauri::Runtime> EventSink for TerminalSink<R> {
     fn emit(&self, payload: serde_json::Value) {
         if let Some(runtime) = self.runtime.upgrade() {
             match payload["type"].as_str() {
@@ -3115,6 +3245,7 @@ mod tests {
             TurnInput::User {
                 parts: "问题".to_string().into(),
                 context_section: None,
+                skill_names: Vec::new(),
             },
             TurnOrigin::Interactive,
             &mut client,
@@ -3841,5 +3972,390 @@ mod tests {
             "自动回合的 error 事件不带 retry：{error}"
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    struct EnvGuard {
+        home: Option<std::ffi::OsString>,
+        xdg: Option<std::ffi::OsString>,
+    }
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.home {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+            match &self.xdg {
+                Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+                None => std::env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
+    }
+
+    struct Fixture {
+        root: std::path::PathBuf,
+        scope: VaultScope,
+        config: HarnessConfig,
+        _env: EnvGuard,
+    }
+
+    fn fixture(name: &str) -> Fixture {
+        let root =
+            std::env::temp_dir().join(format!("lumir-turn-skill-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let env = EnvGuard {
+            home: std::env::var_os("HOME"),
+            xdg: std::env::var_os("XDG_CONFIG_HOME"),
+        };
+        std::env::set_var("HOME", root.join("home"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+        for (skill, policy) in [
+            ("default", ""),
+            ("user-only", "disable-model-invocation: true\n"),
+            ("model-only", "user-invocable: false\n"),
+            ("invalid", "user-invocable: yes\n"),
+        ] {
+            let dir = root.join(".agents/skills").join(skill);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("SKILL.md"),
+                format!("---\ndescription: discovered-{skill}\n{policy}---\nUNIQUE-BODY-{skill}"),
+            )
+            .unwrap();
+        }
+        std::fs::create_dir_all(root.join(".agents/skills/too-large")).unwrap();
+        std::fs::write(
+            root.join(".agents/skills/too-large/SKILL.md"),
+            "x".repeat(201 * 1024),
+        )
+        .unwrap();
+        let policy = IgnorePolicy::load(
+            &root,
+            &[".gitignore".to_string()],
+            &crate::config::VaultConfig::default().ignore,
+        );
+        Fixture {
+            scope: VaultScope {
+                root: root.clone(),
+                policy,
+                vault_id: format!("skill-hybrid-{name}"),
+            },
+            config: crate::config::test_mock(Some("/tmp/skill-hybrid.json")),
+            root,
+            _env: env,
+        }
+    }
+
+    #[test]
+    fn explicit_and_automatic_paths_keep_their_positive_controls() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("mixed");
+        let discovered = super::super::context::discover_skills(&fixture.root);
+        assert!(discovered
+            .iter()
+            .any(|skill| skill.description == "discovered-user-only"));
+        let runtime = Runtime::default();
+        runtime
+            .acquire_turn(&fixture.scope, &fixture.config)
+            .unwrap();
+        let script = r#"{"responses":[
+          {"tool_calls":[{"id":"auto-model-only","name":"skill_load","arguments":"{\"name\":\"model-only\"}"}]},
+          {"text":"done"}
+        ]}"#;
+        let mut client = llm::MockClient::from_str(script, "skill-mixed").unwrap();
+        let _counter_lock = tools::skill_content_test_lock();
+        tools::reset_skill_content_load_count();
+        run_turn_for_with_skills(
+            &NullSink,
+            &runtime,
+            &fixture.scope,
+            &fixture.config,
+            "question",
+            None,
+            vec![
+                "user-only".into(),
+                "model-only".into(),
+                "invalid".into(),
+                "default".into(),
+                "default".into(),
+                "too-large".into(),
+                "bad grammar".into(),
+                "missing".into(),
+            ],
+            &mut client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert_eq!(tools::skill_content_load_count(), 4);
+
+        let input = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let persisted = serde_json::to_string(&input).unwrap();
+        assert!(persisted.contains("UNIQUE-BODY-user-only"));
+        assert!(persisted.contains("UNIQUE-BODY-default"));
+        assert!(
+            persisted.contains("UNIQUE-BODY-model-only"),
+            "禁手动保留自动工具结果正向对照"
+        );
+        assert!(!persisted.contains("UNIQUE-BODY-invalid"));
+        let user = input.iter().find(|item| item["role"] == "user").unwrap();
+        let skill_parts: Vec<_> = user["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|part| part.get("lumir_skill").is_some())
+            .collect();
+        assert_eq!(skill_parts.len(), 2);
+        assert_eq!(skill_parts[0]["lumir_skill"], "user-only");
+        assert_eq!(skill_parts[1]["lumir_skill"], "default");
+        let panel =
+            super::super::attachments::panel_text_of_content(user["content"].as_array().unwrap())
+                .unwrap();
+        assert_eq!(panel, "question");
+        let material = super::super::title::material(&input, None);
+        assert!(!material.contains("UNIQUE-BODY-user-only"));
+        assert!(!material.contains("UNIQUE-BODY-default"));
+
+        let wire = serde_json::to_string(client.received_inputs()).unwrap();
+        assert!(!wire.contains("lumir_skill"));
+        assert!(wire.contains("UNIQUE-BODY-user-only"));
+        assert!(wire.contains("UNIQUE-BODY-default"));
+        assert!(wire.contains("UNIQUE-BODY-model-only"));
+        assert!(!wire.contains("UNIQUE-BODY-invalid"));
+
+        let session_id = runtime.current_session_id(&fixture.scope).unwrap();
+        let file = jsonl::read_session_file(
+            &jsonl::vault_sessions_dir(&fixture.scope.vault_id)
+                .unwrap()
+                .join(format!("{session_id}.jsonl")),
+        )
+        .unwrap();
+        let requests: Vec<&serde_json::Value> = file
+            .records
+            .iter()
+            .filter(|record| record["kind"] == "llm_request")
+            .map(|record| &record["request"]["messages"])
+            .collect();
+        assert!(!requests.is_empty());
+        let request_json = serde_json::to_string(&requests).unwrap();
+        assert!(request_json.contains("UNIQUE-BODY-user-only"));
+        assert!(request_json.contains("UNIQUE-BODY-default"));
+        assert!(request_json.contains("UNIQUE-BODY-model-only"));
+        assert!(!request_json.contains("UNIQUE-BODY-invalid"));
+        assert!(request_json.contains("lumir_skill"));
+
+        let mut retry_client =
+            llm::MockClient::from_str(r#"{"responses":[{"text":"retry-done"}]}"#, "skill-retry")
+                .unwrap();
+        run_turn_resume_for(
+            &NullSink,
+            &runtime,
+            &fixture.scope,
+            &fixture.config,
+            "question".into(),
+            &mut retry_client,
+        );
+        assert_eq!(
+            tools::skill_content_load_count(),
+            4,
+            "重试只回放 input，不重新显式加载"
+        );
+        let retried = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let user = retried.iter().find(|item| item["role"] == "user").unwrap();
+        assert_eq!(
+            user["content"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|part| part.get("lumir_skill").is_some())
+                .count(),
+            2,
+            "重试不重复追加显式 part",
+        );
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn auto_compact_does_not_reinject_explicit_skill() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("compact");
+        let mut config = fixture.config.clone();
+        config.auto_compact = true;
+        config.warn_ctx_pct = 0.0;
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&fixture.scope, &config).unwrap();
+        let script = r#"{"responses":[
+          {"text":"done","usage":{"input_tokens":100,"cached_tokens":0,"output_tokens":1}},
+          {"text":"摘要"}
+        ]}"#;
+        let mut client = llm::MockClient::from_str(script, "skill-compact").unwrap();
+        let _counter_lock = tools::skill_content_test_lock();
+        tools::reset_skill_content_load_count();
+        run_turn_for_with_skills(
+            &NullSink,
+            &runtime,
+            &fixture.scope,
+            &config,
+            "question",
+            None,
+            vec!["default".into()],
+            &mut client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert_eq!(tools::skill_content_load_count(), 1, "压缩不得重新显式加载");
+        let compacted = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let json = serde_json::to_string(&compacted).unwrap();
+        assert!(json.contains("摘要"));
+        assert!(
+            !json.contains("lumir_skill"),
+            "新逻辑会话只接收摘要，不重新注入 Skill part"
+        );
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn restore_replays_history_without_reinjection_and_new_policy_applies() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("restore-policy");
+        let runtime = Runtime::default();
+        runtime
+            .acquire_turn(&fixture.scope, &fixture.config)
+            .unwrap();
+        let script = r#"{"responses":[
+          {"tool_calls":[{"id":"auto-model-only","name":"skill_load","arguments":"{\"name\":\"model-only\"}"}]},
+          {"text":"done"}
+        ]}"#;
+        let mut client = llm::MockClient::from_str(script, "skill-restore").unwrap();
+        let _counter_lock = tools::skill_content_test_lock();
+        tools::reset_skill_content_load_count();
+        run_turn_for_with_skills(
+            &NullSink,
+            &runtime,
+            &fixture.scope,
+            &fixture.config,
+            "question",
+            None,
+            vec!["default".into()],
+            &mut client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert_eq!(tools::skill_content_load_count(), 2);
+        let source_input = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let source_id = runtime.current_session_id(&fixture.scope).unwrap();
+        let resumed = runtime
+            .resume_session(&fixture.scope, &fixture.config, &source_id)
+            .unwrap();
+        assert!(resumed.restored_items > 0);
+        let restored_input = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        assert_eq!(
+            restored_input, source_input,
+            "恢复必须原样灌回最后请求与响应历史"
+        );
+        assert_eq!(tools::skill_content_load_count(), 2, "恢复不得重新显式加载");
+
+        std::fs::write(
+            fixture.root.join(".agents/skills/default/SKILL.md"),
+            "---\ndescription: changed\ndisable-model-invocation: true\n---\nUNIQUE-BODY-default",
+        )
+        .unwrap();
+        runtime
+            .acquire_turn(&fixture.scope, &fixture.config)
+            .unwrap();
+        let mut new_client = llm::MockClient::from_str(
+            r#"{"responses":[
+              {"tool_calls":[{"id":"new-auto","name":"skill_load","arguments":"{\"name\":\"default\"}"}]},
+              {"text":"new done"}
+            ]}"#,
+            "skill-new-policy",
+        )
+        .unwrap();
+        run_turn_for(
+            &NullSink,
+            &runtime,
+            &fixture.scope,
+            &fixture.config,
+            "new question",
+            None,
+            &mut new_client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert_eq!(
+            tools::skill_content_load_count(),
+            2,
+            "策略变更后的新自动调用不得加载"
+        );
+        let wire = serde_json::to_string(new_client.received_inputs()).unwrap();
+        assert!(wire.contains("skill_model_invocation_disabled"));
+        assert!(
+            wire.contains("UNIQUE-BODY-default"),
+            "旧显式正文仍保留在历史"
+        );
+        assert!(
+            wire.contains("UNIQUE-BODY-model-only"),
+            "旧自动工具结果仍保留在历史"
+        );
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn deny_matrix_blocks_both_loaders_after_discovery() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        for mode in [
+            crate::config::PermissionMode::ReadOnly,
+            crate::config::PermissionMode::VaultWrite,
+            crate::config::PermissionMode::FullAccess,
+        ] {
+            for rule in ["skill_load", "skill_load(default)"] {
+                let fixture = fixture(&format!("deny-{}-{}", mode.as_str(), rule.contains('(')));
+                let discovered = super::super::context::discover_skills(&fixture.root);
+                let default = discovered
+                    .iter()
+                    .find(|skill| skill.name == "default")
+                    .unwrap();
+                assert_eq!(default.description, "discovered-default");
+                assert!(default.invocation.valid && default.invocation.model_invocable);
+                let mut config = fixture.config.clone();
+                config.permission_mode = mode;
+                config.permissions.deny = vec![rule.to_string()];
+                let runtime = Runtime::default();
+                runtime.acquire_turn(&fixture.scope, &config).unwrap();
+                let script = r#"{"responses":[
+                  {"tool_calls":[{"id":"denied-auto","name":"skill_load","arguments":"{\"name\":\"default\"}"}]},
+                  {"text":"done"}
+                ]}"#;
+                let mut client = llm::MockClient::from_str(script, "skill-denied").unwrap();
+                let _counter_lock = tools::skill_content_test_lock();
+                tools::reset_skill_content_load_count();
+                run_turn_for_with_skills(
+                    &NullSink,
+                    &runtime,
+                    &fixture.scope,
+                    &config,
+                    "question",
+                    None,
+                    vec!["default".into()],
+                    &mut client,
+                );
+                runtime.release_turn(&fixture.scope);
+                assert_eq!(tools::skill_content_load_count(), 0, "{mode:?} {rule}");
+                let input = runtime
+                    .with_session(&fixture.scope, |session| session.input().to_vec())
+                    .unwrap();
+                assert!(!serde_json::to_string(&input)
+                    .unwrap()
+                    .contains("UNIQUE-BODY-default"));
+                let wire = serde_json::to_string(client.received_inputs()).unwrap();
+                assert!(!wire.contains("UNIQUE-BODY-default"), "{mode:?} {rule}");
+                assert!(wire.contains("permission_denied"));
+                let _ = std::fs::remove_dir_all(&fixture.root);
+            }
+        }
     }
 }

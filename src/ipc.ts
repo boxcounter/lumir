@@ -575,8 +575,12 @@ export type HarnessEvent = HarnessEventEnvelope &
  *  历史形态 `{"path", "selection":{…,text}}`；无上下文时传**空串**（面板在无路径文档上就
  *  这么发——后端 `turn::parse_context` 对空串返回默认块，参数类型恒为 string；传 null 会
  *  触发 `invalid type: null, expected a string`，M398）。 */
-export function harnessSend(parts_json: string, context_json: string): Promise<void> {
-  return invoke<void>("harness_send", { parts_json, context_json });
+export function harnessSend(parts_json: string, context_json: string, skills_json: string): Promise<void> {
+  return invoke<void>("harness_send", { parts_json, context_json, skills_json });
+}
+
+export function harnessSkillsList(): Promise<import("./bindings/SkillSummary").SkillSummary[]> {
+  return invoke("harness_skills_list");
 }
 
 /** 失败轮次的显式重试（change add-harness-turn-retry-nov23 design §4.2）：`turn` 是 error 事件 /

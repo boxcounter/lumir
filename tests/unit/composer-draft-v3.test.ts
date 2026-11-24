@@ -22,6 +22,7 @@ test("v3 往返保留行首与行中 anchor，且不写 id 或图片字节", () 
     text: "AB\nC",
     caret: 2,
     cards: [draftCard(1), draftCard(3)],
+    skills: [],
   });
   assert.equal(raw.includes('"id"'), false);
   assert.equal(raw.includes("data:image"), false);
@@ -33,19 +34,21 @@ test("真实 CRLF v3 在共同出口归一文本、caret 与卡片 at", () => {
     text: "A\r\nB\r\nC",
     caret: 4,
     cards: [{ card: quote, at: 6 }],
+    skills: [],
   }));
   assert.deepEqual(parsed?.draft, {
     version: 3,
     text: "A\nB\nC",
     caret: 3,
     cards: [draftCard(4)],
+    skills: [],
   });
   assert.equal(parsed?.changed, true);
 });
 
 test("CRLF v2 的原始 caret 经同一映射归一，卡片全部落 at 0 并标记迁移", () => {
   const parsed = readComposerDraft(JSON.stringify({ version: 2, text: "A\r\nBC", caret: 4, cards: [quote] }));
-  assert.deepEqual(parsed?.draft, { version: 3, text: "A\nBC", caret: 3, cards: [draftCard(0)] });
+  assert.deepEqual(parsed?.draft, { version: 3, text: "A\nBC", caret: 3, cards: [draftCard(0)], skills: [] });
   assert.equal(parsed?.migrated, true);
   assert.equal(parsed?.changed, true);
 });
@@ -61,6 +64,7 @@ test("混合行界 v1 先迁移原始坐标，再经共同出口归一", () => {
     text: "A\nB\nC\nD",
     caret: 6,
     cards: [draftCard(0)],
+    skills: [],
   });
   assert.equal(parsed?.migrated, true);
   assert.equal(parsed?.changed, true);
@@ -72,6 +76,7 @@ test("v3 非整数与越界 at 只钳到文档范围，不钳行首", () => {
     text: "AB\nC",
     caret: 0,
     cards: [{ card: quote, at: 1.5 }, { card: quote, at: 99 }, { card: quote, at: -2 }],
+    skills: [],
   }));
   assert.deepEqual(parsed?.draft.cards.map((card) => card.at), [1, 4, 0]);
 });

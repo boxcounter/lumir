@@ -29,6 +29,8 @@
 // 本模块是纯数据 + 纯函数（无 DOM、无文案），消费者是 CM composer、消息装配与 transcript 沉淀。
 
 import { findClusterBreak } from "@codemirror/state";
+import { isSkillName } from "./skill-menu";
+import type { ComposerSkillRef } from "./skill-menu";
 
 /** 摘录引用卡片。 */
 export interface QuoteCard {
@@ -313,8 +315,8 @@ export function serializeQuoteMessage(blocks: readonly ComposerBlock[]): string 
 // ---------------------------------------------------------------------------
 // composer 草稿的 (反)序列化（change composer-draft-persistence design §6）
 //
-// 草稿是存储形态，与投递投影分开。当前模型是 v3 text / caret / placed cards；v1/v2 只在读取时
-// 一次性转换。Rust 侧仍只搬运、不解析内容。
+// 草稿是存储形态，与投递投影分开。当前模型是 v3 text / caret / placed cards / skills；v1/v2
+// 只在读取时一次性归一。Rust 侧仍只搬运、不解析内容。
 // ---------------------------------------------------------------------------
 
 export const DRAFT_VERSION = 3;
@@ -324,11 +326,16 @@ export interface DraftPlacedAttachment {
   at: number;
 }
 
+export interface ComposerDraftSkillRef extends ComposerSkillRef {
+  to: number;
+}
+
 export interface ComposerDraft {
   version: 3;
   text: string;
   caret: number | null;
   cards: DraftPlacedAttachment[];
+  skills: ComposerDraftSkillRef[];
 }
 
 export interface ParsedComposerDraft {
@@ -341,13 +348,17 @@ export function serializeComposerDraft(
   text: string,
   caret: number | null,
   cards: readonly DraftPlacedAttachment[],
+  refs: readonly ComposerSkillRef[] = [],
 ): string {
   const validCaret = caret !== null && Number.isInteger(caret) && caret >= 0 && caret <= text.length ? caret : null;
+  const skills = refs.map((ref) => ({ ...ref, to: ref.from + ref.name.length + 1 }))
+    .filter((ref) => draftSkillRefValid(text, ref));
   const draft: ComposerDraft = {
     version: DRAFT_VERSION,
     text,
     caret: validCaret,
     cards: cards.map(({ card, at }) => ({ card, at })),
+    skills,
   };
   return JSON.stringify(draft);
 }
@@ -392,12 +403,28 @@ export function normalizeLineEndings(text: string): {
   };
 }
 
+function draftSkillRefValid(text: string, ref: ComposerDraftSkillRef): boolean {
+  return isSkillName(ref.name) && Number.isInteger(ref.from) && Number.isInteger(ref.to) &&
+    ref.from >= 0 && ref.to === ref.from + ref.name.length + 1 && ref.to <= text.length &&
+    text.slice(ref.from, ref.to) === `/${ref.name}` &&
+    (ref.from === 0 || /\s/.test(text[ref.from - 1]));
+}
+
 export function normalizeDraftForState(draft: ComposerDraft): { draft: ComposerDraft; changed: boolean } {
   const normalized = normalizeLineEndings(draft.text);
   const caret = draft.caret === null ? null : normalized.mapOffset(draft.caret);
   const cards = draft.cards.map(({ card, at }) => ({ card, at: normalized.mapOffset(at) }));
-  const changed = normalized.changed || caret !== draft.caret || cards.some((card, index) => card.at !== draft.cards[index].at);
-  return { draft: { version: 3, text: normalized.text, caret, cards }, changed };
+  const mappedSkills = draft.skills.map((ref) => ({
+    ...ref,
+    from: normalized.mapOffset(ref.from),
+    to: normalized.mapOffset(ref.to),
+  }));
+  const skills = mappedSkills.filter((ref) => draftSkillRefValid(normalized.text, ref));
+  const skillsChanged = skills.length !== draft.skills.length || skills.some((ref, index) =>
+    ref.from !== draft.skills[index].from || ref.to !== draft.skills[index].to);
+  const changed = normalized.changed || caret !== draft.caret || skillsChanged ||
+    cards.some((card, index) => card.at !== draft.cards[index].at);
+  return { draft: { version: 3, text: normalized.text, caret, cards, skills }, changed };
 }
 
 export function parseComposerDraft(text: string): ComposerDraft | null {
@@ -436,8 +463,14 @@ function validDraftCaret(raw: unknown, length: number): number | null {
 }
 
 function parseDraftV3(value: Record<string, unknown>): { draft: ComposerDraft; changed: boolean } | null {
-  if (typeof value.text !== "string" || !Array.isArray(value.cards)) return null;
+  if (typeof value.text !== "string" || !Array.isArray(value.cards) || !Array.isArray(value.skills)) return null;
   const cards: DraftPlacedAttachment[] = [];
+  const skills: ComposerDraftSkillRef[] = [];
+  for (const raw of value.skills) {
+    if (!isRecord(raw) || typeof raw.name !== "string" || typeof raw.from !== "number" ||
+        typeof raw.to !== "number") continue;
+    skills.push({ name: raw.name, from: raw.from, to: raw.to });
+  }
   let changed = false;
   for (const item of value.cards) {
     if (!isRecord(item)) return null;
@@ -452,7 +485,7 @@ function parseDraftV3(value: Record<string, unknown>): { draft: ComposerDraft; c
   }
   const caret = validDraftCaret(value.caret, value.text.length);
   if (caret !== value.caret && value.caret !== null && value.caret !== undefined) changed = true;
-  return { draft: { version: 3, text: value.text, caret, cards }, changed };
+  return { draft: { version: 3, text: value.text, caret, cards, skills }, changed };
 }
 
 function parseDraftV2(value: Record<string, unknown>): ComposerDraft | null {
@@ -463,7 +496,7 @@ function parseDraftV2(value: Record<string, unknown>): ComposerDraft | null {
     if (block === null || block.kind === "paragraph") return null;
     cards.push({ card: block, at: 0 });
   }
-  return { version: 3, text: value.text, caret: validDraftCaret(value.caret, value.text.length), cards };
+  return { version: 3, text: value.text, caret: validDraftCaret(value.caret, value.text.length), cards, skills: [] };
 }
 
 function migrateDraftV1(value: Record<string, unknown>): ComposerDraft | null {
@@ -512,7 +545,7 @@ function migrateDraftV1(value: Record<string, unknown>): ComposerDraft | null {
       }
     }
   }
-  return { version: 3, text, caret: migratedCaret, cards };
+  return { version: 3, text, caret: migratedCaret, cards, skills: [] };
 }
 
 /** 单个 v1 块：已知块类逐字段校验；未知块类原样保留供迁移成可见文本。 */

@@ -4735,4 +4735,56 @@ data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":3}}
         assert!(!error_retryable(&error));
         assert!(out.text.is_empty());
     }
+
+    fn skill_request() -> Request {
+        Request {
+            system: "sys".into(),
+            input: vec![serde_json::json!({
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "question"},
+                    {
+                        "type": "input_text",
+                        "text": "[已加载 Skill：demo]\nUNIQUE-SKILL-WIRE-BODY",
+                        "lumir_skill": "demo"
+                    }
+                ]
+            })],
+            tools: Vec::new(),
+            effort: ThinkingEffort::default(),
+        }
+    }
+
+    #[test]
+    fn responses_and_chat_wire_keep_body_but_strip_local_skill_marker() {
+        let responses = ResponsesClient {
+            http: reqwest::blocking::Client::new(),
+            endpoint: "https://example.invalid".into(),
+            api_key: "test".into(),
+            model: "test-model".into(),
+            effort_supported: false,
+            store_false: false,
+            vault_id: "no-attachments".into(),
+            preset: &KIMI_PRESET,
+        };
+        let body = responses.wire_body(&skill_request()).unwrap();
+        let input = body["input"].to_string();
+        assert!(!input.contains("lumir_skill"));
+        assert!(input.contains("UNIQUE-SKILL-WIRE-BODY"));
+
+        let chat = ChatCompletionsClient {
+            http: reqwest::blocking::Client::new(),
+            endpoint: "https://example.invalid".into(),
+            api_key: "test".into(),
+            model: "test-model".into(),
+            effort_supported: false,
+            vault_id: "no-attachments".into(),
+            preset: &KIMI_PRESET,
+            diagnostics: Vec::new(),
+        };
+        let (body, _) = chat.build_wire_body(&skill_request()).unwrap();
+        let messages = body["messages"].to_string();
+        assert!(!messages.contains("lumir_skill"));
+        assert!(messages.contains("UNIQUE-SKILL-WIRE-BODY"));
+    }
 }

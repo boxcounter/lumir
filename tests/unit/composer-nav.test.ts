@@ -55,7 +55,7 @@ function nearestColumn(text: string, goal: number): number {
 
 function viewWith(text: string, caret: number) {
   const view = {
-    state: createComposerState({ text, caret, cards: [placedAttachment] }),
+    state: createComposerState({ text, caret, cards: [placedAttachment], skills: [] }),
     dispatch(spec: TransactionSpec | Transaction) {
       view.state = spec instanceof Transaction ? spec.state : view.state.update(spec).state;
     },

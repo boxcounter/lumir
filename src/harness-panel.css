@@ -2692,3 +2692,66 @@
   font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
   color: var(--text-3);
 }
+
+
+/* Skill 候选与 refs（change add-harness-skill-slash-invocation-nov23）。 */
+.lumir-hp-composer-area {
+  position: relative;
+}
+.lumir-hp-skill-menu {
+  position: absolute;
+  z-index: 40;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 200px;
+  max-width: 26em;
+  max-height: 200px;
+  padding: var(--sp-1);
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r6);
+  background: var(--bg-raise, var(--bg));
+  box-shadow: var(--shadow-raise);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+}
+.lumir-hp-skill-menu[hidden] {
+  display: none;
+}
+.lumir-hp-skill-option {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 32px;
+  padding: 0 var(--sp-2);
+  border-left: 2px solid transparent;
+  cursor: default;
+}
+.lumir-hp-skill-option.is-selected {
+  border-left-color: var(--accent);
+  background: var(--hover);
+}
+:root[data-theme="eink"] .lumir-hp-skill-option.is-selected {
+  outline: 1px solid var(--border-strong, var(--border));
+  outline-offset: -1px;
+}
+.lumir-hp-skill-name {
+  flex: none;
+  color: var(--text-1);
+}
+.lumir-hp-skill-description {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.lumir-hp-skill-ref {
+  border-radius: var(--r-pill);
+  background: var(--hover);
+  pointer-events: none;
+}
+.lumir-hp-skill-ref.is-missing,
+.lumir-hp-skill-ref.is-disabled {
+  opacity: 0.55;
+  text-decoration: line-through;
+}

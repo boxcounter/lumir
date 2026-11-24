@@ -237,7 +237,7 @@ async function openComposer(
         return invoke(cmd, args);
       };
     },
-    { draft: { version: 3, text, caret, cards: cards.map((card) => ({ card, at: 0 })) }, providers: standardProviders() },
+    { draft: { version: 3, text, caret, cards: cards.map((card) => ({ card, at: 0 })), skills: [] }, providers: standardProviders() },
   );
   await page.goto("/");
   await page.locator('.ft-row[title="oracle.md"]').click();

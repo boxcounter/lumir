@@ -29,7 +29,7 @@ test("v3 往返逐字段无损，包含多行文本、全文 caret 和三类附�
   const text = "第一行\n第二行";
   const cards = [placed(quote, 0), placed(message, 2), placed(image, 4)];
   const raw = serializeComposerDraft(text, 3, cards);
-  assert.deepEqual(parseComposerDraft(raw), { version: 3, text, caret: 3, cards });
+  assert.deepEqual(parseComposerDraft(raw), { version: 3, text, caret: 3, cards, skills: [] });
   assert.equal(DRAFT_VERSION, 3);
   assert.equal(serializeComposerDraft(text, 3, parseComposerDraft(raw)?.cards ?? []), raw);
   assert.equal(raw.includes("data:image"), false);
@@ -38,7 +38,7 @@ test("v3 往返逐字段无损，包含多行文本、全文 caret 和三类附�
 
 test("v2 非法 caret 归 null并迁移 v3，非法 / 未知附件整份回退", () => {
   assert.deepEqual(parseComposerDraft('{"version":2,"text":"x","caret":9,"cards":[]}'), {
-    version: 3, text: "x", caret: null, cards: [],
+    version: 3, text: "x", caret: null, cards: [], skills: [],
   });
   for (const raw of [
     "", "null", "{}", '{"version":99,"text":"x","cards":[]}',
@@ -60,6 +60,7 @@ test("v1 转换：段落与未知块文本守恒、空段落保留、卡片按�
     text: ["前文", "", draftUnknownBlockText(unknown), "后文"].join("\n"),
     caret: null,
     cards: [placed(quote), placed(message), placed(image)],
+    skills: [],
   });
 });
 

@@ -98,7 +98,7 @@ const REGISTRY: RegistryEntry[] = [
     tier: "list",
     shape: "em-capped",
     scaledText: true,
-    selectors: [".lumir-hp-selpop", ".lumir-hp-sesspop"],
+    selectors: [".lumir-hp-selpop", ".lumir-hp-sesspop", ".lumir-hp-skill-menu"],
     note:
       "合并选择器 / 会话历史：内容驱动 + 26em 上限 + 既有下限（selpop 188px、sesspop 200px）。" +
       "两处此前的形态是「无夹取」与「定值 200px」——2.13 档 + 320px pane 实测越界 85px / 名字裁 81%。",
@@ -300,7 +300,7 @@ test("浮层宽度注册表与源码双向对齐，且各档声明实际成立",
   );
 });
 
-test("注册表覆盖盘点出的全部浮层壳（15 个选择器）", () => {
+test("注册表覆盖盘点出的全部浮层壳（16 个选择器）", () => {
   const detected = [...floatingSelectors(rulesOf(realWorld()))].sort();
   assert.deepEqual(
     detected,
@@ -313,6 +313,7 @@ test("注册表覆盖盘点出的全部浮层壳（15 个选择器）", () => {
       ".lumir-hp-permpop",
       ".lumir-hp-selpop",
       ".lumir-hp-sesspop",
+      ".lumir-hp-skill-menu",
       ".lumir-qo",
       ".lumir-toast",
       ".lumir-toc",

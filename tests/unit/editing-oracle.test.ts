@@ -641,6 +641,7 @@ function composerAdapter(content: { text?: string; caret?: number | null; cards?
     text: content.text ?? "",
     caret: content.caret ?? null,
     cards: (content.cards ?? []).map((id, index) => ({ id: index + 1, card: attachmentOf(id), anchor: 0 })),
+    skills: [],
   });
   let draft: ComposerReading["draft"] = null;
   let sends = 0;
@@ -805,7 +806,7 @@ function composerAdapter(content: { text?: string; caret?: number | null; cards?
         }
         case "send": {
           sends += 1;
-          state = createComposerState({ text: "", caret: 0, cards: [] });
+          state = createComposerState({ text: "", caret: 0, cards: [], skills: [] });
           draft = null;
           composing = null;
           return;

@@ -120,6 +120,9 @@ fn item_text(item: &serde_json::Value) -> Option<String> {
         serde_json::Value::Array(parts) => {
             let mut out = String::new();
             for part in parts {
+                if part.get("lumir_skill").is_some() {
+                    continue;
+                }
                 if let Some(text) = part["text"].as_str() {
                     out.push_str(text);
                 }

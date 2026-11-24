@@ -1,0 +1,70 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  filterSkillCatalog,
+  isSkillName,
+  moveSkillHighlight,
+  openSkillMenu,
+  skillSelectionSpec,
+  skillTokenAt,
+} from "../../src/skill-menu.ts";
+import type { SkillSummary } from "../../src/bindings/SkillSummary.ts";
+
+const skill = (name: string, over: Partial<SkillSummary> = {}): SkillSummary => ({
+  name,
+  description: `${name} description`,
+  source: "vault",
+  user_invocable: true,
+  model_invocable: true,
+  invocation_valid: true,
+  ...over,
+});
+const catalog = [
+  skill("acc-skill-abc"),
+  skill("acc-deploy", { model_invocable: false }),
+  skill("acc-background", { user_invocable: false }),
+  skill("acc-invalid", { invocation_valid: false, user_invocable: false, model_invocable: false }),
+];
+
+test("grammar 只服务显式入口，过滤禁手动与非法项但保留禁自动项", () => {
+  assert.equal(isSkillName("acc-skill_1"), true);
+  for (const name of ["", ".hidden", "has.dot", "has space", "中文", "a/b"]) {
+    assert.equal(isSkillName(name), false, name);
+  }
+  assert.deepEqual(filterSkillCatalog(catalog, "acc").map((item) => item.name), [
+    "acc-skill-abc",
+    "acc-deploy",
+  ]);
+});
+
+test("/tmp 仍可显示被动候选，但只有合法左边界的 token 才触发", () => {
+  const tmp = [skill("tmp-acc")];
+  for (const text of ["/tmp", "see /tmp", "- /tmp"]) {
+    assert.deepEqual(skillTokenAt(text, text.length), { from: text.indexOf("/"), to: 4 + text.indexOf("/"), prefix: "tmp" });
+    assert.equal(openSkillMenu(text, text.length, tmp)?.highlighted, null);
+  }
+  assert.equal(skillTokenAt("x/tmp", 5), null);
+  assert.deepEqual(skillTokenAt("/tmp", 2), { from: 0, to: 2, prefix: "t" });
+  assert.equal(skillTokenAt("/tmp", 5), null);
+});
+
+test("被动 Enter/Tab 不选中，方向键进入选择态且到端停住", () => {
+  const opened = openSkillMenu("/acc", 4, catalog)!;
+  assert.equal(opened.highlighted, null);
+  const down = moveSkillHighlight(opened, 1);
+  assert.equal(down.highlighted, 0);
+  assert.equal(moveSkillHighlight(down, -1).highlighted, 0);
+  const up = moveSkillHighlight(opened, -1);
+  assert.equal(up.highlighted, 1);
+  assert.equal(moveSkillHighlight(up, 1).highlighted, 1);
+});
+
+test("选中只替换当前 token，复用既有尾随空格并产出 ref", () => {
+  const opened = openSkillMenu("ask /acc", 8, catalog)!;
+  const selecting = moveSkillHighlight(opened, 1);
+  const spec = skillSelectionSpec("ask /acc next", selecting);
+  assert.notEqual(spec, null);
+  assert.deepEqual(spec!.changes, { from: 4, to: 9, insert: "/acc-skill-abc " });
+  assert.deepEqual(spec!.skill, { name: "acc-skill-abc", from: 4 });
+  assert.deepEqual(spec!.selection, { anchor: 19 });
+});

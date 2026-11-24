@@ -1479,7 +1479,8 @@ body {
 .cm-lp-block-scroll,
 .cm-lp-table-scroll,
 .cm-lp-math-block,
-.cm-lp-mermaid {
+.cm-lp-mermaid,
+.lumir-hp-skill-menu {
   scrollbar-width: thin;
 }
 .lumir-hp-codeblock::-webkit-scrollbar,
@@ -1489,7 +1490,8 @@ body {
 .cm-lp-block-scroll::-webkit-scrollbar,
 .cm-lp-table-scroll::-webkit-scrollbar,
 .cm-lp-math-block::-webkit-scrollbar,
-.cm-lp-mermaid::-webkit-scrollbar {
+.cm-lp-mermaid::-webkit-scrollbar,
+.lumir-hp-skill-menu::-webkit-scrollbar {
   width: 4px;
   height: 4px;
 }
@@ -1500,7 +1502,8 @@ body {
 .cm-lp-block-scroll::-webkit-scrollbar-thumb,
 .cm-lp-table-scroll::-webkit-scrollbar-thumb,
 .cm-lp-math-block::-webkit-scrollbar-thumb,
-.cm-lp-mermaid::-webkit-scrollbar-thumb {
+.cm-lp-mermaid::-webkit-scrollbar-thumb,
+.lumir-hp-skill-menu::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 2px;
 }
@@ -1511,7 +1514,8 @@ body {
 .cm-lp-block-scroll::-webkit-scrollbar-track,
 .cm-lp-table-scroll::-webkit-scrollbar-track,
 .cm-lp-math-block::-webkit-scrollbar-track,
-.cm-lp-mermaid::-webkit-scrollbar-track {
+.cm-lp-mermaid::-webkit-scrollbar-track,
+.lumir-hp-skill-menu::-webkit-scrollbar-track {
   background: transparent;
 }
 /* 块级横滚容器（M180）：表格与代码块共用同一套横滚机制与同一个 class——键位层的命中条件

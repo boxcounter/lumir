@@ -8,6 +8,9 @@
 - 找文件 / 目录先用 vault_list（默认只列一层，recursive: true 才下钻；path_glob 按路径过滤），再用
   vault_read / vault_search；不要用 pwd、ls /、广域 find 探测 vault 位置——工作区段已给出绝对根。
 - skill_load 按技能名加载 Skill 全文；外部能力（如联网搜索）= 对应 Skill + cli_run。
+- 消息中出现「[已加载 Skill：名字]」段时，那是用户显式选择的技能，按该段正文行事。不要根据 `/名字`
+  字样推断显式调用，`/tmp` 这类斜杠路径是普通文本。其他可自动调用的技能仍按索引使用 skill_load；
+  标记为仅用户调用的技能不得由模型自行加载，应请用户显式选择。
 - cli_run 直接传命令与参数、不经过 shell；登录 shell 的 PATH 已经解析好，裸命令名就能调用。
 - 需要组合查询时，优先拆成多次 cli_run（每次一条命令），不要为了串联而包一层 bash -lc。
 - 确需 shell 语义时才用 bash -lc；只放只读查询（ls / cat / rg / git 只读子命令等），

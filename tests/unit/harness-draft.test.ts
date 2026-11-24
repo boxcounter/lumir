@@ -160,7 +160,7 @@ test("load：读回块序列与光标；无草稿 / 损坏 / 读失败都安静�
   assert.equal(await store.load(), null, "盘上没有草稿");
 
   rig.file = serializeComposerDraft(MSG, 1, CARDS);
-  assert.deepEqual(await store.load(), { text: MSG, caret: 1, cards: LOADED_CARDS });
+  assert.deepEqual(await store.load(), { text: MSG, caret: 1, cards: LOADED_CARDS, skills: [] });
 
   rig.file = "{not json";
   assert.equal(await store.load(), null, "损坏 → null（不抛错）");
@@ -182,7 +182,7 @@ test("load：读盘途中再次装载 vault，前一次结果作废（不覆盖�
   // 窗口里装载了下一个 vault：第二次 load 先跑完（它的盘上内容是新 vault 的）
   rig.getImpl = async () => serializeComposerDraft(MSG2, null, CARDS);
   const second = await store.load();
-  assert.deepEqual(second, { text: MSG2, caret: null, cards: LOADED_CARDS });
+  assert.deepEqual(second, { text: MSG2, caret: null, cards: LOADED_CARDS, skills: [] });
   const release = gate.release;
   assert.ok(release !== undefined, "读盘窗口确实挂住了（否则这条断言测的不是让位语义）");
   release();
@@ -328,7 +328,7 @@ test("load：合法 v1 立即串行写回一次 v3，此后同内容 schedule �
     blocks: [{ kind: "paragraph", text: "ab" }, CARD, { kind: "paragraph", text: "cd" }],
     caret: { block: 2, offset: 1 },
   });
-  assert.deepEqual(await store.load(), { text: "ab\ncd", caret: 4, cards: LOADED_CARDS });
+  assert.deepEqual(await store.load(), { text: "ab\ncd", caret: 4, cards: LOADED_CARDS, skills: [] });
   const migrated = serializeComposerDraft("ab\ncd", 4, CARDS);
   assert.deepEqual(rig.writes, [migrated]);
   store.schedule("ab\ncd", 4, CARDS);
@@ -341,7 +341,7 @@ test("迁移写回失败：返回转换内容并 warning，保留待写，后续
   const { store, rig } = createRig();
   rig.file = JSON.stringify({ version: 1, blocks: [{ kind: "paragraph", text: "legacy" }], caret: { block: 0, offset: 2 } });
   rig.failWrite = true;
-  assert.deepEqual(await store.load(), { text: "legacy", caret: 2, cards: [] });
+  assert.deepEqual(await store.load(), { text: "legacy", caret: 2, cards: [], skills: [] });
   assert.equal(rig.warns.length, 1);
   assert.deepEqual(rig.writes, []);
   rig.failWrite = false;

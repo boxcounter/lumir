@@ -139,7 +139,7 @@ test("新会话清除同 vault 草稿：落盘删除后 reload 不复活旧输�
   await page.addInitScript(() => {
     const w = window as unknown as Record<string, any>;
     if (localStorage.getItem("m831-draft") === null) {
-      localStorage.setItem("m831-draft", JSON.stringify({ version: 3, text: "OLD-DRAFT", caret: 9, cards: [] }));
+      localStorage.setItem("m831-draft", JSON.stringify({ version: 3, text: "OLD-DRAFT", caret: 9, cards: [], skills: [] }));
     }
     let stored: string | null = localStorage.getItem("m831-draft");
     w.__draftPuts = [];
@@ -197,7 +197,7 @@ async function openDraftComposer(page: Page, text: string, caret: number): Promi
     const w = window as unknown as Record<string, any>;
     const invoke = w.__TAURI_INTERNALS__.invoke;
     w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: unknown) => {
-      if (cmd === "harness_draft_get") return JSON.stringify({ version: 3, ...draft, cards: [] });
+      if (cmd === "harness_draft_get") return JSON.stringify({ version: 3, ...draft, cards: [], skills: [] });
       if (cmd === "harness_draft_put") return null;
       if (cmd === "harness_state") {
         return JSON.stringify({ messages: [], usage: { ctx_pct: 0, cache_pct_session: 0 }, pending_approval: null, warn_ctx_pct: 85 });

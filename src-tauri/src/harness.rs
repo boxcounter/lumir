@@ -1692,6 +1692,15 @@ fn vault_scope(vault: &crate::commands::VaultState) -> Result<VaultScope, Comman
     })
 }
 
+#[tauri::command(rename_all = "snake_case")]
+pub fn harness_skills_list(
+    vault: tauri::State<'_, crate::commands::VaultState>,
+) -> Result<Vec<context::SkillSummary>, CommandError> {
+    let scope = vault_scope(&vault)?;
+    let skills = context::discover_skills(&scope.root);
+    Ok(context::skill_summaries(&skills))
+}
+
 /// 发送一条提问。立即返回：工具循环在 `lumir-harness-llm` 专线程跑，进展经
 /// `harness:event` 事件推送；上下文块 `context_json` 是 TS 侧组装的
 /// `{path, selection?} | {path, viewport_range?}`（宽容解析，见 [`turn::parse_context`]）。
@@ -1704,16 +1713,28 @@ fn vault_scope(vault: &crate::commands::VaultState) -> Result<VaultScope, Comman
 /// **不建会话、不入队**；前端收到该 code → toast + 把消息里的图片卡片标错误态（前端
 /// MUST NOT 另立能力判定）。放行后含图消息照常入队——会话侧与 JSONL 恒为引用形态，
 /// base64 展开落在 client 发送前（`attachments::expand_image_refs`）。
+fn parse_explicit_skill_names(skills_json: &str) -> Result<Vec<String>, CommandError> {
+    serde_json::from_str::<Vec<String>>(skills_json).map_err(|e| {
+        CommandError::new(
+            "harness_skills_invalid",
+            format!("Skill 选择元数据必须是字符串数组：{e}"),
+        )
+        .param("reason", e.to_string())
+    })
+}
+
 #[tauri::command(rename_all = "snake_case")]
-pub fn harness_send(
+pub fn harness_send<R: tauri::Runtime>(
     vault: tauri::State<'_, crate::commands::VaultState>,
     runtime: tauri::State<'_, Runtime>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<R>,
     parts_json: String,
     context_json: String,
+    skills_json: String,
 ) -> Result<(), CommandError> {
     let scope = vault_scope(&vault)?;
     let config = config::load()?.config.harness;
+    let skill_names = parse_explicit_skill_names(&skills_json)?;
     let parts = attachments::parse_delivery_parts(&parts_json)?;
     // 发送期缺失态（task 4.7）：没有 provider / 缺 Key / 缺 Base URL / 没有模型时在建会话之前
     // 给出人话错误——顺序在图片闸之前，否则「没有 provider 却附了图」会报成图片不支持。
@@ -1731,6 +1752,7 @@ pub fn harness_send(
         config,
         parts,
         context_section,
+        skill_names,
         // 交互发送没有运行交接契约：注册表原样暴露（`None`）。
         None,
         None,
@@ -1794,13 +1816,14 @@ pub fn harness_retry(
 /// 之后挂到 runtime 上，`SessionContext` 构造时读取并过滤工具定义，`release_turn` 清掉。
 /// 交互发送传 `None`（没有交接契约 ⇒ 完整注册表）；cron 两个槽位都传契约值。
 #[allow(clippy::too_many_arguments)] // 两个入口共用这一条运行实现；拆结构体只会把参数换个容器。
-fn start_turn(
-    app: tauri::AppHandle,
+fn start_turn<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     runtime: Runtime,
     scope: VaultScope,
     config: HarnessConfig,
     parts: Vec<attachments::DeliveryPart>,
     context_section: Option<String>,
+    skill_names: Vec<String>,
     tool_policy: Option<run::ToolPolicy>,
     completion: Option<Box<dyn FnOnce() + Send>>,
     origin: turn::TurnOrigin,
@@ -1823,6 +1846,7 @@ fn start_turn(
                 config,
                 parts,
                 context_section,
+                skill_names,
                 origin,
             );
             if let Some(completion) = completion {
@@ -2032,6 +2056,7 @@ pub fn harness_cron_run(
         config,
         parts,
         None,
+        Vec::new(),
         // 契约的工具白名单原样交给运行层：`SessionContext` 只暴露其中声明的工具。
         // 定时 / 点击两个槽位共用这一条链路（点击槽也用契约值，不回落交互全量）。
         Some(spec.tool_policy),

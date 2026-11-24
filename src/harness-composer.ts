@@ -40,6 +40,8 @@ import {
   wordStartBackward,
 } from "./quote-card";
 import type { ComposerAttachment, ComposerBlock, DeliveryProjection } from "./quote-card";
+import { isSkillName } from "./skill-menu";
+import type { ComposerSkillRef } from "./skill-menu";
 
 export interface PlacedAttachment {
   readonly id: number;
@@ -57,12 +59,14 @@ export interface ComposerContent {
   text: string;
   caret: number | null;
   cards: readonly PlacedAttachment[];
+  skills: readonly ComposerSkillRef[];
 }
 
 export interface ComposerContentInput {
   text: string;
   caret: number | null;
   cards: readonly PlacedAttachmentInput[];
+  skills: readonly ComposerSkillRef[];
 }
 
 type AttachmentEdit =
@@ -173,10 +177,60 @@ const composerGraphemeBackspace = EditorView.domEventHandlers({
   beforeinput: (event, view) => absorbComposerGraphemeBackspace(event as InputEvent, view),
 });
 
+type ComposerSkillEdit =
+  | { readonly type: "add"; readonly ref: ComposerSkillRef }
+  | { readonly type: "remove"; readonly ref: ComposerSkillRef };
+
+export const composerSkillEffect = StateEffect.define<ComposerSkillEdit>();
+
+function skillRefValid(text: string, ref: ComposerSkillRef): boolean {
+  if (!isSkillName(ref.name) || !Number.isInteger(ref.from) || ref.from < 0) return false;
+  const to = ref.from + ref.name.length + 1;
+  if (to > text.length || text.slice(ref.from, to) !== `/${ref.name}`) return false;
+  return ref.from === 0 || /\s/.test(text[ref.from - 1]);
+}
+
+export const composerSkillsField = StateField.define<readonly ComposerSkillRef[]>({
+  create: () => [],
+  update(refs, tr) {
+    let next = refs;
+    if (tr.docChanged) {
+      const text = tr.state.doc.toString();
+      next = refs
+        .map((ref) => ({ ...ref, from: tr.changes.mapPos(ref.from) }))
+        .filter((ref) => skillRefValid(text, ref));
+    }
+    for (const effect of tr.effects) {
+      if (!effect.is(composerSkillEffect)) continue;
+      if (effect.value.type === "add") {
+        next = [...next, effect.value.ref];
+      } else {
+        next = next.filter((ref) =>
+          ref.name !== effect.value.ref.name || ref.from !== effect.value.ref.from);
+      }
+    }
+    return next;
+  },
+});
+
+const composerSkillInversions = invertedEffects.of((tr) => {
+  const inverse: StateEffect<ComposerSkillEdit>[] = [];
+  for (const effect of tr.effects) {
+    if (!effect.is(composerSkillEffect)) continue;
+    inverse.push(composerSkillEffect.of({
+      type: effect.value.type === "add" ? "remove" : "add",
+      ref: effect.value.ref,
+    }));
+  }
+  return inverse.reverse();
+});
+
 export const composerStateExtensions = [
   history(),
   composerAttachmentsField,
   composerAttachmentInversions,
+  composerSkillsField,
+  composerSkillInversions,
   composerHistoryGuard,
   composerAnchorSync,
   composerGraphemeBackspace,
@@ -196,12 +250,16 @@ export function createComposerState(content: ComposerContentInput, extensions: r
     const anchor = Math.max(0, Math.min(normalized.mapOffset(rawAnchor), text.length));
     return { id, card: attachment.card, anchor };
   }));
+  const skills = (content.skills ?? [])
+    .map((ref) => ({ name: ref.name, from: normalized.mapOffset(ref.from) }))
+    .filter((ref) => skillRefValid(text, ref));
   return EditorState.create({
     doc: text,
     selection: EditorSelection.cursor(caret),
     extensions: [
       ...composerStateExtensions,
       composerAttachmentsField.init(() => cards),
+      composerSkillsField.init(() => skills),
       ...extensions,
     ],
   });
@@ -212,6 +270,38 @@ export function composerContentOf(state: EditorState): ComposerContent {
     text: state.doc.toString(),
     caret: state.selection.main.head,
     cards: state.field(composerAttachmentsField),
+    skills: state.field(composerSkillsField),
+  };
+}
+
+export function composerSkillsJson(state: EditorState): string {
+  const seen = new Set<string>();
+  const names: string[] = [];
+  const text = state.doc.toString();
+  const refs = [...state.field(composerSkillsField)].sort((a, b) => a.from - b.from);
+  for (const ref of refs) {
+    if (!skillRefValid(text, ref) || seen.has(ref.name)) continue;
+    seen.add(ref.name);
+    names.push(ref.name);
+  }
+  return JSON.stringify(names);
+}
+
+export function selectComposerSkill(
+  state: EditorState,
+  selection: ComposerSkillRef & { readonly to: number },
+): TransactionSpec {
+  const to = selection.to + (state.doc.sliceString(selection.to, selection.to + 1) === " " ? 1 : 0);
+  const insert = `/${selection.name} `;
+  return {
+    changes: { from: selection.from, to, insert },
+    selection: EditorSelection.cursor(selection.from + insert.length),
+    effects: composerSkillEffect.of({
+      type: "add",
+      ref: { name: selection.name, from: selection.from },
+    }),
+    scrollIntoView: true,
+    userEvent: "input.skill",
   };
 }
 
@@ -233,8 +323,13 @@ export function mergeRejectedComposerContent(
   current: ComposerContent,
 ): ComposerContent {
   if (current.text === "" && current.cards.length === 0) return restored;
+  const text = restored.text + current.text;
+  const skills = [
+    ...(restored.skills ?? []),
+    ...(current.skills ?? []).map((ref) => ({ ...ref, from: ref.from + restored.text.length })),
+  ].filter((ref) => skillRefValid(text, ref));
   return {
-    text: restored.text + current.text,
+    text,
     caret: current.caret === null ? null : restored.text.length + current.caret,
     cards: sortPlacedAttachments([
       ...restored.cards,
@@ -243,6 +338,7 @@ export function mergeRejectedComposerContent(
         anchor: attachment.anchor + restored.text.length,
       })),
     ]),
+    skills,
   };
 }
 
