@@ -76,9 +76,11 @@
 - [x] 1.17 视觉结构场景：被动 / 选择两态、listbox / option / aria-selected / aria-activedescendant、
       位置钳制、chip missing / disabled、关闭后零残留
 - [ ] 1.18 真机场景骨架（见 7.1），旧实现跑出预期红；既有自动场景 77 作为不削弱基线保持绿
-      未勾原因：本轮只完成场景骨架与静态检查；按主会话限制不跑真机，未执行旧实现真机红。
+      未勾原因：未补做旧实现真机红跑，不把评审期验收脚本失败冒充产品红。当前实现 726 最终 1/1 PASS（36 断言），
+      77 真机 PASS；早期红跑根因与修正见 proposal 节点 2。
 - [ ] 1.19 在旧实现上跑 1.1–1.18 留红 / 基线绿证据，落 `.local/`；天然绿项不冒充先红
-      未勾原因：核心 Rust/TS 先红证据已落 `.local/missions/skill-hybrid-nov24/`；视觉与真机未做旧实现红跑。
+      未勾原因：核心 Rust/TS 先红证据已落 `.local/missions/skill-hybrid-nov24/`；视觉与真机未补做旧实现红跑，
+      最终当前实现证据不能倒填成旧实现红证据。
 
 ## 2. Rust：元数据、两入口、留存与投影
 
@@ -145,7 +147,8 @@
 - [x] 5.4 ARIA：listbox / option / aria-selected；选择态 aria-autocomplete + aria-activedescendant；
       被动态不设，关闭清除
 - [ ] 5.5 三主题 / eink 目检 + 结构断言；不新增整页像素基线
-      未勾原因：已跑 chromium 结构场景 4/4；按主会话限制不跑全量视觉，三主题/eink 目检留待后续。
+      未勾原因：未另做人工目检；相关结构 15/15 与完整视觉 `GATE RESULT: 15/15 PASS（SKIP 0）`（exit 0）
+      已通过，未更新基线。机器像素结果不写成人工手感验收。
 
 ## 6. 文案
 
@@ -178,19 +181,22 @@
      仍在，只有新自动调用被拦
   10. **键位 / IME / 草稿**：⌃N/P 三态不消费；组合期不弹不吞 Enter；切 vault 草稿往返后 refs 恢复并按
       当前策略执行
-- [ ] 7.2 键入通道探针：实测能把 `/` 与字符送进 CM 模型的通道；不触发就改 `do: keys` 逐字符；
-      未勾原因：本轮不跑真机通道探针；场景采用无 e 的安全字符并在注释记录通道选择。
-      结论写进场景注释，避开已知按键丢弃族
+- [x] 7.2 键入通道探针：实测能把 `/` 与字符送进 CM 模型的通道；不触发就改 `do: keys` 逐字符；
+      最终普通文本 / slash 均用 `typeInNode` 的「占位名 | 本轮文本」联合身份，候选选择保留真实方向键与 Enter；
+      早期 `keys` 的 placeholder→value 身份消失问题已消除，726 最终 1/1 PASS
 - [x] 7.3 新 fixture 只证明注入 / 留存 / 投影 / 策略执行 / 发送链路，不声称证明真实模型遵守
-- [ ] 7.4 场景 77 回归：既有 `harness-mock-skill.json` 与脚本逐条不变，列入本批必跑
-      未勾原因：场景 77 保持未改且静态检查通过；按主会话限制不跑真机回归。
+- [x] 7.4 场景 77 回归：既有 `harness-mock-skill.json` 与脚本逐条不变，列入本批必跑
+      真机 PASS（14.3s），证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/skill-hybrid-nov24/acceptance-726-related-r2.log`
+      与 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-24-skill-hybrid-r2/77-harness-skill-load/`
 - [x] 7.5 dev flavour 不隔离 `HOME` 时只断言合成名，不断言清单条数或首项
 - [x] 7.6 回扫既有 composer 键入 `/` 的场景，命中按新行为改准
 - [x] 7.7 `coverage.mjs` 重新生成 `COVERAGE.md`；`coverage.mjs --check` 与 `run.mjs --check` 通过
-- [ ] 7.8 真机跑新场景 + 77 + 受影响场景；证据落 `.local/acceptance/<批次>/`；FAIL 逐条定位
-      未勾原因：按主会话限制不跑真机；未生成本地 acceptance 真机证据。
-- [ ] 7.9 报告前用绝对路径 `ls` 证据目录（REVIEW.md「证据只在终端跑过」条）
-      未勾原因：已核 mission 证据目录存在；无真机证据路径可报。
+- [x] 7.8 真机跑新场景 + 77 + 受影响场景；证据落 `.local/acceptance/<批次>/`；FAIL 逐条定位
+      726 最终 1/1 PASS（36 断言、34.4s，r5）；723 PASS（r3）；77 / 135 / 725 PASS（r2）。
+      早期失败已逐条按 AX、合成 JSONL、fixture 与输入通道修正，详见 proposal 节点 2
+- [x] 7.9 报告前用绝对路径 `ls` 证据目录（REVIEW.md「证据只在终端跑过」条）
+      已核 r2 / r3 / r5 acceptance 目录与 summary/results 真实存在；最终 726 证据根为
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-24-skill-hybrid-r5/`
 
 ## 8. 提示装配与 dogfood
 
@@ -204,12 +210,14 @@
 
 - [x] 9.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过，记录 `Totals:` 原文
 - [x] 9.2 `bash scripts/docs-check.sh` 通过
-- [ ] 9.3 `scripts/gate.sh quick` 通过，照抄 `GATE RESULT` 原文行 + 退出码；跑前 `git add` 新 bindings
-      未勾原因：按主会话限制不跑 `scripts/gate.sh quick`；相关 Rust/TS/结构/静态检查分别通过。
-- [ ] 9.4 动过 `src/harness-panel.css` 后 `scripts/gate.sh visual` 通过；基线未更新，确需更新先送 Alex 过目
-      未勾原因：按主会话限制不跑全量 visual gate；新场景结构模式 4/4 通过，未更新基线。
-- [ ] 9.5 真机场景 PASS，证据指针可 `ls`
-      未勾原因：按主会话限制不跑真机 726/77。
+- [x] 9.3 `scripts/gate.sh quick` 通过，照抄 `GATE RESULT` 原文行 + 退出码；跑前 `git add` 新 bindings
+      完整视觉 gate 日志同时包含 quick 全部检查与 visual-regression：`GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0；
+      未另跑 quick，证据 `gate-visual-final-isolated.log`
+- [x] 9.4 动过 `src/harness-panel.css` 后 `scripts/gate.sh visual` 通过；基线未更新，确需更新先送 Alex 过目
+      `GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0，基线未更新；证据 `gate-visual-final-isolated.log`
+- [x] 9.5 真机场景 PASS，证据指针可 `ls`
+      726 最终 1/1 PASS、36 断言、34.4s（r5）；723 PASS；77 / 135 / 725 相关 PASS；
+      证据目录与 runner 日志均已读取核对
 - [x] 9.6 门禁日志落 `.local/reviews/` 或批次证据目录，报告绝对路径
 
 ## 10. 信息卫生
@@ -221,11 +229,14 @@
 
 ## 11. 收尾
 
-- [ ] 11.1 `tasks.md` 全部勾选；未勾项就地写放弃理由
-      未勾原因：实现与本轮授权检查已完成；真机、dogfood、独立 reviewer 与归档项按上述原因保留未勾。
+- [x] 11.1 `tasks.md` 全部勾选；未勾项就地写放弃理由
+      已完成项按最终证据勾选；旧实现真机红跑、人工目检与真实模型 dogfood 保留未勾及就地理由，不冒充完成
 - [x] 11.2 `proposal.md` 节点状态与 H1 按 Alex 原话更新，不把待批写成已批
 - [x] 11.3 `docs/backlog.md` 归档跟踪队列落一条
-- [ ] 11.4 交独立 reviewer；verdict 绑定当前 tip
-      未勾原因：由主会话安排独立 reviewer，本 worker 不自行宣称评审完成。
+- [x] 11.4 交独立 reviewer；verdict 绑定当前 tip
+      r3 clean/merge、无 P1/P2，绑定产品 tip `27df529bc4f86fe5b2b806cd27614c95417ec198`；
+      其后仅 test-only 场景 / fixture 提交，最终 tip `32e795f70275aced4b2f4842daf4d93f6399bd46`；
+      评审 `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/skill-hybrid-final-r3.md`
 - [ ] 11.5 节点 2 五要件齐后归档；归档提交后 `--archived` 审计至 PASS
-      未勾原因：待节点 2 五要件齐备后由主会话归档并跑 archived 审计。
+      未勾原因：归档时执行；五要件与证据已记入 proposal 节点 2，归档提交后补实际 hash、包装器输出与审计读数，
+      未取得 `--archived` PASS 前不宣称完成。

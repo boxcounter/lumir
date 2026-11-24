@@ -233,3 +233,57 @@ r2 的 A1–A6 不再分别送裁：候选、refs、200KB、deny 不注入、普
 | 路径 / 历史 token 被误当显式调用 | 后端只消费当前消息 refs 生成的 `skills_json`，不扫描文本 |
 | 留存膨胀 / 上下文预算 | 沿用每 Skill 200KB 上限与既有压缩；正文随历史重复的 token 成本明确接受，不承诺任意规模可用 |
 | 策略变更被误认为擦除历史 | 规格明确只约束新调用，恢复与旧 JSONL 原样保留 |
+
+## 节点 2：独立评审、验收与归档放行记录
+
+### 评审收口与 tip 绑定
+
+- **节点 1 已批准**：Alex 2026-11-24「批准 Skill 混合方案」，实现没有增加 H1 之外的产品语义。
+- **r1（needs-changes，评审 tip `2c992fffe1e3cd5c78c7737842c62e507e34cbfa`）**：
+  - 草稿恢复重复请求 catalog 且零新键入打开候选：程序性 reset 与用户 slash 输入分流，在途请求按 vault / 世代去重，异步回调只接纳仍有效的用户意图；恢复只取一次 catalog 且不打开菜单。
+  - `compositionstart` 后的组合文档更新重开候选：同步与异步入口统一受 IME / 世代 / 取消状态约束；组合期不导航、不吞 Enter、不创建 ref。
+  - 测试区分度不足：补多 ref 逆序与同名去重、⌃N/P 单行边界和跨行、JSONL `llm_request.messages`、Responses / Chat / Mock wire、恢复与压缩不重新显式注入等直接证据。
+  - 评审原文：`/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/skill-hybrid-final-r1.md`。
+- **r2（needs-changes，评审 tip `13596b4bb39461309238ebf61f4c8768ac822f44`）**：
+  - 冷 catalog 裸 `/` 被空数据 close 误清意图：拆分 `hideSkillMenu()` 与 `closeSkillMenu()`，回包后合法候选出现，连续输入不重复强制请求；Esc、失焦、程序 reset、IME 仍取消。
+  - 非法 `skills_json` 伪测试：改为真实 `Webview::on_message` 调用 `harness_send`，覆盖坏 JSON、非数组、非字符串元素，并逐项断言既有 session id / input 不变；删除 helper 假分支和读不到当空。
+  - 726 恢复与新策略可被旧记录满足：恢复证据限定新 session 的最新请求，新策略绑定 `hybrid-new-policy-auto` / `acc-skill-abc` 的唯一错误，不再复用前序 `acc-deploy` 同码错误。
+  - 评审原文：`/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/skill-hybrid-final-r2.md`。
+- **r3：clean/merge，无 P1 / P2**，绑定产品 tip `27df529bc4f86fe5b2b806cd27614c95417ec198`。评审原文：
+  `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/skill-hybrid-final-r3.md`。
+- r3 之后的 `6ff73025`、`ba291d1e`、`32e795f7` 只修改验收场景与其专用 fixture，未改产品实现；最终归档前产品 / 测试 tip 为
+  `32e795f70275aced4b2f4842daf4d93f6399bd46`。这些后续提交以最终真机与完整视觉结果验收，不伪称 r3 评审过这些 test-only diff。
+
+### 机器与真机证据
+
+- 完整视觉与快速门禁：`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0，基线未更新；日志
+  `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/skill-hybrid-nov24/gate-visual-final-isolated.log`。
+- 前端单测：1934 passed / 0 failed（`review-r2-pnpm-test.log`）；Rust lib：1091 passed / 0 failed / 1 ignored
+  （`review-r2-cargo-test.log`）；相关结构场景：15/15 passed（`review-r2-structural.log`）。
+- OpenSpec：`Totals: 39 passed, 0 failed (39 items)`（`review-r2-openspec.log`）；`docs-check.sh` PASS；
+  `COVERAGE PASS（278 个场景 / 247 个 item，与 COVERAGE.md 一致）`；验收静态检查 278 个场景通过。
+- 真机 726 最终 **1/1 PASS、36 断言、34.4s**：证据目录
+  `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-24-skill-hybrid-r5/`，日志
+  `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/skill-hybrid-nov24/acceptance-726-r5-4.log`。
+- 相关真机回归：723 PASS（29.8s，`acceptance-726-723-r3.log`）；77 PASS（14.3s）、135 PASS（27.4s）、
+  725 PASS（33.7s），三者见 `acceptance-726-related-r2.log`。证据分别位于
+  `.local/acceptance/2026-11-24-skill-hybrid-r3/` 与 `.local/acceptance/2026-11-24-skill-hybrid-r2/`。
+- 早期失败均为验收脚本与合同 / 输入通道不一致的收口过程：723 统一三次插卡的 AX 等待与真实点击；
+  726 补恢复后的真实聚焦、用联合身份输入、把显式拒绝改查 live 工具行、按真实 part / 键序断言，并补恢复后的新发送。
+  恢复本身不自动发请求，新会话 mock 游标从 0 开始；最终恢复证据来自新 session 的唯一最新请求，不由旧记录冒充。
+- 原生 TSM 组合、候选窗与人工翻屏 / 键入手感没有另做人工验收；这里只声明结构测试与真机脚本覆盖，
+  **不虚报原生 IME 人工手感 PASS**。mock 与单测证明执行层，不证明真实模型必定遵守；真实模型 dogfood 未执行。
+
+### 五要件放行对账
+
+1. **方案已批准**：H1 已裁，r1 / r2 均为批准范围内的缺陷与证据修复，没有静默扩 scope。
+2. **独立 reviewer clean/merge**：r3 文件与产品 tip 如上；其后只有 test-only 场景提交，最终真机与完整视觉补齐全部门禁。
+3. **tasks 完成或有理由**：`tasks.md` 各项已勾选，或未勾项就地写明旧实现真机红跑、人工目检与真实模型 dogfood 的边界；
+   未把未执行项写成 PASS。
+4. **门禁与真机证据**：完整视觉 15/15、726 与相关场景 PASS，证据路径如上且均可直接读取。
+5. **规格对账**：归档前执行 `node scripts/openspec-archive-check.mjs --change add-harness-skill-slash-invocation-nov23`、
+   `validate --all --strict`、`docs-check.sh`、`coverage.mjs --check` 与 `git diff --check`；`docs/backlog.md`
+   的归档跟踪队列保持本 change 唯一条目。实际输出与归档后审计分两次提交记录，不预写 archived PASS。
+
+**放行方式：机器 + 独立评审放行（本节五要件）。**没有未决价值 / 行为裁决、审美基线更新、影响面升级、
+评审异常或证据缺口；真实模型 dogfood 与原生 IME 人工手感不是本 change 声明的机器验收替代品。
