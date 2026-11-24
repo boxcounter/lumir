@@ -1,6 +1,6 @@
 # Tasks: avoid-session-restore-duplicates-nov24
 
-> 状态：节点 1 已闭合（独立评审 r4 clean / ready-for-Alex）；实现与节点 2 证据齐备；D1 已由 Alex
+> 状态：已归档（归档提交 `63645e496aeb3f3f9c9a8f560a89682f33218a49`，`--archived` PASS）；D1 已由 Alex
 > 2026-11-24 裁决「采用这个。」→ 采用 A。实现顺序按「失败用例先行」：先写会红的测试，再改实现；
 > 协议 / 行为以 `design.md` 为准。
 
@@ -138,4 +138,4 @@ compact 两态已由 `src-tauri/src/harness/lazy_restore_tests.rs` 的
 - [x] 7.3 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 与
       `bash scripts/docs-check.sh` 通过。
 - [x] 7.4 真机目标场景 PASS，证据落 `.local/acceptance/`（不落 worktree）。
-- [ ] 7.5 实现 PR 合并后按流程落归档跟踪条目并归档（归档不由本提案阶段执行）。
+- [x] 7.5 实现 PR 合并后按流程落归档跟踪条目并归档（归档不由本提案阶段执行）。

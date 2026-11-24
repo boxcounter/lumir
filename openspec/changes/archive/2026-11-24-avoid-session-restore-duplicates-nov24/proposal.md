@@ -4,7 +4,7 @@
 - 日期: 2026-11-24
 - 角色: Alex Lee（缺陷报告、节点 1 裁决），AI agent（诊断与起草）
 
-> **节点状态**：节点 1 已闭合，独立评审 r4 clean / ready-for-Alex；实现与节点 2 证据齐备、待归档。
+> **节点状态**：已归档；节点 1 已闭合，节点 2 五要件与 `--archived` 审计均通过。
 > 2026-11-24 Alex 已对 D1 裁决「采用这个。」——采用 A（首次发布失败仍允许本轮对话继续、
 > 初始记录内存缓冲、同一 session id / token 重试）。D1 之外的方向按本需求的直接约束处理。
 > 独立评审 r1（agent-361，绑定 tip `604660d7`）与 r2（绑定 `6fe5007c`）判 needs-changes；
@@ -219,6 +219,18 @@ B 不是局部替换——若未来重启 B，至少同时改写「会话本地�
    证据落 `.local/`。
 5. **规格对账无丢段**：`scripts/openspec-archive-check.mjs` 门禁模式随 docs-check PASS；
    `validate --all --strict` PASS；`docs/backlog.md` 的归档跟踪队列条目唯一。
+
+### 归档后
+
+- **归档提交**：`63645e496aeb3f3f9c9a8f560a89682f33218a49`（2026-11-24）。
+  归档目录：`openspec/changes/archive/2026-11-24-avoid-session-restore-duplicates-nov24/`。
+- **包装器输出**：`Change 'avoid-session-restore-duplicates-nov24' archived as
+  '2026-11-24-avoid-session-restore-duplicates-nov24'`；`harness: update`（3 modified，+0 / ~3 / -0）。
+- **修链**：`归档后修链 0 处（扫过 4 篇 Markdown / 0 条相对链接）`；
+  `openspec-links: PASS（校验 696 条相对链接，全部可达）`；`openspec-archive: PASS`。
+- **`--archived` 审计**：`PASS（openspec/changes/archive/2026-11-24-avoid-session-restore-duplicates-nov24：
+  3 条 MODIFIED，对比 139 段；人工恢复 0 段，声明认领 0 段）`，时间 2026-11-24T23:43:29+0800
+  （Asia/Shanghai）。
 
 ## 关联材料
 
