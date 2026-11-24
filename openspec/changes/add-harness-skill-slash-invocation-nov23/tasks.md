@@ -70,7 +70,9 @@
       `skills_json` 只含当前消息 refs）
 - [ ] 1.15 前端单测：chip 与 catalog（由 refs 画；missing / 禁手动 disabled / 非法 disabled 区分；
       catalog 失败不误标；草稿恢复立即可见；候选只显示用户可调用项）
-- [ ] 1.16 前端单测：草稿 v3（往返；v2 → skills 空 + 立即写 v3；v1 → v3；脏 refs 丢弃；不保存策略快照）
+- [ ] 1.16 前端单测：草稿 v3（往返；v2 → skills 空 + 立即写 v3；v1 → v3；脏 refs 丢弃；不保存策略快照；
+      CRLF v3 / v2 / v1 装载后 caret、卡片 `at` 与 refs `from` / `to` 经同一 offset 映射重定位，
+      CRLF 之后的合法 ref 切片不变且不被丢弃）
 - [ ] 1.17 视觉结构场景：被动 / 选择两态、listbox / option / aria-selected / aria-activedescendant、
       位置钳制、chip missing / disabled、关闭后零残留
 - [ ] 1.18 真机场景骨架（见 7.1），旧实现跑出预期红；既有自动场景 77 作为不削弱基线保持绿
@@ -124,11 +126,14 @@
 ## 4. 草稿 v3
 
 - [ ] 4.1 `src/quote-card.ts`：`ComposerDraft` 升 `version: 3`，增加 `skills: ComposerSkillRef[]`；
-      serialize / read 均产 v3，不保存策略快照
-- [ ] 4.2 v2 → skills 空、migrated 后立即写 v3；v1 按既有规则转换后写 v3；成功后只写 v3，不双写
-- [ ] 4.3 v3 refs 校验范围、切片、grammar；不合格丢弃，不影响其余草稿
+      serialize / read 均产 v3，不保存策略快照；读路径的共同出口先归一 CRLF，用同一映射重定位
+      caret、卡片 `at` 与 refs `from` / `to`
+- [ ] 4.2 v2 → skills 空、migrated 后立即写 v3；v1 按既有规则转换后写 v3；成功后只写 v3，不双写；
+      v2 / v1 的卡片 `at: 0` 语义不因 skills 为空而改变
+- [ ] 4.3 v3 refs 校验范围、切片、grammar；不合格丢弃，不影响其余草稿；校验在 CRLF 归一与
+      重映射之后执行，不得用原始坐标校验后把旧偏移留在归一草稿里
 - [ ] 4.4 `harness-draft.ts` / `harness-panel.ts` 接线；refs 选中 / 失效 / undo 均触发草稿落盘
-- [ ] 4.5 1.16 转绿；v1 / v2 一次性转换不丢文本 / 卡片
+- [ ] 4.5 1.16 转绿；v1 / v2 一次性转换不丢文本 / 卡片；CRLF 之后的引用经同一映射后仍指向原切片
 
 ## 5. 样式与可访问性
 

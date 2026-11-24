@@ -214,7 +214,12 @@ catalog 按 vault 缓存最新成功清单：新 `/` 强制刷新；关闭候选
 ### 6.3 草稿 v3
 
 - 新草稿为 `{version:3,text,caret,cards,skills}`；refs 保存 `{name,from,to}`，不保存策略快照。
+- CRLF 归一是所有版本的共同出口：先得到仍含原始坐标的 `{text,caret,cards,skills}`，再把 `\r\n` / `\r`
+  归一为 `\n`，用同一份原始 offset → 归一 offset 映射重定位 caret、每张卡的 `at` 与每个 ref 的
+  `from` / `to`；refs 的范围 / 切片 / grammar 校验在归一之后执行，写回 v3 与创建 `EditorState`
+  共用这份归一草稿。
 - v1 / v2 是明确消费者：读时一次性归一为 v3、skills 为空，立即写 v3；此后只读写 v3，不双写。
+  v2 / v1 的卡片按既有规则全部落 `at: 0`，不因 skills 为空而改变 `at` 处理。
 - v3 读取校验范围、切片与 grammar，脏 refs 丢弃，其余内容照常恢复。
 - 策略在发送时按当前 Skill 重新判定。恢复一个后来变成禁手动 / 非法的 ref，不代表仍可显式注入。
 

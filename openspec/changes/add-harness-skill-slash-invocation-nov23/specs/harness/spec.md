@@ -309,9 +309,9 @@ composer 内容 SHALL 作为当前 vault 的一份草稿自动保存与恢复；
 
 草稿的归属 SHALL 在出发时绑定：前端在装载 vault 时记下该 vault 的稳定 id，读、写、清除命令 MUST 携带它；后端 SHALL 只按携带的 id 解析落点，MUST NOT 读取当前打开的 vault。切 vault 之前发出的在途写无论何时执行 MUST 只落它出发时的 vault 的文件，MUST NOT 写进之后打开的 vault；在途读的结果 MUST 按装载世代作废，不得覆盖新 vault 的输入区或「已落盘」基准。写失败重试 SHALL 仍打出发时的归属 id。切换 vault 时旧 vault 的待写按既有纪律丢弃（由切换前的 flush 写走），其迟到失败 MUST NOT 回填新 vault 的待写、MUST NOT 改变新 vault 的「已落盘」基准。
 
-新草稿 SHALL 是 `{version:3,text,caret,cards,skills}`：text 是完整问题，caret 是 `[0,text.length]` 内 UTF-16 offset 或 null，cards 按**视觉顺序**逐项保存 `{card, at}`——`card` 是既有附件记录，`at` 是该卡的**精确 UTF-16 偏移**（不要求行首，`0 <= at <= text.length`）；skills 是显式选择引用数组，每项 `{name,from,to}`，from/to 是 `text` 内的 UTF-16 偏移，切片必须逐字节等于 `/名字`。读取时越界、切片不匹配或名字不合 `/` 调用 grammar 的引用 MUST 被丢弃，MUST NOT 影响草稿其余内容的恢复。skills MUST NOT 保存用户 / 模型调用策略快照；发送时 SHALL 按当前 Skill 策略重新判定。图片只存内容寻址名、源 mime 与可选宽高，MUST NOT 内联 base64；v3 合法往返必须逐字段还原（含 refs）。`id` 不写盘，恢复时按数组顺序重新编号。
+新草稿 SHALL 是 `{version:3,text,caret,cards,skills}`：text 是完整问题，caret 是 `[0,text.length]` 内 UTF-16 offset 或 null，cards 按**视觉顺序**逐项保存 `{card, at}`——`card` 是既有附件记录，`at` 是该卡的**精确 UTF-16 偏移**（不要求行首，`0 <= at <= text.length`）；skills 是显式选择引用数组，每项 `{name,from,to}`，from/to 是 `text` 内的 UTF-16 偏移，与 caret、卡片 `at` 同属 `text` 坐标，切片必须逐字节等于 `/名字`；CRLF 归一时 SHALL 按共同出口的同一映射重定位。读取时越界、切片不匹配或名字不合 `/` 调用 grammar 的引用 MUST 被丢弃，MUST NOT 影响草稿其余内容的恢复。skills MUST NOT 保存用户 / 模型调用策略快照；发送时 SHALL 按当前 Skill 策略重新判定。图片只存内容寻址名、源 mime 与可选宽高，MUST NOT 内联 base64；v3 合法往返必须逐字段还原（含 refs）。`id` 不写盘，恢复时按数组顺序重新编号。
 
-**CRLF 归一放在所有版本解析 / 迁移完成后的共同出口**：CM 在 `EditorState.create` 时按 `/\r\n?|\n/` 分行并统一为 LF，原始 CRLF 坐标（caret / `at`）不能直接灌进 state。v1 / v2 / v3 SHALL 先各自解析 / 迁移成同形状草稿（`{text,caret,cards:[{card,at}]}`，仍是原始坐标），再统一把 `\r\n` / `\r` 归一为 `\n`，并用同一份原始 offset → 归一 offset 映射重定位 caret 与每张卡的 `at`。归一后的草稿 SHALL 同时用于**写回 v3**与**创建 `EditorState`**；MUST NOT 只归一文本而保留原始坐标，MUST NOT 让写回与 state 使用两份不同坐标。混合行界（`\r\n` / `\r` / `\n` 混用）按同一扫描处理。
+**CRLF 归一放在所有版本解析 / 迁移完成后的共同出口**：CM 在 `EditorState.create` 时按 `/\r\n?|\n/` 分行并统一为 LF，原始 CRLF 坐标（caret / 卡片 `at` / refs 的 `from` / `to`）不能直接灌进 state。v1 / v2 / v3 SHALL 先各自解析 / 迁移成同形状草稿（`{text,caret,cards:[{card,at}],skills:[{name,from,to}]}`，仍是原始坐标），再统一把 `\r\n` / `\r` 归一为 `\n`，并用同一份原始 offset → 归一 offset 映射重定位 caret、每张卡的 `at` 与每个 ref 的 `from` / `to`；MUST NOT 只映射其中一部分。归一后的草稿 SHALL 同时用于**写回 v3**与**创建 `EditorState`**；refs 的范围 / 切片 / grammar 校验 SHALL 在归一并重映射之后进行，MUST NOT 用原始坐标校验后把旧偏移留在归一草稿里。MUST NOT 只归一文本而保留原始坐标，MUST NOT 让写回与 state 使用两份不同坐标。混合行界（`\r\n` / `\r` / `\n` 混用）按同一扫描处理。
 
 现存 v2 与 v1 都是迁移的具体消费者。读到合法 v2 时 SHALL 一次性转换：可见内容保留，**行尾及坐标按共同出口的统一映射归一**（不是字节级原样保留）；全部卡片落 `at: 0`（等价于 v2 的「卡片全在前」语义），caret 由原始偏移映射到归一文本坐标；skills 为空。读到合法 v1 时 SHALL 沿用现行转换（段落按原顺序以 `\n` 连接，未知块以可见 JSON 文本加入，卡片按相对顺序全部抽入 cards；段落 caret 精确映射，卡片 / 末尾边界映射到最近后续文本块起点，无后续则全文末尾），再全部落 `at: 0`，skills 为空。v1 / v2 转换成功后 SHALL 立即经既有串行 store 写回 v3，此后只读 / 只写 v3；MUST NOT 双写、保留旧编辑路径或建立通用迁移平台。load 起始 SHALL 捕获编辑世代；读盘期间发生新编辑时 MUST 跳过旧迁移写回及 written 基准覆盖，保留当前 pending / written。迁移写一旦入串行链，后续编辑写 SHALL 排在其后，最终落盘必须是最新输入。损坏 v1 / v2 / v3 安静回空；迁移写失败不谎报已保存。
 
@@ -356,6 +356,11 @@ composer 内容 SHALL 作为当前 vault 的一份草稿自动保存与恢复；
 
 - **WHEN** 盘上 v3 草稿的 text 是 `A\r\nB\r\nC`，caret 在 B 之后（原始 offset 4），一张卡片的 `at` 指向 C 行首（原始 offset 6）
 - **THEN** 创建 state 前文本归一为 `A\nB\nC`，caret 与 `at` 用同一映射重定位（分别变为 3 与 4）；恢复后的文本、caret、anchor 与 `composerBlocks()` 顺序全部正确，MUST NOT 把原始 CRLF 坐标直接灌进 state
+
+#### Scenario: CRLF 归一不丢 Skill 引用
+
+- **WHEN** 盘上 v3 草稿的 text 是 `A\r\n/acc-skill-abc `，含一个引用 `{name:"acc-skill-abc",from:3,to:17}`（原始切片逐字节等于 `/acc-skill-abc`），caret 与一张卡片的 `at` 都在文末（原始 offset 18）
+- **THEN** 共同出口把文本归一为 `A\n/acc-skill-abc `，同一映射重定位引用为 `[2,16)`（切片仍逐字节等于 `/acc-skill-abc`）、caret 与卡片 `at` 为 17；恢复后引用保留并照常出 chip，MUST NOT 用旧偏移 `[3,17)` 切成 `acc-skill-abc ` 后丢弃该引用
 
 #### Scenario: CRLF v2 caret 归一
 
