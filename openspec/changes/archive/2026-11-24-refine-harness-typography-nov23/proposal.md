@@ -4,7 +4,12 @@
 - 日期: 2026-11-23
 - 角色: Alex Lee（评审 / 裁决），AI agent（起草）
 
-> 节点状态：本提交只包含提案、设计、任务与 spec delta，不包含产品代码、测试代码或视觉基线。
+> 节点状态：已 rebase 到 `origin/master@dd33d1fc`（含 hybrid Skill）。Alex 已明确回复「批准排版基线」，
+> 授权并仅落盘审阅页 20 张（§8.1 七张、§8.2 九张 + 空态一张、§8.4 三张），未扩面、未改容差。
+> m347 的 19 像素已证明为背景透入，浮层隔离图逐字节一致；m440 / m454 的 24px 外层宽差与独立 8 个
+> glyph 色像素分别记录。独立 reviewer agent-354 除基线裁决项外 clean/merge，唯一文字问题已修正。
+> 真机八场景 8/8 PASS（132.7s），证据 `.local/acceptance/2026-11-24-harness-typography/`。
+> 最终 `gate.sh visual` 为 `GATE RESULT: 15/15 PASS（SKIP 0）`、退出码 0。change 尚未归档。
 > 节点 1（提案评审）：**已批准**——Alex 2026-11-24 回复「批准」，采用 `refined-rows-720` 及
 > D1–D7 推荐值。候选像素基线生成后仍须 Alex 逐张过目；未获明确批准前 MUST NOT 执行
 > `--update` / `--update-snapshots`，也不得把候选图转成正式基线。

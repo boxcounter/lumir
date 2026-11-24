@@ -21,7 +21,7 @@ const PROVIDERS = standardProviders();
 //   4. **元素级基线**：消息区与 composer 区两张 crop——整页容差吞不掉的观感面
 //     （m303/m345 的整页基线失效面随批重建，归 tower 的三联图纪律）。
 //   5. **composer 空态形态（M361 2.1/2.2）**：空态与首行输入同高（输入不「变矮」）；占位
-//      伪元素绝对定位压首行行位（与光标同位、垂直居中观感对齐原型 44px 输入区）。
+//      伪元素绝对定位压首行行位（与光标同位；refined-rows-720 起输入区最小高 48px）。
 //
 // 行为不变量（chip 写回 / ctx 读数 / 两态相位 / 复制源）在 m347 场景，这里不重复。
 
@@ -146,7 +146,7 @@ test("消息区：who/when meta 行 + 用户气泡计算样式 + agent 平铺", 
   expect(bubble.color).toBe(await probeColor(page, "color", "--text"));
   expect(bubble.borderRadius).toBe("6px");
   expect(bubble.borderTopWidth).toBe("1px");
-  expect(bubble.padding).toBe("6px 8px"); // sp-3 sp-4（原型 .msg.user .body）
+  expect(bubble.padding).toBe("8px 12px"); // sp-4 sp-6（refined-rows-720）
   // 消息元素自身不再带气泡底色（样式已移挂 body）。
   const msgBg = await userMsg.evaluate((el) => getComputedStyle(el).backgroundColor);
   expect(msgBg).toBe("rgba(0, 0, 0, 0)");
@@ -169,15 +169,21 @@ test("消息区：who/when meta 行 + 用户气泡计算样式 + agent 平铺", 
   expect(flat.borderTopWidth).toBe("0px");
   expect(flat.color).toBe(await probeColor(page, "color", "--text"));
 
-  // who 行自身的降档形态：micro 字号 / semibold / 宽字距 / 三级色。
+  // who 行自身的降档形态：micro 字号 / semibold / 宽字距；角色与时间分色。
   const whoStyle = await agentWho.evaluate((el) => {
     const s = getComputedStyle(el);
-    return { fontSize: s.fontSize, fontWeight: s.fontWeight, letterSpacing: s.letterSpacing, color: s.color };
+    return { fontSize: s.fontSize, fontWeight: s.fontWeight, letterSpacing: s.letterSpacing, marginBottom: s.marginBottom };
   });
   expect(whoStyle.fontSize).toBe("10.5px");
   expect(whoStyle.fontWeight).toBe("600");
   expect(whoStyle.letterSpacing).toBe("0.525px"); // 0.05em × 10.5px
-  expect(whoStyle.color).toBe(await probeColor(page, "color", "--text-3"));
+  expect(whoStyle.marginBottom).toBe("4px");
+  expect(await agentWho.locator(".lumir-hp-role").evaluate((el) => getComputedStyle(el).color)).toBe(
+    await probeColor(page, "color", "--text-2"),
+  );
+  expect(await agentWho.locator(".lumir-hp-when").evaluate((el) => getComputedStyle(el).color)).toBe(
+    await probeColor(page, "color", "--text-3"),
+  );
 
   // 元素级基线：消息区（who/when + 气泡 + 平铺的观感面）。
   await expectScreenshot(page.locator(".lumir-hp-transcript"), "m351-harness-messages.png");
@@ -227,14 +233,14 @@ test("composer：圆角卡片容器 + focus-within 强调框 + 图标发送钮",
   expect(boxStyle.backgroundColor).toBe(await probeColor(page, "background-color", "--content-bg"));
   expect(boxStyle.borderRadius).toBe("8px");
   expect(boxStyle.borderTopWidth).toBe("1px");
-  // 输入区自身无边框无底色（容器承担）；padding 对齐原型 sp-3 sp-4 sp-1。
+  // 输入区自身无边框无底色（容器承担）；refined-rows-720 的 padding 为 sp-5 sp-6 sp-2。
   const composerStyle = await page.locator(".lumir-hp-composer").evaluate((el) => {
     const s = getComputedStyle(el);
     return { borderTopWidth: s.borderTopWidth, backgroundColor: s.backgroundColor, padding: s.padding };
   });
   expect(composerStyle.borderTopWidth).toBe("0px");
   expect(composerStyle.backgroundColor).toBe("rgba(0, 0, 0, 0)");
-  expect(composerStyle.padding).toBe("6px 8px 2px");
+  expect(composerStyle.padding).toBe("10px 12px 4px");
   // focus-within：输入区获焦 → 容器出 accent 框； blur 后回结构档。
   await page.locator(".lumir-hp-composer").click();
   await expect
@@ -345,7 +351,7 @@ test("发送后焦点回 composer：点击发送钮 → 回答到达后焦点在
 test("composer 空态：与首行输入同高（2.1）+ 占位压首行行位（2.2）", async ({ page }) => {
   await openPanel(page);
 
-  // 占位伪元素：绝对定位、压在首行行位（padding sp-3 sp-4 = 光标位）——旧实现占位自占
+  // 占位伪元素：绝对定位、压在首行行位（padding sp-5 sp-6 = 光标位）——旧实现占位自占
   // 一行，空态比输入态高出一行、光标掉到占位下方的第二行（Alex 2026-10-07 2.1/2.2）。
   const before = await page.locator(".lumir-hp-composer").evaluate((el) => {
     const s = getComputedStyle(el, "::before");
@@ -361,9 +367,9 @@ test("composer 空态：与首行输入同高（2.1）+ 占位压首行行位（
   });
   expect(before.position).toBe("absolute");
   expect(parseFloat(before.top)).toBeCloseTo(before.lineOffsetTop ?? -1, 0); // 占位顶 == 首行行位
-  expect(before.left).toBe("8px");
+  expect(before.left).toBe("12px");
   expect(before.content).not.toBe("none"); // 空态占位在场
-  expect(before.minHeight).toBe("44px"); // 原型 .h-box textarea 的 44px 输入区
+  expect(before.minHeight).toBe("48px");
 
   // 2.1：首行输入后 box 高度不跳变（±0.5px；旧实现空态高出约一行 19.5px）。
   const heightOf = async () => (await page.locator(".lumir-hp-composer-box").boundingBox())?.height ?? 0;

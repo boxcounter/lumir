@@ -105,6 +105,8 @@ steps:
         ax: { not: "与当前文档对话" }
       - label: 恢复的正文里裸 URL 仍上屏（重放走同一份渲染器，两类宿主都不例外）
         ax: { has: "https://example.com/cell/y" }
+      # 排版截图说明（只复用前置 metaLine 判据，不改断言）：长链接由正文 anywhere 换行，
+      # 角色 --text-2、时间 --text-3；恢复消息的 metaLine 节点粒度与合法时间集合不变。
       - shot: 03-restored-时间读数
 ---
 

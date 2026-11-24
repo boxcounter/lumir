@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
 import { expectScreenshot } from "./expect-screenshot";
 
@@ -261,6 +261,20 @@ async function closeStickyForPixels(page: Page): Promise<void> {
     if (active instanceof HTMLElement) active.blur();
   });
   await settleForPixels(page);
+}
+
+async function expectWarningBlockGeometry(note: Locator): Promise<void> {
+  const geometry = await note.evaluate((el) => {
+    const style = getComputedStyle(el);
+    return {
+      width: el.getBoundingClientRect().width,
+      marginLeft: style.marginLeft,
+      marginRight: style.marginRight,
+      padding: style.padding,
+    };
+  });
+  expect(Math.abs(geometry.width - 465)).toBeLessThanOrEqual(0.5);
+  expect(geometry).toMatchObject({ marginLeft: "-8px", marginRight: "-8px", padding: "4px 6px" });
 }
 
 /** 从当前焦点开始按 Tab，直到焦点落到 sticky 的原生关闭钮上（最多 80 次）。
@@ -1162,6 +1176,7 @@ test("V2p 像素基线：Harness degraded（当前写失败）警示块", async 
   await expect(note).toBeVisible();
   await expect(note).toHaveText("对话暂未保存。请检查磁盘空间或目录权限；恢复后会继续写入。");
   await closeStickyForPixels(page);
+  await expectWarningBlockGeometry(note);
   await expectScreenshot(page, "harness-degraded.png");
   await expectScreenshot(note, "harness-degraded-warning-block.png");
 });
@@ -1186,6 +1201,7 @@ test("V3p 像素基线：state=ok + history gap（尚未写入）", async ({ pag
   await expect(note).toContainText("此前部分对话记录未能保存；新内容已恢复写入。");
   await expect(note).toContainText("现在退出，这段对话将无法恢复。");
   await closeStickyForPixels(page);
+  await expectWarningBlockGeometry(note);
   await expectScreenshot(page, "harness-history-gap.png");
   await expectScreenshot(note, "harness-history-gap-warning-block.png");
 });
@@ -1219,6 +1235,7 @@ test("V3bp 像素基线：state=ok + history gap（已恢复写入；02b 同形�
   );
   await expect(note).toHaveText("此前部分对话记录未能保存；新内容已恢复写入。");
   await closeStickyForPixels(page);
+  await expectWarningBlockGeometry(note);
   await expectScreenshot(page, "harness-history-gap-written.png");
   await expectScreenshot(note, "harness-history-gap-written-warning-block.png");
 });

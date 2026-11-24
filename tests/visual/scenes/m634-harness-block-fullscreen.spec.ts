@@ -161,6 +161,12 @@ test("表格全屏：快照逐 cell 相同、无钮副本、读屏名 1/2、Esc 
   const overlay = page.locator(".lumir-table-fs-overlay");
   await expect(overlay).toBeHidden();
 
+  const panelTable = page.locator(".lumir-hp-msg-assistant .lumir-hp-body table").first();
+  const panelStyle = await panelTable.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { fontSize: s.fontSize, lineHeight: s.lineHeight };
+  });
+  expect(panelStyle).toEqual({ fontSize: "13px", lineHeight: "19.5px" });
   const firstSlot = page.locator('.lumir-hp-block-slot[data-hp-block="table"]').first();
   await firstSlot.hover();
   const trigger = firstSlot.locator(".lumir-hp-block-fs-trigger");
@@ -175,11 +181,31 @@ test("表格全屏：快照逐 cell 相同、无钮副本、读屏名 1/2、Esc 
   await expect(snapshot).not.toContainText("CELL-乙");
   // 克隆卫生：快照里不出现任何按钮副本。
   await expect(snapshot.locator("button")).toHaveCount(0);
-  // 结构随元素走：面板表格的边框 / 内边距挂在 `.lumir-hp-table` 类上，克隆脱离 .lumir-hp-body
-  // 之后仍然成立（否则遮罩里是一张无框表）。
+  // 横线与 6/10px padding 随共享结构类进入快照；字号仍由快照的 --editor-font-size 承担，
+  // 不得套用面板的 13px。面板 / 全屏两组读数必须分开。
   await expect(snapshot.locator("table.lumir-hp-table")).toHaveCount(1);
-  const cellBorder = await snapshot.locator("td").first().evaluate((el) => getComputedStyle(el).borderTopWidth);
-  expect(cellBorder).toBe("1px");
+  const snapshotStyle = await snapshot.locator("table").evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { fontSize: s.fontSize, lineHeight: s.lineHeight };
+  });
+  expect(snapshotStyle).toEqual({ fontSize: "15px", lineHeight: "22.5px" });
+  const snapshotCell = await snapshot.locator("td").first().evaluate((el) => {
+    const s = getComputedStyle(el);
+    return {
+      padding: s.padding,
+      borderTopWidth: s.borderTopWidth,
+      borderRightWidth: s.borderRightWidth,
+      borderBottomWidth: s.borderBottomWidth,
+      borderLeftWidth: s.borderLeftWidth,
+    };
+  });
+  expect(snapshotCell).toEqual({
+    padding: "6px 10px",
+    borderTopWidth: "0px",
+    borderRightWidth: "0px",
+    borderBottomWidth: "1px",
+    borderLeftWidth: "0px",
+  });
 
   await page.keyboard.press("Escape");
   await expect(overlay).toBeHidden();
@@ -194,6 +220,55 @@ test("表格全屏：快照逐 cell 相同、无钮副本、读屏名 1/2、Esc 
   await expect(overlay.locator(".lumir-table-fs-snapshot")).toContainText("CELL-乙");
   await page.keyboard.press("Escape");
   await expect(overlay).toBeHidden();
+});
+
+test("表格全屏：非默认编辑器字号随既有缩放变化，快照内容与固有宽不变", async ({ page }) => {
+  await openPanel(page);
+  await page.keyboard.press("Meta+=");
+  await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--editor-font-size").trim())).toBe("17px");
+  const firstSlot = page.locator('.lumir-hp-block-slot[data-hp-block="table"]').first();
+  const panelTable = firstSlot.locator("table");
+  const panelWidth = (await panelTable.boundingBox())!.width;
+  await firstSlot.hover();
+  await firstSlot.locator(".lumir-hp-block-fs-trigger").click();
+  const overlay = page.locator(".lumir-table-fs-overlay");
+  await expect(overlay).toBeVisible();
+  const snapshot = overlay.locator(".lumir-table-fs-snapshot");
+  await expect(snapshot).toContainText("CELL-甲");
+  await expect(snapshot).not.toContainText("CELL-乙");
+  const snapshotTable = snapshot.locator("table");
+  // 同一内容在 17px 快照下自然宽应大于 13px 面板；cell 仍单行，未被压回可用宽。
+  expect((await snapshotTable.boundingBox())!.width).toBeGreaterThan(panelWidth);
+  const cellLines = await snapshotTable.locator("th, td").evaluateAll((cells) =>
+    cells.map((cell) => {
+      const range = document.createRange();
+      range.selectNodeContents(cell);
+      return new Set([...range.getClientRects()].map((rect) => Math.round(rect.top))).size;
+    }),
+  );
+  expect(cellLines).toEqual(cellLines.map(() => 1));
+  const scaled = await snapshotTable.evaluate((el) => {
+    const tableStyle = getComputedStyle(el);
+    const cellStyle = getComputedStyle(el.querySelector("td")!);
+    return {
+      fontSize: tableStyle.fontSize,
+      lineHeight: tableStyle.lineHeight,
+      padding: cellStyle.padding,
+      borderTopWidth: cellStyle.borderTopWidth,
+      borderBottomWidth: cellStyle.borderBottomWidth,
+    };
+  });
+  expect(scaled).toEqual({
+    fontSize: "17px",
+    lineHeight: "25.5px",
+    padding: "6px 10px",
+    borderTopWidth: "0px",
+    borderBottomWidth: "1px",
+  });
+  await page.keyboard.press("Escape");
+  await expect(overlay).toBeHidden();
+  await page.keyboard.press("Meta+0");
+  await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--editor-font-size").trim())).toBe("15px");
 });
 
 test("代码块全屏：整块源码逐行呈现、主题 scope 镜像成立、Esc 关闭且焦点回触发钮", async ({ page }) => {

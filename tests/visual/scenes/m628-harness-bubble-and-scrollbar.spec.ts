@@ -181,10 +181,10 @@ for (const theme of THEMES) {
     //    meta / th / 引用块 / lede 的位）。
     const textToken = await probeColor(page, "color", "--text");
     expect(style.color, "气泡正文色应取 --text").toBe(textToken);
-    // 形态不变量（M351）：r6 圆角 + 1px 描边 + sp-3 / sp-4 内边距。
+    // 形态不变量：r6 圆角 + 1px 描边；refined-rows-720 起为 sp-4 / sp-6 内边距。
     expect(style.borderRadius).toBe("6px");
     expect(style.borderTopWidth).toBe("1px");
-    expect(style.padding).toBe("6px 8px");
+    expect(style.padding).toBe("8px 12px");
 
     const agentBg = parseColor(await probeColor(page, "background-color", "--agent-bg"));
     if (theme === "eink") {

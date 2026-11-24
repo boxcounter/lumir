@@ -58,6 +58,8 @@ steps:
         ax: { has: "+HNL-BETA 第二行，patch 已落盘。" }
       - label: 闸悬停期间磁盘逐字节不变（未采纳不落盘）
         file: { path: harness-note.md, unchangedSince: before }
+      # 排版证据：批准卡 padding 10/12px、决策段下距 8px、按钮最小 32px 且水平
+      # padding 12px；副句 / 依据 / 后果为 --text-2，diff 与采纳行为不变。
       - shot: 01-批准闸
 
   - name: 点击采纳

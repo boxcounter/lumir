@@ -249,6 +249,27 @@ test("transcript 态：快照带图消息按原交错还原（无 ×、读屏名
   await expect(body.locator(".lumir-hp-qtext").first()).toHaveText("先看这张图");
   await expect(body.locator(".lumir-hp-qtext").last()).toHaveText("这里哪里不对？");
 
+  const geometry = await card.evaluate((el) => {
+    const style = getComputedStyle(el);
+    const bubble = el.closest(".lumir-hp-body")!;
+    return {
+      cardWidth: el.getBoundingClientRect().width,
+      bubbleWidth: bubble.getBoundingClientRect().width,
+      fontSize: style.fontSize,
+      lineHeight: style.lineHeight,
+      padding: style.padding,
+    };
+  });
+  expect(geometry).toEqual({
+    cardWidth: 422.5,
+    bubbleWidth: 448.5,
+    fontSize: "13px",
+    lineHeight: "19.5px",
+    padding: "4px 8px 4px 6px",
+  });
+  // 24px 减少量全部来自 transcript 外侧与气泡 padding；卡片自身配方不变，不设固定宽。
+  expect(geometry.bubbleWidth - geometry.cardWidth).toBeCloseTo(26, 1);
+
   await expectScreenshot(card, "m440-image-card-transcript.png");
 });
 

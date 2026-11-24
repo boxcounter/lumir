@@ -416,6 +416,35 @@ test("composer 控制行：合并选择器三维写回 / 形态合同 / ctx 读�
   // 气泡的像素基线（M443 建立的元素级判据；本场景此前只 hover 不截图）：
   // **M533 改了行集 ⇒ 既有基线必失配**——新实图另存主仓 test-results/m533-ctxpop-slim/
   // 供 Alex 过目，基线更新是人肉裁决点（见 tests/visual/README.md 的「更新基线」）。
+  const typography = await ctxPop.evaluate((el) => {
+    const popStyle = getComputedStyle(el);
+    const composerStyle = getComputedStyle(document.querySelector(".lumir-hp-composer")!);
+    return {
+      popFontSize: popStyle.fontSize,
+      popLineHeight: popStyle.lineHeight,
+      popFontWeight: popStyle.fontWeight,
+      popLetterSpacing: popStyle.letterSpacing,
+      composerFontSize: composerStyle.fontSize,
+      composerLineHeight: composerStyle.lineHeight,
+      children: [...el.children].map((child) => {
+        const style = getComputedStyle(child);
+        return { fontSize: style.fontSize, lineHeight: style.lineHeight };
+      }),
+    };
+  });
+  expect(typography).toEqual({
+    popFontSize: "12px",
+    popLineHeight: "18px",
+    popFontWeight: "400",
+    popLetterSpacing: "normal",
+    composerFontSize: "15px",
+    composerLineHeight: "23.7px",
+    children: [
+      { fontSize: "12px", lineHeight: "18px" },
+      { fontSize: "12px", lineHeight: "18px" },
+      { fontSize: "12px", lineHeight: "18px" },
+    ],
+  });
   await expectScreenshot(ctxPop, "m347-ctxpop-cache-metrics.png");
   await page.mouse.move(10, 10);
   await expect(ctxPop).toBeHidden();
@@ -569,9 +598,9 @@ test("权限 chip（M414）：短名读数 / 三档浮层全名 + 释义 / 档�
 test("ctx hover 泡边界收编：窄面板下完整可见（三主题），不越出面板可视区", async ({ page }) => {
   // M378 根因的复现条件：浮层默认右锚 right:-18px、宽度下限 224px（向左延 ~206px），祖先
   // .lumir-harness 有 overflow:hidden——面板窄时浮层左缘被裁（Alex「hint 显示不全」）。
-  // 760px 宽视口把 harness pane 压到默认锚必溢出左缘的宽度；每条主题下量浮层边界 ⊆
-  // 面板边界，并量「未收编左缘」作证这条断言非空转（它 < 面板左缘 = 不收编必红）。
-  await page.setViewportSize({ width: 760, height: 600 });
+  // 740px 宽视口在 composer 新外侧留白下仍把 harness pane 压到默认锚必溢出左缘；
+  // 每条主题下量浮层边界 ⊆ 面板边界，并量「未收编左缘」作证断言非空转。
+  await page.setViewportSize({ width: 740, height: 600 });
   await stubTauri(page, VAULT);
   await stubHarnessComposer(page);
   await page.goto("/");
@@ -620,10 +649,9 @@ test("ctx hover 泡边界收编：窄面板下完整可见（三主题），不�
         popLeft: c.left,
         popRight: c.right,
         popWidth: c.width,
-        // 未收编默认左缘的**上界** = 读数右缘 + 18px 探出 − 宽度下限 224px（right:-18px 锚的
-        // 算式）。M702 起气泡宽随内容增长（P 档），实际宽度 ≥ 224 ⇒ 实际左缘 ≤ 这个值：
-        // 它小于面板左缘即证明「不收编必越界」，作为复现条件仍然成立（且更保守）。
-        unclampedPopLeft: w.right + 18 - 224,
+        // 未收编默认左缘 = 读数右缘 + 18px 探出 − 当前实际浮层宽（right:-18px 锚）。
+        // 宽度在收编时不改变，因此这是精确反推，不再用 224px 下限估一个上界。
+        unclampedPopLeft: w.right + 18 - c.width,
       };
     });
 
@@ -741,11 +769,11 @@ test("字号是**一套设置**：⌘+/-/0 让编辑器与 harness 面板一起�
       Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--editor-font-size")),
     );
 
-  // 基线：编辑器内容 15px、面板根字号 --fs-ui 13px。
+  // 基线：编辑器内容 15px；refined-rows-720 起 composer 同样为 15px。
   await expect.poll(editorFontPx).toBe(15);
-  await expect.poll(composerFontPx).toBe(13);
+  await expect.poll(composerFontPx).toBe(15);
 
-  // 焦点在 composer：⌘= 同时放大两个内容面（编辑器 15→17；面板 13 × 17/15 ≈ 14.73）。
+  // 焦点在 composer：⌘= 同时放大两个内容面（编辑器 15→17；composer 15 × 17/15 = 17）。
   await composer.click();
   await page.keyboard.press("Meta+=");
   await expect.poll(editorFontPx).toBe(17);
@@ -753,10 +781,10 @@ test("字号是**一套设置**：⌘+/-/0 让编辑器与 harness 面板一起�
   await page.keyboard.press("Meta+=");
   await expect.poll(editorFontPx).toBe(19);
   await expect.poll(composerFontPx).toBeGreaterThan(16);
-  // ⌘0 两个面一起回各自的基线（编辑器回配置字号 15；面板回 --fs-ui 13）。
+  // ⌘0 两个面一起回各自的基线（编辑器回配置字号 15；composer 回 --fs-body 15）。
   await page.keyboard.press("Meta+0");
   await expect.poll(editorFontPx).toBe(15);
-  await expect.poll(composerFontPx).toBe(13);
+  await expect.poll(composerFontPx).toBe(15);
 
   // 焦点在编辑器：结果与焦点无关（M378 的焦点路由已废止）——两个面照样一起变。
   await page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content').click();
@@ -766,7 +794,7 @@ test("字号是**一套设置**：⌘+/-/0 让编辑器与 harness 面板一起�
   // ⌘- 回退：编辑器 17 → 15，面板随缩放比回基线。
   await page.keyboard.press("Meta+-");
   await expect.poll(editorFontPx).toBe(15);
-  await expect.poll(composerFontPx).toBe(13);
+  await expect.poll(composerFontPx).toBe(15);
 });
 
 test("权限规则段滚动条：隐藏档，溢出态下删除钮不被压住（M660 #1 追加）", async ({ page }) => {
