@@ -1,17 +1,17 @@
 # Design: Skill 候选浮层恢复为不透底的浮层面（含 token 引用链静态防线）
 
 > 起草注记（非规格正文）：本 change 是渲染缺陷的合同先行修复
-> （[rendering-defect-contract-first.md](../../../docs/process/rendering-defect-contract-first.md)）。
+> （[rendering-defect-contract-first.md](../../../../docs/process/rendering-defect-contract-first.md)）。
 > 下面依次给：合同条款、不变量、根因与审计证据、判据设计（像素 + 静态防线）、备选方案取舍、
 > 风险与真机复验计划。
 
 ## 1. 合同条款
 
-- [ui-design-system 规格](../../specs/ui-design-system/spec.md)「设计 token 层」：
+- [ui-design-system 规格](../../../specs/ui-design-system/spec.md)「设计 token 层」：
   **浮层壳 SHALL 为 `--preview-bg` + 1px `--border` + `--shadow-raise`**（eink 为白底 + 实心黑框、
   无阴影）；界面样式 SHALL 经 token 引用取值，MUST NOT 引用未登记的 token；旧的 `--bg` 一族
   MUST NOT 以别名形式保留。
-- [design-tokens-v1.md](../../../docs/specs/design-tokens-v1.md) §使用规则 2：同一份浮层壳配方，
+- [design-tokens-v1.md](../../../../docs/specs/design-tokens-v1.md) §使用规则 2：同一份浮层壳配方，
   `--preview-bg` 是 bg 层级最亮档，用来表达「浮层在内容之上」。
 
 ## 2. 不变量（本 change 的判据面）
@@ -162,7 +162,7 @@ dark 档的 `--border` 是 `rgba(255,255,255,.095)` 半透明，边框像素也�
 本 change 的定义面在 chromium 像素层 + Node 静态层；WKWebView 的配色与合成路径不同，需真机确认
 一次：
 
-- 主会话后续批次跑 [验收场景 726](../../../scripts/acceptance/scenarios/726-harness-skill-hybrid-invocation.md)
+- 主会话后续批次跑 [验收场景 726](../../../../scripts/acceptance/scenarios/726-harness-skill-hybrid-invocation.md)
   （Skill 混合调用的真机路径），在候选打开的那一步留截图证据；
 - 核对三主题下候选浮层不透底、候选名的字色与列表其余文字同档（浅色 / 深色 / eink 各一次；切主题
   走真实配置通道）；
