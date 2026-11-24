@@ -291,6 +291,22 @@ m440 / m454 的共同文字区在宽度对齐后为 0 pixelmatch 差异；8 个 
 证据：`review-r1.md` §3、`review-r1-card-widths.log`、`review-r1-card-glyph-pixels.log` 与
 `candidates/outer-width/`。
 
+### 8.5 Alex 批准与落盘记录
+
+Alex 已明确回复「批准排版基线」。授权范围仅为审阅页 20 张：§8.1 七张、§8.2 九张与空态一张、
+§8.4 三张。标准 `--update` 用于既有候选，新增 matrix / empty 仅复制对应获批 PNG；来源 / 目标已逐张
+`cmp` 核对为 20/20 一致，变更文件计数也恰为 20。四张 persistence warning-block 虽被标准更新器触碰，
+已在同一落盘阶段立即还原，不属于获批变化。首次完整 visual 发现警示块被新 composer 外侧合计压缩 16px，
+产品 CSS 已用负 margin 恢复其原有宽度与位置，并仅重截 §8.1 已授权的四张整页；三张 warning-block 元素
+基线再次还原，未扩大文件范围。全部受影响整页已核对新时间戳，§8.3 其他基线未改。
+
+反向验证使用 m351 messages：临时换回旧基线后同用例以 1183 像素差判红，恢复获批图后通过且 SHA 一致；
+没有调容差或扩大更新面。独立 reviewer agent-354 的 verdict 为 clean/merge（除基线裁决项），唯一文字问题
+已修；m440 / m454 的表述统一为「24px 外层宽差与独立 8 个 glyph 色像素，无其他差异」。
+
+真机八场景已 8/8 PASS（132.7s），runner 证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-24-harness-typography/`。
+原始调研的 7/8 PASS、退出码 1 只作历史记录，不覆盖此次结果。
+
 ## 9. 非目标与退路
 
 - 不移动进度区，不重做运行态；后续 `move-harness-progress-to-output-tail-nov23` 负责位置与信息架构。

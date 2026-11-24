@@ -4,8 +4,10 @@
 > 0.6 / 5.2 仅登记已完成的前置修复。已 rebase 到 `origin/master@dd33d1fc`（含 hybrid Skill）。
 > 图片卡 badge 已恢复可见；m440 / m454 的 24px 外层宽差与 8 个 glyph 色像素分别记录。
 > m347 的 19 像素已证明为背景透入，隔离图逐字节一致，改列额外基线裁决项而非产品阻塞。
-> 最终 `gate.sh visual` 已复跑，10 个失败全部落在 §8.1 / §8.2 / §8.4。候选基线必须经 Alex 过目，
-> 未批准不得 `--update` / `--update-snapshots`。八场景真机复跑由主会话串行执行，本实现提交不预写其结果。
+> Alex 已明确回复「批准排版基线」，仅落盘审阅页 20 张并完成来源 / 目标与整页时间戳核对；
+> 反向验证先红后绿且获批图已还原，§8.3 其他基线未改；最终 `GATE RESULT: 15/15 PASS（SKIP 0）`、
+> 退出码 0。真机八场景 8/8 PASS（132.7s），证据
+> `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-24-harness-typography/`。
 > 有序链硬门禁：`fix-harness-approval-visibility-nov23` → 本 change →
 > `move-harness-progress-to-output-tail-nov23`。0.5 / 0.6 未完成时 §1–§7 全部不得施工；
 > 本 change 未归档、基线未批准落盘前，后续尾行 change 同样不得施工。
@@ -26,7 +28,7 @@
 - [x] 0.6 已确认 `test/harness-transcript-time-ax-nov23@ede07e8400f30f6418385ea2718847a02afecaf4`
       合并推送 master：K3 clean/merge，quick `GATE RESULT: 13/13 PASS（SKIP 0）`，docs CI
       `45215746792` success；本 change 只复用，不复制其 `metaLine` 执行器、单测或场景 152 判据
-- [ ] 0.7 归档前核对后续尾行提案已回写承接值：阶段 `--text-2`、净间距公式
+- [x] 0.7 归档前核对后续尾行提案已回写承接值：阶段 `--text-2`、净间距公式
       `calc(var(--sp-2) - var(--sp-8))`、空态四边 `sp-8/sp-8/sp-6/sp-8`、13px/1.58 + `--text-2` +
       24px padding，以及“零漂移只相对排版后 idle 基线”；未回写不得放行后续施工
 
@@ -86,9 +88,9 @@
       86-harness-pane-toggle 97-harness-stream-visible 218-harness-bubble-and-scrollbar
       234-harness-table-horizontal-scroll 152-harness-transcript-link-and-time 72-harness-patch-approve
       711-harness-retry-tools 719-harness-retry-approval` 通过
-- [ ] 5.4 在 152 前置修复合并后真机复跑上述八场景，证据落主仓 `.local/acceptance/`；报告逐场景结果、真实
-      PASS/FAIL 数、断言数与退出码。原始调研证据是 7/8 PASS、退出码 1；前置 152 单场景 PASS（17.5s）
-      不替代本 change 的八场景复验，不得预写或倒填 8/8，若仍有 FAIL 原样保留
+- [x] 5.4 真机八场景已复跑：8/8 PASS、125 断言、132.7s、退出码 0，证据
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-24-harness-typography/`。
+      原始调研的 7/8 PASS、退出码 1 与前置 152 单场景 PASS（17.5s）仅作历史记录，不覆盖此次结果
 
 ## 6. 门禁、基线裁决与证据
 
@@ -97,8 +99,8 @@
       本地像素层，未获 Alex 批准前只保留 actual / candidate，不更新正式基线
 - [x] 6.3 将 design §8.1 的 7 张既有候选与 §8.2 的 9 张新增候选逐张交 Alex；§8.3 的不应变化清单同时
       核对。获得明确批准后才允许统一更新，未批准即保持基线不动并如实报告视觉门禁结果
-- [ ] 6.4 若 Alex 批准基线：统一更新后核对全部受影响整页基线时间戳，复跑视觉门禁；做一次有区分度的
-      反向验证后还原，禁止调容差或零碎更新
+- [x] 6.4 Alex 批准的 20 张已落盘并核对全部整页时间戳；反向验证先红后绿且获批图已还原。
+      最终 `gate.sh visual` 为 `GATE RESULT: 15/15 PASS（SKIP 0）`、退出码 0；未调容差或零碎扩面
 - [x] 6.5 `openspec validate --all --strict`、`bash scripts/docs-check.sh`、`git diff --check` 全部通过；
       日志与关键证据放主仓 `.local/`，不使用会被清理的 worktree 内证据路径
 - [x] 6.6 对账实际改动面、tasks、delta 与证据；确认没有进度区移动、滚动重写、pane/composer 720px 固定宽、

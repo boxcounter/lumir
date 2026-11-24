@@ -2071,7 +2071,8 @@
    独立类，引用失败状态行（.lumir-hp-qc-src）的单行省略形态不受影响。
    eink：tint 按 token 规则退为 transparent，左侧边条仍以结构线宽承担警示。 */
 .lumir-hp-persist-warning {
-  margin: 0 0 var(--sp-2);
+  /* 进入 composer 新 16px 外侧后仍保持警示块既有宽度与位置，不向排版基线扩面。 */
+  margin: 0 calc(-1 * var(--sp-4)) var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
   background: var(--pending-tint);
   color: var(--text);

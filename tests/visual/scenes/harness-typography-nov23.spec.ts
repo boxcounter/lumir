@@ -539,8 +539,5 @@ test("Harness 阅读排版：空态与运行提示只改指定排版并留独立
   await expectContrast(stage, parseColor(await token(page, "--agent-bg", "background-color")), 4.5);
   expect((await style(page.locator(".lumir-hp-progress"))).padding).toBe("0px 8px");
   expect((await style(page.locator(".lumir-hp-bar-fill"))).animationName).toBe("lumir-hp-bar-slide");
-  const candidate = test.info().outputPath("harness-typography-empty-running-candidate.png");
-  await page.locator(".lumir-harness").screenshot({ path: candidate, animations: "disabled" });
-  test.info().annotations.push({ type: "pixel-candidate", description: candidate });
-  console.log(`[pixel-candidate] empty-running -> ${candidate}`);
+  await expectHarnessCandidate(page, "harness-typography-empty-running.png");
 });
