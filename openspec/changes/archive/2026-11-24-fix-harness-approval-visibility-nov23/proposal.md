@@ -294,4 +294,17 @@ transcript 内的输出尾行；它的 design §9.7 已承认「脱离态看不�
 
 ### 归档后
 
-（归档提交后追加：归档提交 hash、包装器输出 / 修链读数、`--archived` PASS 与时间。）
+- **归档提交**：`12a21a972fe0f8e22cb94ddc940504c466a8692c`（2026-11-24）。
+  归档目录：`openspec/changes/archive/2026-11-24-fix-harness-approval-visibility-nov23/`。
+- **包装器输出**：`Change 'fix-harness-approval-visibility-nov23' archived as
+  '2026-11-24-fix-harness-approval-visibility-nov23'`；`harness: update`（1 modified，+0 / ~1 / -0）。
+- **修链**：`归档后修链 0 处（扫过 4 篇 Markdown / 3 条相对链接）`；
+  `openspec-links: PASS（校验 685 条相对链接，全部可达）`；`openspec-archive: PASS`。
+- **`--archived` 审计**：`PASS（openspec/changes/archive/2026-11-24-fix-harness-approval-visibility-nov23：
+  1 条 MODIFIED，对比 5 段；人工恢复 0 段，声明认领 0 段）`，时间 2026-11-24T11:45:11+0800
+  （Asia/Shanghai）。日志
+  `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/approval-visibility-nov24/archive-audit.log`。
+- **归档后 validate**：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`：
+  `38 passed, 0 failed`（归档前为 39；归档后活跃 change 少一条）。
+- 归档后仍保留的链约束：后一环 `move-harness-progress-to-output-tail-nov23` 必须以本归档后的
+  living「进度呈现」为基线整块重抄，并把「滚动区外必须有审批信号」写成不变量。

@@ -211,5 +211,7 @@
 - [x] 8.3 归档时记录链位置：本 change 是前一环；后一环 `move-harness-progress-to-output-tail-nov23`
       必须以本 change 归档后的 living「进度呈现」为基线整块重抄，并把「滚动区外必须有审批信号」
       写成不变量（链位置已记入 proposal 节点 2；后一环未实现，其 tasks 已有硬前置门禁）
-- [ ] 8.4 归档后跑 `node scripts/openspec-archive-check.mjs --archived fix-harness-approval-visibility-nov23`（未做：归档后执行）
+- [x] 8.4 归档后跑 `node scripts/openspec-archive-check.mjs --archived fix-harness-approval-visibility-nov23`
       并取得 PASS，把归档提交 hash、包装器输出、修链读数与审计时间追加进节点 2 块
+      ——归档提交 `12a21a97`；`--archived` PASS（1 条 MODIFIED / 5 段，人工恢复 0），时间
+      2026-11-24T11:45:11+0800；包装器修链 0 处、links PASS；记录见 proposal 节点 2「归档后」
