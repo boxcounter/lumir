@@ -930,7 +930,7 @@ test("待批时切会话：旧会话的待决不进入新视图", async ({ page 
       if (cmd === "harness_resume_session") {
         w.__resumed.push(args.session_id);
         w.__afterResume = true;
-        return { session_token: 2, messages: [] };
+        return { session_token: 2, messages: [], switched: true };
       }
       if (cmd === "harness_state" && w.__afterResume) {
         return JSON.stringify({

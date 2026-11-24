@@ -70,7 +70,7 @@ async function stubHarness(page: Page, assistantText: string): Promise<void> {
         }
         if (cmd === "harness_resume_session") {
           w.__restored = true;
-          return { session_id: "restored-session", restored_items: 2, messages: [] };
+          return { session_id: "restored-session", restored_items: 2, messages: [], switched: true };
         }
         if (cmd === "harness_cron_run") return null;
         if (cmd === "harness_list_sessions") return [];

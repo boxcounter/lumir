@@ -97,6 +97,7 @@ async function stubRace(page: Page, options: RaceStubOptions = {}): Promise<void
       if (!pending) throw new Error(`没有挂起的调用：${name}`);
       delete w.__pending[name];
       if (mode === "reject") pending.reject(error);
+      else if (name === "resume") pending.resolve({ session_token: null, messages: [], switched: true });
       else pending.resolve(null);
     };
     const counts = { send: 0, abort: 0, new: 0, cron: 0, retry: 0, resume: 0, sessionGet: 0 };
@@ -176,7 +177,7 @@ async function stubRace(page: Page, options: RaceStubOptions = {}): Promise<void
         const call = counts.resume;
         counts.resume += 1;
         if (opts.holdResume?.includes(call)) return hold("resume");
-        return { session_token: null, messages: [] };
+        return { session_token: null, messages: [], switched: true };
       }
       if (cmd === "harness_list_sessions") return opts.sessionList ?? [];
       if (cmd === "harness_state") return snapshotFor(w.__root);
@@ -551,7 +552,7 @@ test("cron 结果通知恢复跨 vault：不打开 B 的面板、不清 B 的未
     internals.invoke = async (cmd: string, args: any) => {
       if (cmd === "harness_resume_session") {
         return new Promise((resolve) => {
-          w.__pending.resume = { resolve: () => resolve({ session_token: null, messages: [] }) };
+          w.__pending.resume = { resolve: () => resolve({ session_token: null, messages: [], switched: true }) };
         });
       }
       return original(cmd, args);

@@ -171,6 +171,30 @@ steps:
       has: ["/AXPopUpButton \\(活动排序甲/"]
     timeoutMs: 15000
 
+  - name: 恢复后尚未发送：只有内存 pending，不得出现恢复文件
+    do: settle
+    expect:
+      - label: 查看阶段仍只有四份预置 JSONL
+        glob: { dir: "env:harness/sessions", pattern: "\\.jsonl$", exact: 4 }
+      - label: 查看阶段无恢复临时文件
+        glob: { dir: "env:harness/sessions", pattern: "\\.jsonl\\.tmp$", exact: 0 }
+
+  - name: 点 composer 建立输入焦点
+    do: clickInNode
+    target: { role: AXTextArea, name: "问点什么" }
+  - name: 在 A 的恢复上下文里真实发送首轮
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|活动排序甲续聊" }
+    text: "活动排序甲续聊"
+  - name: 发送
+    do: key
+    key: enter
+  - name: 等 A 的恢复首轮完成（此时才发布恢复文件）
+    do: waitFor
+    waitFor:
+      has: ["验收回答：上下文已收到。"]
+    timeoutMs: 30000
+
   - name: 打开浮层，判恢复行的落位
     do: click
     target: { role: AXPopUpButton, name: "活动排序甲" }
@@ -254,6 +278,27 @@ steps:
     waitFor:
       has: ["/AXPopUpButton \\(活动排序甲/"]
     timeoutMs: 15000
+
+  - name: 第二次查看仍不新增分支文件
+    do: settle
+    expect:
+      - label: 仍只有源 A 与第一个分支等五份 JSONL
+        glob: { dir: "env:harness/sessions", pattern: "\\.jsonl$", exact: 5 }
+  - name: 点 composer 建立输入焦点
+    do: clickInNode
+    target: { role: AXTextArea, name: "问点什么" }
+  - name: 在源 A 的第二分支里真实发送
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|活动排序甲第二分支" }
+    text: "活动排序甲第二分支"
+  - name: 发送
+    do: key
+    key: enter
+  - name: 等第二分支首轮完成（此时才出现第六份文件）
+    do: waitFor
+    waitFor:
+      has: ["验收回答：上下文已收到。"]
+    timeoutMs: 30000
 
   - name: 打开浮层，判分叉行数
     do: click

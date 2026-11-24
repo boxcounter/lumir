@@ -168,6 +168,7 @@ async function stubHealth(page: Page, options: HarnessStubOptions = {}): Promise
             restored_items: 0,
             messages: [],
             session_token: opts.resumeSessionToken ?? 0,
+            switched: true,
           };
         }
         w.__resumeStarted = true;
@@ -179,6 +180,7 @@ async function stubHealth(page: Page, options: HarnessStubOptions = {}): Promise
               restored_items: 0,
               messages: [],
               session_token: opts.resumeSessionToken ?? 0,
+              switched: true,
             });
           };
         });

@@ -53,6 +53,7 @@ import {
   waitUntil,
 } from "./drive.mjs";
 import { envHome, envRelPath, InfraError, mkdirp, readText, repoRoot, secondVaultDir, sleep, vaultDir } from "./util.mjs";
+import { applyEnvChmod, restoreEnvChmods, validateEnvChmod } from "./env-chmod.mjs";
 import { waitReady, sendCommand, waitReport, writeImeReport } from "./ime-driver.mjs";
 import { IME_CASES, IME_CASE_NAMES } from "../driver/ime-cases.mjs";
 
@@ -152,7 +153,7 @@ export const ACTIONS = new Set([
   "settle", "waitFor", "sleep", "key", "keys", "type", "typeInNode", "click", "clickNodeText", "clickInNode", "clickEditor",
   "doubleClick", "drag", "hover", "scroll", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor",
   "vaultWrite", "vaultAppend", "vaultRm", "vaultSparse", "resizeWindow", "clipboardRead",
-  "clipboardImage", "clipboardText", "note", "migrateHarnessSessions", "invalidate", "envWrite", "mockFill",
+  "clipboardImage", "clipboardText", "note", "migrateHarnessSessions", "invalidate", "envWrite", "envChmod", "mockFill",
   "waitForNotification", "clickNotification", "openNotificationCenter", "closeNotificationCenter",
   // 退出后点击（change add-cron-notification-relaunch）：正常退出 + 按 bundle id 重新附着 +
   // 改 cron-state.json 的现场（跨天 / 台账外 id / 快照会话三条判据都要它）。
@@ -670,6 +671,13 @@ export function checkScenario(scenario) {
     const at = `steps[${i}]${step.name ? `(${step.name})` : ""}`;
     if (!step.name) push(`${at} 缺少 name`);
     if (step.do !== undefined && !ACTIONS.has(step.do)) push(`${at} 未知动作 do=${step.do}`);
+    if (step.do === "envChmod") {
+      try {
+        validateEnvChmod(step);
+      } catch (error) {
+        push(`${at} ${error.message}`);
+      }
+    }
     if (step.do === "imeDrive") {
       const spec = step.ime;
       if (!isPlainTable(spec)) {
@@ -3130,6 +3138,13 @@ export async function runScenario(ctx, scenario) {
     const ax = await readAx(cu, ctx.pid).catch(() => null);
     await fail(`[场景异常] ${e.message}`, String(e.stack ?? "").split("\n").slice(1, 3).join(" | "), ax);
   } finally {
+    try {
+      restoreEnvChmods();
+    } catch (error) {
+      evidence.record({ kind: "assert", ok: false, label: "[运行环境无效] envChmod 复位", detail: error.message });
+      evidence.statusOverride = "INVALID";
+      throw new InfraError(error.message);
+    }
     const fails = evidence.records.filter((r) => r.kind === "assert" && !r.ok);
     if (fails.length && /未取得|中途丢失/.test(ctx.foregroundNote ?? "")) {
       evidence.record({
@@ -4960,6 +4975,10 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       }
       await writeFile(target, replaced);
       return `${runId} → ${rel}`;
+    }
+    case "envChmod": {
+      const target = applyEnvChmod(step);
+      return `${target} → ${step.mode}`;
     }
     case "envWrite": {
       // 隔离配置目录下的写入（change add-harness-subagents §8.4 的现场需要：用户级子代理定义

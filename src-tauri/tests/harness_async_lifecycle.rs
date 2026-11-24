@@ -338,7 +338,7 @@ fn stop_targets_only_the_inflight_vault_turn() {
     );
     assert_eq!(
         runtime
-            .resume_session(&scope_a, &config, "20260101-000000-abcdef")
+            .resume_session(&scope_a, &config, "s20260101-abcdef")
             .unwrap_err()
             .code,
         "harness_busy"

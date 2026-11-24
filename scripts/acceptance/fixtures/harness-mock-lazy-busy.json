@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "responses": [
+    { "text": "BUSY-BASE", "usage": { "input_tokens": 100, "cached_tokens": 0, "output_tokens": 1 } },
+    { "text": "BUSY-SLOW", "delay_ms": 12000, "usage": { "input_tokens": 100, "cached_tokens": 0, "output_tokens": 1 } }
+  ]
+}

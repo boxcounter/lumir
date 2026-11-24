@@ -1,0 +1,6 @@
+{"ts":200000,"payload":{"kind":"session_open","session_id":"s200000-lazy-b","vault_root":"$vault","opened_from":"new","provider":"mock","model":"mock-model","thinking":"high","system":"S","assembly":[]}}
+{"ts":200001,"payload":{"kind":"llm_request","request":{"system":"S","messages":[{"role":"user","content":[{"type":"input_text","text":"乙问题"}]}]}}}
+{"ts":200002,"payload":{"kind":"llm_response","text":"乙回答"}}
+{"ts":200003,"payload":{"kind":"session_title","title":"查看乙","decision":"initial","reason":"first-turn"}}
+{"ts":200004,"payload":{"kind":"subrun","run_id":"run-lazy-b","agent":"research","description":"乙后台任务","status":"completed","model":"mock-model","usage":{"input_tokens":1,"cached_tokens":0,"output_tokens":1}}}
+{"ts":200005,"payload":{"kind":"notice_delivered","run_ids":["run-lazy-b"],"wake_batch":"batch-lazy-b","shown_at":200005}}

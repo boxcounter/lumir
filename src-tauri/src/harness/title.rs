@@ -1921,6 +1921,14 @@ mod tests {
         .unwrap();
 
         runtime.resume_session(&scope, &config, source_id).unwrap();
+        runtime
+            .with_session(&scope, |session| {
+                session.jsonl().record(&serde_json::json!({
+                    "kind": "llm_request",
+                    "request": {"system": "S", "messages": [message("user", "续聊")]}
+                }));
+            })
+            .unwrap();
         let (title, path) = runtime
             .with_session(&scope, |s| {
                 (

@@ -4,12 +4,11 @@
 - 日期: 2026-11-24
 - 角色: Alex Lee（缺陷报告、节点 1 裁决），AI agent（诊断与起草）
 
-> **节点状态**：节点 1 **待评审闭合**；闭合前不进入实现，评审问题不因 D1 已裁决而关闭。
+> **节点状态**：节点 1 已闭合，独立评审 r4 clean / ready-for-Alex；自动化实现完成、待真机验收。
 > 2026-11-24 Alex 已对 D1 裁决「采用这个。」——采用 A（首次发布失败仍允许本轮对话继续、
 > 初始记录内存缓冲、同一 session id / token 重试）。D1 之外的方向按本需求的直接约束处理。
-> 独立评审 r1（agent-361，绑定 tip `604660d7`）判 needs-changes；r2（绑定 `6fe5007c`）仍判
-> needs-changes（compact 双调用点、provider 后置失败两态、术语残留三组 P2）。本版已按其修订，
-> 待 r3 复审（闭合映射见文末「评审闭合」）。
+> 独立评审 r1（agent-361，绑定 tip `604660d7`）与 r2（绑定 `6fe5007c`）判 needs-changes；
+> 制品修订后，r4 已 clean / ready-for-Alex。
 > 本提案只改制品：不改 living spec、不改产品代码、不改测试代码、不改 `docs/backlog.md`。
 
 ## Why

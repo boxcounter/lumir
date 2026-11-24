@@ -757,9 +757,9 @@ export function harnessListSessions(): Promise<SessionSummary[]> {
  * 从留存文件恢复历史会话并续聊（M392，change reshape-harness-session-recording design §6.2）：
  * `session_id` 是 `sessions/<vault 稳定 id>/<id>.jsonl` 的文件名。后端读源文件最后一条会话轮次
  * `llm_request` 的完整请求体（折叠其后未入请求的末尾响应），system + input 原样灌进
- * **新**会话并续写新留存文件（`opened_from=restore`）。返回的 `SessionResumeInfo.messages`
- * 是后端把灌回的 input 映射成的**面板重建消息**（M398）——调用方（src/harness-panel.ts 的
- * resumeSession）据此一次重放历史 transcript，不必再拉 `harness_state`。busy 态 reject
+ * **新**内存会话；首次真实请求才发布新留存文件（`opened_from=restore`）。返回的
+ * `SessionResumeInfo.messages` 是后端把灌回的 input 映射成的**面板重建消息**（M398）——
+ * `switched=false` 时为空，调用方不得重放。busy 下仅当前文件直切成功；真正切换时 busy reject
  * `harness_busy`；源文件不属于当前 vault reject
  * `harness_session_vault_mismatch`；留存不可读 / 格式非法 reject `harness_session_unreadable` /
  * `harness_session_invalid`（D409–D411 经 src/copy.ts 的 errorText 按 code 渲染）。

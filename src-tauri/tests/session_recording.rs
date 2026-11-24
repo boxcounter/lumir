@@ -608,7 +608,8 @@ fn resume_rebuilds_session_and_continues_in_new_file() {
         expected.push(item);
     }
 
-    // 恢复：新会话 id 立即给出；新文件惰性——首条记录时才创建。
+    // 恢复：先离开当前文件；新会话 id 立即给出，文件随首次真实请求发布。
+    runtime.new_session(&f.scope()).unwrap();
     let info = runtime
         .resume_session(&f.scope(), &config, &source_id)
         .expect("恢复成功");
@@ -766,6 +767,7 @@ fn resume_folds_trailing_response_with_dangling_tool_calls() {
     );
 
     let source_id = jsonl::JsonlWriter::session_id_from_path(&files[0]).unwrap();
+    runtime.new_session(&f.scope()).unwrap();
     let info = runtime
         .resume_session(&f.scope(), &config, &source_id)
         .expect("恢复成功");
@@ -1253,7 +1255,8 @@ fn resumed_session_is_listable_with_first_user_text() {
     assert_eq!(list[0].first_user_text.as_deref(), Some(QUOTE_MESSAGE_NAME));
     assert!(list[0].ts.is_some());
 
-    // 恢复 + 续聊一轮：新文件随首条记录创建，恢复出的会话随即出现在列举里。
+    // 离开当前文件后恢复 + 续聊一轮：首次真实请求发布，恢复出的会话随即出现在列举里。
+    runtime.new_session(&f.scope()).unwrap();
     let info = runtime
         .resume_session(&f.scope(), &config, &source_id)
         .unwrap();
@@ -1627,8 +1630,9 @@ fn restored_responses_session_translates_to_chat_messages() {
         "mock 档也记录缺省方言（字段不缺席）"
     );
 
-    // ② 以 chat 方言恢复：新文件首行记录**当前**方言（恢复充分性的推导依据）。
+    // ② 离开当前文件后以 chat 方言恢复：新文件首行记录**当前**方言（恢复充分性的推导依据）。
     let chat = kimi_chat_config();
+    runtime.new_session(&f.scope()).unwrap();
     let info = runtime
         .resume_session(&f.scope(), &chat, &source_id)
         .expect("恢复成功");
@@ -2277,6 +2281,7 @@ fn retry_session_recovers_to_one_user_and_one_answer() {
         &mut client,
     );
     runtime.release_turn(&f.scope());
+    runtime.new_session(&f.scope()).unwrap();
     let info = runtime
         .resume_session(
             &f.scope(),
