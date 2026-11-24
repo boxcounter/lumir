@@ -67,6 +67,12 @@ steps:
       - label: 盘上恢复原始字节
         file: { path: links-wiki.md, exact: "[[plain]]\n\n第二段内容。\n" }
 
+  # 两次 ⌘S 合法推进 mtime；后续纯手势只能与「恢复原文并保存后」的基线比较。
+  - name: 记录非编辑手势的新基线
+    do: record
+    file: links-wiki.md
+    as: 手势基线
+
   - name: 移出 span 后恢复 widget
     do: key
     key: "ctrl+e"
@@ -76,7 +82,7 @@ steps:
       - label: 离开后源码重新隐藏
         editor: { not: "[[plain]]" }
       - label: 离开与恢复不写盘
-        file: { path: links-wiki.md, unchangedSince: wikilink 基线, mtimeUnchangedSince: wikilink 基线 }
+        file: { path: links-wiki.md, unchangedSince: 手势基线, mtimeUnchangedSince: 手势基线 }
 
   - name: 无修饰主键点击 widget 只进入源码、不跳转
     do: clickEditor
@@ -90,7 +96,7 @@ steps:
       - label: 未打开目标文件
         editor: { not: "纯文本基线" }
       - label: 点击本身不写盘
-        file: { path: links-wiki.md, unchangedSince: wikilink 基线, mtimeUnchangedSince: wikilink 基线 }
+        file: { path: links-wiki.md, unchangedSince: 手势基线, mtimeUnchangedSince: 手势基线 }
 
   - name: 回到渲染态，准备修饰键矩阵
     do: key
@@ -103,18 +109,18 @@ steps:
 
   - name: Ctrl-Click 不激活、不先进入编辑
     do: click
-    target: { role: "AXStaticText", name: "plain", modifiers: ["control"] }
+    target: { role: "AXTextArea", name: "plain", dx: 0.0658, dy: 0.0096, modifiers: ["control"] }
     expect:
       - label: 仍在源文档且 widget 未撤下
         editor: { not: "[[plain]]" }
       - label: 没有跳转目标或新建提示
         ax: { not: "/纯文本基线|未创建的链接/" }
       - label: 文档字节不变
-        file: { path: links-wiki.md, unchangedSince: wikilink 基线, mtimeUnchangedSince: wikilink 基线 }
+        file: { path: links-wiki.md, unchangedSince: 手势基线, mtimeUnchangedSince: 手势基线 }
 
   - name: Shift-Click 不先进入编辑或触发跳转
     do: click
-    target: { role: "AXStaticText", name: "plain", modifiers: ["shift"] }
+    target: { role: "AXTextArea", name: "plain", dx: 0.0658, dy: 0.0096, modifiers: ["shift"] }
     expect:
       - label: widget 保持渲染态
         editor: { not: "[[plain]]" }
@@ -123,18 +129,18 @@ steps:
 
   - name: Alt-Click 不先进入编辑或触发跳转
     do: click
-    target: { role: "AXStaticText", name: "plain", modifiers: ["alt"] }
+    target: { role: "AXTextArea", name: "plain", dx: 0.0658, dy: 0.0096, modifiers: ["alt"] }
     expect:
       - label: widget 保持渲染态
         editor: { not: "[[plain]]" }
       - label: 无跳转或提示
         ax: { not: "/纯文本基线|未创建的链接/" }
       - label: 三类修饰手势均未写盘
-        file: { path: links-wiki.md, unchangedSince: wikilink 基线, mtimeUnchangedSince: wikilink 基线 }
+        file: { path: links-wiki.md, unchangedSince: 手势基线, mtimeUnchangedSince: 手势基线 }
 
   - name: Meta-Click 沿用既有链接跟随
     do: click
-    target: { role: "AXStaticText", name: "plain", modifiers: ["meta"] }
+    target: { role: "AXTextArea", name: "plain", dx: 0.0658, dy: 0.0096, modifiers: ["meta"] }
     expect:
       - label: 打开既有目标笔记
         editor: { has: "纯文本基线" }
@@ -146,4 +152,4 @@ steps:
 
 只读三态 widget 的入口由同一 visual 文件中的真实 `EditorState.readOnly` 编辑器 fixture 覆盖。vault 外只读文档按既有合同不注入 wikilink resolver，真机应用内没有「只读 + 三态 replace widget」的装配路径；本场景不把 vault 外的纯原文降级形态冒充该防线。
 
-执行边界：场景会写合成 vault 的 `links-wiki.md`，并在结尾前保存回原始字节；不触碰真实 vault。修饰键点击使用套件的真实 CGEvent 通道，需要主窗口在前台。精确指针拖选不在真机重复建设。
+执行边界：场景会写合成 vault 的 `links-wiki.md`，并在结尾前保存回原始字节；不触碰真实 vault。两次显式 ⌘S 合法推进 mtime，因此恢复原文后另记「手势基线」，后续非编辑步骤仍同时断言哈希与 mtime 不变。修饰键点击使用套件的真实 CGEvent 通道，需要主窗口在前台；WKWebView 不给 inline widget 的 `AXStaticText` 配 bbox，故定位取唯一 `AXTextArea` 的 bbox，dx=50/760、dy=6/624，与普通点击的 (dx=50, dy=6) 落点相同。精确指针拖选不在真机重复建设。

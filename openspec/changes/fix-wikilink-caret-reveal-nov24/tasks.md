@@ -28,5 +28,5 @@
 ## 4. 验证与归档
 
 - [x] 4.1 前端 unit、相关 visual 与 `scripts/gate.sh visual` 通过；不未经 Alex 过目更新像素基线。
-- [ ] 4.2 真机验收场景通过，证据落 `.local/acceptance/`；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过。
+- [x] 4.2 真机验收场景通过，证据落 `.local/acceptance/`；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过。
 - [ ] 4.3 独立 reviewer clean/merge、节点 2 五要件与归档跟踪记录齐备后独立归档；提交归档结果且 `--archived fix-wikilink-caret-reveal-nov24` PASS，不设置 B 的归档先后门禁。
