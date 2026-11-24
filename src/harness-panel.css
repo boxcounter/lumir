@@ -2743,7 +2743,7 @@
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--r6);
-  background: var(--bg-raise, var(--bg));
+  background: var(--preview-bg);
   box-shadow: var(--shadow-raise);
   font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
 }
