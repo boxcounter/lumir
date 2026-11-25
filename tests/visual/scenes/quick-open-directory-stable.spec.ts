@@ -274,10 +274,10 @@ for (const theme of ["light", "dark", "eink"] as const) {
     await reviewShot(page, theme, "empty-query");
     const states = [
       { name: "zero-match", raw: "ghost" },
-      { name: "one-direct-and-candidate", raw: "notes/plan.md" },
+      { name: "one-exact-path-candidate", raw: "notes/plan.md", noDirect: true },
       { name: "many-candidates", raw: "bulk" },
       { name: "directory-pending", raw: "notes/" },
-      { name: "async-line-suffix", raw: "notes/plan.md:12" },
+      { name: "async-line-suffix", raw: "notes/plan.md:12", noDirect: true },
       { name: "long-chinese-directory", raw: `${CN_DIR}/` },
       { name: "external-directory", raw: "/tmp/external/" },
       { name: "empty-directory", raw: "empty/" },
@@ -286,6 +286,7 @@ for (const theme of ["light", "dark", "eink"] as const) {
     for (const state of states) {
       await fill(page, state.raw);
       await page.waitForTimeout(180);
+      if (state.noDirect === true) await expect(page.locator(".lumir-qo-direct")).toHaveCount(0);
       expect(await inputRect(page), `状态 ${state.raw} 移动了输入框`).toEqual(baseline);
       await expectOverlayInsideViewport(page);
       await reviewShot(page, theme, state.name);
@@ -335,8 +336,9 @@ test("O7 高度分布：空查询与单候选在可用高度足够时为六行�
     }
 
     await fill(page, "notes/plan.md");
-    await expect(page.locator(".lumir-qo-direct")).toBeVisible();
+    await expect(page.locator(".lumir-qo-direct")).toHaveCount(0);
     await expect(page.locator(".lumir-qo-item")).toHaveCount(1);
+    await expect(page.locator(".lumir-qo-item")).toHaveClass(/is-active/);
     const oneHeight = (await page.locator(".lumir-qo-list").boundingBox())!.height;
     if (height >= 320) expect(oneHeight, `${height}px 单候选应保留六行`).toBeCloseTo(164, 0);
     else expect(oneHeight).toBeLessThan(164);

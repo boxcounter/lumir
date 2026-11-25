@@ -29,6 +29,43 @@ steps:
     expect:
       - label: 输入框持焦
         ax: { has: "/AXComboBox \\(按路径快速打开文件\\)/" }
+  - name: 输入外部精确文件路径，不显示 direct action 伪候选
+    do: typeInNode
+    target: { role: AXComboBox, name: "按路径快速打开文件|$vault2" }
+    text: "$vault2/root.md"
+    expect:
+      - label: 不显示 vault 内 direct action 文案
+        ax: { not: "按 Enter 打开" }
+      - label: 不显示外部 direct action 文案
+        ax: { not: "按 Enter 只读打开" }
+      - label: 保留通用帮助而不新增相似提示
+        ax: { has: "输入路径或文件名；可加 :12 这样的行号后缀" }
+      - shot: 01-外部精确路径无伪候选
+  - name: Enter 仍直接只读打开外部精确路径
+    do: key
+    key: enter
+  - name: 等外部精确文件装载
+    do: waitFor
+    waitFor:
+      has: ["QO-874-ROOT"]
+    timeoutMs: 15000
+  - name: 外部精确文件直接打开能力未删除
+    do: settle
+    expect:
+      - label: 外部文件经既有只读链打开
+        ax: { has: "vault 外 · 只读" }
+      - label: 文档内容来自第二合成 vault 根文件
+        editor: { has: "QO-874-ROOT" }
+      - label: 标签读屏名带只读标记
+        ax: { has: "root.md（vault 外只读）" }
+  - name: 焦点在编辑器，重新打开 Quick Open
+    do: clickEditor
+  - name: 按 ⌘P 准备目录验收
+    do: keys
+    keys: ["cmd+p"]
+    expect:
+      - label: 输入框持焦
+        ax: { has: "/AXComboBox \\(按路径快速打开文件\\)/" }
   - name: 输入外部绝对目录（显式尾斜杠）
     do: typeInNode
     target: { role: AXComboBox, name: "按路径快速打开文件|$vault2" }
@@ -36,6 +73,8 @@ steps:
     expect:
       - label: 直接子文件与直接子目录出现，子目录带尾斜杠
         ax: { has: "$vault2/sub/" }
+      - label: 目录语境也不显示 direct action 文案
+        ax: { not: "按 Enter 打开" }
       - label: 深层文件不得出现在根层候选
         ax: { not: "QO-874-CHILD-READONLY" }
       - label: 深层文件路径不得出现在根层候选
@@ -48,7 +87,7 @@ steps:
           minWidth: 280
           minHeight: 18
           record: qo-874-input
-      - shot: 01-外部目录两项候选
+      - shot: 02-外部目录两项候选
 
   - name: 切到不存在的外部目录，形成零候选与长提示
     do: keys
@@ -64,7 +103,7 @@ steps:
         geom:
           target: { role: AXComboBox, name: "按路径快速打开文件" }
           unchangedSince: qo-874-input
-      - shot: 02-零候选长提示
+      - shot: 03-零候选长提示
 
   - name: 返回外部根目录
     do: keys
@@ -95,7 +134,7 @@ steps:
         geom:
           target: { role: AXComboBox, name: "按路径快速打开文件" }
           unchangedSince: qo-874-input
-      - shot: 03-进入外部子目录
+      - shot: 04-进入外部子目录
 
   - name: 记录外部文件字节与 mtime 基线
     do: record
@@ -137,4 +176,4 @@ steps:
         ax: { not: "尚未可保存" }
 ---
 
-本场景只写第二合成 vault `/tmp/lumir-m102-acceptance-b`。根层有两项、缺失目录零项、子目录一项；根层候选不得出现 `sub/child.md`，证明没有递归。`geom.record` 与 `geom.unchangedSince` 在 0/1/2 候选和长提示之间逐值比较输入框 bbox，缺基线或 bbox 都 FAIL。精确宽度、三主题、100 条截断、pending/迟到与 resize 由 Chromium 矩阵承担；本场景不宣称覆盖这些读数。真机执行留待窗口空闲后由主会话串行。
+本场景只写第二合成 vault `/tmp/lumir-m102-acceptance-b`。先证明外部精确文件路径不显示 direct action、保留通用帮助且 Enter 仍能只读打开，再验根层两项、缺失目录零项、子目录一项；根层候选不得出现 `sub/child.md`，证明没有递归。`geom.record` 与 `geom.unchangedSince` 在 0/1/2 候选和长提示之间逐值比较输入框 bbox，缺基线或 bbox 都 FAIL。精确宽度、三主题、100 条截断、pending/迟到与 resize 由 Chromium 矩阵承担；本场景不宣称覆盖这些读数。真机执行留待窗口空闲后由主会话串行。

@@ -15,8 +15,6 @@ import {
   lookupVaultPath,
   normalizeQuickOpenInput,
   quickOpenAttempts,
-  quickOpenDirectExternalText,
-  quickOpenDirectText,
   quickOpenDirectoryHint,
   resolveQuickOpen,
   resolveQuickOpenSync,
@@ -499,20 +497,6 @@ test("行展示：根目录文件没有目录前缀；vault 外绝对路径的�
     name: "draft.md",
     suffix: "",
   });
-});
-
-test("行展示：直接打开行动作前缀与路径分离（两种语言模板都按实际位置切）", () => {
-  const path = "notes/2026/projects/lumir/weekly-notes.md";
-  const zh = splitPathRowText(quickOpenDirectText(path), path);
-  assert.equal(zh.prefix, "按 Enter 打开 ");
-  assert.equal(zh.dirs, "notes/2026/projects/lumir/");
-  assert.equal(zh.name, "weekly-notes.md");
-  assert.equal(zh.suffix, "");
-  // 拼接回原文：拆分的唯一语义是收缩次序，文本不变。
-  assert.equal(zh.prefix + zh.dirs + zh.name + zh.suffix, quickOpenDirectText(path));
-  const en = splitPathRowText(quickOpenDirectExternalText(path), path);
-  assert.equal(en.prefix + en.dirs + en.name + en.suffix, quickOpenDirectExternalText(path));
-  assert.equal(en.name, "weekly-notes.md");
 });
 
 test("行展示：文本里没有路径 ⇒ 整段作前缀，不抛错、不猜位置", () => {
