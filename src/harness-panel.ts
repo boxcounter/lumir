@@ -139,7 +139,9 @@ import {
 } from "./harness-context";
 import type { HarnessContextBlock, HarnessContextSource } from "./harness-context";
 import { createHarnessDraftStore } from "./harness-draft";
-import { moveSkillHighlight, openSkillMenu, skillMenuNavigationDelta, skillSelectionSpec, skillTokenAt } from "./skill-menu";
+import { hoverSkillHighlight, moveSkillHighlight, skillMenuNavigationDelta, skillSelectionSpec, skillTokenAt, syncSkillMenuState } from "./skill-menu";
+import { revealElementWithin } from "./selector-reveal";
+import { scheduleCompositionSettle, cancelCompositionSettle } from "./composition-settle";
 import type { SkillMenuState } from "./skill-menu";
 import { skillCatalogRefreshEffect, skillChips } from "./skill-chips";
 import type { SkillSummary } from "./bindings/SkillSummary";
@@ -4434,6 +4436,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     skillMenuState = null;
     skillMenuEl.hidden = true;
     skillMenuEl.replaceChildren();
+    skillMenuEl.removeAttribute("data-armed");
     unregisterEscapeLayer("harness-skill-menu");
     composerView?.contentDOM.removeAttribute("aria-activedescendant");
   }
@@ -4452,6 +4455,20 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     skillCatalogEpoch += 1;
   }
 
+  /** 候选盒的垂直夹取宿主要是**面板**（`.lumir-harness`，它才是 `overflow: hidden` 的裁切者），
+   *  不是 composer 区；允许向上覆盖 transcript。 */
+  const SKILL_MENU_MAX_HEIGHT = 200;
+  const SKILL_MENU_PANEL_MARGIN = 8;
+
+  /** 真实可见带 = menuRect ∩ panelRect ∩ viewport（合同 selector-contract C2）。
+   *  菜单自身的 `clientHeight` 看不见祖先裁切——用它当视口会让「盒内、屏外」的项被判为可见。 */
+  function skillMenuClip(menuRect: DOMRect, panelRect: DOMRect): { top: number; bottom: number } {
+    return {
+      top: Math.max(menuRect.top, panelRect.top, 0),
+      bottom: Math.min(menuRect.bottom, panelRect.bottom, window.innerHeight),
+    };
+  }
+
   function updateSkillMenuHighlight(): void {
     const state = skillMenuState;
     if (state === null) return;
@@ -4461,27 +4478,32 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       option.classList.toggle("is-selected", selected);
       option.setAttribute("aria-selected", String(selected));
     });
-    if (highlighted === null) composerView.contentDOM.removeAttribute("aria-activedescendant");
-    else composerView.contentDOM.setAttribute("aria-activedescendant", `lumir-hp-skill-option-${highlighted}`);
-    placeSkillMenu();
-    if (highlighted !== null) {
-      const option = skillMenuEl.children[highlighted] as HTMLElement | undefined;
-      if (option !== undefined) {
-        const menuRect = skillMenuEl.getBoundingClientRect();
-        const optionRect = option.getBoundingClientRect();
-        const viewportTop = menuRect.top + skillMenuEl.clientTop;
-        const viewportBottom = viewportTop + skillMenuEl.clientHeight;
-        if (optionRect.top < viewportTop) skillMenuEl.scrollTop += optionRect.top - viewportTop;
-        else if (optionRect.bottom > viewportBottom) skillMenuEl.scrollTop += optionRect.bottom - viewportBottom;
-      }
-    }
+    skillMenuEl.dataset.armed = state.armed ? "true" : "false";
+    composerView.contentDOM.setAttribute("aria-activedescendant", `lumir-hp-skill-option-${highlighted}`);
+    const clip = placeSkillMenu();
+    const option = skillMenuEl.children[highlighted] as HTMLElement | undefined;
+    if (clip !== null && option !== undefined) revealElementWithin(skillMenuEl, option, clip);
   }
 
   function highlightSkillMenuItem(index: number): void {
-    if (skillMenuState === null || skillMenuState.highlighted === index) return;
-    skillMenuState = { ...skillMenuState, highlighted: index };
+    if (skillMenuState === null) return;
+    const hovered = hoverSkillHighlight(skillMenuState, index);
+    if (hovered === skillMenuState) return;
+    skillMenuState = hovered;
     updateSkillMenuHighlight();
   }
+
+  /** 指针选意只认**真实指针移动**（`mousemove`），不认 `mouseenter`：揭示滚动会把另一行搬到
+   *  静止指针下面，`mouseenter` 会在那一刻改掉键盘刚选中的游标（合同 C6「hover 不得抹掉游标」）。
+   *  整表只挂一个监听，option 重建时不重复注册。 */
+  skillMenuEl.addEventListener("mousemove", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const option = target.closest(".lumir-hp-skill-option");
+    if (option === null) return;
+    const index = Array.from(skillMenuEl.children).indexOf(option);
+    if (index >= 0) highlightSkillMenuItem(index);
+  });
 
   function renderSkillMenu(): void {
     const state = skillMenuState;
@@ -4505,8 +4527,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       description.textContent = item.description;
       option.append(name, description);
       option.addEventListener("mousedown", (event) => event.preventDefault());
-      option.addEventListener("mouseenter", () => highlightSkillMenuItem(index));
-      option.addEventListener("click", () => selectSkillMenuItem());
+      option.addEventListener("click", () => selectSkillMenuItem(index));
       skillMenuEl.append(option);
     });
     updateSkillMenuHighlight();
@@ -4518,11 +4539,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     updateSkillMenuHighlight();
   }
 
-  function placeSkillMenu(): void {
-    if (skillMenuState === null || !isLayoutCapable(skillMenuEl)) return;
+  function placeSkillMenu(): { top: number; bottom: number } | null {
+    const state = skillMenuState;
+    if (state === null || !isLayoutCapable(skillMenuEl)) return null;
     const caret = composerView.coordsAtPos(composerView.state.selection.main.head);
     const host = composerArea.getBoundingClientRect();
-    if (caret === null) return;
+    const panelRect = panel.getBoundingClientRect();
+    if (caret === null) return null;
     const fontSize = overlayFontSize(skillMenuEl);
     const avail = Math.max(0, host.width - 16);
     const width = placeOverlay({
@@ -4537,13 +4560,21 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       preferred: "left",
     });
     skillMenuEl.style.width = `${width.width}px`;
-    const estimatedHeight = Math.min(6, skillMenuState.items.length) * 32 + 8;
-    const below = caret.bottom + 4;
-    const top = below + estimatedHeight <= host.bottom
-      ? below
-      : Math.max(host.top + 8, caret.top - estimatedHeight - 4);
     skillMenuEl.style.left = `${width.left - host.left}px`;
-    skillMenuEl.style.top = `${top - host.top}px`;
+
+    // 盒先归位再谈揭示：菜单只能往上覆盖 transcript，不能被 composer 区或面板裁掉。
+    // 面板高度不足时收缩 max-height（CSS 的 200px 是上限，不是保证）。
+    const limitTop = Math.max(panelRect.top, 0) + SKILL_MENU_PANEL_MARGIN;
+    const limitBottom = Math.min(panelRect.bottom, window.innerHeight) - SKILL_MENU_PANEL_MARGIN;
+    const capacity = Math.max(0, limitBottom - limitTop);
+    skillMenuEl.style.maxHeight = capacity < SKILL_MENU_MAX_HEIGHT ? `${capacity}px` : "";
+    // 行高随 --lumir-hp-scale 变，用实测高度而不是 32px 的估算（同一语义不留第二处真源）。
+    const height = skillMenuEl.getBoundingClientRect().height;
+    const below = caret.bottom + 4;
+    const top = below + height <= limitBottom ? below : caret.top - height - 4;
+    const clamped = Math.min(Math.max(top, limitTop), Math.max(limitTop, limitBottom - height));
+    skillMenuEl.style.top = `${clamped - host.top}px`;
+    return skillMenuClip(skillMenuEl.getBoundingClientRect(), panelRect);
   }
 
   function syncSkillMenu(forceCatalog = false, fromCatalog = false): void {
@@ -4569,7 +4600,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (forceCatalog || newToken) {
       refreshSkillCatalog(true);
     }
-    skillMenuState = openSkillMenu(
+    skillMenuState = syncSkillMenuState(
+      skillMenuState,
       composerView.state.doc.toString(),
       composerView.state.selection.main.head,
       skillCatalog ?? [],
@@ -4595,7 +4627,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     });
   }
 
-  function selectSkillMenuItem(): void {
+  function selectSkillMenuItem(index?: number): void {
+    if (skillMenuState === null) return;
+    if (index !== undefined) {
+      // 指针点击本身就是显式选择：同一次动作里先武装游标，再走与键盘同一个接受路径。
+      const next = hoverSkillHighlight(skillMenuState, index);
+      if (next !== skillMenuState) {
+        skillMenuState = next;
+        updateSkillMenuHighlight();
+      }
+    }
     if (skillMenuState === null) return;
     const selected = skillSelectionSpec(composerView.state.doc.toString(), skillMenuState);
     if (selected === null) return;
@@ -10396,7 +10437,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       return;
     }
     if (mod) return;
-    if (skillMenuState !== null && skillMenuState.highlighted !== null &&
+    if (skillMenuState !== null && skillMenuState.armed &&
         (event.key === "Enter" || event.key === "Tab")) {
       event.preventDefault();
       selectSkillMenuItem();
@@ -10409,6 +10450,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }, true);
   composer.addEventListener("compositionstart", () => {
+    cancelCompositionSettle(composerView, "skill-menu");
     closeSkillMenu();
     (composerView as unknown as { measure(): void }).measure();
     imeGateState = imeGateCompositionStart(imeGateState);
@@ -10416,6 +10458,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   composer.addEventListener("compositionend", () => {
     imeGateState = imeGateCompositionEnd(imeGateState, Date.now());
     composerIme.compositionEnd(viewGeneration);
+    // 组合结束后按**最终文档**重算一次：组合期的同步一律关候选，提交事务到达时
+    // composerIsComposing() 可能仍为真；不补这一拍，候选会停在关闭态或旧 query 上。
+    scheduleCompositionSettle(composerView, "skill-menu", () => {
+      if (composerIsComposing()) return;
+      syncSkillMenu();
+    });
   });
   composer.addEventListener("copy", (event: ClipboardEvent) => {
     if (event.clipboardData === null) return;

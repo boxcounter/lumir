@@ -326,6 +326,69 @@ test("光标位于视口下缘时浮层向上翻转且不越界", async ({ page 
   expect(await readDocument(page)).toBe(doc);
 });
 
+test("长列表逐项导航：活动行在真实可见带内，滚动位置不被重建归零，编辑器与页面不滚", async ({ page }) => {
+  const paths = Array.from({ length: 30 }, (_, index) => `notes/item-${String(index).padStart(2, "0")}.md`);
+  await openDoc(page, "[[", paths);
+  // fixture 恒带 source.md 自身，故 30 个合成文件 + 1 = 31 条候选
+  await expect(page.locator(ROW)).toHaveCount(31);
+  const readState = () => page.locator(OVERLAY).evaluate((root) => {
+    const list = root.querySelector<HTMLElement>(".lumir-link-suggest-list");
+    const active = root.querySelector<HTMLElement>(".lumir-link-suggest-item.is-active");
+    if (list === null || active === null) throw new Error("候选或活动行不在场");
+    const listRect = list.getBoundingClientRect();
+    const activeRect = active.getBoundingClientRect();
+    const scroller = document.querySelector<HTMLElement>(".cm-scroller");
+    return {
+      listScrollTop: list.scrollTop,
+      overflowing: list.scrollHeight > list.clientHeight,
+      clipTop: Math.max(0, listRect.top),
+      clipBottom: Math.min(window.innerHeight, listRect.bottom),
+      activeTop: activeRect.top,
+      activeBottom: activeRect.bottom,
+      editorScrollTop: scroller?.scrollTop ?? 0,
+      pageScrollTop: document.scrollingElement?.scrollTop ?? 0,
+      activeText: active.textContent ?? "",
+    };
+  });
+  const initial = await readState();
+  expect(initial.overflowing, "长列表必须先证明真的溢出，滚动断言才不是空测量").toBe(true);
+  expect(initial.activeText).toBe("source.md");
+  expect(initial.listScrollTop).toBe(0);
+  const editorScroll = initial.editorScrollTop;
+
+  let previousScroll = initial.listScrollTop;
+  for (let step = 0; step < 20; step += 1) {
+    await page.keyboard.press("ArrowDown");
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    const state = await readState();
+    const detail = JSON.stringify(state);
+    expect(state.activeTop, `第 ${step} 步活动行上缘越过真实可见带：${detail}`).toBeGreaterThanOrEqual(state.clipTop - 0.5);
+    expect(state.activeBottom, `第 ${step} 步活动行下缘越过真实可见带：${detail}`).toBeLessThanOrEqual(state.clipBottom + 0.5);
+    expect(state.listScrollTop, `第 ${step} 步向下的滚动位置不得回退（旧实现被清 max-height 归零）`).toBeGreaterThanOrEqual(previousScroll - 0.5);
+    expect(state.editorScrollTop, "候选揭示不得滚动编辑器").toBe(editorScroll);
+    expect(state.pageScrollTop, "候选揭示不得滚动页面").toBe(0);
+    previousScroll = state.listScrollTop;
+  }
+  expect(previousScroll, "二十步导航必须真实产生滚动").toBeGreaterThan(0);
+  const atBottom = await readState();
+  expect(atBottom.activeText).toBe("notes/item-19.md");
+
+  for (let step = 0; step < 20; step += 1) {
+    await page.keyboard.press("ArrowUp");
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    const state = await readState();
+    expect(state.activeTop).toBeGreaterThanOrEqual(state.clipTop - 0.5);
+    expect(state.activeBottom).toBeLessThanOrEqual(state.clipBottom + 0.5);
+    expect(state.listScrollTop, "向上的滚动位置不得回退").toBeLessThanOrEqual(previousScroll + 0.5);
+    previousScroll = state.listScrollTop;
+  }
+  const back = await readState();
+  expect(back.activeText).toBe("source.md");
+  expect(back.listScrollTop).toBe(0);
+  expect(back.editorScrollTop).toBe(editorScroll);
+});
+
+
 test("三主题壳完全不透明，长路径和同名可辨，边缘与 resize 后不越出视口", async ({ page }) => {
   const long = "deep/a/very/long/directory/that/must/shrink/before/the/file/name.md";
   await openDoc(page, "[[", [long, "a/same.md", "b/same.md"]);

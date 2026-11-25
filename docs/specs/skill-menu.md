@@ -3,6 +3,10 @@
 > 来源：Alex 2026-11-25 在 Lumir 0.16.0 的三项实测缺陷报告。本文是
 > [渲染/交互缺陷合同先行规则](../process/rendering-defect-contract-first.md) 要求的专项质量合同；
 > 产品增量归 OpenSpec change `fix-skill-menu-ux-nov25`。
+>
+> 转移语义与通用不变量（游标 / 武装 / 真实 clip / 最小揭示 / IME / ARIA）的统一居所是
+> [selector-contract.md](selector-contract.md)。本文只保留 Skill 表面的专属口径（S3 宽度、S4 滚动面、
+> 空态与零候选），不重抄通用条款。
 
 ## 输入分布
 
@@ -18,13 +22,27 @@
 
 ### S1 — 同类导航键只有一个高亮移动语义
 
-候选打开且非 IME composition 时，Ctrl+N 与 ArrowDown 恒产生相同的下一项状态，Ctrl+P 与 ArrowUp 恒产生相同上一项状态。对任意列表长度与当前高亮，四类键均到端停住、不环绕；从被动态按下方向键 / Ctrl+N 到首项，按上方向键 / Ctrl+P 到末项。
+候选打开即有唯一游标（首项 / 按名字保留 / 全名项，口径见 selector-contract C4）。候选打开且非 IME
+composition 时，Ctrl+N 与 ArrowDown 恒产生相同的下一项状态，Ctrl+P 与 ArrowUp 恒产生相同上一项状态。
+对任意列表长度与当前游标，四类键均到端停住、不环绕；首项按上、末项按下停在原位。
 
-候选消费这四次导航：事件 MUST `preventDefault`，composer 文档、caret 与撤销栈 MUST 不变。候选关闭时本合同不接管按键，既有 Emacs 行移动 MUST 保持。Shift+Arrow 与 Ctrl+Shift+N/P 继续走原生选区路径且不被候选消费，既有扩选 MUST 保持；Shift+Arrow 扩选使 caret 离开 Skill token 后，候选按既有 `selectionSet → syncSkillMenu()` 路径关闭，Ctrl+Shift+N/P 另保留旧主动关闭路径，两者均不强制保留候选。Meta / Alt 组合与 IME composition MUST NOT 被这条候选导航吞掉；Enter / Tab 接受、被动态不消费、Escape 关闭的既有合同不变。
+候选消费这四次导航：事件 MUST `preventDefault`，composer 文档、caret 与撤销栈 MUST 不变。候选关闭时
+本合同不接管按键，既有 Emacs 行移动 MUST 保持。Shift+Arrow 与 Ctrl+Shift+N/P 继续走原生选区路径且不被
+候选消费，既有扩选 MUST 保持；Shift+Arrow 扩选使 caret 离开 Skill token 后，候选按既有
+`selectionSet → syncSkillMenu()` 路径关闭，Ctrl+Shift+N/P 另保留旧主动关闭路径，两者均不强制保留候选。
+Meta / Alt 组合与 IME composition MUST NOT 被这条候选导航吞掉；Enter / Tab 只在武装态接受（C4），
+Escape 关闭的既有合同不变。
 
-### S2 — 高亮项始终完整可见
+### S2 — 高亮项始终完整可见，候选盒不被祖先裁切
 
-任意高亮改变后，当前 option 的上下缘 SHALL 落在候选滚动视口上下缘内（允许 1px 几何取整容差）。若它已完整可见，候选 `scrollTop` MUST 不变；若它从上方或下方离开视口，只滚动候选到恰好揭示它的最近位置。首尾、长列表与指针/键盘交替满足同一条，禁止借整页、transcript 或 composer 滚动完成揭示。
+真实可见带 = `menuRect ∩ panelRect ∩ viewport`（再扣掉菜单自身的边框与 padding），不是菜单的
+`clientHeight`。候选盒 SHALL 完整落在面板与视口内（面板是 `.lumir-harness`，允许向上覆盖 transcript；
+高度不足时收缩 `max-height`），因为被裁区里的行无法靠 `scrollTop` 搬进屏幕。
+
+任意游标改变后，当前 option 的上下缘 SHALL 落在真实可见带内（允许 1px 几何取整容差）。若它已完整可见，
+候选 `scrollTop` MUST 不变；越界时只滚动候选到带边缘并保留一行上下文。首尾、长列表与指针/键盘交替满足
+同一条，禁止借整页、transcript 或 composer 滚动完成揭示。指针选意只认真实指针移动，揭示滚动不得改动
+键盘刚选中的游标。
 
 ### S3 — 宽度随可用空间增长且始终受边界约束
 

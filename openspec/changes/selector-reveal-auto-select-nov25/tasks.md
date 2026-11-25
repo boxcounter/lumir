@@ -1,0 +1,31 @@
+# Tasks: selector-reveal-auto-select-nov25
+
+## 合同与纯逻辑
+
+- [x] 新建 `docs/specs/selector-contract.md`（C1–C8：游标 / 武装 / 真实 clip / 最小揭示 / IME / ARIA / 呈现变体）
+- [x] `docs/specs/skill-menu.md` S1 / S2 改到新口径并加合同指针
+- [x] 新增 `src/selector-reveal.ts`：`revealScrollTop` + `revealElementWithin`
+- [x] 新增 `tests/unit/selector-reveal.test.ts`（表驱动 + 属性矩阵）
+- [x] `src/skill-menu.ts` 增 `armed` 与 `syncSkillMenuState` / `hoverSkillHighlight`；`skillSelectionSpec` 只在武装态成立
+- [x] 重写 `tests/unit/skill-menu.test.ts` 为 highlighted × armed × source 矩阵
+
+## Skill 候选
+
+- [x] `placeSkillMenu` 改以面板矩形 + 视口夹取，收缩 `max-height`，实测高度替代硬编码 32
+- [x] 揭示改用真实 clip（menuRect ∩ panelRect ∩ viewport）与一行上下文
+- [x] `data-armed` 与 `aria-activedescendant` 逐拍一致；指针选意改 `mousemove`，揭示滚动不抢游标
+- [x] IME 组合结束按最终文档重算一次（`composition-settle` 新增 `skill-menu` 消费者）
+
+## wikilink 候选
+
+- [x] 去掉 `scrollIntoView`；`schedulePlace` / `place` 保留并恢复 `scrollTop`
+- [x] `writePlace` 先写 `max-height` 再按真实可见带揭示活动行
+
+## 测试与场景
+
+- [x] `skill-hybrid.spec.ts` oracle 改真实 clip（含盒不越界断言）
+- [x] 新增：可见最底项再移一项 / 短视口 × 三主题 × 缩放 / 全名接受 / 普通路径不武装 / 异步不武装 / IME 重算
+- [x] `wikilink-suggestion.spec.ts` 新增 30 项长列表逐项导航（活动行在带内、scrollTop 不被归零、编辑器与页面不滚）
+- [x] 更新验收场景 867 / 868 的导航预期与截图步
+- [ ] 主会话串行执行：`scripts/gate.sh quick` + `scripts/gate.sh visual` + 真机 867 / 868
+- [ ] 归档时执行：delta 合并进 living spec，`--archived` 审计 PASS

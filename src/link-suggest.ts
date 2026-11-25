@@ -14,6 +14,7 @@ import {
 import { isInsideCodeContext } from "./preview/code-context";
 import { detectFrontmatter } from "./preview/frontmatter";
 import { findWikilinkSpans } from "./preview/wikilinks";
+import { revealElementWithin } from "./selector-reveal";
 
 export interface LinkSuggestTrigger {
   readonly openerFrom: number;
@@ -369,10 +370,12 @@ class LinkSuggestView {
   }
 
   private schedulePlace(): void {
+    // 清样式会把列表从「可滚」打成「内容高」，scrollTop 同步归零——先记下来，写回定高后再恢复。
+    const preservedScrollTop = this.list.scrollTop;
     this.clearPlaceStyles();
     this.view.requestMeasure({
       read: () => this.measurePlace(),
-      write: (measured) => this.writePlace(measured),
+      write: (measured) => this.writePlace(measured, preservedScrollTop),
       key: this,
     });
   }
@@ -425,14 +428,15 @@ class LinkSuggestView {
     });
     if (state.active >= 0) this.view.contentDOM.setAttribute("aria-activedescendant", `${this.id}-${state.active}`);
     else this.view.contentDOM.removeAttribute("aria-activedescendant");
-    const active = this.list.children[state.active] as HTMLElement | undefined;
-    active?.scrollIntoView({ block: "nearest" });
+    // 揭示归 writePlace：这里只重建行。曾经的 scrollIntoView 会被紧随其后的 schedulePlace
+    // 清掉 max-height 而把 scrollTop 归零，长列表的滚动位置永远累积不起来。
     this.schedulePlace();
   }
 
   private place(): void {
+    const preservedScrollTop = this.list.scrollTop;
     this.clearPlaceStyles();
-    this.writePlace(this.measurePlace());
+    this.writePlace(this.measurePlace(), preservedScrollTop);
   }
 
   private measurePlace(): PlaceMeasurement | null {
@@ -467,7 +471,7 @@ class LinkSuggestView {
     };
   }
 
-  private writePlace(measured: PlaceMeasurement | null): void {
+  private writePlace(measured: PlaceMeasurement | null, preservedScrollTop = 0): void {
     if (measured === null) {
       this.close();
       return;
@@ -475,6 +479,14 @@ class LinkSuggestView {
     applyOverlayPlacement(this.root, measured.placement, measured.baseLeft);
     this.root.style.maxHeight = `${measured.available}px`;
     this.root.style.top = `${measured.top}px`;
+    // 定高之后再恢复滚动位置（先设 scrollTop 会被不可滚的列表钳成 0），最后按真实可见带揭示活动行。
+    this.list.scrollTop = preservedScrollTop;
+    const state = this.state;
+    if (state === null || state.active < 0) return;
+    const active = this.list.children[state.active] as HTMLElement | undefined;
+    if (active === undefined) return;
+    const viewportHeight = this.view.dom.ownerDocument.defaultView?.innerHeight ?? 0;
+    revealElementWithin(this.list, active, { top: 0, bottom: viewportHeight });
   }
 
   private onKeyDown = (event: KeyboardEvent): void => {

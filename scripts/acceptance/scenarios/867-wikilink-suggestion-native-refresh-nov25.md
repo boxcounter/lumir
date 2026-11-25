@@ -3,7 +3,9 @@ id: "867-wikilink-suggestion-native-refresh-nov25"
 item: 867
 tier: full
 title: 行内 [[ 候选：原生逐字输入立即打开、query 逐拍同步、逐字删除关闭
-fixtures: [aaa-native-home.md, d/Alpha.md, d/Beta.md, d/sigma.md, d/source.md]
+fixtures: [aaa-native-home.md, d/Alpha.md, d/Beta.md, d/sigma.md, d/source.md,
+           d/list-00.md, d/list-01.md, d/list-02.md, d/list-03.md, d/list-04.md, d/list-05.md,
+           d/list-06.md, d/list-07.md, d/list-08.md, d/list-09.md, d/list-10.md, d/list-11.md]
 open: aaa-native-home.md
 marker: "native candidate fixture"
 steps:
@@ -95,6 +97,45 @@ steps:
       - label: sigma 与 source 仍在
         ax: { scope: { role: AXList, name: 筛选 }, order: ["d/sigma.md", "d/source.md"] }
 
+  - name: 建立长列表现场：全选后键入完整 opener
+    do: key
+    key: "cmd+a"
+    channel: cgevent
+  - name: 键入两个 [ 打开全量候选（现为 17 项，超过一屏）
+    do: keys
+    keys: ["[", "["]
+    expect:
+      - label: 长列表末项在空 query 候选里
+        node: { role: AXStaticText, name: "^d/list-11\\.md$", present: true }
+      - label: 候选首屏仍含既有项
+        ax: { has: "d/Alpha.md" }
+      - shot: 02-长列表首屏
+
+  - name: 连续 ↓ 十二拍走到长列表中段
+    do: keys
+    keys: ["down", "down", "down", "down", "down", "down", "down", "down", "down", "down", "down", "down"]
+    gapMs: 80
+    expect:
+      - label: 导航不写正文
+        editor: { has: "[[" }
+      - shot: 03-长列表导航中段-活动行应在屏内
+  - name: 十二拍 ↑ 回到首项
+    do: keys
+    keys: ["up", "up", "up", "up", "up", "up", "up", "up", "up", "up", "up", "up"]
+    gapMs: 80
+    expect:
+      - label: 往返导航不写磁盘
+        file: { path: aaa-native-home.md, unchangedSince: 源文档基线, mtimeUnchangedSince: 源文档基线 }
+      - shot: 04-长列表回到首项
+  - name: Escape 关闭长列表候选
+    do: key
+    key: escape
+    expect:
+      - label: 候选关闭
+        node: { role: AXList, name: 筛选, present: false }
+      - label: 正文只剩完整 opener
+        editor: { has: "[[" }
+
   - name: 再删除一个 [，opener 不完整必须关闭并清掉旧候选
     do: key
     key: "backspace"
@@ -116,6 +157,10 @@ steps:
 本场景专门复现 Alex 2026-11-25 的 0.16.0 实测序列。每拍只输入一个可打印字符或一次 Backspace，不在拍间重新点击编辑器；因此旧实现中「首次打开后插件被禁用、后续继续显示上一代候选」不能被关闭再重开的路径掩盖。
 
 `d/` 在文件树中保持折叠，候选行则显示完整路径。`d/Alpha.md` 等负向判据因此只可能来自候选，不会命中文件树 basename 或 fixture 正文。`aaa-native-home.md` 与 `d/` 均不含 `s`，query=s 的正向前缀候选只有 `d/sigma.md` 与 `d/source.md`；两者的 stem 都以 `s` 开头，同属 stem 前缀层并按索引顺序排列，本场景不覆盖完整路径子串层。当前笔记以 `aaa-` 开头，确保它与四个 `d/` 目标都在列表首屏的 AX 可见范围内，避免把 offscreen 过滤误判为候选缺失。
+
+长列表揭示的几何判据（活动行 ⊆ `listRect ∩ viewport`、`scrollTop` 不被重建归零、编辑器与页面不滚）在
+`tests/visual/scenes/wikilink-suggestion.spec.ts` 的「长列表逐项导航」；真机 AX 读不到滚动位置，故本节只留
+逐拍截图与「正文 / 磁盘未变」的断言，不把截图描述成已通过的几何断言。
 
 本 worker 只执行静态校验。真实 WKWebView 由主会话运行：
 

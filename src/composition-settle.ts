@@ -1,6 +1,6 @@
 import type { EditorView } from "@codemirror/view";
 
-export type CompositionSettleConsumer = "lists" | "link-suggest";
+export type CompositionSettleConsumer = "lists" | "link-suggest" | "skill-menu";
 
 const timers = new WeakMap<EditorView, Map<CompositionSettleConsumer, ReturnType<typeof setTimeout>>>();
 
