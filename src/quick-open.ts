@@ -604,7 +604,8 @@ const ITEM_ID_PREFIX = "lumir-qo-opt-";
  * 结果区补帧的探测去抖：输入停稳 120ms 后才发一次存在探测。探测对**每一个判决未定的输入**
  * 发起（见 `shouldProbe`）——未定就意味着「这条查询串可能是一条索引外的精确路径」，Enter
  * 的目标在探测落地前不可知，游标因此不能先亮首行。去抖保证每次键入只重置计时器，不是逐键
- * IPC：一次停稳 = 一次单路径往返。
+ * IPC：一次停稳 = 一次完整判决的探测（普通查询一级；`path:行` 沿既有阶梯至多两级），
+ * 结果区补帧与 Enter 共用这一份（见 `resolutionFor`）。
  */
 const PROBE_DEBOUNCE_MS = 120;
 
@@ -741,6 +742,11 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
    * 既不重复 probe，也不会让补帧把 Enter 已经给出的提示（「找不到」）覆盖回用法行。
    */
   let settled: { raw: string; resolution: QuickOpenResolution } | null = null;
+  /**
+   * 同一输入的一次完整判决在途（补帧与 Enter 共用）。Enter 若在 `settled` 落地之前按下，
+   * MUST 加入同一次探测而不是再发一份：一次停驻只对应一次探测。
+   */
+  let inflight: { raw: string; promise: Promise<QuickOpenResolution> } | null = null;
 
   /** 解析所需的三个只读口（与 confirm 共用同一份 env 形状）。 */
   const lookupEnv = (): VaultLookupEnv => ({
@@ -749,6 +755,23 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
     probe: (paths) => options.probe(paths),
     scanDirectory: (path, external) => options.scanDirectory(path, external),
   });
+
+  /**
+   * 取这一输入走完探测的判决：已落地 ⇒ 复用 `settled`；正在探 ⇒ 加入同一份；都没有 ⇒ 发起一次。
+   * 结果区补帧与 Enter 都从这里取，因此「停驻后再 Enter」对同一输入只发生一次探测；
+   * 输入一变就是另一条 `raw`，自然重新探测。
+   */
+  function resolutionFor(raw: string): Promise<QuickOpenResolution> {
+    if (settled !== null && settled.raw === raw) return Promise.resolve(settled.resolution);
+    if (inflight !== null && inflight.raw === raw) return inflight.promise;
+    const entry = { raw, promise: resolveQuickOpen(raw, options.root(), lookupEnv()) };
+    inflight = entry;
+    const release = (): void => {
+      if (inflight === entry) inflight = null;
+    };
+    void entry.promise.then(release, release);
+    return entry.promise;
+  }
 
   function setHint(text: string): void {
     hint.textContent = text;
@@ -777,6 +800,7 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
     clearProbe();
     ++renderSeq;
     settled = null;
+    inflight = null;
     list.replaceChildren();
     rows = [];
     items = [];
@@ -943,7 +967,7 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
       void (async () => {
         let res: QuickOpenResolution;
         try {
-          res = await resolveQuickOpen(raw, options.root(), lookupEnv());
+          res = await resolutionFor(raw);
         } catch {
           probing = false;
           return;
@@ -1104,13 +1128,14 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
     const seq = ++request;
     let res: QuickOpenResolution;
     try {
-      res = await resolveQuickOpen(raw, options.root(), lookupEnv());
+      res = await resolutionFor(raw);
     } catch {
       if (seq === request) setHint(QUICK_OPEN_FAILED());
       return;
     }
     if (seq !== request) return; // 过期结果：用户已经改了输入
-    // 这次判决已经走完探测，同一输入的后续重画复用它（不再 probe、不再覆盖提示）。
+    // 这次判决已走完探测（或复用了同一输入已落地 / 在途的那一份）；同一输入的后续重画复用它
+    //（不再 probe、不再覆盖提示）。
     settled = { raw, resolution: res };
     // 结果区与动作同源：游标可能因「判决未定期间不承诺」而被抑制（探测没落地时渲染不出高亮），
     // 也可能这次的按键探测才把判决定下来。**动作之前**把游标同步到该判决的策略起点——判决行

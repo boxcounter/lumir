@@ -169,6 +169,9 @@ async function expectActiveRow(page: Page, text: string): Promise<void> {
   await expect(active).toHaveCount(1);
   await expect(active).toHaveText(text);
   await expect(active).toHaveAttribute("aria-selected", "true");
+  // `.is-active` 与 `aria-selected` 是两份状态（design §1 第 3 条）：至多一行 `aria-selected=true`。
+  // 只查 `.is-active` 会把「ARIA 多标了一行」放过去，读屏拿到的仍是一条假承诺。
+  await expect(page.locator('.lumir-qo-item[aria-selected="true"]')).toHaveCount(1);
   await expect(page.locator(".lumir-qo-input")).toHaveAttribute(
     "aria-activedescendant",
     (await active.getAttribute("id")) ?? "",
@@ -231,8 +234,9 @@ test("移动后覆盖默认：↑ 到 apps/plan.md 后 Enter 只打开游标行"
   await expect(page.locator(".cm-content")).toContainText("QO-TARGET-APPS-PLAN");
 });
 
-test("普通过滤查询：探测落地后首行高亮，Enter 打开首行（默认承诺不回归）", async ({ page }) => {
+test("普通过滤查询：探测落地后首行高亮，Enter 打开首行（默认承诺不回归；停驻后的 Enter 不再探测）", async ({ page }) => {
   await start(page);
+  await stubPathsExist(page, []);
   await fill(page, "plan");
   await expect(page.locator(".lumir-qo-item")).toHaveText([
     "notes/plan.md",
@@ -241,9 +245,14 @@ test("普通过滤查询：探测落地后首行高亮，Enter 打开首行（�
   ]);
   // 普通查询的同步判决也是 undecided：探测落地为「找不到」后才回落到首行
   await expectActiveRow(page, "notes/plan.md");
+  // 停驻 ⇒ 恰好一次探测（去抖后、单路径），探测结果已由结果区消费
+  await expect.poll(() => probeAnswers(page)).toBe(1);
 
   await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-qo")).toBeHidden();
+  // Enter 复用同一输入的已落地判决：MUST NOT 再发一次 `fs_paths_exist`
+  //（旧实现无条件重新 `resolveQuickOpen`，这里会变成 2）
+  expect(await probeAnswers(page)).toBe(1);
   await expect(page.locator(".cm-content")).toContainText("QO-TARGET-PLAN");
 });
 
@@ -265,12 +274,14 @@ test("普通查询 = 索引外精确路径且是其它候选子串：未定与�
   await expectNoActiveRow(page);
 
   // 探测已回来：判决是 `open scratch.md`，它不在候选里 ⇒ 落地之后也 MUST NOT 亮任何行
-  await expect.poll(() => probeAnswers(page)).toBeGreaterThan(0);
+  await expect.poll(() => probeAnswers(page)).toBe(1);
   await page.waitForTimeout(150);
   await expectNoActiveRow(page);
 
   await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-qo")).toBeHidden();
+  // 判决已在停驻时落地：Enter 复用同一份判决，MUST NOT 再探一次（旧实现这里会变成 2）
+  expect(await probeAnswers(page)).toBe(1);
   await expect(page.locator(".tab-open")).toHaveText(["scratch.md"]);
   await expect(page.locator(".cm-content")).toContainText("QO-TARGET-SCRATCH");
 });
@@ -282,7 +293,8 @@ test("path:line 异步补帧：在途不高亮，落地后高亮判决行并保�
   await openQuickOpen(page);
   await fill(page, "plan.md:12");
 
-  // 探测在途（去抖 120ms + 两级探测各 400ms）：目标还没定，禁止用首行冒充
+  // 探测在途（去抖 120ms + 一次单路径探测 400ms；剥后缀那一级在索引里同步命中，
+  // 不再探测）：目标还没定，禁止用首行冒充
   await page.waitForTimeout(200);
   await expect(page.locator(".lumir-qo-item")).toHaveText([
     "notes/plan.md",
@@ -294,9 +306,13 @@ test("path:line 异步补帧：在途不高亮，落地后高亮判决行并保�
   // 落地：判决路径 = plan.md（非首行），高亮与 ARIA 一起挪到判决行
   await expect(page.locator(".lumir-qo-item.is-active")).toHaveText("plan.md", { timeout: 5000 });
   await expectActiveRow(page, "plan.md");
+  // `path:行` 的既有阶梯在这里是「整串探测 1 次 + 剥后缀同步命中」：停驻恰好 1 次
+  await expect.poll(() => probeAnswers(page)).toBe(1);
 
   await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-qo")).toBeHidden();
+  // Enter 复用停驻时已走完的阶梯，MUST NOT 新增探测（旧实现会再走一遍整串那级）
+  expect(await probeAnswers(page)).toBe(1);
   await expect.poll(() => cursorLine(page)).toBe(12);
   await expect(page.locator(".cm-content")).toContainText("QO-TARGET-ROOT-L12");
 });
@@ -311,7 +327,7 @@ test("探测在途移到非判决行：落地后按行身份保位（不被挪�
   await openQuickOpen(page);
   await fill(page, "plan.md:12");
 
-  // 两级探测都还没回来：目标未定，不亮
+  // 探测还没回来：目标未定，不亮
   await page.waitForTimeout(200);
   await expect(page.locator(".lumir-qo-item")).toHaveText([
     "notes/plan.md",
@@ -326,13 +342,15 @@ test("探测在途移到非判决行：落地后按行身份保位（不被挪�
   await expectActiveRow(page, "apps/plan.md");
 
   // 落地之后仍停在这一行（保位）；回落到策略起点的话这里会变成 plan.md
-  await expect.poll(() => probeAnswers(page)).toBeGreaterThan(0);
+  await expect.poll(() => probeAnswers(page)).toBe(1);
   await page.waitForTimeout(150);
   await expectActiveRow(page, "apps/plan.md");
 
   // 主动移动过 ⇒ Enter 接受游标行（不打 `:12` 落点：行号只属于判决路径的精确打开）
   await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-qo")).toBeHidden();
+  // 停驻时的那次探测已经落地：Enter 复用，不再新增一次
+  expect(await probeAnswers(page)).toBe(1);
   await expect(page.locator(".tab-open")).toHaveText(["plan.md"]);
   await expect(page.locator(".cm-content")).toContainText("QO-TARGET-APPS-PLAN");
   await expect.poll(() => cursorLine(page)).toBe(1);
@@ -355,6 +373,8 @@ test("游标落在判决行本身：在途 ↓ 后 Enter 仍落到 :行（移动
   // 游标行就是判决行 ⇒ 仍按精确路径打开并保留粘贴时的行号（不是 openRow 的第 1 行）
   await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-qo")).toBeHidden();
+  // 同一条输入已在停驻时探完：Enter 复用，MUST NOT 再探（旧实现这里会变成 2）
+  expect(await probeAnswers(page)).toBe(1);
   await expect.poll(() => cursorLine(page)).toBe(12);
   await expect(page.locator(".cm-content")).toContainText("QO-TARGET-NOTES-L12");
 });
