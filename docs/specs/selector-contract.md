@@ -161,11 +161,18 @@ MUST NOT 为了「统一」强行改成一种：
 - **纯函数表驱动 + 属性矩阵**（`tests/unit/selector-reveal.test.ts`、`tests/unit/skill-menu.test.ts`）：
   揭示函数在 `scrollTop × 带内位置 × 行高 × 余量` 上断言 C3；状态机在 `事件 × 列表长度 × 前缀`
   上断言 C4。
-- **浏览器几何矩阵**（`tests/visual/scenes/skill-hybrid.spec.ts`、`wikilink-suggestion.spec.ts`）：
-  oracle 一律取真实 clip（`menuRect ∩ panelRect ∩ viewport`），并单独断言盒不越界；先证明列表真的
-  溢出再测揭示；记录候选之外的滚动读数，全程不变。
+- **浏览器几何矩阵**（`tests/visual/scenes/skill-hybrid.spec.ts`、
+  `skill-visible-selection-nov25.spec.ts`、`wikilink-suggestion.spec.ts`）：oracle MUST 独立于实现
+  计算真实可见带——`menuRect ∩ 全部裁切祖先 ∩ viewport`，再扣掉滚动口自身的边框与 padding；MUST NOT
+  复用实现的裁剪辅助函数，MUST NOT 以候选自身的盒 / `clientHeight` 代餐（同源 oracle 只能证明实现
+  与自己一致）。矩阵 SHALL 覆盖真实规模目录（超过一屏、含长描述）与两种键族、上下两个方向，**逐拍**
+  同时断言（a）选中 option 完整在带内、（b）可见标记与 `aria-selected` 同项且标记可辨；只测
+  `scrollTop` 变化或 AX 里存在某行 MUST NOT 作为可见判据。先证明列表真的溢出再测揭示；记录候选之外
+  的滚动读数，全程不变。
 - **跨拍窗口**：在 read / write 两拍之间下发滚动，断言写拍采用新位置、本次揭示让位，以及窗口之后的
   下一次游标变化仍完整揭示（`wikilink-suggestion.spec.ts` 的两条 T1 用例）。
 - **状态可观测性**：候选根节点暴露 `data-armed="true"|"false"`，供机器断言「视觉高亮 ≠ 接受承诺」；
   它不是视觉差异，MUST NOT 被样式消费。
-- 真 WKWebView 只用截图留证，不用 AX 冒充几何断言（见各验收场景）。
+- 真 WKWebView 不用 AX 冒充几何断言（见各验收场景）；但「选中行是否在可见区内」SHALL 由 AX 暴露
+  判定——AX 快照过滤真实可见区之外的行，选中行文本在场即该行在可见区。截图 MUST NOT 单独作为该判据
+  （缺陷曾以「截图里没有选中标记、场景却判 PASS」的形态漏网）。

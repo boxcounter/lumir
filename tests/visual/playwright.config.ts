@@ -109,11 +109,14 @@ export default defineConfig({
     // 那条来自 WKWebView 真机现场（真机 WKWebView 是缺陷现场，Chromium 只是近似）。
     // M858 补的流式事件字面量码（内部错误 / 空响应）同在此场景：它们只在事件流里出现，
     // 与 M852 的网络失败同一条上屏路径（appendError），两支各判一次。
+    // fix-skill-visible-selection-nov25 起 Skill 候选可见性矩阵同行：缺陷现场是 WKWebView
+    // （真机截图里选中行落在候选盒的裁切区外），判据是「选中 option 完整落在真实可见带内」——
+    // 揭示只写 `scrollTop`，而两引擎的滚动钳制 / 子像素取整不同，chromium 绿不能替代真机分支。
     ...(webkitRealuaPresent
       ? [
           {
             name: "webkit-realua",
-            testMatch: /m280-overlay-esc-scroll\.spec\.ts|m361-harness-ime-enter\.spec\.ts|m642-overlay-select-all\.spec\.ts|m668-vault-remove-focus\.spec\.ts|m815-composer-selection-highlight\.spec\.ts|editing-oracle\.spec\.ts|m831-harness-composer-codemirror\.spec\.ts|markdown-editing-stability\.spec\.ts|text-clipboard-adversarial\.spec\.ts|persistence-adversarial\.spec\.ts|harness-async-adversarial\.spec\.ts|first-run-empty-state\.spec\.ts|first-run-error-copy\.spec\.ts/,
+            testMatch: /m280-overlay-esc-scroll\.spec\.ts|m361-harness-ime-enter\.spec\.ts|skill-visible-selection-nov25\.spec\.ts|m642-overlay-select-all\.spec\.ts|m668-vault-remove-focus\.spec\.ts|m815-composer-selection-highlight\.spec\.ts|editing-oracle\.spec\.ts|m831-harness-composer-codemirror\.spec\.ts|markdown-editing-stability\.spec\.ts|text-clipboard-adversarial\.spec\.ts|persistence-adversarial\.spec\.ts|harness-async-adversarial\.spec\.ts|first-run-empty-state\.spec\.ts|first-run-error-copy\.spec\.ts/,
             use: { browserName: "webkit" as const, userAgent: REAL_WEBKIT_UA },
           },
         ]
