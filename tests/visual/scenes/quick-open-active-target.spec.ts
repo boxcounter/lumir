@@ -17,10 +17,10 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 // （旧实现亮首行、Enter 却打开索引外文件）；本场景用一条带延迟的探测把「在途」与「落地」
 // 两段都钉住，并证明落地后仍不亮、Enter 打开的是那条精确路径。
 //
-// 探测次数的两端（section 4）：输入后 <120ms 立即 Enter 由 Enter 发起那唯一一次、停驻计时器
-// 随后加入同一在途 promise；离开再回到同一输入按输入原文复用已落地判决，不重探、也不重新
-// 验证外部变化。两处都同时数「发起」与「应答」，并各配一个必须让它翻转的现场（旧 src /
-// re-stub 出来的「外部变化」）。
+// 探测次数的两端（section 4）：输入后立即 Enter 与停驻计时器共用同一次探测（不冻结时钟——谁先
+// 发起都只计 1 次）；离开再回到同一输入按输入原文复用已落地判决，不重探、也不重新验证外部变化；
+// 关闭浮层重开 / 进入目录后回到同一串则复位重探。三处都同时数「发起」与「应答」，并各配一个
+// 必须让它翻转的现场（旧 src / re-stub 出来的「外部变化」）。
 //
 // 本场景不覆盖：解析次序矩阵（tests/unit/quick-open.test.ts）、纯策略起点与异步保位/回落
 // 的纯函数判据（同文件的「游标起点」「异步补帧的保位」段）、真机 WKWebView 手感
@@ -59,6 +59,12 @@ const LAZY_DOC = "# Lazy\n\nQO-TARGET-LAZY\n";
 const ROOT_SCRATCH = "# Root scratch\n\nQO-TARGET-SCRATCH\n";
 const DRAFTS_SCRATCH = "# Drafts scratch\n\nQO-TARGET-DRAFTS-SCRATCH\n";
 const APPS_SCRATCH = "# Apps scratch\n\nQO-TARGET-APPS-SCRATCH\n";
+
+/**
+ * 复位用例的「盘上新出现的文件」：读取表有内容、`entries` 无此行（与 `scratch.md` 同型的索引外
+ * 文件）。用例中途用 re-stub 的 `fs_paths_exist` 让它「出现」——复用点忽略它、复位点必须识别它。
+ */
+const NEW_PLAN = "# New plan\n\nQO-TARGET-NEW-PLAN\n";
 
 /** vault 外只读文档：20 行，第 12 行有 marker。 */
 const EXTERNAL_PATH = "/tmp/lumir-verify/active-target.md";
@@ -102,6 +108,7 @@ const VAULT: VaultFixture = {
     "a.md": LOWER,
     // 只有读取表、没有 entries 行 = 盘上存在但不在索引（惰性 / 被忽略规则挡住）
     "scratch.md": ROOT_SCRATCH,
+    "plan": NEW_PLAN,
     [LAZY_PATH]: LAZY_DOC,
   },
   externalFiles: { [EXTERNAL_PATH]: EXTERNAL_DOC },
@@ -470,21 +477,24 @@ test("目录语境：首行高亮，两段式 Enter 与进入子目录后的复�
 // ---------------------------------------------------------------------------
 
 // 停驻 + Enter 已由上面各条钉住（普通查询 / 角落 / path:line / 保位 / 判决行自身各 1 次）。
-// 这里补「停驻窗口本身」的两端：Enter 抢在去抖到点之前按下，以及输入离开再回来。
+// 这里补「停驻窗口本身」的三端：Enter 与去抖计时器的先后（谁先到都共用同一次）、输入离开再
+// 回来（复用不重验）、两条复位路径（关闭重开 / 进入目录后重验）。第 12–14 条用同一条 re-stub
+// 做两向对照：复用点忽略外部变化，复位点必须识别它。
 // 判据用**发起次数**（`__probeCalls`）而不只是应答次数——旧实现的毛病正是多发一次
 // `fs_paths_exist`，两次都成功应答时只看应答次数也能数出来，但发起次数能把「没发」与
 // 「发了又丢弃」分开。
-test("输入后 <120ms 立即 Enter：与停驻计时器共用同一次探测，总计 1 次", async ({ page }) => {
+test("立即 Enter 与停驻计时器共用同一次探测：谁先发起都只计 1 次（未冻结时钟，不测 120ms 边界）", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
-  // 400ms 应答：Enter 与去抖计时器无论谁先到，都落进同一次探测的在途窗口
+  // 400ms 应答：Enter 与去抖计时器无论谁先到，都落在同一次探测的在途窗口里
   await stubPathsExist(page, [], 400);
   await openQuickOpen(page);
   await fill(page, "plan");
-  // 停驻去抖（120ms）到点之前按 Enter：这次探测由 Enter 发起，打开的是首行
+  // 填完立即 Enter：不冻结时钟——Enter 可能先发起（计时器到点后加入在途），计时器也可能先发起
+  // （Enter 后到加入在途 / 复用已落地判决）；两种先后都必须只发那一次
   await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-qo")).toBeHidden({ timeout: 5000 });
-  // 去抖计时器随后到点：必须加入在途 / 复用已落地的那一份（旧实现无条件再 resolve 一次 ⇒ 2）
+  // 余下的那次发起若来自计时器：必须加入在途 / 复用已落地的那一份（旧实现无条件再 resolve 一次 ⇒ 2）
   await page.waitForTimeout(300);
   expect(await probeCalls(page)).toBe(1);
   expect(await probeAnswers(page)).toBe(1);
@@ -522,4 +532,79 @@ test("离开再回到同一输入：复用已落地判决，不重探、不重�
   await expect(page.locator(".lumir-qo")).toBeHidden();
   expect(await probeCalls(page)).toBe(1);
   await expect(page.locator(".cm-content")).toContainText("QO-TARGET-PLAN");
+});
+
+// ---------------------------------------------------------------------------
+// 5）复位：关闭重开 / 进入目录后，同一串重新探测并识别新文件
+// ---------------------------------------------------------------------------
+
+// 第 12 条证明复用点**不重验**；复位点必须反过来。两条复位路径共用同一个现场（re-stub 让
+// `plan` 出现在盘上、仍不在索引里）：若不重探，结果区仍是旧判决（首行高亮）、Enter 仍打开旧
+// 游标行，三处断言（发起次数 / 高亮 / 打开的正文）会一起翻转。
+test("关闭浮层重开后复位：同一串重新探测，识别盘上新出现的文件", async ({ page }) => {
+  await start(page);
+  await stubPathsExist(page, [], 0);
+  await fill(page, "plan");
+  await expectActiveRow(page, "notes/plan.md");
+  await expect.poll(() => probeAnswers(page)).toBe(1);
+
+  // 外部世界变了：盘上出现名为 plan 的文件（读取表已有内容，索引仍无此行）
+  await stubPathsExist(page, ["plan"], 0, { resetCounters: false });
+
+  // 关闭浮层：dismiss() 复位 settled 与 inflight
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".lumir-qo")).toBeHidden();
+
+  // 重开 + 同一串：MUST 重新探测（复用旧判决的实现这里停在 1 次、旧首行仍高亮）
+  await openQuickOpen(page);
+  await fill(page, "plan");
+  await expect.poll(() => probeCalls(page)).toBe(2);
+  // 新判决是可打开的 `plan`，它不在候选里 ⇒ 不高亮任何行
+  await expectNoActiveRow(page);
+  expect(await probeAnswers(page)).toBe(2);
+
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".lumir-qo")).toBeHidden();
+  // Enter 复用刚落地的那一份，不再新增
+  expect(await probeCalls(page)).toBe(2);
+  await expect(page.locator(".tab-open")).toHaveText(["plan"]);
+  await expect(page.locator(".cm-content")).toContainText("QO-TARGET-NEW-PLAN");
+});
+
+test("进入目录后复位：回到同一串重新探测，识别盘上新出现的文件", async ({ page }) => {
+  await start(page);
+  await stubPathsExist(page, [], 0);
+  await fill(page, "plan");
+  await expectActiveRow(page, "notes/plan.md");
+  await expect.poll(() => probeAnswers(page)).toBe(1);
+
+  await stubPathsExist(page, ["plan"], 0, { resetCounters: false });
+
+  // 换输入：进目录（`enterDirectory` 清 settled）。这一段只发目录扫描，不发 fs_paths_exist
+  await fill(page, "notes");
+  await expect(page.locator(".lumir-qo-item")).toHaveText([
+    "notes/plan.md",
+    "notes/guide.md",
+    "notes/sub/",
+  ]);
+  await page.keyboard.press("Enter"); // 裸目录的两段式第一段：只揭示
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expectActiveRow(page, "notes/sub/");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".lumir-qo-input")).toHaveValue("notes/sub/");
+  await expectActiveRow(page, "notes/sub/deep.md");
+  expect(await probeCalls(page)).toBe(1);
+
+  // 回到同一串：MUST 重新探测（不重置记忆的实现这里复用旧判决、停在 1 次）
+  await fill(page, "plan");
+  await expect.poll(() => probeCalls(page)).toBe(2);
+  await expectNoActiveRow(page);
+  expect(await probeAnswers(page)).toBe(2);
+
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".lumir-qo")).toBeHidden();
+  expect(await probeCalls(page)).toBe(2);
+  await expect(page.locator(".tab-open")).toHaveText(["plan"]);
+  await expect(page.locator(".cm-content")).toContainText("QO-TARGET-NEW-PLAN");
 });

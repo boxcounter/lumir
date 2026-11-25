@@ -29,20 +29,21 @@
 ## 3. 测试与规格
 
 - [x] 3.1 `tests/unit/quick-open.test.ts` 新增「游标起点」矩阵并全绿
-- [x] 3.2 新增 `tests/visual/scenes/quick-open-active-target.spec.ts`（**12 条**，全绿）。
+- [x] 3.2 新增 `tests/visual/scenes/quick-open-active-target.spec.ts`（**14 条**，全绿）。
       计数与来历：首批 7 条（红跑 `visual-red-old.log` 的 7 条）→ 红/绿之后补第 8 条
       「游标落在判决行本身」→ 机械核验后补第 9 条（角落反例）与第 10 条（保位判别）→
-      批准记录轮补第 11 条（输入后 <120ms 立即 Enter）与第 12 条（离开再回到同一输入）。
+      批准记录轮补第 11 条（立即 Enter 与停驻计时器共用同一次）与第 12 条（离开再回到同一输入）→
+      最终复核轮补第 13 条（关闭浮层重开复位）与第 14 条（进入目录后复位）。
       旧实现复跑（`visual-red-old-impl.log`）：9 passed / 1 failed——**第 8 条在旧实现上是绿的**
       （`path:line` 的旧 `probing` 已抑制高亮，它不是红灯用例，是补充回归用例）；红灯只有第 9 条。
       第 11 / 12 条的红证据见 7.3 / 7.4（旧 `src` 上分别是「2 次探测」与「首访 0 次探测」）。
 - [x] 3.3 既有 `quick-open.spec.ts` / `quick-open-directory-stable.spec.ts` 全绿（42 passed；
       其中「非目录查询：↓ 后一次 Enter」按「未定期间没有游标位置」更新了时序：等落地后再按 ↓）
 - [x] 3.4 `openspec/changes/.../specs/quick-open/spec.md` 的 MODIFIED requirement：改写游标条款；
-      living 9 个场景 → delta 13 个——改写 1 个（「直接行与候选行并存时 Enter 打开游标行」）+
-      新增 4 个（「判决可打开但没有对应候选行」/「探测在途不冒充目标」/「普通查询恰好是索引外精确路径」/
-      「离开再回到同一输入复用已落地判决」）；requirement 正文补「复用键是输入原文、外部变化不在
-      复用点重新验证」一句
+      living 9 个场景 → delta 14 个——改写 1 个（「直接行与候选行并存时 Enter 打开游标行」）+
+      新增 5 个（「判决可打开但没有对应候选行」/「探测在途不冒充目标」/「普通查询恰好是索引外精确路径」/
+      「离开再回到同一输入复用已落地判决」/「复位后重新探测并识别新文件」）；requirement 正文补
+      「复用键是输入原文、外部变化不在复用点重新验证」一句
 
 ## 4. 验收场景（静态检查；真机由主会话串行）
 
@@ -56,6 +57,10 @@
 - [x] 4.5 231-quick-open-long-path-width：长路径段复核未写死「恒首行高亮」
 - [x] 4.6 874：外部目录与稳定布局段**只登记覆盖边界**（候选高亮行同样不判，由 visual 钉住），
       未新增精确路径无高亮的真机观测
+- [x] 4.7 230d 真机首跑暴露候选行可访问名被视觉分段插空格（`qo-dir/ 深层 /`）：候选行显式落
+      `aria-label` = 整条显示路径（目录含尾 `/`），`title` 合同不变；`quick-open-directory-stable.spec.ts`
+      补目录 / 中文长目录 / 外部目录三条 `toHaveAccessibleName`；230d 断言不放松（连续串反过来
+      成为可访问名的判据，深后代负向断言同时恢复区分度）
 
 ## 5. 验证与交付
 
@@ -69,14 +74,27 @@
       / `visual-red-probe-count.log`（5 failed，全部为探测次数期望 1、实得 2）
 - [x] 5.1a 批准记录轮的复跑（同一批命令，日志各自独立）：`target-unit-r4.log`（48/48）、
       `visual-green-target-r5.log`（**12/12**）、`visual-structural-target-r4.log`（12/12，CI 结构
-      层同款）、`tsc-root-r2.log` / `tsc-visual-r2.log` / `tsc-unit-r2.log`（均 exit 0）、
+      层同款）、`tsc-root-r2.log` / `tsc-visual-r2.log` / `tsc-unit-r2.log`（**该轮三份日志是 0 字节，
+      不能自证 exit 0**；结论由最终复核轮的 r3 日志复核，见 8.5）、
       `unit-all-r6.log`（1998/1998）、`docs-check-r5.log`（PASS）、`openspec-validate-r2.log`
       （39/39）；本轮红证据 `visual-red-fast-enter.log` / `visual-red-return-raw.log`（见 7.3 / 7.4）。
       既有 42 条与相邻 42 条未复跑：本轮只动 change 文档与本场景文件，产品代码零改动。
       全量前端第一次跑撞上 `link-suggest` 的同步预算抖动（万文件过滤 23.01ms > 16ms，同进程其余
       1997 条全绿），空载重跑 1998/1998——是负载下的计时抖动，与本 change 无关（该文件不在改动面）
+- [x] 5.1b 最终复核轮的全量复跑：`visual-green-target-r6.log`（**14/14**）、
+      `visual-structural-target-r5.log`（14/14，CI 结构层同款）、`visual-green-existing-r6.log`
+      （42/42）、`visual-green-adjacent-r4.log`（42/42 = escape 11 + focus 14 + gutter-copy 11 +
+      m702 6）、`target-unit-r5.log`（48/48）、`unit-all-r7.log`（1998/1998）、
+      `tsc-root-r3.log` / `tsc-visual-r3.log` / `tsc-unit-r3.log`（命令回显 + `EXIT=0`）、
+      `docs-check-r6.log`（PASS）、`openspec-validate-r3.log`（39/39）；红证据
+      `visual-red-reset-slot.log` / `visual-red-reset-cache.log`（见 8.2）
 - [ ] 5.2 完整 `gate quick` / `gate visual` 与真机复验由主会话串行执行（本 worker 不启动真机）
 - [x] 5.3 证据落 `.local/missions/quick-open-active-target/`；提交本分支，不 push / merge / archive
+- [x] 5.4 230d 真机复跑（隔离端口 1431，runner 自带 XDG / 合成 vault / 锁）：**1/1 PASS**，
+      证据 `.local/acceptance/2026-11-25/230d-quick-open-select-all-dir-children/`；AX 读数为
+      `[312] AXStaticText (qo-dir/深层/)`（修复前 `(qo-dir/ 深层 /)`），
+      `qo-dir/直接子项.md` 与「深层后代不混入」两条同时有区分度；失败首跑证据留在
+      `.local/acceptance/2026-11-25-quick-open-active-target-final/230d-...`
 
 ## 6. 机械核验后的修正（2026-11-25）
 
@@ -113,16 +131,47 @@
 - [x] 7.2 复用边界落进 design §3 / §6 与 spec 的 requirement + 新场景：`settled` 只按输入原文键控，
       同一浮层内离开再回到同一串复用旧判决，外部文件 / 索引变化不在复用点重新验证；关闭浮层
       （`dismiss`）或进入目录（`enterDirectory`）复位
-- [x] 7.3 visual 第 11 条（输入后 <120ms 立即 Enter）：Enter 先发起那唯一一次、去抖计时器到点后
-      加入同一在途 promise，发起 1 次 / 应答 1 次。红证据 `visual-red-fast-enter.log`（`src` 取
-      `9f3744a3`：停驻探测已存在而 `confirm` 不共享 ⇒ 发起 2 次）；绿 `visual-green-target-r5.log`。
+- [x] 7.3 visual 第 11 条（立即 Enter 与停驻计时器共用同一次）：Enter 与去抖计时器谁先到，都由先到者
+      发起、后到者加入同一在途 promise（或复用已落地判决），发起 1 次 / 应答 1 次；测试不冻结时钟，
+      名称 / 注释不冒充测量 120ms 边界（最终复核轮改口径，见 8.3）。红证据 `visual-red-fast-enter.log`
+      （`src` 取 `9f3744a3`：停驻探测已存在而 `confirm` 不共享 ⇒ 发起 2 次）；绿
+      `visual-green-target-r5.log`。
       口径注记：更早的 `5c95abb0` 上这条是**绿**的——那版对普通查询根本不发起停驻探测，1 次全是
       Enter 发的；能判红的现场是「停驻探测存在但不共享」，所以红基线取 `9f3744a3` 而不是 `5c95abb0`
 - [x] 7.4 visual 第 12 条（离开再回到同一输入）：回到时 `.is-active` 同步到位（一次性读，不轮询），
       离开期间 re-stub 的「`plan` 存在」不触发新探测，Enter 仍打开旧判决的游标行。红证据
       `visual-red-return-raw.log`（旧 `src`：同串首访根本不发探测，计数 0）；绿
       `visual-green-target-r5.log`
-- [x] 7.5 机械核验 P2（批准记录）/ P3-1（`settled` 边界）/ P3-2（<120ms Enter）关闭；5.1a 的指针
+- [x] 7.5 机械核验 P2（批准记录）/ P3-1（`settled` 边界）/ P3-2（立即 Enter 口径）关闭；5.1a 的指针
       全部指向本轮日志，不复用上一轮文件名
 - [x] 7.6 文档计数同步：proposal 第 3 / 4 条、tasks 3.2 / 3.4 / 5.1a、design §5 统一为「浏览器矩阵
-      12 条」「living 9 → delta 13（改写 1 + 新增 4）」
+      12 条」「living 9 → delta 13（改写 1 + 新增 4）」（最终复核轮改为 14 条 / delta 14，见 8.3 / 8.4）
+
+## 8. 最终机械复核 P3 收口（2026-11-25）
+
+- [x] 8.1 `enterDirectory()` 复位语义与 design 对齐（**产品代码零 diff**）：
+      - `inflight` **不清**，理由写进 design §3：复用按输入原文键控，进目录换上的 raw 必是子项路径
+        （`dir/child` 或 `dir/child/`），旧在途永远命不中；清掉它反而会在「进目录后删掉尾斜杠退回
+        原串」时多发一条扫描。在途本身不可取消，旧 promise 的结果由 `renderSeq` + 原文校验丢弃。
+      - `settled = null` **保留**，同时写明它是**防御性清空**：目录行只在扫描落地后才出现（`rows`
+        来自 `directory.entries`），那次落地已把单槽记忆换成目录判决，所以「进入目录后回到文件串」
+        的可见复位来自进入前的目录输入，不是这一行。design §3 / §6 按此措辞。
+- [x] 8.2 复位翻转用例（visual 第 13 / 14 条），同一 re-stub 现场（盘上新增 `plan`、索引仍无此行）：
+      - 第 13 条「关闭浮层重开」：复位后重新探测（发起 1→2）、判决翻成可打开、高亮清空、Enter 打开
+        `plan`。红证据 `visual-red-reset-slot.log`：删掉 `dismiss()` 的 `settled = null` ⇒ 1 failed
+        （Expected 2 / Received 1）。
+      - 第 14 条「进入目录后回到同一串」：同一组断言。**只删 `enterDirectory()` 的 `settled = null`
+        时它是绿的**——这是 8.1 的现场证据（可见复位来自进入前的目录输入）；它的红基线是「按 raw
+        多槽缓存、跨复位复用」的实现：`visual-red-reset-cache.log` 两条都红（2 vs 1）。因此它捕获
+        的是「跨导航复用」这一类错误，不是那一行赋值本身。
+      - 绿：`visual-green-target-r6.log`（14/14）、`visual-structural-target-r5.log`（14/14）。
+- [x] 8.3 第 11 条口径：名称 / 注释改为「Enter 与停驻计时器共用同一次探测」，明写不冻结时钟、谁先
+      发起都只计 1 次，不冒充测量 120ms 边界；proposal 判据 3、design §5、本文件 3.2 / 7.3 同步
+- [x] 8.4 复位场景进 spec delta：「复位后重新探测并识别新文件」⇒ living 9 → delta 14（改写 1 +
+      新增 5）；proposal 判据 3 / 4、本文件 3.4 同步
+- [x] 8.5 tsc 证据形式：三份日志带命令回显 + `EXIT=$?`（`tsc-root-r3.log` / `tsc-visual-r3.log` /
+      `tsc-unit-r3.log`）；r2 的三份 0 字节日志作废，不再被任何指针引用
+- [x] 8.6 全量复跑（5.1b）：目标 14/14、结构 14/14、既有 42/42、相邻 42/42、目标单测 48/48、
+      全量前端 1998/1998、三份 tsc `EXIT=0`、docs-check PASS、validate 39/39
+      （全量前端首跑在视觉套件并行负载下 `link-suggest` 预算 45.6ms > 16ms 红 1 条，空载复跑
+      1998/1998——与本 change 无关，该文件不在改动面）
