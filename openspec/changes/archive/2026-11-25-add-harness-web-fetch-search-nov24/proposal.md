@@ -164,7 +164,7 @@ D1 / D2 已批准，不再列默认批准策略裁决点。以下 fail-closed �
    - 权限 / 批准闸回扫：17 个既有场景已全部补钉 `web_access.enabled=false`，最终 15/17 PASS，`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-stage5-web/approval-sweep/summary.md`；725/726 在无 Web 实现的分支同步骤失败，属预存在，另立修复，不记为 Web 通过。
 5. **规格对账（归档前）**：`scripts/openspec-archive-check.mjs` 门禁模式 PASS（16 MODIFIED / 359 段 / 0 静默丢段）；`validate --all --strict` 38/38；`docs/backlog.md` 归档队列恰一条 `add-harness-web-fetch-search-nov24`。读数取自 2026-11-25 归档前工作区。
 
-**归档后记录**：待归档提交后补录归档 commit、`openspec-archive.mjs` 输出、修链读数与 `--archived add-harness-web-fetch-search-nov24` 的 PASS 原文与时间。
+**归档后记录（2026-11-25T19:43+0800）**：归档提交 `d5c1143d9136260da8eac5a017df3057f378a0d7`；包装器输出 `Change 'add-harness-web-fetch-search-nov24' archived as '2026-11-25-add-harness-web-fetch-search-nov24'` / `Specs updated successfully` / `归档后修链 0 处（扫过 6 篇 Markdown / 0 条相对链接）` / `openspec-links: PASS（校验 700 条相对链接，全部可达）`；`node scripts/openspec-archive-check.mjs --archived add-harness-web-fetch-search-nov24` → `PASS（openspec/changes/archive/2026-11-25-add-harness-web-fetch-search-nov24：9 条 MODIFIED，对比 250 段；人工恢复 0 段，声明认领 0 段）`。
 
 ## 关联材料
 
