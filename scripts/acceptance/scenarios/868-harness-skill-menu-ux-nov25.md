@@ -126,7 +126,7 @@ steps:
         ax: { focused: "AXTextArea" }
   - name: 移开指针，确保候选从无 hover 的被动态打开
     do: hover
-    target: { role: AXStaticText, name: "^harness-note$" }
+    target: { role: AXRadioButton, name: "^harness-note.md$" }
   - name: 输入共同前缀，打开十二项长列表
     do: typeInNode
     target: { role: AXTextArea, name: "问点什么|/acc-skill" }
@@ -158,9 +158,9 @@ steps:
     key: enter
     expect:
       - label: 两次下一项接一次上一项得到 acc-skill-00
-        ax: { has: "/acc-skill-00 " }
+        ax: { has: '/AXTextArea = "/acc-skill-00"/' }
       - label: 未误选第二项
-        ax: { not: "/acc-skill-01 " }
+        ax: { not: '/AXTextArea = "/acc-skill-01"/' }
       - label: 接受后编辑器仍未变
         editor: { unchangedSince: doc-before-skill-nav }
 
@@ -172,7 +172,7 @@ steps:
     target: { role: AXTextArea, name: "问点什么" }
   - name: 移开指针，确保候选从无 hover 的被动态打开
     do: hover
-    target: { role: AXStaticText, name: "^harness-note$" }
+    target: { role: AXRadioButton, name: "^harness-note.md$" }
   - name: 再次打开同一长列表
     do: typeInNode
     target: { role: AXTextArea, name: "问点什么|/acc-skill" }
@@ -193,9 +193,9 @@ steps:
     key: enter
     expect:
       - label: 末项停住后回退一项得到 acc-skill-10
-        ax: { has: "/acc-skill-10 " }
+        ax: { has: '/AXTextArea = "/acc-skill-10"/' }
       - label: 未误选末项
-        ax: { not: "/acc-skill-11 " }
+        ax: { not: '/AXTextArea = "/acc-skill-11"/' }
       - label: 整个键盘流程未改编辑器
         editor: { unchangedSince: doc-before-skill-nav }
 
@@ -207,7 +207,7 @@ steps:
     target: { role: AXTextArea, name: "问点什么" }
   - name: 移开指针，确保候选从无 hover 的被动态打开
     do: hover
-    target: { role: AXStaticText, name: "^harness-note$" }
+    target: { role: AXRadioButton, name: "^harness-note.md$" }
   - name: 打开 Shift+Arrow 对照候选
     do: typeInNode
     target: { role: AXTextArea, name: "问点什么|/acc-skill" }
@@ -238,7 +238,7 @@ steps:
     target: { role: AXTextArea, name: "问点什么" }
   - name: 移开指针，确保候选从无 hover 的被动态打开
     do: hover
-    target: { role: AXStaticText, name: "^harness-note$" }
+    target: { role: AXRadioButton, name: "^harness-note.md$" }
   - name: 打开 Ctrl+Shift 对照候选
     do: typeInNode
     target: { role: AXTextArea, name: "问点什么|/acc-skill" }
@@ -267,7 +267,7 @@ steps:
     target: { role: AXTextArea, name: "问点什么" }
   - name: 移开指针，确保候选从无 hover 的被动态打开
     do: hover
-    target: { role: AXStaticText, name: "^harness-note$" }
+    target: { role: AXRadioButton, name: "^harness-note.md$" }
   - name: 打开 Meta 对照候选
     do: typeInNode
     target: { role: AXTextArea, name: "问点什么|/acc-skill" }
@@ -277,7 +277,7 @@ steps:
     key: "cmd+n"
     expect:
       - label: Meta 组合不走 Ctrl+N 的候选导航与关闭路径
-        ax: { has: "合成 Skill 00 的长描述" }
+        ax: { has: "AXList (Select a Skill)" }
       - shot: 07-Meta-N-候选高亮现场
   - name: 关闭 Meta 对照候选
     do: key
@@ -294,25 +294,34 @@ steps:
     target: { role: AXTextArea, name: "问点什么" }
   - name: 移开指针，确保候选从无 hover 的被动态打开
     do: hover
-    target: { role: AXStaticText, name: "^harness-note$" }
+    target: { role: AXRadioButton, name: "^harness-note.md$" }
   - name: 打开 Alt 对照候选
     do: typeInNode
     target: { role: AXTextArea, name: "问点什么|/acc-skill" }
     text: "/acc-skill"
-  - name: Alt+N 不关闭候选，截图保留真实高亮状态
+  - name: Alt+N 走 macOS 原生组字，不被候选导航消费
     do: key
     key: "alt+n"
     channel: cgevent
     expect:
-      - label: Alt 组合不走 Ctrl+N 的候选导航与关闭路径
-        ax: { has: "合成 Skill 00 的长描述" }
-      - shot: 08-Alt-N-候选高亮现场
-  - name: 关闭 Alt 对照候选
+      - label: Alt+N 的原生组字精确落入 composer
+        ax: { has: '/AXTextArea = "/acc-skill˜"/' }
+      - label: 组字改变 query 后候选关闭，未产生候选导航
+        ax: { not: "AXList (Select a Skill)" }
+      - label: Alt 对照仍未改编辑器
+        editor: { unchangedSince: doc-before-skill-nav }
+      - shot: 08-Alt-N-原生组字现场
+  - name: Alt 组字后 Escape 关闭对话面板
     do: key
     key: escape
     expect:
-      - label: Alt 对照后 Escape 合同仍在
-        ax: { not: "合成 Skill 00 的长描述" }
+      - label: 对话面板已关闭
+        ax: { has: "AXCheckBox (对话面板) Value: 0" }
+      - label: Alt 对照候选保持关闭
+        ax: { not: "AXList (Select a Skill)" }
+  - name: 重开对话面板，准备 20% 窄 pane 对照
+    do: click
+    target: { role: AXCheckBox, name: "^对话面板$" }
 
   - name: 新建会话，seed 已固定文档侧 80% 与 harness 20%
     do: click
@@ -326,7 +335,7 @@ steps:
     target: { role: AXTextArea, name: "问点什么" }
   - name: 移开指针，确保候选从无 hover 的被动态打开
     do: hover
-    target: { role: AXStaticText, name: "^harness-note$" }
+    target: { role: AXRadioButton, name: "^harness-note.md$" }
   - name: 20% 窄 pane 打开长描述候选并保留几何现场截图
     do: typeInNode
     target: { role: AXTextArea, name: "问点什么|/acc-skill" }
@@ -340,5 +349,6 @@ steps:
 本场景用 Enter 后的实际 ref 判定 Ctrl+N/P 的导航结果，不以「AX 里能看到 option 文本」冒充高亮或滚动位置断言。
 长列表揭示、菜单外零滚动、修饰键 `defaultPrevented`、候选高亮与 20% 窄 pane 不越界的逐拍机器判据在
 `tests/visual/scenes/skill-hybrid.spec.ts`；真机 AX 读不到这些 DOM 事实，因此 868 用选区替换结果验证
-Shift/Ctrl+Shift 的原生路径，用候选存续与截图保留 Meta/Alt 和窄 pane 现场，不把截图描述成已通过的像素断言。
+Shift/Ctrl+Shift 的原生路径，用候选存续验证 Meta、用精确组字结果验证 Alt，并用截图保留两者和窄 pane 现场，
+不把截图描述成已通过的像素断言。
 所有 Skill 与描述均为合成 fixture，不读取真实配置或真实 vault。
