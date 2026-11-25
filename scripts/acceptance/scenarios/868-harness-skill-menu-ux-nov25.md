@@ -203,12 +203,12 @@ steps:
     do: typeInNode
     target: { role: AXTextArea, name: "问点什么|/acc-skill" }
     text: "/acc-skill"
-  - name: Shift+ArrowUp 保留候选与原生扩选
+  - name: Shift+ArrowUp 关闭候选并保留原生扩选
     do: key
     key: "shift+up"
     expect:
-      - label: Shift+Arrow 不走旧 Ctrl+Shift 的关闭路径
-        ax: { has: "合成 Skill 00 的长描述" }
+      - label: 原生扩选使 caret 离开 Skill token 后候选关闭，事件未被候选消费
+        ax: { not: "合成 Skill 00 的长描述" }
       - shot: 05-Shift-Arrow-原生扩选
   - name: 用替换选区的可见结果证明 Shift+Arrow 未被候选消费
     do: keys
@@ -216,7 +216,7 @@ steps:
     expect:
       - label: 原生选区被 z 替换，而不是候选导航后保留原文
         ax: { has: '/AXTextArea = "z"/' }
-      - label: 替换后候选关闭
+      - label: 替换后候选保持关闭
         ax: { not: "合成 Skill 00 的长描述" }
       - label: Shift 对照仍未改编辑器
         editor: { unchangedSince: doc-before-skill-nav }

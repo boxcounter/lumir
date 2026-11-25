@@ -14,7 +14,8 @@ Skill 候选当前把 Ctrl+N/P 路由到「关闭候选但不消费」，方向�
 - 候选打开时，Ctrl+N 与 Ctrl+P 分别和 ArrowDown 与 ArrowUp 共用同一个高亮移动函数；事件被候选消费，不得同时移动 composer 光标或改文档。候选关闭时，既有 Emacs 行移动不变。
 - 高亮经键盘或指针改变后，当前项 SHALL 在候选滚动视口内完整可见；已在视口内不滚动，且不得滚动整页或 transcript。到端停住、不环绕的既有语义不变。
 - Skill 候选按 composer 宿主可用宽度响应式加宽：短内容取得可用空间驱动的目标宽，长内容可超过旧 26em，但仍受 48em 与 pane 可用宽上限约束。只改 Skill 候选，不改通用 list 浮层的 26em 档。
-- 保留 Enter / Tab 接受、被动态不抢 Enter、Escape 层栈关闭、IME composition 不触发导航且不吞确认 Enter、refs 与发送语义。
+- 保留 Enter / Tab 接受、被动态不抢 Enter / Tab、Escape 层栈关闭、IME composition 不触发导航且不吞确认 Enter、refs 与发送语义；补两条真实 Tab 按键路径回归。
+- 合同核对不改变已批准行为：基线规格只要求带修饰键的同名方向键不被候选消费；旧实现也未消费 Shift+Arrow，原生扩选后经既有 `selectionSet → syncSkillMenu()` 路径在 caret 离开 Skill token 时关闭候选。因此 Shift+Arrow 与 Ctrl+Shift+N/P 均保持「不消费 + 原生扩选 + 候选关闭」，不新增「修饰键后菜单必须保留」的行为。
 
 ## Non-goals
 

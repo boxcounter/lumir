@@ -65,8 +65,9 @@ MUST NOT 被当作显式调用依据；`/tmp`、`/usr/local` 等斜杠开头路�
 到端停住、不环绕），事件 SHALL 被候选消费且 MUST NOT 同时移动 composer caret、改变文档或产生撤销步。
 候选关闭时的 `⌃N` / `⌃P` SHALL 保留 composer 既有 Emacs 行移动；`⌃⇧N` / `⌃⇧P` SHALL 保留既有扩选，
 候选按原有关闭路径结束但 MUST NOT 消费该组合键。无修饰的 `Enter` / `Tab` 选中，
-`Esc` 关闭，鼠标点击选中且按下时 MUST NOT 夺走输入区焦点。带修饰键的同名方向键 MUST NOT 被候选消费。
-`Esc` SHALL 走共享浮层层栈，一次只关最上层，MUST NOT 收起面板或移动焦点。
+`Esc` 关闭，鼠标点击选中且按下时 MUST NOT 夺走输入区焦点。带修饰键的同名方向键 MUST NOT 被候选消费；
+`⇧↑` / `⇧↓` SHALL 保留原生扩选，扩选使 caret 离开 Skill token 后候选按既有选区同步路径关闭，MUST NOT
+为保留候选而阻断或重写原生选区。`Esc` SHALL 走共享浮层层栈，一次只关最上层，MUST NOT 收起面板或移动焦点。
 
 **候选高亮可见性**：高亮经键盘或指针改变后，当前 option SHALL 完整落在候选滚动视口内；已完整可见时
 候选滚动位置 MUST NOT 改变，离开视口时 SHALL 只滚动候选到最近可见位置。首尾、长列表与指针 / 键盘混合
@@ -176,6 +177,11 @@ Skill 内容引发的 `cli_run`；invocation policy MUST NOT 替代或放宽权�
 - **WHEN** 候选已进入选择态，用户使用方向键 / Ctrl+N / Ctrl+P / Enter / Tab / Esc；另一次在中文输入法组合期键入或确认
 - **THEN** 选择态只消费相应导航与选中键，Ctrl+N / Ctrl+P 与方向键分别同义且不改 composer caret 或文档；
   Esc 只关候选；组合期不触发、不导航、不吞确认 Enter，组合开始关闭已有候选
+
+#### Scenario: Shift+Arrow 保留原生扩选并关闭候选
+
+- **WHEN** 候选已显示，caret 位于多行 composer 的 Skill token 末尾，用户按 `⇧↑` 或 `⇧↓`
+- **THEN** 事件不被候选消费，原生扩选非空且文档不变；caret 离开 Skill token 后候选按既有选区同步路径关闭
 
 #### Scenario: 长列表高亮始终可见且不带动整页
 

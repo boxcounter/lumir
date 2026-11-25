@@ -20,7 +20,7 @@
 
 候选打开且非 IME composition 时，Ctrl+N 与 ArrowDown 恒产生相同的下一项状态，Ctrl+P 与 ArrowUp 恒产生相同上一项状态。对任意列表长度与当前高亮，四类键均到端停住、不环绕；从被动态按下方向键 / Ctrl+N 到首项，按上方向键 / Ctrl+P 到末项。
 
-候选消费这四次导航：事件 MUST `preventDefault`，composer 文档、caret 与撤销栈 MUST 不变。候选关闭时本合同不接管按键，既有 Emacs 行移动 MUST 保持。Shift+Arrow 与 Ctrl+Shift+N/P 继续走原生选区路径且不被候选消费，后者仍按旧路径关闭候选，既有扩选 MUST 保持；Meta / Alt 组合与 IME composition MUST NOT 被这条候选导航吞掉；Enter / Tab 接受、Escape 关闭的既有合同不变。
+候选消费这四次导航：事件 MUST `preventDefault`，composer 文档、caret 与撤销栈 MUST 不变。候选关闭时本合同不接管按键，既有 Emacs 行移动 MUST 保持。Shift+Arrow 与 Ctrl+Shift+N/P 继续走原生选区路径且不被候选消费，既有扩选 MUST 保持；Shift+Arrow 扩选使 caret 离开 Skill token 后，候选按既有 `selectionSet → syncSkillMenu()` 路径关闭，Ctrl+Shift+N/P 另保留旧主动关闭路径，两者均不强制保留候选。Meta / Alt 组合与 IME composition MUST NOT 被这条候选导航吞掉；Enter / Tab 接受、被动态不消费、Escape 关闭的既有合同不变。
 
 ### S2 — 高亮项始终完整可见
 

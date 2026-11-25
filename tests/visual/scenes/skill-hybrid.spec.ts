@@ -115,6 +115,24 @@ test("Skill 候选被动态不抢 Enter，方向键选择后才提交 ref", asyn
   await expect(menu).toBeHidden();
 });
 
+test("Skill 候选被动态不消费 Tab，保留原生焦点遍历且不创建 ref", async ({ page }) => {
+  await setup(page);
+  await page.mouse.move(10, 10);
+  const composer = page.locator(".lumir-hp-composer .cm-content");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  await page.keyboard.type("/acc");
+  await expect(menu).toBeVisible();
+  await expect(composer).not.toHaveAttribute("aria-activedescendant", /.*/);
+  await page.keyboard.press("Tab");
+  await expect(composer).not.toBeFocused();
+  await expect(menu).toBeHidden();
+  await expect(composer).toHaveText("/acc");
+  await expect(composer.locator(".lumir-hp-skill-ref")).toHaveCount(0);
+  expect(await sent(page)).toEqual([]);
+  const keys = await page.evaluate(() => (window as unknown as { __keyDefaults: any[] }).__keyDefaults);
+  expect(keys.at(-1)).toMatchObject({ key: "Tab", prevented: false });
+});
+
 test("方向键进入选择态后 Enter 选中并提交当前 ref", async ({ page }) => {
   await setup(page);
   const composer = page.locator(".lumir-hp-composer .cm-content");
@@ -130,6 +148,28 @@ test("方向键进入选择态后 Enter 选中并提交当前 ref", async ({ pag
   await page.keyboard.press("Enter");
   await expect(composer).toHaveText("/acc-skill-abc ");
   await expect(composer.locator(".lumir-hp-skill-ref")).toHaveCount(1);
+  await page.keyboard.press("Enter");
+  await expect.poll(async () => (await sent(page)).length).toBe(1);
+  expect((await sent(page))[0].skills_json).toBe('["acc-skill-abc"]');
+});
+
+test("方向键进入选择态后 Tab 接受并提交当前 ref", async ({ page }) => {
+  await setup(page);
+  const composer = page.locator(".lumir-hp-composer .cm-content");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  await page.mouse.move(10, 10);
+  await page.keyboard.type("/acc");
+  await expect(menu.locator("[role=option]")).toHaveCount(2);
+  await page.keyboard.press("ArrowDown");
+  await expect(composer).toHaveAttribute("aria-activedescendant", "lumir-hp-skill-option-0");
+  await page.keyboard.press("Tab");
+  await expect(composer).toHaveText("/acc-skill-abc ");
+  await expect(composer.locator(".lumir-hp-skill-ref")).toHaveCount(1);
+  await expect(composer).toBeFocused();
+  await expect(menu).toBeHidden();
+  expect(await sent(page)).toEqual([]);
+  const keys = await page.evaluate(() => (window as unknown as { __keyDefaults: any[] }).__keyDefaults);
+  expect(keys.at(-1)).toMatchObject({ key: "Tab", prevented: true });
   await page.keyboard.press("Enter");
   await expect.poll(async () => (await sent(page)).length).toBe(1);
   expect((await sent(page))[0].skills_json).toBe('["acc-skill-abc"]');
@@ -300,21 +340,23 @@ test("⌃⇧N/P 保留扩选：候选关闭但事件不被消费", async ({ page
   }
 });
 
-test("⇧Arrow 保留原生选区且不被候选消费", async ({ page }) => {
+test("⇧Arrow 保留原生扩选且不被候选消费，caret 离开 token 后候选关闭", async ({ page }) => {
   for (const item of [
-    { key: "Shift+ArrowUp", head: 0 },
-    { key: "Shift+ArrowDown", head: 4 },
+    { key: "Shift+ArrowUp", head: 3 },
+    { key: "Shift+ArrowDown", head: 14 },
   ] as const) {
-    await setup(page);
-    await page.keyboard.type("/acc");
+    await setup(page, { version: 3, text: "abcdef\n/acc\nxy", caret: 11, cards: [], skills: [] });
+    await page.keyboard.type("-");
+    await page.keyboard.press("Backspace");
     const menu = page.locator(".lumir-hp-skill-menu");
     await expect(menu).toBeVisible();
     await page.keyboard.press(item.key);
     await expect.poll(() => page.evaluate(() => {
       const view = (document.querySelector(".lumir-hp-composer .cm-content") as any).cmTile.root.view;
       const main = view.state.selection.main;
-      return { anchor: main.anchor, head: main.head, doc: view.state.doc.toString() };
-    })).toEqual({ anchor: 4, head: item.head, doc: "/acc" });
+      return { anchor: main.anchor, head: main.head, empty: main.empty, doc: view.state.doc.toString() };
+    })).toEqual({ anchor: 11, head: item.head, empty: false, doc: "abcdef\n/acc\nxy" });
+    await expect(menu).toBeHidden();
     const keys = await page.evaluate(() => (window as unknown as { __keyDefaults: any[] }).__keyDefaults);
     expect(keys.at(-1)).toMatchObject({ key: item.key.slice("Shift+".length), prevented: false, shiftKey: true });
   }

@@ -49,7 +49,7 @@ test("/tmp 仍可显示被动候选，但只有合法左边界的 token 才触�
   assert.equal(skillTokenAt("/tmp", 5), null);
 });
 
-test("被动 Enter/Tab 不选中，方向键进入选择态且到端停住", () => {
+test("被动态无高亮，方向键进入选择态且到端停住", () => {
   const opened = openSkillMenu("/acc", 4, catalog)!;
   assert.equal(opened.highlighted, null);
   const down = moveSkillHighlight(opened, 1);
