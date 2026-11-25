@@ -353,8 +353,8 @@ steps:
     expect:
       - label: 输入框已空（没有 Value 字段）；全选未生效时这里会是「第 2 节 标」的 Value
         ax: { not: "/AXComboBox \\(筛选\\) Value:/" }
-      - label: 结果集回到全量（第 2 章的小节标题重新出现在大纲里，正文之外多一份）
-        ax: { count: { pattern: "第 2 章 小节", min: 2 } }
+      - label: 结果集回到全量（第 2 节标题重新出现在大纲里，正文之外多一份）
+        ax: { count: { pattern: "第 2 节 标题", min: 2 } }
 
   - name: 恢复远端条目查询（供下一步 Enter 使用）
     do: typeInNode
