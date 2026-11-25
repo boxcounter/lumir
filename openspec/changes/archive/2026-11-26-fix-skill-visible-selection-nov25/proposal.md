@@ -114,3 +114,20 @@ master（`46d7669`）已由 `selector-scroll-auto-select` 系列修掉这两处�
 - 影响的测试：新增 `skill-visible-selection-nov25.spec.ts`；`skill-hybrid.spec.ts` 的 oracle 加固；
   `tests/visual/playwright.config.ts` 的 `webkit-realua` testMatch 扩一项。
 - 关联约束：性能合同不涉及（无产品改动）；仓库信息卫生——目录 fixture 全为合成名字 / 描述。
+
+## 归档记录
+
+- **归档提交**：`42b4e148`（`chore(openspec): archive fix-skill-visible-selection-nov25`）；归档目录
+  `openspec/changes/archive/2026-11-26-fix-skill-visible-selection-nov25/`。
+- **包装器（`openspec archive`）实际输出**：`Change 'fix-skill-visible-selection-nov25' archived as
+  '2026-11-26-fix-skill-visible-selection-nov25'.`；`Applying changes to
+  openspec/specs/harness/spec.md: + 1 added`；`Totals: + 1, ~ 0, - 0, → 0`。
+- **归档后修链**：0 处（扫过 4 篇 Markdown / 1 条相对链接）；`openspec-links: PASS（校验 705 条相对
+  链接，全部可达）`。
+- **`--archived` 审计**：`openspec-archive-check: PASS（openspec/changes/archive/2026-11-26-fix-skill-visible-selection-nov25：
+  0 条 MODIFIED，对比 0 段；人工恢复 0 段，声明认领 0 段）`（2026-11-26T07:27:45+0800）。delta 为
+  ADDED-only，0 条 MODIFIED 是预期读数。
+- **归档队列**：预归档读数「归档队列 1 项已完成 change 均有唯一条目」；按「核销即删除、不留索引」
+  未在 backlog 留常驻行（80/80 行硬上限）。
+- **边界保留**：`webkit-realua` 实际 DPR 1；868 的 AX 判据是必要不充分（曝光窗口比像素可见区多一行），
+  完整几何归浏览器矩阵——归档后的 living spec 与 868 场景文本保持这一口径。
