@@ -739,16 +739,22 @@ export function webProviderDestination(draft: Draft, snapshot: SettingsSnapshot)
 function buildWebAccess(draft: Draft): WebAccessPatch | undefined {
   if (!draft.pageReset && !webAccessTouched(draft)) return undefined;
   const patch: WebAccessPatch = {};
-  if (draft.pageReset) {
-    patch.enabled = { kind: "reset" };
-    patch.approval = { kind: "reset" };
-  }
-  if (!draft.pageReset && webFieldTouched(draft.web.enabled.value, draft.web.enabled.explicit, draft.baseline.web.enabled)) {
+  const enabledTouched = webFieldTouched(
+    draft.web.enabled.value,
+    draft.web.enabled.explicit,
+    draft.baseline.web.enabled,
+  );
+  const approvalTouched = webFieldTouched(
+    draft.web.approval.value,
+    draft.web.approval.explicit,
+    draft.baseline.web.approval,
+  );
+  if (draft.pageReset || enabledTouched) {
     patch.enabled = draft.web.enabled.explicit
       ? { kind: "set", value: draft.web.enabled.value }
       : { kind: "reset" };
   }
-  if (!draft.pageReset && webFieldTouched(draft.web.approval.value, draft.web.approval.explicit, draft.baseline.web.approval)) {
+  if (draft.pageReset || approvalTouched) {
     patch.approval = draft.web.approval.explicit
       ? { kind: "set", value: draft.web.approval.value }
       : { kind: "reset" };
@@ -1141,10 +1147,7 @@ export function applyDraftDelete(draft: Draft): void {
 
 /** 页级「还原此页默认」（spec「页级还原默认只改草稿」）：把设置面拥有的键全部标为删键；
  *  provider 条目本身保留（id 与预设是身份，不是设置值），还原后的空条目仍可保存。 */
-export function pageResetDraft(
-  draft: Draft,
-  defaults: Record<AutomationKey, boolean>,
-): void {
+export function pageResetDraft(draft: Draft, snapshot: SettingsSnapshot): void {
   for (const provider of draft.providers) {
     if (provider.removed || provider.ignored) continue;
     provider.keyEdit = { kind: "clear", value: "" };
@@ -1163,9 +1166,12 @@ export function pageResetDraft(
   draft.activeOwner = null;
   draft.activeTouched = true;
   draft.pageReset = true;
-  for (const key of AUTOMATION_KEYS) draft.automation[key] = { value: defaults[key], explicit: false };
-  draft.web.enabled = { value: true, explicit: false };
-  draft.web.approval = { value: "allow_all", explicit: false };
+  for (const key of AUTOMATION_KEYS) {
+    draft.automation[key] = { value: snapshot.defaults[FLAG_KEYS[key]], explicit: false };
+  }
+  draft.web.enabled = { value: snapshot.defaults.web_access_enabled, explicit: false };
+  draft.web.approval = { value: snapshot.defaults.web_access_approval, explicit: false };
+  draft.web.originEdit = null;
   for (const kind of NAMING_KINDS) {
     draft.naming[kind] = { provider: null, model: null };
     draft.namingOwner[kind] = null;
@@ -3493,9 +3499,8 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
 
   // ── 页级还原（默认值来自快照，纯函数在模块层）──────────────────────────
   function pageReset(target: Draft): void {
-    const defaults = {} as Record<AutomationKey, boolean>;
-    for (const key of AUTOMATION_KEYS) defaults[key] = defaultFlagValue(key);
-    pageResetDraft(target, defaults);
+    if (snapshot === null) return;
+    pageResetDraft(target, snapshot);
     automationRows.clear();
   }
 

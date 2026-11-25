@@ -447,7 +447,7 @@ test("buildPatch：删掉当前项后再「还原此页默认」→ delete 仍�
   applyDraftDelete(draft);
   // 页级还原把 active 清成 null（Reset）——删除本身仍需要一个合法替代目标才能过删保护，
   // 随后同一笔的 Reset 再把键删掉。
-  pageResetDraft(draft, { auto_compact: true, session_naming: true, attachment_naming: true, subagents: true });
+  pageResetDraft(draft, base);
   assert.equal(draft.active, null);
   const patch = buildPatch(draft, base, base.revision!);
   assert.deepEqual(patch.providers[0], { action: "delete", id: "kimi-work", active_after: "deepseek" });
@@ -702,8 +702,7 @@ test("自动化不随 provider 增删改：开关值与显式状态在草稿操�
 test("pageResetDraft：条目字段全标删键、active 与命名覆盖删键、开关回默认；provider 条目本身保留", () => {
   const base = snapshot();
   const draft = createDraft(base);
-  const defaults = { auto_compact: true, session_naming: true, attachment_naming: true, subagents: true };
-  pageResetDraft(draft, defaults);
+  pageResetDraft(draft, base);
   const entry = draft.providers[0]!;
   assert.equal(entry.removed, false, "provider id / preset 是身份，不是设置值");
   assert.deepEqual(entry.keyEdit, { kind: "clear", value: "" });
@@ -733,7 +732,7 @@ test("pageResetDraft：条目字段全标删键、active 与命名覆盖删键�
   withOverride.naming.session.override_model = "k3-256k";
   withOverride.naming.attachment.override_model = "k3-256k";
   const draftWithOverride = createDraft(withOverride);
-  pageResetDraft(draftWithOverride, defaults);
+  pageResetDraft(draftWithOverride, withOverride);
   assert.deepEqual(buildPatch(draftWithOverride, withOverride, withOverride.revision!).naming, {
     session: { provider: { kind: "reset" }, model: { kind: "reset" } },
     attachment: { provider: { kind: "reset" }, model: { kind: "reset" } },

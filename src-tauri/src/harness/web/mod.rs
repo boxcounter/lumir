@@ -48,6 +48,10 @@ pub fn definitions() -> Vec<Value> {
 }
 
 pub trait WebToolPort: Send + Sync {
+    fn configuration_error(&self, _operation: WebOperation) -> Option<WebEnvelope> {
+        None
+    }
+
     fn execute(
         &self,
         operation: WebOperation,
@@ -74,7 +78,23 @@ impl ConfiguredWebToolPort {
     }
 }
 
+fn unconfigured_envelope(operation: WebOperation) -> WebEnvelope {
+    WebEnvelope::failure(
+        operation,
+        WebErrorCode::WebProviderUnconfigured,
+        "没有唯一可用的官方 DeepSeek Web provider",
+        None,
+        0,
+    )
+}
+
 impl WebToolPort for ConfiguredWebToolPort {
+    fn configuration_error(&self, operation: WebOperation) -> Option<WebEnvelope> {
+        resolve_web_provider(&self.config)
+            .err()
+            .map(|_| unconfigured_envelope(operation))
+    }
+
     fn approval_preview(
         &self,
         operation: WebOperation,
@@ -145,13 +165,7 @@ impl WebToolPort for ConfiguredWebToolPort {
                 }),
                 0,
             ),
-            Err(_) => WebEnvelope::failure(
-                operation,
-                WebErrorCode::WebProviderUnconfigured,
-                "没有唯一可用的官方 DeepSeek Web provider",
-                None,
-                0,
-            ),
+            Err(_) => unconfigured_envelope(operation),
         }
     }
 }
@@ -191,6 +205,11 @@ pub fn execute(
     };
     if let Err(output) = precheck(name, args) {
         return output;
+    }
+    if !aborted() {
+        if let Some(envelope) = port.configuration_error(operation) {
+            return envelope_output(envelope);
+        }
     }
     envelope_output(port.execute(operation, args, aborted))
 }
@@ -319,9 +338,21 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    struct CountingPort(AtomicUsize);
+    struct CountingPort(AtomicUsize, bool);
 
     impl WebToolPort for CountingPort {
+        fn configuration_error(&self, operation: WebOperation) -> Option<WebEnvelope> {
+            self.1.then(|| {
+                WebEnvelope::failure(
+                    operation,
+                    WebErrorCode::WebProviderUnconfigured,
+                    "synthetic unconfigured",
+                    None,
+                    0,
+                )
+            })
+        }
+
         fn approval_preview(
             &self,
             _operation: WebOperation,
@@ -343,7 +374,7 @@ mod tests {
 
     #[test]
     fn web_disabled_and_invalid_never_call_the_port() {
-        let port = CountingPort(AtomicUsize::new(0));
+        let port = CountingPort(AtomicUsize::new(0), false);
         let args = serde_json::json!({"query": "synthetic"});
         let disabled = execute(
             "web_search",
@@ -374,7 +405,7 @@ mod tests {
 
     #[test]
     fn web_invalid_args_fail_before_the_port_with_null_provider_and_zero_attempts() {
-        let port = CountingPort(AtomicUsize::new(0));
+        let port = CountingPort(AtomicUsize::new(0), false);
         for args in [
             serde_json::json!({"query": " \n\t"}),
             serde_json::json!({"query": "synthetic", "count": 0}),
@@ -403,6 +434,37 @@ mod tests {
         assert_eq!(output.value["code"], serde_json::json!("web_args_invalid"));
         assert_eq!(output.value["provider"], Value::Null);
         assert_eq!(output.value["provider_id"], Value::Null);
+        assert_eq!(output.value["attempts"], serde_json::json!(0));
+        assert_eq!(port.0.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn web_cancelled_wins_over_unconfigured_provider() {
+        let port = ConfiguredWebToolPort::new(&HarnessConfig::default());
+        let output = execute(
+            "web_search",
+            &serde_json::json!({"query": "synthetic"}),
+            WebAccessConfig::default(),
+            Some(&port),
+            &|| true,
+        );
+        assert_eq!(output.value["code"], serde_json::json!("web_cancelled"));
+    }
+
+    #[test]
+    fn web_unconfigured_never_calls_the_execution_port() {
+        let port = CountingPort(AtomicUsize::new(0), true);
+        let output = execute(
+            "web_search",
+            &serde_json::json!({"query": "synthetic"}),
+            WebAccessConfig::default(),
+            Some(&port),
+            &|| false,
+        );
+        assert_eq!(
+            output.value["code"],
+            serde_json::json!("web_provider_unconfigured")
+        );
         assert_eq!(output.value["attempts"], serde_json::json!(0));
         assert_eq!(port.0.load(Ordering::SeqCst), 0);
     }

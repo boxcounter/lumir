@@ -139,24 +139,86 @@ test("origin 单删与全清共用同一 Web patch，不改自动开关", () => 
   assert.deepEqual(patch.automation, {});
 });
 
-test("页级还原只重置 Web 两键，不清 origin 或 origin 编辑意图", () => {
-  const draft = createDraft(snapshot());
-  setWebApprovalDraft(draft, "ask");
-  pageResetDraft(draft, {
-    auto_compact: true,
-    session_naming: true,
-    attachment_naming: true,
-    subagents: true,
+test("页级还原后再改 Web enabled/approval 优先于 reset，再恢复默认仍删键", () => {
+  const base = snapshot({
+    web_access: {
+      enabled: { kind: "present", value: { kind: "bool", text: "false" } },
+      approval: { kind: "present", value: { kind: "string", text: "ask" } },
+      effective: { enabled: false, approval: "ask", status: "valid" },
+      invalid: null,
+      provider: { provider: null, provider_id: null, status: "not_evaluated" },
+      origins: ["https://example.com"],
+    },
   });
-  assert.equal(draft.web.enabled.explicit, false);
-  assert.equal(draft.web.approval.explicit, false);
-  assert.deepEqual(draft.web.origins, ["https://example.com"]);
-  const patch = buildPatch(draft, snapshot(), "rev-stage2");
-  assert.deepEqual(patch.web_access, {
+  const draft = createDraft(base);
+  pageResetDraft(draft, base);
+  setWebEnabledDraft(draft, false);
+  setWebApprovalDraft(draft, "ask");
+  assert.deepEqual(buildPatch(draft, base, base.revision!).web_access, {
+    enabled: { kind: "set", value: false },
+    approval: { kind: "set", value: "ask" },
+  });
+
+  draft.web.enabled = { value: base.defaults.web_access_enabled, explicit: false };
+  draft.web.approval = { value: base.defaults.web_access_approval, explicit: false };
+  assert.deepEqual(buildPatch(draft, base, base.revision!).web_access, {
     enabled: { kind: "reset" },
     approval: { kind: "reset" },
   });
-  assert.equal(patch.web_access?.clear_origins, undefined);
+});
+
+test("字段级编辑与页级还原组合时只保留最新意图", () => {
+  const base = snapshot();
+  const draft = createDraft(base);
+  setWebEnabledDraft(draft, false);
+  pageResetDraft(draft, base);
+  setWebApprovalDraft(draft, "ask");
+  assert.deepEqual(buildPatch(draft, base, base.revision!).web_access, {
+    enabled: { kind: "reset" },
+    approval: { kind: "set", value: "ask" },
+  });
+});
+
+test("页级还原取消此前 clear/add/remove，保留已保存 deny 且允许后续新编辑", () => {
+  const base = snapshot();
+  for (const kind of ["clear", "add", "remove"] as const) {
+    const draft = createDraft(base);
+    if (kind === "clear") clearWebOriginsDraft(draft);
+    if (kind === "add") addWebOriginDraft(draft, "https://example.net");
+    if (kind === "remove") removeWebOriginDraft(draft, "https://example.com");
+    pageResetDraft(draft, base);
+    assert.equal(draft.web.originEdit, null, kind);
+    assert.deepEqual(draft.web.origins, ["https://example.com"], kind);
+    assert.deepEqual(buildPatch(draft, base, base.revision!).web_access, {
+      enabled: { kind: "reset" },
+      approval: { kind: "reset" },
+    }, kind);
+  }
+
+  const draft = createDraft(base);
+  clearWebOriginsDraft(draft);
+  pageResetDraft(draft, base);
+  addWebOriginDraft(draft, "https://example.net");
+  assert.deepEqual(buildPatch(draft, base, base.revision!).web_access, {
+    enabled: { kind: "reset" },
+    approval: { kind: "reset" },
+    add_origin: "https://example.net",
+  });
+});
+
+test("页级还原的 Web 显示值与字段级还原同取 snapshot defaults", () => {
+  const base = snapshot();
+  base.defaults.web_access_enabled = false;
+  base.defaults.web_access_approval = "ask";
+  base.web_access.effective = { enabled: false, approval: "ask", status: "valid" };
+  const draft = createDraft(base);
+  pageResetDraft(draft, base);
+  assert.deepEqual(draft.web.enabled, { value: false, explicit: false });
+  assert.deepEqual(draft.web.approval, { value: "ask", explicit: false });
+  assert.deepEqual(buildPatch(draft, base, base.revision!).web_access, {
+    enabled: { kind: "reset" },
+    approval: { kind: "reset" },
+  });
 });
 
 test("provider 跳转载到实际条目；未解析时落到 DeepSeek 管理面", () => {

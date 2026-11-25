@@ -4554,6 +4554,48 @@ mod tests {
     }
 
     #[test]
+    fn web_ask_ignores_allow_rules_and_session_approval_cache() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("web-ask-ignores-allow-and-cache");
+        let mut config = fixture.config.clone();
+        config.permission_mode = crate::config::PermissionMode::FullAccess;
+        config.web_access.approval = crate::harness::web::config::WebApproval::Ask;
+        config.permissions.allow = vec![
+            "web_search".to_string(),
+            "web_fetch(https://example.com)".to_string(),
+        ];
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&fixture.scope, &config).unwrap();
+        let sink = NullSink;
+        let mut ctx = SessionContext::new(&sink, &runtime, &fixture.scope, &config);
+        for (tool, subject, args) in [
+            (
+                "web_search",
+                "synthetic query",
+                serde_json::json!({"query": "synthetic query"}),
+            ),
+            (
+                "web_fetch",
+                "https://example.com",
+                serde_json::json!({"url": "https://example.com/a"}),
+            ),
+        ] {
+            ctx.remember_approval(tool, subject);
+            let verdict = ctx.decide(tool, subject, &args);
+            assert_eq!(verdict.decision, Decision::Ask, "{tool}");
+            assert_eq!(
+                verdict.reason,
+                Some(permissions::DecisionReason::WebAccessPolicy {
+                    approval: crate::harness::web::config::WebApproval::Ask,
+                }),
+                "allow 规则与会话缓存都不得授权 {tool}"
+            );
+        }
+        runtime.release_turn(&fixture.scope);
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
     fn web_ask_preview_is_structured_identical_in_event_and_snapshot() {
         let _env_lock = crate::harness::xdg_test_lock();
         for operation in ["search", "fetch"] {
@@ -4623,6 +4665,7 @@ mod tests {
             runtime.release_turn(&fixture.scope);
 
             assert_eq!(pending_json["web"], event_json["web"]);
+            assert_eq!(pending_json["reason"], event_json["reason"]);
             assert_eq!(pending_json["reason"]["kind"], "web_access_policy");
             assert_eq!(pending_json["reason"]["approval"], "ask");
             assert!(pending_json.get("remember").is_none());
@@ -4719,6 +4762,57 @@ mod tests {
             .to_string();
         let output: serde_json::Value = serde_json::from_str(&output).unwrap();
         assert_eq!(output["code"], "web_url_blocked");
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn web_allow_all_finishes_without_approval_card() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("web-allow-all-no-card");
+        let mut config = fixture.config.clone();
+        config.permission_mode = crate::config::PermissionMode::FullAccess;
+        config.web_access.approval = crate::harness::web::config::WebApproval::AllowAll;
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&fixture.scope, &config).unwrap();
+        let sink = Collect::default();
+        let events = sink.0.clone();
+        let script = r#"{"responses":[
+          {"tool_calls":[{"id":"web-allowed","name":"web_search","arguments":"{\"query\":\"synthetic query\"}"}]},
+          {"text":"done"}
+        ]}"#;
+        let mut client = llm::MockClient::from_str(script, "web-allow-all").unwrap();
+        run_turn_for(
+            &sink,
+            &runtime,
+            &fixture.scope,
+            &config,
+            "question",
+            None,
+            &mut client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert!(runtime
+            .snapshot(&fixture.scope, &config)
+            .pending_approvals
+            .is_empty());
+        assert!(events
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|event| event["type"] != "approval_request"));
+        let input = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let output = input
+            .iter()
+            .find(|item| item["type"] == "function_call_output")
+            .expect("allow_all 必须直接进入 Web port")["output"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let output: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(output["code"], "web_provider_unconfigured");
+        assert_eq!(output["attempts"], 0);
         let _ = std::fs::remove_dir_all(&fixture.root);
     }
 
