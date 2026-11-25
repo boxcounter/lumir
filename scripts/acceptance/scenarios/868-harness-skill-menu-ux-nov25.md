@@ -1,6 +1,6 @@
 ---
-id: "867-harness-skill-menu-ux-nov25"
-item: 867
+id: "868-harness-skill-menu-ux-nov25"
+item: 868
 tier: full
 title: Skill 候选：Ctrl+N/P 同方向键、长列表高亮揭示与响应式加宽（change fix-skill-menu-ux-nov25）
 open: harness-note.md
