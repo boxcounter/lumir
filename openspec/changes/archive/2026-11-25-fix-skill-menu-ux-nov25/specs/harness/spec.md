@@ -4,7 +4,7 @@
 > 旧「Skill 的混合调用与入口策略」整条移除，由新名「Skill 的混合调用、入口策略与候选交互」承接。
 > MODIFIED 不允许场景改名，而本次必须废止「Ctrl+N/P 主动关候选」旧场景，故按仓内先例走 REMOVED +
 > ADDED。其余发现、策略、权限、引用、留存与投影段落逐字保留。专项输入分布见
-> [Skill 候选交互合同](../../../../../docs/specs/skill-menu.md)。
+> [Skill 候选交互合同](../../../../../../docs/specs/skill-menu.md)。
 
 ## REMOVED Requirements
 
