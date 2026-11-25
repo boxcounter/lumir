@@ -410,6 +410,45 @@ test("原生输入事务矩阵：opener 即开、query 逐拍同步、opener 不
   expect(consoleErrors).toEqual([]);
 });
 
+test("requestMeasure 读阶段不写候选 DOM，写阶段完成定位", async ({ page }) => {
+  await openExperiment(page, "", ["notes/Alpha.md"]);
+  await page.locator(".cm-content").evaluate((content) => {
+    const view = (content as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const probe = window.__wikilinkMeasure = { reads: 0, writes: 0, readMutations: 0 };
+    const requestMeasure = view.requestMeasure.bind(view);
+    view.requestMeasure = (request: any) => {
+      if (request?.read === undefined) return requestMeasure(request);
+      return requestMeasure({
+        ...request,
+        read: (current: any) => {
+          const observer = new MutationObserver(() => {});
+          observer.observe(document.body, { attributes: true, childList: true, characterData: true, subtree: true });
+          const result = request.read(current);
+          probe.readMutations += observer.takeRecords().filter((record) => {
+            if (record.target === view.contentDOM) return true;
+            if (record.target instanceof Element && record.target.closest(".lumir-link-suggest") !== null) return true;
+            return [...record.addedNodes, ...record.removedNodes].some((node) =>
+              node instanceof Element && (node.matches(".lumir-link-suggest") || node.querySelector(".lumir-link-suggest") !== null));
+          }).length;
+          observer.disconnect();
+          probe.reads += 1;
+          return result;
+        },
+        write: request.write === undefined ? undefined : (...args: any[]) => {
+          probe.writes += 1;
+          return request.write(...args);
+        },
+      });
+    };
+    view.dispatch({ changes: { from: 0, insert: "[[al" }, selection: { anchor: 4 } });
+  });
+  await expect(page.locator(OVERLAY)).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__wikilinkMeasure.reads)).toBeGreaterThan(0);
+  expect(await page.evaluate(() => window.__wikilinkMeasure.readMutations)).toBe(0);
+  expect(await page.evaluate(() => window.__wikilinkMeasure.writes)).toBeGreaterThan(0);
+  expect(await rows(page)).toEqual(["notes/Alpha.md"]);
+});
+
 test("compositionend：DOM 已是最终候选而 state 仍旧，pending flush 前零刷新，flush 后仅刷新一次", async ({ page }) => {
   const doc = "[[";
   await openExperiment(page, doc, ["notes/Alpha.md", "notes/Beta.md"]);
@@ -474,5 +513,6 @@ test("compositionend：DOM 已是最终候选而 state 仍旧，pending flush �
 declare global {
   interface Window {
     __wikilinkIme: { pending: boolean; dispatches: number; refreshes: number };
+    __wikilinkMeasure: { reads: number; writes: number; readMutations: number };
   }
 }

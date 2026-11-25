@@ -115,7 +115,7 @@ steps:
 
 本场景专门复现 Alex 2026-11-25 的 0.16.0 实测序列。每拍只输入一个可打印字符或一次 Backspace，不在拍间重新点击编辑器；因此旧实现中「首次打开后插件被禁用、后续继续显示上一代候选」不能被关闭再重开的路径掩盖。
 
-`d/` 在文件树中保持折叠，候选行则显示完整路径。`d/Alpha.md` 等负向判据因此只可能来自候选，不会命中文件树 basename 或 fixture 正文。`native-home.md` 与 `d/` 均不含 `s`，query=s 的正向候选只有 `d/sigma.md` 与 `d/source.md`；sigma 属 stem 前缀层，source 属完整路径子串层，顺序同时守住既有分层。
+`d/` 在文件树中保持折叠，候选行则显示完整路径。`d/Alpha.md` 等负向判据因此只可能来自候选，不会命中文件树 basename 或 fixture 正文。`native-home.md` 与 `d/` 均不含 `s`，query=s 的正向候选只有 `d/sigma.md` 与 `d/source.md`；两者的 stem 都以 `s` 开头，同属 stem 前缀层并按索引顺序排列，本场景不覆盖完整路径子串层。
 
 本 worker 只执行静态校验。真实 WKWebView 由主会话运行：
 

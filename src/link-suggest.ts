@@ -6,9 +6,9 @@ import { registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import { FILTER_LABEL, NO_MATCH_TEXT, foldCase, isFoldedMatch } from "./list-filter";
 import {
   applyOverlayPlacement,
-  measureOverlayNaturalWidth,
   overlayFontSize,
   placeOverlay,
+  type OverlayPlacement,
 } from "./overlay-placement";
 import { isInsideCodeContext } from "./preview/code-context";
 import { detectFrontmatter } from "./preview/frontmatter";
@@ -178,6 +178,13 @@ interface OpenState {
   readonly trigger: LinkSuggestTrigger;
   readonly items: readonly LinkSuggestion[];
   readonly active: number;
+}
+
+interface PlaceMeasurement {
+  readonly placement: OverlayPlacement;
+  readonly available: number;
+  readonly top: number;
+  readonly baseLeft: number;
 }
 
 function sameOpenState(left: OpenState, right: OpenState): boolean {
@@ -359,7 +366,18 @@ class LinkSuggestView {
   }
 
   private schedulePlace(): void {
-    this.view.requestMeasure({ read: () => this.place(), key: this });
+    this.clearPlaceStyles();
+    this.view.requestMeasure({
+      read: () => this.measurePlace(),
+      write: (measured) => this.writePlace(measured),
+      key: this,
+    });
+  }
+
+  private clearPlaceStyles(): void {
+    this.root.style.width = "";
+    this.root.style.minWidth = "";
+    this.root.style.maxHeight = "";
   }
 
   private render(): void {
@@ -404,36 +422,50 @@ class LinkSuggestView {
   }
 
   private place(): void {
+    this.clearPlaceStyles();
+    this.writePlace(this.measurePlace());
+  }
+
+  private measurePlace(): PlaceMeasurement | null {
     const state = this.state;
-    if (state === null) return;
+    if (state === null) return null;
     const caret = this.view.coordsAtPos(state.trigger.head);
     const win = this.view.dom.ownerDocument.defaultView;
-    if (caret === null || win === null || caret.bottom < 0 || caret.top > win.innerHeight) {
-      this.close();
-      return;
-    }
+    if (caret === null || win === null || caret.bottom < 0 || caret.top > win.innerHeight) return null;
     const placement = placeOverlay({
       tier: "list",
-      natural: measureOverlayNaturalWidth(this.root),
+      natural: this.root.getBoundingClientRect().width,
       host: win.innerWidth,
       hostLeft: 0,
       fontSize: overlayFontSize(this.root),
       anchor: { left: caret.left, right: caret.right },
       preferred: "left",
     });
-    applyOverlayPlacement(this.root, placement);
     const below = win.innerHeight - caret.bottom - 12;
     const above = caret.top - 12;
     const direction = below >= 80 || below >= above ? "below" : "above";
     const available = Math.max(0, Math.min(272, direction === "below" ? below : above));
-    if (available < 26) {
+    if (available < 26) return null;
+    const height = Math.min(this.root.getBoundingClientRect().height, available);
+    const top = direction === "below" ? caret.bottom + 4 : caret.top - height - 4;
+    const offsetParent = this.root.offsetParent as HTMLElement | null;
+    const baseLeft = offsetParent?.getBoundingClientRect().left ?? 0;
+    return {
+      placement,
+      available,
+      top: Math.min(win.innerHeight - height - 8, Math.max(8, top)),
+      baseLeft,
+    };
+  }
+
+  private writePlace(measured: PlaceMeasurement | null): void {
+    if (measured === null) {
       this.close();
       return;
     }
-    this.root.style.maxHeight = `${available}px`;
-    const height = this.root.getBoundingClientRect().height;
-    const top = direction === "below" ? caret.bottom + 4 : caret.top - height - 4;
-    this.root.style.top = `${Math.min(win.innerHeight - height - 8, Math.max(8, top))}px`;
+    applyOverlayPlacement(this.root, measured.placement, measured.baseLeft);
+    this.root.style.maxHeight = `${measured.available}px`;
+    this.root.style.top = `${measured.top}px`;
   }
 
   private onKeyDown = (event: KeyboardEvent): void => {

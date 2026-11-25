@@ -186,16 +186,18 @@ export function overlayFontSize(el: HTMLElement): number {
  *
  * 坐标基准：`position: fixed` 的浮层以视口为包含块；`absolute` 的以 `offsetParent` 为包含块
  * （本仓是 chip 外面的 wrapper）。两者都从视口坐标折算，调用方不必各判一次。
+ * `requestMeasure` 消费者可在 read 阶段量好 `measuredBaseLeft` 并传入，避免 write 阶段再读布局。
  */
-export function applyOverlayPlacement(el: HTMLElement, placement: OverlayPlacement): void {
+export function applyOverlayPlacement(el: HTMLElement, placement: OverlayPlacement, measuredBaseLeft?: number): void {
   if (!isLayoutCapable(el)) return;
   el.style.width = `${placement.width}px`;
   el.style.translate = "";
   el.style.right = "auto";
-  const offsetParent = el.offsetParent as HTMLElement | null;
-  const base =
+  const offsetParent = measuredBaseLeft === undefined ? el.offsetParent as HTMLElement | null : null;
+  const base = measuredBaseLeft ?? (
     offsetParent !== null && typeof offsetParent.getBoundingClientRect === "function"
       ? offsetParent.getBoundingClientRect().left
-      : 0;
+      : 0
+  );
   el.style.left = `${placement.left - base}px`;
 }
