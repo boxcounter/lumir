@@ -4,7 +4,7 @@ item: 875
 tier: full
 title: Harness Markdown strong：有序列表空行后的缩进续段在流式中间态与终态均不显示字面星号
 open: harness-note.md
-marker: "HMB-875"
+marker: "HNL-ALPHA"
 config:
   harness:
     provider: mock
