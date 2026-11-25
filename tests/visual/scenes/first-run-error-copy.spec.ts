@@ -9,7 +9,8 @@
 // 正观测（同一屏里英文 / 中文确实上屏、后端原文确实带 URL），否则负向断言恒真。
 
 import { expect, test, type Page } from "@playwright/test";
-import { stubTauri, type VaultFixture } from "./tauri-stub";
+import { stubTauri, type SnapshotJson, type VaultFixture } from "./tauri-stub";
+import type { SettingsSnapshot } from "../../../src/bindings/SettingsSnapshot";
 import { COPY } from "../../../src/copy-data";
 
 const DOC = "# 首次安装错误文案\n\n第一段，给上下文 chip 一个视口口径。\n";
@@ -233,8 +234,9 @@ const DIAG_PRESET_MESSAGE = "配置项 harness.providers 的旧条目已补齐 p
 const DIAG_WINDOW_MESSAGE =
   '配置项 harness.providers.kimi-work.models[0]（id "k3-256k"）的 window 应为 1..=10000000 的整数，已忽略该项';
 
-/** 设置面快照（与 Rust `SettingsSnapshot` 的序列化形状同形；合成数据）。 */
-function diagnosticSettingsSnapshot(): Record<string, unknown> {
+/** 设置面快照（与 Rust `SettingsSnapshot` 的序列化形状同形；合成数据）。
+ *  标注 `SnapshotJson<SettingsSnapshot>`：契约加字段时这里缺键由 `tsc-visual` 报出，不靠跑红猜。 */
+function diagnosticSettingsSnapshot(): SnapshotJson<SettingsSnapshot> {
   const models = [
     {
       id: "k3-256k",
@@ -309,6 +311,7 @@ function diagnosticSettingsSnapshot(): Record<string, unknown> {
       provider_order: ["kimi", "deepseek", "generic", "mock"],
       model_window_min: 1,
       model_window_max: 10000000,
+      web_approval_options: ["allow_all", "ask"],
     },
     defaults: {
       auto_compact: true,
@@ -316,6 +319,8 @@ function diagnosticSettingsSnapshot(): Record<string, unknown> {
       attachment_naming_enabled: true,
       subagents_enabled: true,
       model_window: 131072,
+      web_access_enabled: true,
+      web_access_approval: "allow_all",
     },
     diagnostics: [
       {
@@ -331,6 +336,16 @@ function diagnosticSettingsSnapshot(): Record<string, unknown> {
         message: DIAG_WINDOW_MESSAGE,
       },
     ],
+    // Web 权限区（change add-harness-web-fetch-search-nov24 起进快照）：`createDraft` 无条件读它，
+    // 缺席会在打开面板时抛 TypeError 并吞成「读取失败」横幅——本组判的诊断因此一个都不渲染。
+    web_access: {
+      enabled: { kind: "absent" },
+      approval: { kind: "absent" },
+      effective: { enabled: true, approval: "allow_all", status: "valid" },
+      invalid: null,
+      provider: { provider: null, provider_id: null, status: "missing" },
+      origins: [],
+    },
   };
 }
 

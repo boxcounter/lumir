@@ -27,6 +27,25 @@ export interface LogEventRecord {
   fields: Record<string, string>;
 }
 
+/**
+ * 手写 invoke 快照（`settings_get` 等）的 JSON 形状：契约里的 `bigint` 过 IPC 是 JSON 数字，
+ * 其余结构逐键保留。
+ *
+ * 场景覆写 `invoke` 时给的快照 MUST 用 `SnapshotJson<SettingsSnapshot>` 标注：后端契约加字段
+ * 而 fixture 没跟上时，`tsc-visual` 直接报缺键；不标注则要等运行期——面板读到 `undefined`
+ * 抛 TypeError、被 `open()` 吞成「读取失败」横幅，症状与真实 IPC 失败同形，只能靠 5s 超时
+ * 去猜（M865 的 diagnosed fixture 漏掉 Web 设置区新字段时就是这样红的）。
+ */
+export type SnapshotJson<T> = T extends bigint
+  ? number
+  : T extends string | number | boolean | null
+    ? T
+    : T extends readonly (infer U)[]
+      ? SnapshotJson<U>[]
+      : T extends object
+        ? { [K in keyof T]: SnapshotJson<T[K]> }
+        : T;
+
 /** `vault_list` 的一行（契约见 src/bindings/VaultListEntry.ts）。列在桩里只被**渲染**，
  *  排序由后端给定（前端不重排），因此这里的书写顺序就是浮层里的行序。 */
 export interface VaultListRow {
