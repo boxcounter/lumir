@@ -143,7 +143,9 @@ import {
 } from "./harness-context";
 import type { HarnessContextBlock, HarnessContextSource } from "./harness-context";
 import { createHarnessDraftStore } from "./harness-draft";
-import { moveSkillHighlight, openSkillMenu, skillMenuNavigationDelta, skillSelectionSpec, skillTokenAt } from "./skill-menu";
+import { hoverSkillHighlight, moveSkillHighlight, sameSkillMenuState, skillMenuNavigationDelta, skillSelectionSpec, skillTokenAt, syncSkillMenuState } from "./skill-menu";
+import { isFullyVisibleWithin, revealElementWithin } from "./selector-reveal";
+import { scheduleCompositionSettle, cancelCompositionSettle } from "./composition-settle";
 import type { SkillMenuState } from "./skill-menu";
 import { skillCatalogRefreshEffect, skillChips } from "./skill-chips";
 import type { SkillSummary } from "./bindings/SkillSummary";
@@ -4571,11 +4573,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   let skillMenuIntentFrom: number | null = null;
   let skillCatalogInFlight: { vault: string | null; epoch: number } | null = null;
   let programmaticComposerReset = 0;
+  /** 上一次放置确立的滚动位置与游标可见性——`if-clipped` 的「原本完整可见」判据。 */
+  let skillMenuPlacedScrollTop = 0;
+  let skillMenuPlacedActiveVisible = false;
 
   function hideSkillMenu(): void {
     skillMenuState = null;
+    skillMenuPlacedActiveVisible = false;
     skillMenuEl.hidden = true;
     skillMenuEl.replaceChildren();
+    skillMenuEl.removeAttribute("data-armed");
     unregisterEscapeLayer("harness-skill-menu");
     composerView?.contentDOM.removeAttribute("aria-activedescendant");
   }
@@ -4594,6 +4601,27 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     skillCatalogEpoch += 1;
   }
 
+  /** 候选盒的垂直夹取宿主要是**面板**（`.lumir-harness`，它才是 `overflow: hidden` 的裁切者），
+   *  不是 composer 区；允许向上覆盖 transcript。max-height 的上限唯一真源是 CSS
+   *  （`.lumir-hp-skill-menu`），这里只按可用空间再收缩，MUST NOT 另留一份硬编码上限。 */
+  const SKILL_MENU_PANEL_MARGIN = 8;
+  const SKILL_MENU_CARET_GAP = 4;
+
+  /** 实测行高（随 --lumir-hp-scale 变）：用于判断一侧空间是否还放得下一整行。 */
+  function skillMenuRowHeight(): number {
+    const first = skillMenuEl.firstElementChild;
+    return first === null ? 0 : first.getBoundingClientRect().height;
+  }
+
+  /** 真实可见带 = menuRect ∩ panelRect ∩ viewport（合同 selector-contract C2）。
+   *  菜单自身的 `clientHeight` 看不见祖先裁切——用它当视口会让「盒内、屏外」的项被判为可见。 */
+  function skillMenuClip(menuRect: DOMRect, panelRect: DOMRect): { top: number; bottom: number } {
+    return {
+      top: Math.max(menuRect.top, panelRect.top, 0),
+      bottom: Math.min(menuRect.bottom, panelRect.bottom, window.innerHeight),
+    };
+  }
+
   function updateSkillMenuHighlight(): void {
     const state = skillMenuState;
     if (state === null) return;
@@ -4603,27 +4631,69 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       option.classList.toggle("is-selected", selected);
       option.setAttribute("aria-selected", String(selected));
     });
-    if (highlighted === null) composerView.contentDOM.removeAttribute("aria-activedescendant");
-    else composerView.contentDOM.setAttribute("aria-activedescendant", `lumir-hp-skill-option-${highlighted}`);
-    placeSkillMenu();
-    if (highlighted !== null) {
-      const option = skillMenuEl.children[highlighted] as HTMLElement | undefined;
-      if (option !== undefined) {
-        const menuRect = skillMenuEl.getBoundingClientRect();
-        const optionRect = option.getBoundingClientRect();
-        const viewportTop = menuRect.top + skillMenuEl.clientTop;
-        const viewportBottom = viewportTop + skillMenuEl.clientHeight;
-        if (optionRect.top < viewportTop) skillMenuEl.scrollTop += optionRect.top - viewportTop;
-        else if (optionRect.bottom > viewportBottom) skillMenuEl.scrollTop += optionRect.bottom - viewportBottom;
-      }
+    skillMenuEl.dataset.armed = state.armed ? "true" : "false";
+    composerView.contentDOM.setAttribute("aria-activedescendant", `lumir-hp-skill-option-${highlighted}`);
+    relayoutSkillMenu("cursor");
+  }
+
+  /** 只重排几何，不重建 items：resize / 分隔条拖动 / 同状态回包都只需要新的位置。
+   *  与 `renderSkillMenu`（重建 DOM）分开，状态去重才不会连带跳过几何（C2：盒必须等于真实 clip）。
+   *
+   *  揭示分两种（C3）：
+   *  - `cursor`：游标刚变，按合同必揭示（越界才滚，带内不动）。
+   *  - `if-clipped`：游标没变。只揭示「上一次放置时完整可见、被新几何挤出带」的游标——可见性
+   *    判据取上一次放置确立的几何（`skillMenuActiveVisibleAtLastPlacement`），不取此刻的 clip：
+   *    面板 / 视口收缩的事件到达时浏览器已经把新尺寸应用到 clip 上。用户手动滚开的阅读位置
+   *    MUST NOT 被同状态回包 / resize 拉回游标项（那不是几何变化造成的，是用户在读别处）。 */
+  function relayoutSkillMenu(reveal: "cursor" | "if-clipped"): void {
+    const state = skillMenuState;
+    if (state === null || skillMenuEl.hidden) return;
+    const option = skillMenuEl.children[state.highlighted] as HTMLElement | undefined;
+    if (option === undefined) {
+      placeSkillMenu();
+      skillMenuPlacedActiveVisible = false;
+      return;
     }
+    // 「原本完整可见」按上一次放置确立的几何判，不按此刻的 clip：面板 / 视口收缩的事件到达时
+    // 浏览器已把新尺寸应用到 clip 上，此刻读到的往往已经是「被裁掉」，正分支永远不会触发（N5）。
+    const wasFullyVisible = reveal === "if-clipped" && skillMenuActiveVisibleAtLastPlacement();
+    const clip = placeSkillMenu();
+    if (clip === null) {
+      skillMenuPlacedActiveVisible = false;
+      return;
+    }
+    if (reveal === "cursor" || wasFullyVisible) revealElementWithin(skillMenuEl, option, clip);
+    // 本次放置确立的几何：下一次 if-clipped 的「原本完整可见」判据。
+    skillMenuPlacedScrollTop = skillMenuEl.scrollTop;
+    skillMenuPlacedActiveVisible = isFullyVisibleWithin(skillMenuEl, option, clip);
+  }
+
+  /** `if-clipped` 的判据：上次放置时游标完整可见，且此后用户没有滚动过候选（位置仍是我们留下的）。
+   *  可见性变化只能来自几何 ⇒ 该揭示；用户滚开 ⇒ 那是阅读位置，重排 MUST NOT 拉回（N1）。 */
+  function skillMenuActiveVisibleAtLastPlacement(): boolean {
+    return skillMenuPlacedActiveVisible &&
+      Math.abs(skillMenuEl.scrollTop - skillMenuPlacedScrollTop) <= 0.5;
   }
 
   function highlightSkillMenuItem(index: number): void {
-    if (skillMenuState === null || skillMenuState.highlighted === index) return;
-    skillMenuState = { ...skillMenuState, highlighted: index };
+    if (skillMenuState === null) return;
+    const hovered = hoverSkillHighlight(skillMenuState, index);
+    if (hovered === skillMenuState) return;
+    skillMenuState = hovered;
     updateSkillMenuHighlight();
   }
+
+  /** 指针选意只认**真实指针移动**（`mousemove`），不认 `mouseenter`：揭示滚动会把另一行搬到
+   *  静止指针下面，`mouseenter` 会在那一刻改掉键盘刚选中的游标（合同 C6「hover 不得抹掉游标」）。
+   *  整表只挂一个监听，option 重建时不重复注册。 */
+  skillMenuEl.addEventListener("mousemove", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const option = target.closest(".lumir-hp-skill-option");
+    if (option === null) return;
+    const index = Array.from(skillMenuEl.children).indexOf(option);
+    if (index >= 0) highlightSkillMenuItem(index);
+  });
 
   function renderSkillMenu(): void {
     const state = skillMenuState;
@@ -4647,8 +4717,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       description.textContent = item.description;
       option.append(name, description);
       option.addEventListener("mousedown", (event) => event.preventDefault());
-      option.addEventListener("mouseenter", () => highlightSkillMenuItem(index));
-      option.addEventListener("click", () => selectSkillMenuItem());
+      option.addEventListener("click", () => selectSkillMenuItem(index));
       skillMenuEl.append(option);
     });
     updateSkillMenuHighlight();
@@ -4660,11 +4729,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     updateSkillMenuHighlight();
   }
 
-  function placeSkillMenu(): void {
-    if (skillMenuState === null || !isLayoutCapable(skillMenuEl)) return;
+  function placeSkillMenu(): { top: number; bottom: number } | null {
+    const state = skillMenuState;
+    if (state === null || !isLayoutCapable(skillMenuEl)) return null;
     const caret = composerView.coordsAtPos(composerView.state.selection.main.head);
     const host = composerArea.getBoundingClientRect();
-    if (caret === null) return;
+    const panelRect = panel.getBoundingClientRect();
+    if (caret === null) return null;
     const fontSize = overlayFontSize(skillMenuEl);
     const avail = Math.max(0, host.width - 16);
     const width = placeOverlay({
@@ -4679,13 +4750,57 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       preferred: "left",
     });
     skillMenuEl.style.width = `${width.width}px`;
-    const estimatedHeight = Math.min(6, skillMenuState.items.length) * 32 + 8;
-    const below = caret.bottom + 4;
-    const top = below + estimatedHeight <= host.bottom
-      ? below
-      : Math.max(host.top + 8, caret.top - estimatedHeight - 4);
     skillMenuEl.style.left = `${width.left - host.left}px`;
-    skillMenuEl.style.top = `${top - host.top}px`;
+
+    // 盒先归位再谈揭示：菜单只能往上覆盖 transcript，不能被 composer 区或面板裁掉。
+    // max-height 上限的唯一真源是 CSS；这里不解析 getComputedStyle 的字符串（百分比等非 px
+    // 计算值会被 parseFloat 静默误读），改为清空 inline 上限后**实测**受 CSS 约束的高度——
+    // 单位由浏览器负责，JS 只按可用空间再收缩（收缩值必小于实测高度，不会越过 CSS 上限）。
+    // 清空上限会让菜单瞬时展开、浏览器把 scrollTop 钳到新 maxScroll：先记下来，定高后恢复，
+    // 否则 reveal 会按被钳小的位置判「已可见」而不回滚（C3 带内不动）。
+    const preservedScrollTop = skillMenuEl.scrollTop;
+    skillMenuEl.style.maxHeight = "";
+    const rowHeight = skillMenuRowHeight();
+    const naturalHeight = skillMenuEl.getBoundingClientRect().height;
+    const limitTop = Math.max(panelRect.top, 0) + SKILL_MENU_PANEL_MARGIN;
+    const limitBottom = Math.min(panelRect.bottom, window.innerHeight) - SKILL_MENU_PANEL_MARGIN;
+    // 下方放置以控制行（模型 chip / 发送钮等常驻可交互件）的顶缘为界：候选不得压住它。
+    const belowTop = caret.bottom + SKILL_MENU_CARET_GAP;
+    const belowLimit = Math.min(limitBottom, ctl.getBoundingClientRect().top - SKILL_MENU_CARET_GAP);
+    const aboveBottom = caret.top - SKILL_MENU_CARET_GAP;
+    const belowSpace = Math.max(0, belowLimit - belowTop);
+    const aboveSpace = Math.max(0, aboveBottom - limitTop);
+    // 放置优先级：下方放得下 ⇒ 下方；否则上方放得下 ⇒ 上方；都放不下时优先收缩上方，
+    // 上方连一行都放不下才用下方（同样收缩到控制行顶缘以上）。上翻后盒底不越过 caret。
+    let below: boolean;
+    let available: number;
+    if (naturalHeight <= belowSpace) {
+      below = true;
+      available = naturalHeight;
+    } else if (naturalHeight <= aboveSpace) {
+      below = false;
+      available = naturalHeight;
+    } else if (aboveSpace > 0 && aboveSpace >= rowHeight) {
+      below = false;
+      available = aboveSpace;
+    } else if (belowSpace > 0 && belowSpace >= rowHeight) {
+      below = true;
+      available = belowSpace;
+    } else if (aboveSpace >= belowSpace) {
+      below = false;
+      available = aboveSpace;
+    } else {
+      below = true;
+      available = belowSpace;
+    }
+    if (available < naturalHeight) skillMenuEl.style.maxHeight = `${available}px`;
+    const height = skillMenuEl.getBoundingClientRect().height;
+    const top = below ? belowTop : aboveBottom - height;
+    const clamped = Math.min(Math.max(top, limitTop), Math.max(limitTop, limitBottom - height));
+    skillMenuEl.style.top = `${clamped - host.top}px`;
+    // 定高之后再恢复：展开读数期间被钳掉的滚动位置只允许存在于这一拍内部，揭示仍按真实带判定。
+    skillMenuEl.scrollTop = preservedScrollTop;
+    return skillMenuClip(skillMenuEl.getBoundingClientRect(), panelRect);
   }
 
   function syncSkillMenu(forceCatalog = false, fromCatalog = false): void {
@@ -4711,11 +4826,19 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (forceCatalog || newToken) {
       refreshSkillCatalog(true);
     }
-    skillMenuState = openSkillMenu(
+    const next = syncSkillMenuState(
+      skillMenuState,
       composerView.state.doc.toString(),
       composerView.state.selection.main.head,
       skillCatalog ?? [],
     );
+    // IME settle、catalog 回包与文档回调可能对同一份最终文档各算一次：状态没变就不重建 DOM，
+    // 但几何仍要重排——面板尺寸 / 位置可能已变（resize 后回包），盒必须仍等于真实 clip。
+    if (sameSkillMenuState(skillMenuState, next)) {
+      relayoutSkillMenu("if-clipped");
+      return;
+    }
+    skillMenuState = next;
     renderSkillMenu();
   }
 
@@ -4737,7 +4860,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     });
   }
 
-  function selectSkillMenuItem(): void {
+  function selectSkillMenuItem(index?: number): void {
+    if (skillMenuState === null) return;
+    if (index !== undefined) {
+      // 指针点击本身就是显式选择：同一次动作里先武装游标，再走与键盘同一个接受路径。
+      const next = hoverSkillHighlight(skillMenuState, index);
+      if (next !== skillMenuState) {
+        skillMenuState = next;
+        updateSkillMenuHighlight();
+      }
+    }
     if (skillMenuState === null) return;
     const selected = skillSelectionSpec(composerView.state.doc.toString(), skillMenuState);
     if (selected === null) return;
@@ -6402,6 +6534,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (!selPop.hidden) placeSelPop();
     if (!effHint.hidden) placeEffHint();
     if (!sessPop.hidden) placeSessPop();
+    // Skill 候选的 clip 宿主是面板本身：窗口 / 面板尺寸变化后必须重排（不重建 items），
+    // 只在几何把原本可见的游标挤出带时揭示——已经滚开去读别的行时不得被拉回。
+    relayoutSkillMenu("if-clipped");
   }
   const overlayResize = new ResizeObserver(() => reclampOpenOverlays());
   overlayResize.observe(panel);
@@ -10594,7 +10729,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       return;
     }
     if (mod) return;
-    if (skillMenuState !== null && skillMenuState.highlighted !== null &&
+    // 武装只接受**无修饰**的 Enter / Tab（change delta「武装时无修饰的 Enter / Tab」）：
+    // Shift+Enter 换行、Shift+Tab 焦点回退、Alt 组合保持原义（C7）。
+    if (skillMenuState !== null && skillMenuState.armed &&
+        !event.shiftKey && !event.altKey &&
         (event.key === "Enter" || event.key === "Tab")) {
       event.preventDefault();
       selectSkillMenuItem();
@@ -10607,6 +10745,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }, true);
   composer.addEventListener("compositionstart", () => {
+    cancelCompositionSettle(composerView, "skill-menu");
     closeSkillMenu();
     (composerView as unknown as { measure(): void }).measure();
     imeGateState = imeGateCompositionStart(imeGateState);
@@ -10614,6 +10753,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   composer.addEventListener("compositionend", () => {
     imeGateState = imeGateCompositionEnd(imeGateState, Date.now());
     composerIme.compositionEnd(viewGeneration);
+    // 组合结束后按**最终文档**重算一次：组合期的同步一律关候选，提交事务到达时
+    // composerIsComposing() 可能仍为真；不补这一拍，候选会停在关闭态或旧 query 上。
+    scheduleCompositionSettle(composerView, "skill-menu", () => {
+      if (composerIsComposing()) return;
+      syncSkillMenu();
+    });
   });
   composer.addEventListener("copy", (event: ClipboardEvent) => {
     if (event.clipboardData === null) return;
