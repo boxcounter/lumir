@@ -5,6 +5,7 @@ import { fileText, stubTauri, type VaultFixture } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
 
 const OVERLAY = ".lumir-link-suggest";
+const LIST = ".lumir-link-suggest-list";
 const ROW = ".lumir-link-suggest-item";
 
 function fixture(doc: string, paths: readonly string[]): VaultFixture {
@@ -59,6 +60,94 @@ async function openDoc(page: Page, doc: string, paths: readonly string[] = ["not
 async function rows(page: Page): Promise<string[]> {
   return page.locator(ROW).evaluateAll((items) => items.map((item) => item.textContent ?? ""));
 }
+
+async function settleFrames(page: Page): Promise<void> {
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+}
+
+/** 候选的真实可见带与滚动读数：clip = `listRect ∩ viewport` 再扣掉列表自身的边框与 padding，
+ *  与 `src/selector-reveal.ts` 的 `revealBand` / `isFullyVisibleWithin` 同一几何。 */
+async function suggestGeometry(page: Page) {
+  return page.locator(OVERLAY).evaluate((root) => {
+    const list = root.querySelector<HTMLElement>(".lumir-link-suggest-list");
+    const active = root.querySelector<HTMLElement>(".lumir-link-suggest-item.is-active");
+    if (list === null || active === null) throw new Error("候选或活动行不在场");
+    const listRect = list.getBoundingClientRect();
+    const style = getComputedStyle(list);
+    const padTop = Number.parseFloat(style.paddingTop) || 0;
+    const padBottom = Number.parseFloat(style.paddingBottom) || 0;
+    const scrollportTop = listRect.top + list.clientTop;
+    const activeRect = active.getBoundingClientRect();
+    const rootRect = root.getBoundingClientRect();
+    return {
+      scrollTop: list.scrollTop,
+      maxScroll: list.scrollHeight - list.clientHeight,
+      overflowing: list.scrollHeight > list.clientHeight,
+      clipTop: Math.max(scrollportTop + padTop, 0),
+      clipBottom: Math.min(scrollportTop + list.clientHeight - padBottom, innerHeight),
+      activeTop: activeRect.top,
+      activeBottom: activeRect.bottom,
+      activeText: active.textContent ?? "",
+      rootTop: rootRect.top,
+      rootBottom: rootRect.bottom,
+      viewport: innerHeight,
+    };
+  });
+}
+
+async function scrollSuggestTo(page: Page, top: number) {
+  await page.locator(LIST).evaluate((list, value) => { list.scrollTop = value; }, top);
+  await settleFrames(page);
+  return suggestGeometry(page);
+}
+
+/** 重排的机器化边界：只许重写几何样式，不许重建行或改动游标。`styleWrites` 证明重排真的跑过。 */
+async function installSuggestProbe(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>(".lumir-link-suggest")!;
+    const list = root.querySelector<HTMLElement>(".lumir-link-suggest-list")!;
+    const w = window as unknown as Record<string, any>;
+    w.__suggestRows = Array.from(list.children);
+    w.__suggestChildMutations = 0;
+    w.__suggestStyleWrites = 0;
+    w.__suggestA11y = {
+      activeText: list.querySelector<HTMLElement>(".lumir-link-suggest-item.is-active")?.textContent ?? null,
+      activeDescendant: document.querySelector(".cm-content")?.getAttribute("aria-activedescendant") ?? null,
+      rowCount: list.children.length,
+    };
+    w.__suggestObserver = new MutationObserver((records) => {
+      for (const record of records) {
+        if (record.type === "childList") w.__suggestChildMutations += 1;
+        if (record.type === "attributes" && record.attributeName === "style") w.__suggestStyleWrites += 1;
+      }
+    });
+    w.__suggestObserver.observe(root, { childList: true, attributes: true, attributeFilter: ["style"] });
+  });
+}
+
+async function readSuggestProbe(page: Page) {
+  return page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>(".lumir-link-suggest")!;
+    const list = root.querySelector<HTMLElement>(".lumir-link-suggest-list")!;
+    const w = window as unknown as Record<string, any>;
+    const result = {
+      childMutations: w.__suggestChildMutations as number,
+      styleWrites: w.__suggestStyleWrites as number,
+      sameRows: Array.from(list.children).every((node, index) => node === w.__suggestRows[index]),
+      a11yBefore: w.__suggestA11y as { activeText: string | null; activeDescendant: string | null; rowCount: number },
+      a11y: {
+        activeText: list.querySelector<HTMLElement>(".lumir-link-suggest-item.is-active")?.textContent ?? null,
+        activeDescendant: document.querySelector(".cm-content")?.getAttribute("aria-activedescendant") ?? null,
+        rowCount: list.children.length,
+      },
+    };
+    w.__suggestObserver.disconnect();
+    return result;
+  });
+}
+
+const suggestStyleWrites = (page: Page) =>
+  page.evaluate(() => (window as unknown as Record<string, any>).__suggestStyleWrites as number);
 
 test("触发、过滤、方向键 / ⌃NP 与 Enter：完整路径、焦点和 caret 都正确", async ({ page }) => {
   const doc = "[[al";
@@ -426,6 +515,115 @@ test("三主题壳完全不透明，长路径和同名可辨，边缘与 resize 
   expect(rect!.x).toBeGreaterThanOrEqual(0);
   expect(rect!.y).toBeGreaterThanOrEqual(0);
   expect(rect!.y + rect!.height).toBeLessThanOrEqual(600);
+});
+
+// ── 几何重排与「主动揭示」分开（selector-contract C2 / C3，与 Skill 候选同一合同）──
+// 没有游标变化的重排只许动几何：揭示只在游标改变、或重排前完整可见的活动行被新几何挤出带时发生。
+// 用户手动滚开是在读别处，同状态刷新 / 窗口缩放 MUST NOT 把它拉回活动行（旧实现实测弹回 0）。
+const MANY_PATHS = Array.from({ length: 30 }, (_, index) => `notes/item-${String(index).padStart(2, "0")}.md`);
+
+async function scrollWikiListAway(page: Page, top: number, fullyAway = true) {
+  const away = await scrollSuggestTo(page, top);
+  const detail = JSON.stringify(away);
+  expect(away.overflowing, `前提：长列表必须真实溢出，滚动断言才不是空测量：${detail}`).toBe(true);
+  expect(away.maxScroll, `前提：滚动余量必须容得下手动位置：${detail}`).toBeGreaterThan(top);
+  expect(away.scrollTop, `前提：手动滚动必须真的生效（被重排拉回 = 缺陷现场）：${detail}`).toBeCloseTo(top, 0);
+  if (fullyAway) expect(away.activeBottom, `前提：活动行必须被滚出可见带：${detail}`).toBeLessThan(away.clipTop);
+  return away;
+}
+
+test("手动滚开后同状态刷新只重排几何：候选不得弹回高亮项", async ({ page }) => {
+  await openDoc(page, "[[", MANY_PATHS);
+  await expect(page.locator(ROW)).toHaveCount(31);
+  const away = await scrollWikiListAway(page, 140);
+  await installSuggestProbe(page);
+  // 在 caret 之后插入正文：trigger / 游标 / items 均不变 → 走同状态去重路径，只重排几何。
+  const doc = await page.locator(".cm-content").evaluate((content) => {
+    const view = (content as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const head = view.state.selection.main.head;
+    view.dispatch({ changes: { from: view.state.doc.length, insert: "x" }, selection: { anchor: head } });
+    return view.state.doc.toString();
+  });
+  expect(doc, "同状态前提：caret 之前的 trigger 文本不得被这次写入改写").toBe("[[x");
+  await expect.poll(() => suggestStyleWrites(page), {
+    timeout: 3000,
+    message: "同状态刷新必须仍重排几何（样式未被重写 = 没重排）",
+  }).toBeGreaterThan(0);
+  await settleFrames(page);
+  const after = await suggestGeometry(page);
+  const probe = await readSuggestProbe(page);
+  const detail = `${JSON.stringify(away)} => ${JSON.stringify(after)}`;
+  expect(Math.abs(after.scrollTop - away.scrollTop),
+    `同状态刷新不得改动用户手动滚动的 scrollTop（${detail}）`).toBeLessThanOrEqual(0.5);
+  expect(after.activeBottom, `同状态刷新不得把活动行拉回可见带（${detail}）`).toBeLessThan(after.clipTop);
+  expect(probe.childMutations, "同状态刷新不得重建候选行").toBe(0);
+  expect(probe.sameRows, "同状态刷新必须复用同一批行节点").toBe(true);
+  expect(probe.a11y, "同状态重排不得改动游标 / aria-activedescendant").toEqual(probe.a11yBefore);
+  expect(probe.a11y.rowCount).toBe(31);
+});
+
+test("窗口缩放不得把手动滚开的候选弹回高亮项", async ({ page }) => {
+  await openDoc(page, "[[", MANY_PATHS);
+  await expect(page.locator(ROW)).toHaveCount(31);
+  const away = await scrollWikiListAway(page, 140);
+  await installSuggestProbe(page);
+  // 只缩宽度：垂直可用空间与 max-height 不变，scrollTop 的合法余量也不变——
+  // 这个重排若动 scrollTop，只可能是「顺手揭示」，不是浏览器钳制。
+  await page.setViewportSize({ width: 1000, height: 800 });
+  await expect.poll(() => suggestStyleWrites(page), {
+    timeout: 3000,
+    message: "窗口缩放后必须重排几何（样式未被重写 = 没重排）",
+  }).toBeGreaterThan(0);
+  await settleFrames(page);
+  const after = await suggestGeometry(page);
+  const probe = await readSuggestProbe(page);
+  const detail = `${JSON.stringify(away)} => ${JSON.stringify(after)}`;
+  expect(after.overflowing, `前提：缩放后列表仍须溢出：${detail}`).toBe(true);
+  expect(Math.abs(after.scrollTop - away.scrollTop),
+    `窗口缩放不得改动用户手动滚动的 scrollTop（${detail}）`).toBeLessThanOrEqual(0.5);
+  expect(after.activeBottom, `窗口缩放不得把活动行拉回可见带（${detail}）`).toBeLessThan(after.clipTop);
+  expect(after.rootTop, `缩放后候选盒仍须在视口内：${detail}`).toBeGreaterThanOrEqual(0);
+  expect(after.rootBottom, `缩放后候选盒仍须在视口内：${detail}`).toBeLessThanOrEqual(after.viewport);
+  expect(probe.childMutations, "缩放重排不得重建候选行").toBe(0);
+  expect(probe.sameRows, "缩放重排必须复用同一批行节点").toBe(true);
+  expect(probe.a11y, "缩放重排不得改动游标 / aria-activedescendant").toEqual(probe.a11yBefore);
+});
+
+test("手动滚开后高亮变化仍按 C3 揭示新活动行", async ({ page }) => {
+  await openDoc(page, "[[", MANY_PATHS);
+  await expect(page.locator(ROW)).toHaveCount(31);
+  const away = await scrollWikiListAway(page, 140);
+  await page.keyboard.press("ArrowDown");
+  await expect(page.locator(`${ROW}.is-active`)).toHaveText("notes/item-00.md");
+  await settleFrames(page);
+  const after = await suggestGeometry(page);
+  const detail = `${JSON.stringify(away)} => ${JSON.stringify(after)}`;
+  expect(after.activeTop, `游标刚变必须按 C3 揭示（上缘越界）：${detail}`).toBeGreaterThanOrEqual(after.clipTop - 0.5);
+  expect(after.activeBottom, `游标刚变必须按 C3 揭示（下缘越界）：${detail}`).toBeLessThanOrEqual(after.clipBottom + 0.5);
+  expect(after.scrollTop, `揭示必须朝新活动行移动，而不是留在手动位置：${detail}`).toBeLessThan(away.scrollTop);
+});
+
+test("极端 clip 边界：活动行只被裁掉 1px 也属于「原本不可见」，重排不得拉回", async ({ page }) => {
+  await openDoc(page, "[[", MANY_PATHS);
+  await expect(page.locator(ROW)).toHaveCount(31);
+  const away = await scrollWikiListAway(page, 1, false);
+  expect(away.activeTop, `前提：活动行上缘须被裁 1px（部分可见 ≠ 完整可见）：${JSON.stringify(away)}`)
+    .toBeLessThan(away.clipTop - 0.5);
+  expect(away.activeBottom, `前提：活动行仍须部分可见：${JSON.stringify(away)}`).toBeGreaterThan(away.clipTop);
+  // 同状态刷新 + 缩放都不许把 1px 的差值「顺手对齐」成 0。
+  await page.locator(".cm-content").evaluate((content) => {
+    const view = (content as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const head = view.state.selection.main.head;
+    view.dispatch({ changes: { from: view.state.doc.length, insert: "x" }, selection: { anchor: head } });
+  });
+  await settleFrames(page);
+  const refreshed = await suggestGeometry(page);
+  expect(refreshed.scrollTop, `1px 部分可见不得被同状态刷新对齐回 0：${JSON.stringify(refreshed)}`).toBeCloseTo(1, 0);
+  await page.setViewportSize({ width: 1000, height: 800 });
+  await settleFrames(page);
+  const resized = await suggestGeometry(page);
+  expect(resized.scrollTop, `1px 部分可见不得被缩放对齐回 0：${JSON.stringify(resized)}`).toBeCloseTo(1, 0);
+  expect(resized.activeTop).toBeLessThan(resized.clipTop - 0.5);
 });
 
 let fixtureServer: ViteDevServer;

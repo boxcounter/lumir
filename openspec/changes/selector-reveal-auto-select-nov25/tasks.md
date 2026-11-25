@@ -53,3 +53,10 @@
 - [x] N2 `max-height` 的 `em` / `vh` 实测路径各一条浏览器用例（percentage 已由 R2 覆盖）
 - [x] N3 两条重排用例补 `aria-selected` / `data-armed` / `aria-activedescendant` 快照与样式重写计数（证明重排真的跑过）
 - [x] N4 mission README 更新到当前 tip 与本轮红 / 绿证据
+
+## wikilink 同合同收口（2026-11-25）
+
+- [x] 几何重排与主动揭示分开：`schedulePlace` / `place` 携带 `"cursor" | "if-clipped"`；同状态刷新、resize 与滚动只在「重排前完整可见、被新几何挤出带」时揭示，用户手动滚开的 `scrollTop` 不被拉回；游标刚变仍按 C3 揭示
+- [x] 清 `max-height` 的瞬时塌缩不再回灌：排队的重排跨拍期间挂起 `placementPending`，塌缩拍的 scroll 事件不得被当成用户新位置写回
+- [x] 补 4 条浏览器用例：手动滚开后同状态刷新 / 窗口缩放 / 1px 极端 clip 边界不拉回，游标变化仍揭示；复用 `selector-reveal` 的 `revealBand` / `isFullyVisibleWithin` 单一几何
+- [x] 守住既有能力：`preservedScrollTop` 恢复、read/write 分离、IME「零刷新 / 仅一次」计数路径不变

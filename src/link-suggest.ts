@@ -14,7 +14,7 @@ import {
 import { isInsideCodeContext } from "./preview/code-context";
 import { detectFrontmatter } from "./preview/frontmatter";
 import { findWikilinkSpans } from "./preview/wikilinks";
-import { revealElementWithin } from "./selector-reveal";
+import { isFullyVisibleWithin, revealElementWithin } from "./selector-reveal";
 
 export interface LinkSuggestTrigger {
   readonly openerFrom: number;
@@ -189,6 +189,12 @@ interface PlaceMeasurement {
   readonly baseLeft: number;
 }
 
+/** 揭示时机（docs/specs/selector-contract.md C3）：
+ *  - `cursor`：游标刚变，越界才滚、带内不动；
+ *  - `if-clipped`：游标没变。只有重排前完整可见的活动行被新几何挤出带时才揭示——用户手动滚开
+ *    是在读别处，同状态刷新 / resize / 滚动 MUST NOT 把它拉回活动行。 */
+type RevealMode = "cursor" | "if-clipped";
+
 function sameOpenState(left: OpenState, right: OpenState): boolean {
   return left.active === right.active &&
     left.trigger.openerFrom === right.trigger.openerFrom &&
@@ -211,6 +217,8 @@ class LinkSuggestView {
   private composing = false;
   private settling = false;
   private destroyed = false;
+  /** 已排队的几何重排（read/write 跨拍）。见 `schedulePlace`：清样式的瞬时塌缩不得回灌成用户滚动。 */
+  private placementPending = false;
 
   constructor(view: EditorView, files: () => readonly string[], enabled: () => boolean, id: string) {
     this.view = view;
@@ -363,21 +371,41 @@ class LinkSuggestView {
     const previous = this.state;
     this.state = next;
     if (previous !== null && sameOpenState(previous, next)) {
-      this.schedulePlace();
+      this.schedulePlace("if-clipped");
       return;
     }
     this.render();
   }
 
-  private schedulePlace(): void {
+  private schedulePlace(reveal: RevealMode): void {
     // 清样式会把列表从「可滚」打成「内容高」，scrollTop 同步归零——先记下来，写回定高后再恢复。
+    // 「重排前是否完整可见」也必须在清样式之前判：清完列表已展开，旧几何不存在了。
     const preservedScrollTop = this.list.scrollTop;
+    const wasFullyVisible = reveal === "if-clipped" && this.activeFullyVisible();
+    // 跨拍重排的塌缩拍里，scroll 事件读到的是被钳成 0 的 scrollTop：那不是用户滚动，不许回灌
+    // 成 place() 的新位置（否则写回 0 会把刚记下的阅读位置抹掉）。write 之后再恢复监听。
+    this.placementPending = true;
     this.clearPlaceStyles();
     this.view.requestMeasure({
       read: () => this.measurePlace(),
-      write: (measured) => this.writePlace(measured, preservedScrollTop),
+      write: (measured) => {
+        this.placementPending = false;
+        this.writePlace(measured, preservedScrollTop, reveal, wasFullyVisible);
+      },
       key: this,
     });
+  }
+
+  /** 当前已渲染几何下活动行是否完整落在真实可见带内（与 `revealElementWithin` 同一套几何）。
+   *  重排前完整可见、重排后被挤出带 ⇒ 这次揭示由几何变化造成，该揭示；
+   *  重排前就不可见 ⇒ 用户自己滚开了，同状态重排 MUST NOT 把它拉回。 */
+  private activeFullyVisible(): boolean {
+    const state = this.state;
+    if (state === null || state.active < 0) return false;
+    const active = this.list.children[state.active] as HTMLElement | undefined;
+    const win = this.view.dom.ownerDocument.defaultView;
+    if (active === undefined || win === null) return false;
+    return isFullyVisibleWithin(this.list, active, { top: 0, bottom: win.innerHeight });
   }
 
   private clearPlaceStyles(): void {
@@ -430,13 +458,15 @@ class LinkSuggestView {
     else this.view.contentDOM.removeAttribute("aria-activedescendant");
     // 揭示归 writePlace：这里只重建行。曾经的 scrollIntoView 会被紧随其后的 schedulePlace
     // 清掉 max-height 而把 scrollTop 归零，长列表的滚动位置永远累积不起来。
-    this.schedulePlace();
+    this.schedulePlace("cursor");
   }
 
   private place(): void {
+    // resize / 编辑器或列表滚动：没有游标变化，只为「原本可见却被新几何挤出」补揭示。
     const preservedScrollTop = this.list.scrollTop;
+    const wasFullyVisible = this.activeFullyVisible();
     this.clearPlaceStyles();
-    this.writePlace(this.measurePlace(), preservedScrollTop);
+    this.writePlace(this.measurePlace(), preservedScrollTop, "if-clipped", wasFullyVisible);
   }
 
   private measurePlace(): PlaceMeasurement | null {
@@ -471,7 +501,12 @@ class LinkSuggestView {
     };
   }
 
-  private writePlace(measured: PlaceMeasurement | null, preservedScrollTop = 0): void {
+  private writePlace(
+    measured: PlaceMeasurement | null,
+    preservedScrollTop: number,
+    reveal: RevealMode,
+    wasFullyVisible: boolean,
+  ): void {
     if (measured === null) {
       this.close();
       return;
@@ -481,6 +516,8 @@ class LinkSuggestView {
     this.root.style.top = `${measured.top}px`;
     // 定高之后再恢复滚动位置（先设 scrollTop 会被不可滚的列表钳成 0），最后按真实可见带揭示活动行。
     this.list.scrollTop = preservedScrollTop;
+    // 游标没变且重排前就不完整可见 ⇒ 用户自己滚开了，不得借重排把阅读位置拉回活动行。
+    if (reveal === "if-clipped" && !wasFullyVisible) return;
     const state = this.state;
     if (state === null || state.active < 0) return;
     const active = this.list.children[state.active] as HTMLElement | undefined;
@@ -504,6 +541,9 @@ class LinkSuggestView {
   };
 
   private onGeometryChange = (): void => {
+    // 排队的重排自己会在 write 拍重新读几何并放盒；它清样式的瞬时塌缩触发的 scroll 事件
+    // 不是用户滚动，跳过以免把钳成 0 的瞬时值当成新位置。
+    if (this.placementPending) return;
     if (this.state !== null && !this.composing && !this.settling) this.place();
   };
 }
