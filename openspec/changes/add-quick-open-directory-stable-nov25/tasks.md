@@ -31,8 +31,8 @@
 
 - [x] 4.1 `geom` bbox record/unchangedSince，缺基线或 bbox fail-closed，并补套件自测与 README
 - [ ] 4.2 新增 `874-quick-open-external-directory-and-stable-layout`，第二合成 vault、只读与零写入判据；`$vault2` 步骤级解析与套件端到端自测已通过，真机执行留主会话串行，PASS 前不得勾完成
-- [x] 4.3 回扫并更新 230d/231 既有期望，重生成 COVERAGE，`node scripts/acceptance/run.mjs --check` 绿
-- [x] 4.4 874 增加外部精确路径无 direct action、通用帮助保留、Enter 仍只读打开的静态合同；真机执行仍留主会话
+- [ ] 4.3 全库回扫 direct action 旧合同并更新 230a/230b/230c/230d/231/707：真实候选或通用帮助为正向观测，无 direct 行；230a 以 ⌥G 预填值 `39` 精确断言行号落点。静态检查通过后，230a/230b/230c/707 真机 PASS 才勾完成
+- [x] 4.4 874 增加外部精确路径无 direct action、通用帮助保留、无普通空态、Enter 仍只读打开的静态合同；真机执行仍留主会话
 
 ## 5. 验证与交付
 

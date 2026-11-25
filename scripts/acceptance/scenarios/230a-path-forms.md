@@ -2,7 +2,8 @@
 # change quick-open-file-oct23（M655）真机判据的第 1 组（M747 拆分）：**路径形态**。
 # 背景用户原话：「长场景在 fail-fast 后会让一次失败跳过后续覆盖。拆分是为了独立诊断和有效覆盖，
 # 不是为了减少场景数或规避既有失败。」因此：每组带自己的启动状态与 fixture，组间不共享运行期
-# 状态；原断言逐条保留、逐字不改判据。其余两组：230b（惰性文件与外部只读）/ 230c（重启与焦点
+# 状态；原始能力覆盖不减少，direct action 删除后按新 UI 合同改准前置观测与行号读数。
+# 其余两组：230b（惰性文件与外部只读）/ 230c（重启与焦点
 # 作用域）。`node scripts/acceptance/run.mjs 230` 按 **id 前缀**或 item 号选中三组。
 #
 # 为什么这条判据只能在真机层：
@@ -50,22 +51,25 @@ steps:
         ax: { has: "/AXComboBox \\(按路径快速打开文件\\) Value: notes/deep/plan.md/" }
       - label: 完整路径也出现在 AX 文本里（回读面之外的第二条正观测）
         ax: { has: "notes/deep/plan.md" }
-  - name: 等结果区给出直接打开行（索引收编后才出现；探针命中也算）
+  - name: 等真实文件候选出现（索引收编后按完整路径列出）
     do: waitFor
     waitFor:
-      # 段边界容错：直接行是「动作前缀 / 目录 / 文件名」三个 flex 段（`.lumir-qo-{prefix,dirs,name}`），
-      # WKWebView 在段之间会插一个空格（2026-10-27 实测 `按 Enter 打开 notes/deep/ plan.md`），
-      # 逐字串因此恒红。`\s*` 只落在段边界，路径字符本身零容差（见正文「判据为什么这样写」）。
-      has: ['/按 Enter 打开\s*notes\/deep\/\s*plan\.md/']
+      has: ['/help="notes\/deep\/plan\.md"/']
     timeoutMs: 15000
   - name: Enter 前的结果区
     do: settle
     expect:
-      - label: 直接打开行在场，且动作文本与目标路径落在同一条行上（锚定整行，不是「两串都在树里」；与 Enter 同一份判决）
-        node: { name: "^按 Enter 打开\\s*notes/deep/\\s*plan\\.md$", present: true }
-      - label: 该行的全路径通道（`title` → AX `help`）逐字是目标路径（零容差：属性不受分段空格影响）
+      - label: 唯一结果行是真实文件候选（目录与文件名之间的段边界允许 AX 插空格）
+        node: { name: "^notes/deep/\\s*plan\\.md$", present: true }
+      - label: 真实候选的全路径通道（`title` → AX `help`）逐字是目标路径
         ax: { has: '/help="notes\/deep\/plan\.md"/' }
-      - label: 有直接打开行时 MUST NOT 出现候选空态
+      - label: 提示行给出真实候选计数
+        ax: { has: "命中 1 条" }
+      - label: direct action 伪候选已删除
+        ax: { not: "按 Enter 打开" }
+      - label: 外部 direct action 伪候选同样不存在
+        ax: { not: "按 Enter 只读打开" }
+      - label: 有真实候选时 MUST NOT 出现候选空态
         ax: { not: "没有匹配的条目" }
       - shot: 02-路径输入
   - name: Enter
@@ -105,8 +109,10 @@ steps:
     expect:
       - label: 候选空态在场（这是**真实**的零命中：索引与探测都不成立）
         ax: { has: "没有匹配的条目" }
-      - label: 没有直接打开行（判据是那条动作文本，不是任意文本）
+      - label: 没有 direct action 伪候选（普通空态是这一步的正向锚点）
         ax: { not: "按 Enter 打开" }
+      - label: 外部 direct action 伪候选同样不存在
+        ax: { not: "按 Enter 只读打开" }
       - shot: 03b-真负例空态
   - name: Enter
     do: key
@@ -156,21 +162,27 @@ steps:
     expect:
       - label: 路径落进输入框（逐键注入的正观测；AX 的 Value 是回读面）
         ax: { has: "/AXComboBox \\(按路径快速打开文件\\) Value: goto-line-long.md:39/" }
-  - name: 等直接行补帧（存在探测是异步的：先探整串，再落到剥后缀那一级）
+  - name: 等剥掉行号后缀后的真实文件候选出现
     do: waitFor
     waitFor:
-      has: ["第 39 行"]
+      has: ['/help="goto-line-long\.md"/']
     timeoutMs: 5000
   - name: Enter 前的结果区
     do: settle
     expect:
-      - label: 直接打开行标明落点行（与 Enter 同一份判决）
-        ax: { has: "按 Enter 打开 goto-line-long.md" }
-      - label: 落点行读数在场
-        ax: { has: "第 39 行" }
-      - label: 有直接打开行时 MUST NOT 出现候选空态
+      - label: 唯一结果行是剥掉 `:39` 后的真实文件候选
+        node: { name: "^goto-line-long\\.md$", present: true }
+      - label: 真实候选的 `title` 不含行号后缀
+        ax: { has: '/help="goto-line-long\.md"/' }
+      - label: 提示行给出真实候选计数
+        ax: { has: "命中 1 条" }
+      - label: direct action 伪候选已删除
+        ax: { not: "按 Enter 打开" }
+      - label: 独立的「第 39 行」伪落点标记已删除（正文同名前缀不是整行精确匹配）
+        node: { role: AXStaticText, name: "^第 39 行$", present: false }
+      - label: 有真实候选时 MUST NOT 出现候选空态
         ax: { not: "没有匹配的条目" }
-      - shot: 04b-带行号的直接行
+      - shot: 04b-带行号的真实候选
   - name: Enter
     do: key
     key: enter
@@ -186,7 +198,22 @@ steps:
         ax: { has: "/AXRadioButton \\(goto-line-long.md\\)/" }
       - label: 含冒号与深层路径两个标签都还在（MUST NOT 顶掉任何已打开的标签）
         ax: { has: "/AXRadioButton \\(v1:2.md\\)/" }
-      - shot: 05-行号落点（选区与居中位置由截图判读）
+      - shot: 05-行号落点复用既有标签
+  - name: 用 ⌥G 预填值精确读取行号落点（预填值 = 当前光标所在行）
+    do: key
+    key: "alt+g"
+    expect:
+      - label: Quick Open 的 `path:39` 确实把光标落到第 39 行
+        ax: { has: '/AXTextField = "39"/' }
+      - label: 行号输入条持焦（读数来自当前落点，不是残留浮层）
+        ax: { focused: "AXTextField" }
+      - shot: 05b-行号落点精确读数
+  - name: Escape 收起到行输入条
+    do: key
+    key: escape
+    expect:
+      - label: 行号输入条已收起且焦点交还编辑器
+        ax: { focused: "AXTextArea" }
 ---
 
 # 230a —— 按路径快速打开（⌘P）之一：路径形态（原场景 230 拆分第 1 组，M747）
@@ -203,11 +230,12 @@ Alex 2026-10-23 的需求原话：「快速便捷地查找、打开文件（类�
 3. **文件名里的冒号不被拆开**：`notes/v1:2.md` 打开的是这个文件本身，而不是路径 `notes/v1` 的
    第 2 行——「整串优先」在真机侧的判据。
 4. **`path:行` 只落点、不重开**：`goto-line-long.md:39` 落到第 39 行且复用既有标签。
-5. **结果区与 Enter 同源**（M700）：索引内的路径在 Enter **之前**就给「直接打开」行（动作文本 +
-   落点行），且 MUST NOT 同时出现「没有匹配的条目」；真实的零命中（`notes/deep/nope.md`）仍然
-   落空态、Enter 后报「找不到」。
+5. **结果区与 Enter 同源**：索引内的路径在 Enter **之前**列出真实文件候选及其全路径 `title`，
+   不再生成 direct action 或独立行号落点伪候选；`path:行` 的候选按剥后缀后的路径匹配，Enter 后由
+   ⌥G 预填值精确证明落在第 39 行。真实的零命中（`notes/deep/nope.md`）仍然落空态、Enter 后报「找不到」。
 
-拆分口径（M747）：断言逐条保留、判据一条不放宽；每组自带启动状态与 fixture，独立诊断。
+拆分口径（M747）：原始能力覆盖不减少；direct action 删除后，Enter 前改判真实候选 / 通用帮助，
+Enter 后结果断言不放宽；每组自带启动状态与 fixture，独立诊断。
 同族其余两组：`230b-lazy-and-external-readonly`（惰性文件与外部只读）/
 `230c-restart-and-focus-scopes`（重启与焦点作用域）。三组同属 item 655，`run.mjs 230` 按 id 前缀
 选中全部。
@@ -224,24 +252,14 @@ Alex 2026-10-23 的需求原话：「快速便捷地查找、打开文件（类�
   ——带 `role="combobox"` 的原生 `<input>` 在 WKWebView 里是 **AXComboBox**（13 处 target /
   断言因此首次真机执行时全部找不到节点；截图证明浮层当时是好的）。空值时读屏名是 aria-label
   （D570）；非空值时值在 `Value:` 字段（读屏名不随之改变）。
-- **直接打开行的断言用动作文本，不用「有内容」**：`按 Enter 打开 <路径>` / `按 Enter 只读打开
-  <路径>` 是结果区**判决**的措辞（D589 / D590），落点行是独立的 `第 N 行`（D591）。拿「界面变
-  了」当判据挡不住「结果区仍然说没有匹配、Enter 却能打开」这个 M697 的原始缺陷。
-- **直接打开行的判据写成「锚定整行 + 全路径属性」两条，不写逐字子串**（M755，2026-10-27 真机
-  坐实）：该行由 `fillPathText` 拆成 prefix / dirs / name 三段（`src/quick-open.ts` 的
-  `.lumir-qo-{prefix,dirs,name}`，CSS 两段都是 `white-space: nowrap`），WKWebView 把这三段并成
-  一条 `AXStaticText` 时**在段边界插一个空格**——实测 `按 Enter 打开 notes/deep/ plan.md`
-  （`help="notes/deep/plan.md"` 逐字正确）。因此：
-  ① `waitFor` 与动作断言用**段边界 `\s*` 容错的正则**，`\s*` 只落在「前缀 / 目录 / 文件名」之间，
-     路径字符本身零容差（写错路径照样红）；
-  ② 稳态断言用 `node: { name: "^按 Enter 打开\\s*notes/deep/\\s*plan\\.md$", present: true }`
-     ——锚定**同一条行**的动作文本与路径，比原来的「两串都在 AX 树里」更强（REVIEW.md「断言
-     等价于子串」条）；
-  ③ 另配一条 `ax: { has: '/help="notes\/deep\/plan\.md"/' }`：该行的 `title`（W5 全文通道）
-     逐字是路径，**属性不受段边界空格影响**，是零容差的路径判据（`element.title = row.path`，
-     见 `src/quick-open.ts` 的 `fillRows`）。
-  逐字子串为什么恒红：空格是段边界的固有产物，不是折行、也不是偶发——同一形态在 2026-10-26 /
-  2026-10-27 两次跑批里逐字相同。
+- **真实候选用「整行 + 全路径属性 + 计数」三条正观测**：direct action 删除后，结果区只允许真实
+  文件或目录候选。`fillPathText` 仍会把目录与文件名拆段，WKWebView 可在段边界插空格，因此整行
+  `node` 只在该边界用 `\s*`，路径字符本身零容差；`title` → AX `help` 再逐字证明完整路径，「命中
+  1 条」证明提示来自真实候选集合。`按 Enter 打开` / `按 Enter 只读打开` 只作负向断言，通用帮助与
+  折叠多命中的正当 Enter 提示不删。
+- **`path:行` 不再期待「第 N 行」伪落点标记**：真实候选的 `title` 是剥掉合法后缀后的文件路径；
+  独立 `第 39 行` 整行节点必须不存在。Enter 后的行号结果不靠这个已删除标记，也不只靠正文 marker，
+  而是再按 ⌥G 读取预填值 `39`——预填值等于当前光标所在行，与场景 56 的机器判据同源。
 - **负例配正向断言**：`ax: { not: "按 Enter 打开" }` 单独写有恒真风险（结果区没渲染这块也成立），
   因此同一步里配 `没有匹配的条目` 在场（D117）——两边一起才说明「这是真的零命中」。
 - **`notes/deep/plan.md` 与 `notes/v1:2.md` 用 `vaultWrite` 现造**：fixture 目录的 .md 由
@@ -250,10 +268,10 @@ Alex 2026-10-23 的需求原话：「快速便捷地查找、打开文件（类�
 
 ## 覆盖边界（如实登记，三组共用一份）
 
-- **行号落点只有「文件与标签」两级机器判据**：`AXTextArea.value` 是整个文档文本，套件读不到
-  选区与滚动位置（CL-1 / CL-2 的同一已知边界）。第 39 行是否落在视口中部由 `05` 号截图人工
-  判读；选区逐字节判据在 `tests/visual/scenes/quick-open.spec.ts`（真 CM view 上读
-  `selection.main.head` 的行号）与 `tests/unit/quick-open.test.ts`（解析层）。
+- **行号落点由 ⌥G 预填值精确判定**：`AXTextArea.value` 是整个文档文本，目标行在场不能证明落点；
+  本组在 Enter 后读 ⌥G 输入条的预填值 `39`，并复用既有标签。视口居中位置与选区像素仍由截图和
+  `tests/visual/scenes/quick-open.spec.ts`（真 CM view 上读 `selection.main.head`）承担，解析矩阵在
+  `tests/unit/quick-open.test.ts`。
 - **候选列表的滚动手感、浮层弹出节奏、`↑↓` 游标手感**：归 Alex 手感裁决，不进机器判据
   （候选集合、上限与游标落点在 `tests/visual/scenes/quick-open.spec.ts` 用真实 DOM 钉住）。
 - **Rust 侧的读取拒绝矩阵**（非绝对路径 / `..` / 目录 / 超限 / 非法编码）在 `cargo test` 的
