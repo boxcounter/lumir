@@ -142,6 +142,10 @@
       撤下后为 false。
 - [x] 6.8 P1 回归：非首启恢复中打开设置 → 树就绪 → 设置 overlay 仍可见且 `#app.inert`
       仍为 true；关闭设置后才由设置 owner 恢复 false（`startup-restore.spec.ts`）。
+- [x] 6.9 首启按钮深色对比度：`.ft-open-btn` 未设 `color`，按钮不继承父级、落 UA `buttontext`
+      （深色主题下文字 `rgb(0,0,0)` / 底色 `rgb(34,35,38)` = 1.34:1）。补三主题 WCAG AA
+      4.5:1 机器断言（`getComputedStyle` 实际颜色 + 相对亮度），先红后绿；最小修复为
+      `.ft-open-btn { color: var(--text); }`，不改布局。修后 16.04 / 12.10 / 21.00:1。
 
 ## 7. 真机验收
 

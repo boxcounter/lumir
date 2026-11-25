@@ -35,6 +35,51 @@ const EMPTY_VAULT: VaultFixture = {
   config: { language: "en" },
 };
 
+/** WCAG 2.x 对比度。首启按钮是正文档（`--fs-ui` 13px / `--fw-emphasis` 550，不构成大字号），
+ *  按 AA 正文阈值 4.5:1 判。UA 系统色（`buttontext`）不随 CSS 主题走——按钮若只设背景不设
+ *  前景，深色主题会拿到近黑文字，这类缺陷只有量对比度才判得出来。 */
+const relativeLuminance = (rgb: [number, number, number]): number => {
+  const channel = (v: number): number => {
+    const s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2]);
+};
+
+/** 只接受不透明 `rgb()`：按钮底色是 `--content-bg`，三主题都无 alpha；带 alpha 时必须先合成
+ *  才能算比值，出现即判红，不静默按通道值算。 */
+const opaqueRgb = (css: string): [number, number, number] => {
+  const m = /^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/.exec(css.trim());
+  if (m === null) throw new Error(`期望不透明 rgb()，实际 ${css}`);
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
+};
+
+const contrastRatio = (fg: string, bg: string): number => {
+  const [hi, lo] = [relativeLuminance(opaqueRgb(fg)), relativeLuminance(opaqueRgb(bg))].sort(
+    (a, b) => b - a,
+  );
+  return (hi + 0.05) / (lo + 0.05);
+};
+
+for (const theme of ["light", "dark", "eink"] as const) {
+  pageTest(`真首启（${theme}）：添加 vault 按钮文字对底色达 WCAG AA 4.5:1`, async (page) => {
+    await stubTauri(page, null, { theme });
+    await page.goto("/");
+
+    const open = page.getByRole("button", { name: "添加 vault" });
+    await expect(open).toBeVisible();
+    const colors = await open.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { color: cs.color, backgroundColor: cs.backgroundColor };
+    });
+    const ratio = contrastRatio(colors.color, colors.backgroundColor);
+    expect(
+      ratio,
+      `${theme}: 文字 ${colors.color} / 底色 ${colors.backgroundColor} 对比 ${ratio.toFixed(2)}:1 低于 4.5:1`,
+    ).toBeGreaterThanOrEqual(4.5);
+  });
+}
+
 pageTest("真首启：启动态首启模式唯一 Add vault，整窗居中，无树空态/正文", async (page) => {
   await stubTauri(page, null);
   // 原生菜单事件的测试通道：stubTauri 已把 __TAURI_INTERNALS__ 装好，这里包一层记录

@@ -193,5 +193,30 @@ editorPane、`openHarnessPane(false)` 无 JSONL / preflight、877 未被占用�
 - 基线候选（未 `--update`）：`.local/reviews/first-run-onboarding-nov25/baseline-candidates/`
   下 `first-run-{light,dark,eink}.png` 与 `tips-{light,dark,eink}.png` + README 清单。
 
+## 9. 像素层复审：首启按钮深色对比度（2026-11-25）
+
+Alex 在候选图上发现 `first-run-dark.png` 的「添加 vault」文字近黑、深底上不可读。
+
+- 根因：`.ft-open-btn` 只设 `background: var(--content-bg)`，未设 `color`；按钮不继承父级
+  `color`，缺省落 UA 的 `buttontext`（跟随系统外观，不跟 CSS 主题）。启动面 `#startup` 的
+  `color: var(--text)` 传不进按钮。树空态同一入口类共用此规则，深色下同病。
+- 断言（先红）：`first-run-empty-state.spec.ts` 三主题各一条，`getComputedStyle` 取按钮文字 /
+  底色，按 WCAG 2.x 相对亮度算对比，正文档阈值 4.5:1（13px / 550 不构成大字号）。
+  修复前 dark 红：`rgb(0, 0, 0)` / `rgb(34, 35, 38)` = **1.34:1**（chromium 实测）。
+- 修复：`.ft-open-btn { color: var(--text); }`（最小改动，不动布局）。
+- 修复后（chromium 计算样式实测）：light `rgb(33,32,26)` / `rgb(253,253,252)` = **16.04:1**；
+  dark `rgb(227,226,219)` / `rgb(34,35,38)` = **12.10:1**；eink `rgb(0,0,0)` / `rgb(255,255,255)`
+  = **21.00:1**。三主题断言绿；像素采样与计算样式一致（修前 dark 字形像素 `rgb(0,0,0)`，
+  修后 `rgb(227,226,219)`）。
+- 候选重生成（同一临时脚本，未入 git）与漂移核对（逐像素解码比对）：
+  - `first-run-dark`：484 px 变化、376 px 超 51/255（字形区域），maxDiff 227 —— 即修复面；
+  - `first-run-light`：472 px 变化，maxDiff 33（UA 黑 `#000` → token `#21201a`），未超像素门容差；
+  - `first-run-eink`：0 px 变化（eink `--text` = `#000000`，与 UA 色同值）；
+  - `tips-{light,dark,eink}`：0 px 变化（tips 面不含该按钮，未漂移）。
+- 正式基线未 `--update`。已知陈旧基线：`m645-startup-surface` 的 `startup-dark` 基线本身
+  带同一缺陷（黑字），修复后的实际图与旧基线差 329 px 超阈值、但占 960k 像素的 0.034%，
+  低于 `maxDiffPixelRatio 0.001`，因此门禁容差内不红。修复后的三主题启动态候选存为
+  `startup-restoring-{light,dark,eink}.png`，供 Alex 过目后随 `startup-dark` 一并重录。
+
 剩余（主会话执行）：`877` / `263` 真机验收、完整 `gate.sh quick/visual`、正式视觉基线
-`--update`（Alex 过目候选后）。
+`--update`（Alex 过目候选后；含 `m645-startup-surface/startup-dark` 的陈旧基线与首启 / tips 新基线）。
