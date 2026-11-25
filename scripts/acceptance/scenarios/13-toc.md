@@ -337,6 +337,33 @@ steps:
       - label: 查询串逐字落在输入框里（AXValue 是 typeInNode 的回读字段）
         ax: { has: "/AXComboBox \\(筛选\\) Value: 第 2 节 标题/" }
 
+  # change fix-selector-ime-aria-nov25：输入面 ⌘A 全选。必须走 cgevent 真键盘事件——KimiCU 的
+  # `cmd+a` 会走 AX 全选兼容路径（零键盘事件），验不到产品自己的 Cmd-A 分支。
+  - name: ⌘A 全选筛选串（真实键盘事件）
+    do: key
+    key: "cmd+a"
+    channel: cgevent
+
+  - name: 全选后按一次 Backspace（盲发，恰好一次）：全选生效则整串被清空
+    do: keys
+    keys: ["Backspace"]
+
+  - name: 判输入串是否被整串清空
+    do: settle
+    expect:
+      - label: 输入框已空（没有 Value 字段）；全选未生效时这里会是「第 2 节 标」的 Value
+        ax: { not: "/AXComboBox \\(筛选\\) Value:/" }
+      - label: 结果集回到全量（第 2 章的小节标题重新出现在大纲里，正文之外多一份）
+        ax: { count: { pattern: "第 2 章 小节", min: 2 } }
+
+  - name: 恢复远端条目查询（供下一步 Enter 使用）
+    do: typeInNode
+    target: { role: AXComboBox, name: "筛选" }
+    text: "第 2 节 标题"
+    expect:
+      - label: 查询串逐字落在输入框里
+        ax: { has: "/AXComboBox \\(筛选\\) Value: 第 2 节 标题/" }
+
   - name: Enter 跳到筛选出来的那一条（结果集只剩一条，游标就是它）
     do: key
     key: "return"
@@ -429,6 +456,10 @@ modeline 显示当前标题路径（兼作位置指示），点击它或按 ⌘�
   option 的 `aria-selected` / `aria-current`，组合期按键序列也无法由套件稳定注入。代码级判据在
   `tests/visual/scenes/selector-aria-ime-nov25.spec.ts`；真机只做手工复核（真实中文输入法下组合期
   `↓` / `Enter` 不导航、不接受，组合结束后列表按最终串刷新一次），清单见该 change 的完工报告。
+- **`⌘A` 全选必须走 cgevent 真键盘事件**（同上 change）：KimiCU 的 `cmd+a` 在原生输入框上走
+  AX 全选兼容路径（零键盘事件），会把「原生 Select All 顺手做了」误判成产品分支生效。判据是
+  「全选后按一次 Backspace（盲发，恰好一次）→ 输入框没有 `Value` 字段」：全选没生效时只删掉最后
+  一个字符，输入框仍有值；正文里的同名前缀不参与这条判据（匹配的是 AXComboBox 的 Value 字段）。
 
 ## 环境与副作用
 

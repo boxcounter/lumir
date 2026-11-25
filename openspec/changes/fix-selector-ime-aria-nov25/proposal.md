@@ -9,6 +9,9 @@
 > 批准范围：TOC 与 Vault Switch 的 IME 组合守卫、ARIA 语义修正、Tab 遍历与关闭焦点口径；
 > 不包含 Quick Open 初态语义（诊断 P3）、Skill 选中底色（诊断 P4）与任何视觉基线更新——这三项
 > 仍待单独裁决。
+> 实现期增补（2026-11-25）：用户实测「Vault Switch 与 Outline 的筛选框 `⌘A` 不能全选，Quick
+> Open 可以」。Alex 要求在同一 change 内按 Quick Open 的同一输入面合同修复；范围仍限于 TOC /
+> Vault 两个筛选框，不新增 capability、不扩到其它表面。
 > 诊断依据：四选择器盘点报告（2026-11-25，`.tower` 会话产出；本 proposal 引用的行号已按当前
 > 工作树复核）。合同居所 `docs/specs/selector-contract.md` 由并行 change 落地，本 change 只引用
 > 该路径、不编辑它，也不在 delta 里复制合同条款。
@@ -55,9 +58,14 @@ hover 规则用 `--hover` 覆盖了游标行的 `--sel` 底色（`src/style.css:
      承担（查询为空 + 非当前游标行），沿用既有两步确认、未接管时不消费按键。指针点击、键盘
      `Enter`（切换 / 重定位）与删除的两步确认语义不变。
    - hover 不清掉游标标记；主动关闭交还焦点并保持阅读位置，被动关闭不抢焦点。
-3. **测试与验收**：先落一份在旧实现上判红的 chromium 矩阵（IME / ARIA / Tab / 焦点 / hover），
-   再实现；验收场景 13（大纲）与 17（vault 切换）补组合期与 Tab / 焦点步骤，真机复跑由主会话
-   串行执行。
+3. **输入面的 `⌘A` 全选（`toc-outline` / `vault-workspace` 共用 `quick-open` 的合同）**
+   - TOC / Vault 的筛选框是「输入面」：`⌘A` 在输入框持焦时由浮层就地键处理**显式接管**
+     （`preventDefault` + 选中输入串），不依赖 webview / 原生 Select All 的默认行为，也不绕到
+     `editor.select-all`（那会选中正文、丢掉输入串）；组合期不接管，其余文本编辑键仍走原生路径。
+   - 合同本体引用 `quick-open` 的「输入面内的全选（⌘A）」条，不在两个 capability 各写一份。
+4. **测试与验收**：先落一份在旧实现上判红的 chromium 矩阵（IME / ARIA / Tab / 焦点 / hover /
+   `⌘A`），再实现；验收场景 13（大纲）与 17（vault 切换）补组合期、Tab / 焦点与 `⌘A` 全选步骤，
+   真机复跑由主会话串行执行。
 
 ## Non-goals
 

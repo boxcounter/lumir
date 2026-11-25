@@ -84,6 +84,33 @@ steps:
       - label: 浮层底部的新增入口在（形态 A 下浮层内唯一的新增入口，D104 的悬停提示）
         ax: { has: "选择一个目录作为新 vault" }
 
+  # change fix-selector-ime-aria-nov25：输入面 ⌘A 全选。必须走 cgevent 真键盘事件——KimiCU 的
+  # `cmd+a` 走 AX 全选兼容路径（零键盘事件），验不到产品自己的 Cmd-A 分支。
+  - name: 在筛选框输入多字符查询（为 ⌘A 全选造现场）
+    do: typeInNode
+    target: { role: AXComboBox, name: "筛选" }
+    text: "acceptance"
+    expect:
+      - label: 查询串逐字落在输入框里
+        ax: { has: "/AXComboBox \\(筛选\\) Value: acceptance/" }
+
+  - name: ⌘A 全选筛选串（真实键盘事件）
+    do: key
+    key: "cmd+a"
+    channel: cgevent
+
+  - name: 全选后按一次 Backspace（盲发，恰好一次）：全选生效则整串被清空
+    do: keys
+    keys: ["Backspace"]
+
+  - name: 判输入串是否被整串清空
+    do: settle
+    expect:
+      - label: 输入框已空（没有 Value 字段）；全选未生效时这里会是「acceptanc」的 Value
+        ax: { not: "/AXComboBox \\(筛选\\) Value:/" }
+      - label: 结果集回到全量（B 行重新出现在列表里，浮层没有因按键收起）
+        ax: { has: "lumir-m102-acceptance-b" }
+
   - name: Esc 收起浮层（浮层内就地消费 Esc，D86 同口径）
     do: key
     key: "escape"
@@ -331,6 +358,9 @@ steps:
 **Tab 遍历与 ARIA 属性**（change fix-selector-ime-aria-nov25）：本场景只判终端事实「两次 Tab 后
 浮层收起」；行 / 删除钮的 `tabindex`、`aria-selected` / `aria-current` 与 option id 归 chromium
 矩阵（`tests/visual/scenes/selector-aria-ime-nov25.spec.ts`），AX 读不到这些属性。
+**筛选框的 ⌘A 全选**同一 change：本场景用 `channel: cgevent` 发真实 ⌘A（KimiCU 的 `cmd+a` 在原生
+输入框上走 AX 全选兼容路径，会掩盖产品分支），再按一次 Backspace（盲发）——全选生效才会把整串清空；
+判据是输入框不再有 `Value` 字段，AX 读不到 selectionStart / End。
 
 **纯键盘删除**（同一 change）：文末用「`↓` 到 B → `Delete` 进入确认句 → 再按一次 → 撤销提示点名
 B」判这条键真的走通；B 删掉后再对**失效行**走同一套三步（它同样在游标空间里，`available=false`

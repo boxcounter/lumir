@@ -10,6 +10,12 @@ vault 列表浮层的就地键 SHALL 与 `toc-outline` 的「浮层选择列表�
 组合期 MUST NOT 刷新结果集，组合结束 SHALL 按最终查询串刷新**恰一次**（`compositionend` 之后引擎
 补发的同值 `input` MUST NOT 触发第二次刷新）。
 
+筛选框的 `⌘A` SHALL 与 `quick-open` 的「输入面内的全选（⌘A）」条同一套（vault 筛选框同样是
+**输入面**）：输入框持焦时由浮层的就地键处理显式接管（`preventDefault` 后选中输入串），MUST NOT
+依赖 webview / 原生 Select All 菜单的默认行为，MUST NOT 绕到 `editor.select-all`（那会选中正文、
+丢掉输入串）；组合期的 `⌘A` MUST NOT 由该分支消费、MUST NOT 改变输入框选区。其余文本编辑键 SHALL
+继续走原生输入框路径。本条不在 vault 侧重述实现，只声明同一合同适用于本浮层的筛选框。
+
 `aria-selected` SHALL 只表示**键盘游标**：任意时刻至多一条 option 为 `aria-selected="true"`，且它
 SHALL 是 `aria-activedescendant` 指向的那一条。**当前 vault** SHALL 用 `aria-current="true"` 与既有
 ✓ 槽位 / 「当前」flag / `is-current` 视觉标记表示，MUST NOT 用 `aria-selected` 表示；游标移开后当前行 SHALL 是
@@ -54,6 +60,13 @@ MUST NOT 被读成「不可聚焦 / 不可指向」（与原生 `disabled` 不�
   依次按下 `↓` 与 `Enter`，随后结束组合并提交最终查询串
 - **THEN** 组合期游标不动、浮层不关闭、没有发起 `vault_open_path` 或重定位请求；当前 vault 与右栏
   正文不变；组合结束后列表按最终查询串刷新，游标落在首条命中
+
+#### Scenario: 输入框内 ⌘A 全选输入串
+
+- **WHEN** 浮层打开、筛选框里已有 `notes-vault`，用户按 `⌘A` 后键入 `x`
+- **THEN** 输入框内容变成 `x`（整串被替换，MUST NOT 变成 `notes-vaultx` 一类的追加形态），列表按
+  `x` 筛；这次 `⌘A` 的 `defaultPrevented` 为真（输入面显式接管）；当前 vault 与右栏正文不因这次
+  全选改变；组合期按下 `⌘A` 时浮层不消费该键、不建立全选
 
 #### Scenario: 组合期不进入删除确认
 

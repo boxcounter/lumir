@@ -169,8 +169,9 @@ async function contrastRatioOf(
   });
 }
 
-/** 组合期可派发的按键：裸 key，或带 ctrlKey 的 chord（`⌃N` / `⌃P` 与 `↑` / `↓` 共用一条守卫）。 */
-type ComposeKey = string | { key: string; ctrlKey: boolean };
+/** 组合期可派发的按键：裸 key，或带 ctrlKey / metaKey 的 chord（`⌃N` / `⌃P` / `⌘A` 与
+ *  `↑` / `↓` 共用同一条组合期守卫）。 */
+type ComposeKey = string | { key: string; ctrlKey?: boolean; metaKey?: boolean };
 
 /** 组合开始 + 中间串 + 组合期按键（不结束组合）。返回每个按键的 `defaultPrevented`——组合期
  *  MUST NOT 消费就地键：只看「游标没动」分不出「浮层让路」与「浮层接了但没生效」，这个读数与它
@@ -183,8 +184,11 @@ async function composeKeys(
   return page.locator(selector).evaluate((el, opts) => {
     const input = el as HTMLInputElement;
     const sent: Array<{ key: string; prevented: boolean }> = [];
-    const norm = (raw: string | { key: string; ctrlKey: boolean }): { key: string; ctrlKey: boolean } =>
-      typeof raw === "string" ? { key: raw, ctrlKey: false } : raw;
+    const norm = (raw: string | { key: string; ctrlKey?: boolean; metaKey?: boolean }): {
+      key: string;
+      ctrlKey: boolean;
+      metaKey: boolean;
+    } => (typeof raw === "string" ? { key: raw, ctrlKey: false, metaKey: false } : { ctrlKey: false, metaKey: false, ...raw });
     input.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
     input.value = opts.mid;
     input.dispatchEvent(new InputEvent("input", { bubbles: true, data: opts.mid, isComposing: true }));
@@ -196,6 +200,7 @@ async function composeKeys(
         cancelable: true,
         isComposing: true,
         ctrlKey: key.ctrlKey,
+        metaKey: key.metaKey,
       });
       input.dispatchEvent(event);
       sent.push({ key: event.key, prevented: event.defaultPrevented });
@@ -209,6 +214,7 @@ async function composeKeys(
         bubbles: true,
         cancelable: true,
         ctrlKey: key.ctrlKey,
+        metaKey: key.metaKey,
       });
       Object.defineProperty(event, "keyCode", { value: 229 });
       input.dispatchEvent(event);
@@ -269,6 +275,56 @@ async function rebuilds(page: Page): Promise<number> {
   return page.evaluate(() => (window as unknown as { __rebuilds: number }).__rebuilds);
 }
 
+/** 键盘事件在窗口冒泡末端的 `defaultPrevented` 读数：判「输入面有没有显式接管该键」。
+ *  只看选区分不出「产品接管了」与「webview 原生默认行为顺手做了」——后者在 WKWebView 上不成立
+ *  （用户实测的 ⌘A 缺陷正是这条差异）。 */
+async function installKeyConsumptionLog(
+  page: Page,
+  match: { key: string; meta?: boolean },
+): Promise<void> {
+  await page.evaluate((m) => {
+    const w = window as unknown as { __keyLog: Array<{ key: string; prevented: boolean }> };
+    w.__keyLog = [];
+    window.addEventListener("keydown", (event) => {
+      if (event.key !== m.key) return;
+      if ((m.meta === true) !== event.metaKey) return;
+      w.__keyLog.push({ key: event.key, prevented: event.defaultPrevented });
+    });
+  }, match);
+}
+
+async function keyConsumptionLog(page: Page): Promise<Array<{ key: string; prevented: boolean }>> {
+  return page.evaluate(
+    () => (window as unknown as { __keyLog: Array<{ key: string; prevented: boolean }> }).__keyLog,
+  );
+}
+
+/** 输入框的选区读数（全选的判据是 selectionStart/End，不是「值没变」）。 */
+async function inputSelection(
+  page: Page,
+  selector: string,
+): Promise<{ start: number | null; end: number | null; value: string }> {
+  return page.locator(selector).evaluate((el) => {
+    const input = el as HTMLInputElement;
+    return { start: input.selectionStart, end: input.selectionEnd, value: input.value };
+  });
+}
+
+/** 编辑器（CodeMirror）的选区读数：判 ⌘A 没有绕到 `editor.select-all`（那会整篇选中）。 */
+async function editorSelection(page: Page): Promise<{ anchor: number; head: number }> {
+  return page.evaluate(() => {
+    const el = document.querySelector(".cm-content") as unknown as {
+      cmTile: {
+        root: {
+          view: { state: { selection: { main: { anchor: number; head: number } } } };
+        };
+      };
+    };
+    const main = el.cmTile.root.view.state.selection.main;
+    return { anchor: main.anchor, head: main.head };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // 大纲浮层
 // ---------------------------------------------------------------------------
@@ -282,13 +338,30 @@ test("大纲：组合期的 ↑↓ / ⌃N⌃P / Enter 不移动游标、不接�
 
   const sent = await composeKeys(page, ".lumir-toc-input", {
     mid: "甲",
-    keys: ["ArrowDown", "Enter", { key: "n", ctrlKey: true }, { key: "p", ctrlKey: true }],
+    keys: [
+      "ArrowDown",
+      "Enter",
+      { key: "n", ctrlKey: true },
+      { key: "p", ctrlKey: true },
+      { key: "a", metaKey: true },
+    ],
     keyCode229: ["ArrowDown", "Enter"],
   });
 
-  // 组合期六次按键都不被浮层消费（MUST NOT preventDefault）——与「游标没动」成对，
-  // 才分得出「浮层让路」和「浮层接了但没生效」。
-  expect(sent.map((entry) => entry.prevented)).toEqual([false, false, false, false, false, false]);
+  // 组合期七次按键都不被浮层消费（MUST NOT preventDefault）——与「游标没动」成对，
+  // 才分得出「浮层让路」和「浮层接了但没生效」。⌘A 也在其中：组合期它归输入法 / 原生路径，
+  // MUST NOT 被输入面的全选分支接管。
+  expect(sent.map((entry) => entry.prevented)).toEqual([
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+  ]);
+  const composingSelection = await inputSelection(page, ".lumir-toc-input");
+  expect(composingSelection.start, "组合期 ⌘A MUST NOT 建立全选").toBe(composingSelection.end);
   // 组合期：游标不动（旧实现会被两条 ArrowDown / ⌃N 推走）
   await expect(active).toHaveText("第一部分");
   // 组合期 Enter 不跳转：浮层仍开着、焦点仍在输入框
@@ -321,6 +394,30 @@ test("大纲：组合期的 ↑↓ / ⌃N⌃P / Enter 不移动游标、不接�
     { key: "ArrowDown", prevented: true },
     { key: "n", prevented: true },
   ]);
+});
+
+test("大纲：⌘A 在筛选框内全选输入串（输入面合同，与 Quick Open 同源）", async ({ page }) => {
+  await openToc(page);
+  const input = page.locator(".lumir-toc-input");
+  const popover = page.locator(".lumir-toc");
+
+  await page.keyboard.type("部分");
+  await expect(input).toHaveValue("部分");
+  const editorBefore = await editorSelection(page);
+  await installKeyConsumptionLog(page, { key: "a", meta: true });
+  await page.keyboard.press("Meta+a");
+
+  // 输入面必须显式接管（旧实现没有这条分支：Chromium 的原生 select-all 会把选区做出来，
+  // 但 defaultPrevented 为假——WKWebView 上就是用户实测的「⌘A 不能全选」）。
+  expect(await keyConsumptionLog(page)).toEqual([{ key: "a", prevented: true }]);
+  expect(await inputSelection(page, ".lumir-toc-input")).toEqual({ start: 0, end: 2, value: "部分" });
+  await expect(popover).toBeVisible();
+
+  // 全选后键入替换整串（不是追加），列表按新串筛；⌘A MUST NOT 绕到 editor.select-all。
+  await page.keyboard.type("乙");
+  await expect(input).toHaveValue("乙");
+  await expect(page.locator(".lumir-toc-item")).toHaveText(["乙小节", "乙小节细节"]);
+  expect(await editorSelection(page), "⌘A 不得选中编辑器正文").toEqual(editorBefore);
 });
 
 test("大纲：组合结束按最终串只刷新一次列表", async ({ page }) => {
@@ -415,12 +512,20 @@ test("vault：组合期的 ↑↓ / ⌃N⌃P / Enter 不移动游标、不切换
   const switchesBefore = (await invokes(page)).filter((cmd) => cmd === "vault_open_path").length;
   const sent = await composeKeys(page, ".vault-filter", {
     mid: "not",
-    keys: ["ArrowDown", "Enter", { key: "n", ctrlKey: true }, { key: "p", ctrlKey: true }, "Delete", "Backspace"],
+    keys: [
+      "ArrowDown",
+      "Enter",
+      { key: "n", ctrlKey: true },
+      { key: "p", ctrlKey: true },
+      "Delete",
+      "Backspace",
+      { key: "a", metaKey: true },
+    ],
     keyCode229: ["ArrowDown", "Enter", "Delete"],
   });
 
-  // 组合期九次按键都不被浮层消费（MUST NOT preventDefault），游标不动、没有发起切换、没有进入
-  // 删除确认（Delete / Backspace 的组合期反例）。
+  // 组合期十次按键都不被浮层消费（MUST NOT preventDefault），游标不动、没有发起切换、没有进入
+  // 删除确认（Delete / Backspace 的组合期反例），⌘A 也不被输入面的全选分支接管。
   expect(sent.map((entry) => entry.prevented)).toEqual([
     false,
     false,
@@ -431,7 +536,10 @@ test("vault：组合期的 ↑↓ / ⌃N⌃P / Enter 不移动游标、不切换
     false,
     false,
     false,
+    false,
   ]);
+  const composingSelection = await inputSelection(page, ".vault-filter");
+  expect(composingSelection.start, "组合期 ⌘A MUST NOT 建立全选").toBe(composingSelection.end);
   await expect(page.locator(".vault-row-confirm")).toHaveCount(0);
   await expect(active.locator(".vault-row-name")).toHaveText("demo-vault");
   await expect(popover).toBeVisible();
@@ -470,6 +578,30 @@ test("vault：组合期的 ↑↓ / ⌃N⌃P / Enter 不移动游标、不切换
     { key: "n", prevented: true },
   ]);
   await expect(active.locator(".vault-row-name")).toHaveText("sandbox-vault");
+});
+
+test("vault：⌘A 在筛选框内全选输入串（输入面合同，与 Quick Open 同源）", async ({ page }) => {
+  await openSwitcher(page);
+  const input = page.locator(".vault-filter");
+  const popover = page.locator(".vault-pop");
+
+  await page.keyboard.type("vault");
+  await expect(input).toHaveValue("vault");
+  const editorBefore = await editorSelection(page);
+  await installKeyConsumptionLog(page, { key: "a", meta: true });
+  await page.keyboard.press("Meta+a");
+
+  // 与 Quick Open 的「输入面内的全选（⌘A）」同一条合同：显式接管、选中输入串、不依赖原生
+  // Select All。旧实现的 defaultPrevented 为假（Chromium 原生路径会顺手做选区，WKWebView 不会）。
+  expect(await keyConsumptionLog(page)).toEqual([{ key: "a", prevented: true }]);
+  expect(await inputSelection(page, ".vault-filter")).toEqual({ start: 0, end: 5, value: "vault" });
+  await expect(popover).toBeVisible();
+
+  // 全选后键入替换整串；列表按新串筛；编辑器正文不被选中。
+  await page.keyboard.type("box");
+  await expect(input).toHaveValue("box");
+  await expect(page.locator(".vault-row .vault-row-name")).toHaveText(["sandbox-vault"]);
+  expect(await editorSelection(page), "⌘A 不得选中编辑器正文").toEqual(editorBefore);
 });
 
 test("vault：组合结束按最终串只刷新一次列表", async ({ page }) => {

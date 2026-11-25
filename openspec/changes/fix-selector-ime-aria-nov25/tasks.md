@@ -165,6 +165,23 @@
 - [ ] 8.5 5.4 的另一半仍未做：真实中文 IME 下组合期 `↓` / `Enter` 不导航、不接受，组合结束后列表
       按最终串刷新一次——需要真机时段与真人输入法，归主会话。
 
+## 9. 输入面 ⌘A 全选（2026-11-25 用户实测缺陷，同 change 增补）
+
+- [x] 9.1 先红：`selector-aria-ime-nov25.spec.ts` 补两条真实按键用例（TOC / Vault：输入多字符 →
+      `Meta+a` → `defaultPrevented` / selectionStart / selectionEnd / 输入不丢 / 浮层不关 / 编辑器
+      选区不变），并在旧实现上判红（`prevented: false`；证据
+      `.local/probes/selector-ime-aria-nov25/red-cmd-a.log`）。
+- [x] 9.2 组合期反例并入两条现有组合测试：`⌘A`（`isComposing` 与 `keyCode 229`）不被消费、不建立
+      全选。
+- [x] 9.3 `src/toc.ts` / `src/vault-switcher.ts`：`onKeydown` 的 `switch` 各加 `Cmd-A` 分支
+      （`preventDefault` + `input.select()`），位置在组合期守卫之后；不绕 `editor.select-all`。
+- [x] 9.4 规格同步：`toc-outline` ADDED 条加「输入面 ⌘A」段 + 3 个 scenario；`vault-workspace`
+      ADDED 条加同一段 + 1 个 scenario；两处均引用 `quick-open` 的「输入面内的全选（⌘A）」，不复制
+      条款正文。
+- [x] 9.5 目标矩阵 17 条全绿；两条 tsc、docs-check、`openspec validate --all --strict` 通过（读数
+      见完工报告）。
+- [ ] 9.6 真机 13 / 17 的 `cgevent` ⌘A 步骤与完整 quick / visual 由主会话在新 tip 重跑。
+
 ## 备注（合并时由主会话统一）
 
 - `docs/specs/selector-contract.md` 由并行 change（`fix/selector-scroll-auto-select-nov25`）落地，
