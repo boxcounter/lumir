@@ -17,4 +17,4 @@
 - [x] 3.1 新增合成 fixture 的 WKWebView 场景 868，覆盖 Ctrl+N/P、长列表高亮揭示与候选加宽；场景静态校验通过。
 - [x] 3.2 相关前端单测、Skill 目标视觉测试（含三主题与三宽度）、OpenSpec strict validate 与 docs-check 通过，日志落 `.local/missions/skill-menu-ux-nov25/`。
 - [x] 3.3 不更新视觉基线；若有预期像素差异，把候选图与精确清单落 `.local/reviews/skill-menu-ux-nov25/` 待 Alex 过目。
-- [ ] 3.4 主会话串行执行 `node scripts/acceptance/run.mjs 868`；本 worker 不启动真机，交付时不得宣称真机通过。
+- [x] 3.4 主会话串行执行 `node scripts/acceptance/run.mjs 868`；本 worker 不启动真机，交付时不得宣称真机通过。**已完成（2026-11-25，最终 tip `d0b6927c`）：868 1/1 PASS、38 断言、63.2s，证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-skill-menu-ux-r4/`。**

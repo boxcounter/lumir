@@ -30,3 +30,21 @@ Skill 候选当前把 Ctrl+N/P 路由到「关闭候选但不消费」，方向�
 - 影响的合同：`docs/specs/skill-menu.md`（新增 Skill 专项交互不变量）。
 - 影响的代码/系统：composer 捕获键路由、Skill 候选渲染与局部滚动、候选宽度计算及其单元/浏览器/真机场景。
 - 关联约束：渲染/交互缺陷合同先行；滚动容器继续归细条档，右缘不放常驻可交互件。
+
+## 归档记录
+
+### 归档前（节点 2 五要件）
+
+1. **节点 1 批准依据**：Alex 2026-11-25 在 Lumir 0.16.0 实测三项缺陷（Ctrl+N/P 不能选择、方向键移动高亮但列表不跟随、选择框过小）并明确要求安排修复；见文首「节点 1」记录。实现期未新增行为裁决。
+2. **独立评审**：K3 最终 **clean**（无 P1 / P2 / P3；按节点 2 五要件放行），绑定 tip `d0b6927c82a14a223ac04509219ebd38c7564a00`，报告 `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/skill-menu-ux-nov25/k3-final.md`；前序 clean 为 `8d33cabd`。评审列出的 merge/archive 前置（完整 quick / visual、真机 868）已由同一 tip 的完整 gate 与 868 证据补齐；评审后无产品 / 测试改动。
+3. **tasks 完成**：`tasks.md` 10/10 全勾；3.4 的真机 868 已完成并记录证据路径（见下）。
+4. **门禁与真机证据**：
+   - 完整 `bash scripts/gate.sh visual`（含 quick 层）在 `d0b6927c`：`GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0；日志 `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/skill-menu-ux-nov25/gate-visual-final-tip-r2.log`。
+   - 真机 868：`868-harness-skill-menu-ux-nov25` **1/1 PASS**、38 断言、0 failed、63.196s；证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-skill-menu-ux-r4/`（`results.json`、`summary.md`、`steps.md`、09/10 截图）。
+   - `tests/visual/baselines/` 相对基线零改动，未更新基线。
+5. **规格对账（归档前读数）**：
+   - `node scripts/openspec-archive-check.mjs --change fix-skill-menu-ux-nov25` → `PASS（扫过 1 份 delta，0 条 MODIFIED，对比 0 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目（--change fix-skill-menu-ux-nov25））`。
+   - 默认门禁模式 → `PASS（扫过 12 份 delta，16 条 MODIFIED，对比 351 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目）`。
+   - `pnpm exec openspec validate --all --strict` → `39 passed, 0 failed (39 items)`。
+   - `bash scripts/docs-check.sh` → `PASS`（含归档对账、队列齐备、backlog 出口与 80 行上限）。
+   - `docs/backlog.md` 的归档跟踪队列有且仅有一条本 change 条目；因文件已在 80 行硬上限，按既有先例移除已归档的 `add-harness-skill-slash-invocation-nov23` 旧条目，记录保留在其归档 proposal 与 git 历史。
