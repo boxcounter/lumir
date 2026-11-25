@@ -65,3 +65,11 @@ living spec「对话面板」已要求模型输出按 Markdown（GFM 基本面�
    - `pnpm exec openspec validate --all --strict` → `39 passed, 0 failed (39 items)`。
    - `bash scripts/docs-check.sh` → `PASS`（含归档对账、队列齐备、backlog 出口与 80 行上限）。
    - `docs/backlog.md` 队列有且仅有一条本 change 条目；因 80 行硬上限，按既有先例移除已归档的 `add-harness-skill-slash-invocation-nov23` 旧条目，记录保留在其归档 proposal 与 git 历史。
+
+### 归档后
+
+- **归档提交**：`4fc7d05e`（归档目录 `openspec/changes/archive/2026-11-25-fix-harness-markdown-bold-nov25/` + 并入后的 living spec 一起提交）。
+- **包装器实际输出**：`Change 'fix-harness-markdown-bold-nov25' archived as '2026-11-25-fix-harness-markdown-bold-nov25'.`；`harness: update`（`+ 1 added` / `- 0 removed`），`Totals: + 1, ~ 0, - 0, → 0`。
+- **修链读数**：`归档后修链 0 处（扫过 3 篇 Markdown / 0 条相对链接）`；`openspec-links: PASS（校验 699 条相对链接，全部可达）`。
+- **归档后审计**：`node scripts/openspec-archive-check.mjs --archived fix-harness-markdown-bold-nov25` → `PASS（openspec/changes/archive/2026-11-25-fix-harness-markdown-bold-nov25：0 条 MODIFIED，对比 0 段；人工恢复 0 段，声明认领 0 段）`（2026-11-25T15:34+0800）。
+- **F1 trailing newline**：仍为基线既有独立缺陷，本 change 未修、未宣称覆盖；归档不改变该结论，按 K3 结论另立 change 处理。
