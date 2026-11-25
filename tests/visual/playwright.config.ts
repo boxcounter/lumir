@@ -111,7 +111,9 @@ export default defineConfig({
     // 与 M852 的网络失败同一条上屏路径（appendError），两支各判一次。
     // fix-skill-visible-selection-nov25 起 Skill 候选可见性矩阵同行：缺陷现场是 WKWebView
     // （真机截图里选中行落在候选盒的裁切区外），判据是「选中 option 完整落在真实可见带内」——
-    // 揭示只写 `scrollTop`，而两引擎的滚动钳制 / 子像素取整不同，chromium 绿不能替代真机分支。
+    // 揭示只写 `scrollTop`，而两引擎的滚动钳制 / 子像素取整不同，chromium 绿不能替代真实 UA 的
+    // WebKit 分支。该 project 只覆写 `browserName` 与 `userAgent`，**不覆写 `deviceScaleFactor`**，
+    // 实际 DPR 1（没有 2× 缩放覆写，证据里别再写高分辨率分支）。
     ...(webkitRealuaPresent
       ? [
           {

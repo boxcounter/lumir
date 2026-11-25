@@ -63,15 +63,18 @@ master（`46d7669`）已由 `selector-scroll-auto-select` 系列修掉这两处�
    真实可见带改为「菜单 ∩ 全部裁切祖先 ∩ 视口 − 滚动口边框 / padding」，并断言 `.is-selected`
    与 `aria-selected` 同项。既有 68 条按新判据全绿。
 3. **真机分支同行**：把新矩阵挂进 `webkit-realua` project——揭示只写 `scrollTop`，两引擎的滚动
-   钳制与子像素取整不同，chromium 绿不替代真机分支。
+   钳制与子像素取整不同，chromium 绿不替代真实 UA 的 WebKit 分支（该 project 不覆写
+   `deviceScaleFactor`，实际 DPR 1）。
 4. **合同补判据**（`docs/specs/selector-contract.md` §证伪方式 + `harness` living spec 新增一条
    判据 requirement）：oracle 必须独立于实现；逐拍同时判「完整可见」与「标记同项」；真机场景
-   必须用 AX 暴露判选中行可见，不得只留截图。
+   必须给出 AX 暴露判据——它是**必要不充分**判据（不出现 ⇒ 必然不可见；在场 ≠ 整行完整可见），
+   不得只留截图，也不得用 AX 暴露冒充完整几何。
 5. **真机判据补齐**（只改场景文本，不在本批跑真机）：868 的末项 / 末段步骤从「只留截图」改为
-   AX 可见性断言——AX 只暴露真实 clip 内的行（与 867 同一手法），判据按正反两向成对写并在同一次
-   运行里翻面（首段 `acc-skill-00` 在场 / `acc-skill-11` 不在场；末段 `acc-skill-11` 与
-   `acc-skill-10` 在场 / `acc-skill-00` 不在场；回退段 `acc-skill-10` 在场 / `acc-skill-00` 不在场）。
-   含本修复的构建上的真机复跑由主会话串行执行（tasks 3.3）。
+   **AX 暴露**判据——AX 快照按离屏过滤只暴露曝光窗口内的行，而该窗口比像素可见区**多一行**，所以
+   它只判「不出现＝必然不可见」这一向（与 867 同一手法）。判据按正反两向成对写并在同一次运行里
+   翻面（首段 `acc-skill-00` 在场 / `acc-skill-11` 不在场；末段 `acc-skill-11` 与 `acc-skill-10`
+   在场 / `acc-skill-00` 不在场；回退段 `acc-skill-10` 在场 / `acc-skill-00` 不在场）。完整几何仍
+   归浏览器矩阵。含本修复的构建上的真机复跑由主会话串行执行（tasks 3.3）。
 
 ## Non-goals
 
