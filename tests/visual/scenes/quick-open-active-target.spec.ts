@@ -12,8 +12,14 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 // 之一会把「高亮≠目标」重新放进来。目录两段式、lazy、外部只读与 `path:line` 的既有合同
 // 在这里是同批回归面：它们不得随本次改动变化。
 //
-// 本场景不覆盖：解析次序矩阵（tests/unit/quick-open.test.ts）、纯策略起点
-// （同文件的「游标起点」段）、真机 WKWebView 手感（验收场景 230a/230b/230c/230d/231/874）。
+// 角落（「普通查询 = 索引外精确路径且是其它候选子串」）：判决在探测落地前是未定的——探测
+// 命中时 Enter 打开候选之外的那条路径，不命中时才落到首行。未定期间 MUST NOT 高亮任何行
+// （旧实现亮首行、Enter 却打开索引外文件）；本场景用一条带延迟的探测把「在途」与「落地」
+// 两段都钉住，并证明落地后仍不亮、Enter 打开的是那条精确路径。
+//
+// 本场景不覆盖：解析次序矩阵（tests/unit/quick-open.test.ts）、纯策略起点与异步保位/回落
+// 的纯函数判据（同文件的「游标起点」「异步补帧的保位」段）、真机 WKWebView 手感
+// （验收场景 230a/230b/230c/230d/231/874）。
 
 /** `notes/plan.md`：20 行，第 12 行有 marker（`notes/plan.md:12` 的落点判据）。 */
 const NOTES_PLAN_LINES: string[] = ["# Plan", "", "QO-TARGET-PLAN", ""];
@@ -40,6 +46,15 @@ const ROOT_PLAN = `${ROOT_PLAN_LINES.join("\n")}\n`;
 const LAZY_PATH = ".local/lazy-notes.md";
 const LAZY_DOC = "# Lazy\n\nQO-TARGET-LAZY\n";
 
+/**
+ * 角落现场：根层 `scratch.md` **在盘上但不在索引里**（被忽略规则挡在枚举之外），索引里只有
+ * 同子串的 `apps/scratch.md` / `drafts/scratch.md`。输入 `scratch.md` 因此在同步层是
+ * `undecided`，探测命中后 Enter 打开候选之外的根层文件。
+ */
+const ROOT_SCRATCH = "# Root scratch\n\nQO-TARGET-SCRATCH\n";
+const DRAFTS_SCRATCH = "# Drafts scratch\n\nQO-TARGET-DRAFTS-SCRATCH\n";
+const APPS_SCRATCH = "# Apps scratch\n\nQO-TARGET-APPS-SCRATCH\n";
+
 /** vault 外只读文档：20 行，第 12 行有 marker。 */
 const EXTERNAL_PATH = "/tmp/lumir-verify/active-target.md";
 const EXTERNAL_LINES: string[] = ["# External", ""];
@@ -57,12 +72,15 @@ const VAULT: VaultFixture = {
   root: "/v",
   entries: [
     { path: "notes", kind: "dir", size: 0, mtime_ms: 0 },
+    { path: "drafts", kind: "dir", size: 0, mtime_ms: 0 },
     { path: "apps", kind: "dir", size: 0, mtime_ms: 0 },
     { path: "notes/plan.md", kind: "file", size: PLAN.length, mtime_ms: 0 },
     { path: "notes/guide.md", kind: "file", size: GUIDE.length, mtime_ms: 0 },
     { path: "notes/sub", kind: "dir", size: 0, mtime_ms: 0 },
     { path: "notes/sub/deep.md", kind: "file", size: DEEP.length, mtime_ms: 0 },
     { path: "apps/plan.md", kind: "file", size: APPS_PLAN.length, mtime_ms: 0 },
+    { path: "apps/scratch.md", kind: "file", size: APPS_SCRATCH.length, mtime_ms: 0 },
+    { path: "drafts/scratch.md", kind: "file", size: DRAFTS_SCRATCH.length, mtime_ms: 0 },
     { path: "plan.md", kind: "file", size: ROOT_PLAN.length, mtime_ms: 0 },
     { path: "A.md", kind: "file", size: UPPER.length, mtime_ms: 0 },
     { path: "a.md", kind: "file", size: LOWER.length, mtime_ms: 0 },
@@ -72,21 +90,28 @@ const VAULT: VaultFixture = {
     "notes/guide.md": GUIDE,
     "notes/sub/deep.md": DEEP,
     "apps/plan.md": APPS_PLAN,
+    "apps/scratch.md": APPS_SCRATCH,
+    "drafts/scratch.md": DRAFTS_SCRATCH,
     "plan.md": ROOT_PLAN,
     "A.md": UPPER,
     "a.md": LOWER,
+    // 只有读取表、没有 entries 行 = 盘上存在但不在索引（惰性 / 被忽略规则挡住）
+    "scratch.md": ROOT_SCRATCH,
     [LAZY_PATH]: LAZY_DOC,
   },
   externalFiles: { [EXTERNAL_PATH]: EXTERNAL_DOC },
   links: {},
 };
 
-/** 给桩补 `fs_paths_exist`：惰性文件的探测在真后端由忽略规则产生。`delayMs` 造「探测在途」。 */
+/** 给桩补 `fs_paths_exist`：惰性文件的探测在真后端由忽略规则产生。`delayMs` 造「探测在途」。
+ *  每次应答落进 `__probeAnswers`——断言可以钉在「探测已经回来之后」，而不是靠猜时间。 */
 async function stubPathsExist(page: Page, present: string[], delayMs = 0): Promise<void> {
   await page.evaluate(
     ({ present, delayMs }) => {
+      const w = window as unknown as { __probeAnswers?: Array<{ paths: string[]; found: string[] }> };
+      w.__probeAnswers = [];
       const internals = (
-        window as unknown as {
+        w as unknown as {
           __TAURI_INTERNALS__: { invoke: (...args: any[]) => Promise<unknown> };
         }
       ).__TAURI_INTERNALS__;
@@ -95,10 +120,19 @@ async function stubPathsExist(page: Page, present: string[], delayMs = 0): Promi
         if (cmd !== "fs_paths_exist") return inner(cmd, args, ...rest);
         const paths = args?.paths ?? [];
         if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
-        return paths.filter((path) => present.includes(path));
+        const found = paths.filter((path) => present.includes(path));
+        (w.__probeAnswers ??= []).push({ paths, found });
+        return found;
       };
     },
     { present, delayMs },
+  );
+}
+
+/** 已经应答过的探测次数（>0 表示第一级探测回来了，`path:line` 的第二级是 2）。 */
+function probeAnswers(page: Page): Promise<number> {
+  return page.evaluate(
+    () => ((window as unknown as { __probeAnswers?: unknown[] }).__probeAnswers ?? []).length,
   );
 }
 
@@ -197,7 +231,7 @@ test("移动后覆盖默认：↑ 到 apps/plan.md 后 Enter 只打开游标行"
   await expect(page.locator(".cm-content")).toContainText("QO-TARGET-APPS-PLAN");
 });
 
-test("普通过滤查询：首行高亮，Enter 打开首行（默认承诺不回归）", async ({ page }) => {
+test("普通过滤查询：探测落地后首行高亮，Enter 打开首行（默认承诺不回归）", async ({ page }) => {
   await start(page);
   await fill(page, "plan");
   await expect(page.locator(".lumir-qo-item")).toHaveText([
@@ -205,11 +239,40 @@ test("普通过滤查询：首行高亮，Enter 打开首行（默认承诺不�
     "apps/plan.md",
     "plan.md",
   ]);
+  // 普通查询的同步判决也是 undecided：探测落地为「找不到」后才回落到首行
   await expectActiveRow(page, "notes/plan.md");
 
   await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-qo")).toBeHidden();
   await expect(page.locator(".cm-content")).toContainText("QO-TARGET-PLAN");
+});
+
+// 角落：普通 query 恰好是**索引外**文件的精确路径，同时又命中索引内的同子串候选。
+// 旧实现：有候选的普通查询不发起探测 ⇒ 同步 undecided 直接高亮首行（apps/scratch.md），
+// 按下 Enter 后完整探测改判为 `open scratch.md`（盘上的根层文件）——屏幕承诺与 Enter 目标
+// 分叉，与原始缺陷同类。修后：未定期间不亮任何行，落地为候选外路径后同样不亮，Enter 打开它。
+test("普通查询 = 索引外精确路径且是其它候选子串：未定与落地都不亮，Enter 打开那条精确路径", async ({ page }) => {
+  await start(page);
+  await stubPathsExist(page, ["scratch.md"], 400);
+  await fill(page, "scratch.md");
+
+  await expect(page.locator(".lumir-qo-item")).toHaveText(["apps/scratch.md", "drafts/scratch.md"]);
+  // 判红点（旧实现）：填完立刻高亮 apps/scratch.md，而 Enter 打开 scratch.md
+  await expectNoActiveRow(page);
+
+  // 探测在途（去抖 120ms + 400ms 应答）：目标未定，不亮
+  await page.waitForTimeout(200);
+  await expectNoActiveRow(page);
+
+  // 探测已回来：判决是 `open scratch.md`，它不在候选里 ⇒ 落地之后也 MUST NOT 亮任何行
+  await expect.poll(() => probeAnswers(page)).toBeGreaterThan(0);
+  await page.waitForTimeout(150);
+  await expectNoActiveRow(page);
+
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".lumir-qo")).toBeHidden();
+  await expect(page.locator(".tab-open")).toHaveText(["scratch.md"]);
+  await expect(page.locator(".cm-content")).toContainText("QO-TARGET-SCRATCH");
 });
 
 test("path:line 异步补帧：在途不高亮，落地后高亮判决行并保留行号落点", async ({ page }) => {
@@ -236,6 +299,43 @@ test("path:line 异步补帧：在途不高亮，落地后高亮判决行并保�
   await expect(page.locator(".lumir-qo")).toBeHidden();
   await expect.poll(() => cursorLine(page)).toBe(12);
   await expect(page.locator(".cm-content")).toContainText("QO-TARGET-ROOT-L12");
+});
+
+// 异步保位的判别现场：判决行是第三条 `plan.md`，用户在探测在途时移到第二条 `apps/plan.md`。
+// 探测落地只补画结果区——按行身份保位停在 apps/plan.md；若实现回落到策略起点，游标会跳到
+// 判决行 plan.md（两条路径的打开 marker 不同，测试因此能分辨这两种实现）。
+test("探测在途移到非判决行：落地后按行身份保位（不被挪回判决行），Enter 打开保位行", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await page.goto("/");
+  await stubPathsExist(page, ["plan.md"], 400);
+  await openQuickOpen(page);
+  await fill(page, "plan.md:12");
+
+  // 两级探测都还没回来：目标未定，不亮
+  await page.waitForTimeout(200);
+  await expect(page.locator(".lumir-qo-item")).toHaveText([
+    "notes/plan.md",
+    "apps/plan.md",
+    "plan.md",
+  ]);
+  await expectNoActiveRow(page);
+
+  // 用户移到非判决行：apps/plan.md（判决行是第三条 plan.md）
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expectActiveRow(page, "apps/plan.md");
+
+  // 落地之后仍停在这一行（保位）；回落到策略起点的话这里会变成 plan.md
+  await expect.poll(() => probeAnswers(page)).toBeGreaterThan(0);
+  await page.waitForTimeout(150);
+  await expectActiveRow(page, "apps/plan.md");
+
+  // 主动移动过 ⇒ Enter 接受游标行（不打 `:12` 落点：行号只属于判决路径的精确打开）
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".lumir-qo")).toBeHidden();
+  await expect(page.locator(".tab-open")).toHaveText(["plan.md"]);
+  await expect(page.locator(".cm-content")).toContainText("QO-TARGET-APPS-PLAN");
+  await expect.poll(() => cursorLine(page)).toBe(1);
 });
 
 test("游标落在判决行本身：在途 ↓ 后 Enter 仍落到 :行（移动不吃掉行号）", async ({ page }) => {

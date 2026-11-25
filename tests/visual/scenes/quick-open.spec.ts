@@ -245,6 +245,9 @@ test("非目录查询：↓ 后一次 Enter 打开游标候选（目录语境之
   await openQuickOpen(page);
   await page.keyboard.type("plan");
   await expect(page.locator(".lumir-qo-item")).toHaveText(["notes/plan.md", "apps/plan.json"]);
+  // 普通查询的判决在探测落地前是未定的：那段时间没有游标位置（change
+  // quick-open-active-target）。落地为「找不到」后游标回到首行，从这里按 ↓ 才是第二条。
+  await expect(page.locator(".lumir-qo-item.is-active")).toHaveText("notes/plan.md");
   await page.keyboard.press("ArrowDown");
   await expect(page.locator(".lumir-qo-item.is-active")).toHaveText("apps/plan.json");
   await page.keyboard.press("Enter");

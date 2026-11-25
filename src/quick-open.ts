@@ -459,14 +459,14 @@ export function quickOpenCandidates(
  *     行冒充目标；
  *   - 目录语境 / 折叠多命中 / 找不到 / 非法：Enter 消费的是当前游标行（两段式的第二次），
  *     起点仍是首行；
- *   - `undecided`：探测在途时目标未定 ⇒ -1（不先用首行冒充）；普通过滤查询没有在途探测，
- *     Enter 的兜底就是首行 ⇒ 首行。
+ *   - `undecided`：**一律 -1**。判决未定意味着「这条路存在与否」要等探测：探测命中时 Enter
+ *     打开的是那条索引外的精确路径，而它按定义不在候选里（在索引里就会同步命中）；探测不成立
+ *     时 Enter 才落到首行。两种结果都还没定，先亮首行就是在**有直接打开可能**时替目标作保。
+ *
+ * 判决明确之后才高亮：探测落地的补帧会带着 `missing` / `open` 重画，普通过滤因此回到首行、
+ * 候选外的精确路径因此保持无高亮（见 `quickOpenCursorIndex` 与 `render` 的探测发起条件）。
  */
-export function quickOpenStartIndex(
-  res: QuickOpenResolution,
-  rows: readonly QuickOpenRow[],
-  opts: { probing: boolean },
-): number {
+export function quickOpenStartIndex(res: QuickOpenResolution, rows: readonly QuickOpenRow[]): number {
   if (rows.length === 0) return -1;
   if (res.directory !== undefined) return 0;
   const verdict = res.verdict;
@@ -474,10 +474,27 @@ export function quickOpenStartIndex(
     case "open":
       return rows.findIndex((row) => row.entryKind === "file" && row.path === verdict.path);
     case "undecided":
-      return opts.probing ? -1 : 0;
+      return -1;
     default:
       return 0;
   }
+}
+
+/**
+ * 异步补帧之后的游标下标：用户主动移动过时按**行身份**（`quickOpenRowKey`）保位——探测落地只补画
+ * 结果区，不得把用户已经选定的行挪到判决行上；保位行已不在新候选里（补帧期间索引变化）或
+ * 本来没移动过 ⇒ 回落到该判决的策略起点（`quickOpenStartIndex`），不再无条件回首行。
+ */
+export function quickOpenCursorIndex(
+  res: QuickOpenResolution,
+  rows: readonly QuickOpenRow[],
+  prev: { key?: string; moved: boolean },
+): number {
+  if (prev.moved && prev.key !== undefined) {
+    const at = rows.findIndex((row) => quickOpenRowKey(row) === prev.key);
+    if (at >= 0) return at;
+  }
+  return quickOpenStartIndex(res, rows);
 }
 
 // ---------------------------------------------------------------------------
@@ -584,13 +601,16 @@ const LIST_ID = "lumir-qo-list";
 /** 条目 id 前缀（`aria-activedescendant` 用）。 */
 const ITEM_ID_PREFIX = "lumir-qo-opt-";
 /**
- * 结果区补帧的探测去抖：输入停稳 120ms 后才发一次存在探测。探测只在「候选为空」或
- * 「输入带合法行号后缀」时发起（见 `shouldProbe`），所以普通打字不会把每个字符变成一次 IPC。
+ * 结果区补帧的探测去抖：输入停稳 120ms 后才发一次存在探测。探测对**每一个判决未定的输入**
+ * 发起（见 `shouldProbe`）——未定就意味着「这条查询串可能是一条索引外的精确路径」，Enter
+ * 的目标在探测落地前不可知，游标因此不能先亮首行。去抖保证每次键入只重置计时器，不是逐键
+ * IPC：一次停稳 = 一次单路径往返。
  */
 const PROBE_DEBOUNCE_MS = 120;
 
-/** 行身份（异步补帧后按它把游标留在同一行上）。 */
-function rowKey(row: QuickOpenRow | undefined): string | undefined {
+/** 行身份（异步补帧后按它把游标留在同一行上；`external` / `entryKind` 一并进键，改名与
+ *  同名跨来源不串位）。 */
+export function quickOpenRowKey(row: QuickOpenRow | undefined): string | undefined {
   return row === undefined
     ? undefined
     : `candidate:${row.external}:${row.entryKind}:${row.path}`;
@@ -832,21 +852,23 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
     const files = options.files();
     const candidates = quickOpenCandidates(res, files);
     const unsettled = settled === null || settled.raw !== raw;
-    const probe = unsettled && shouldProbe(res, candidates);
+    const probe = unsettled && shouldProbe(res);
     const scan = unsettled && res.directory?.status === "pending";
     probing = probe || scan;
     apply(res, candidates, { preserveCursor: false });
     if (probing) scheduleProbe(raw, seq);
   }
 
-  /** 是否要为这一版结果补一次存在探测（见 `PROBE_DEBOUNCE_MS` 的理由）。 */
-  function shouldProbe(res: QuickOpenResolution, candidates: readonly QuickOpenRow[]): boolean {
-    if (res.verdict.kind !== "undecided") return false;
-    // 候选为空：空态的判据只能等探测落地（I4：异步不抢先落终态）。
-    if (candidates.length === 0) return true;
-    // 带合法行号后缀：`path:行` 是完整的粘贴形态，需要探测出 Enter 的精确落点。普通路径
-    // 前缀不探，否则每敲一个字符就是一次 IPC。
-    return res.plan.kind === "ok" && res.plan.attempts.length > 1;
+  /** 是否要为这一版结果补一次存在探测。
+   *
+   *  `undecided` 只有一个含义：查询串本身既不在索引里、也不是目录——它可能是一条索引外的
+   *  精确路径（被忽略规则挡在枚举之外），而候选列表只由索引组成，所以它永远不会出现在候选
+   *  里。探测命中的那一刻 Enter 打开的是候选之外的那条路径，不命中时才落到首行；在结果未定
+   *  之前亮首行，就是替一个可能被 Enter 推翻的目标作保。因此探测对每个未定判决发起（去抖见
+   *  `PROBE_DEBOUNCE_MS`），落地后由补帧按判决重画游标。
+   */
+  function shouldProbe(res: QuickOpenResolution): boolean {
+    return res.verdict.kind === "undecided";
   }
 
   /** 把一份判决画成结果区（真实候选按索引序、至多 `CANDIDATE_LIMIT` 条）。 */
@@ -856,8 +878,9 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
     opts: { preserveCursor: boolean },
   ): void {
     // 异步补帧：用户**主动移动过**游标时按真实候选身份保留位置；没动过时游标回策略起点
-    //（判决行 / 首行 / 无高亮，见 `quickOpenStartIndex`）。
-    const activeKey = opts.preserveCursor && userMoved ? rowKey(rows[activeIndex]) : undefined;
+    //（判决行 / 首行 / 无高亮，见 `quickOpenStartIndex` / `quickOpenCursorIndex`）。
+    const preserve = opts.preserveCursor && userMoved;
+    const activeKey = preserve ? quickOpenRowKey(rows[activeIndex]) : undefined;
     rows = candidates.slice(0, CANDIDATE_LIMIT);
     fillRows();
     list.hidden = rows.length === 0;
@@ -880,14 +903,8 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
       setActive(-1);
       return;
     }
-    if (activeKey !== undefined) {
-      // 异步补帧：把游标留在原来那条真实候选上；行没了才回策略起点。
-      const at = rows.findIndex((row) => rowKey(row) === activeKey);
-      setActive(at >= 0 ? at : quickOpenStartIndex(res, rows, { probing }));
-      return;
-    }
-    setActive(quickOpenStartIndex(res, rows, { probing }));
-    userMoved = false;
+    setActive(quickOpenCursorIndex(res, rows, { moved: preserve, key: activeKey }));
+    if (activeKey === undefined) userMoved = false;
   }
 
   /** 行 DOM：只有真实候选拥有 option、鼠标入口与游标位置。 */
@@ -1095,6 +1112,14 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
     if (seq !== request) return; // 过期结果：用户已经改了输入
     // 这次判决已经走完探测，同一输入的后续重画复用它（不再 probe、不再覆盖提示）。
     settled = { raw, resolution: res };
+    // 结果区与动作同源：游标可能因「判决未定期间不承诺」而被抑制（探测没落地时渲染不出高亮），
+    // 也可能这次的按键探测才把判决定下来。**动作之前**把游标同步到该判决的策略起点——判决行
+    // 在候选里就落在它上面；判决是候选之外的精确路径就清空；其余判决落到 Enter 将要消费的
+    // 首行。同步只改游标，不重建行、不改提示；用户主动移动过时不动它（下面按游标行打开）。
+    if (!userMoved) {
+      const start = quickOpenStartIndex(res, rows);
+      if (start !== activeIndex) setActive(start);
+    }
     const verdict = res.verdict;
     const activeRow = rows[activeIndex];
     // 判决是目录时保持既有两段式：第一次只揭示「是目录」，第二次打开当前游标所在的直接子级
@@ -1130,10 +1155,7 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
           await openRow(activeIndex);
           return;
         }
-        // 结果区与动作同源：判决可能是这次按 Enter 才由探测定下的（在途时按合同不加高亮），
-        // 动作之前先把游标同步到判决行——不允许「打开精确路径、屏幕还亮着别的候选行」。
-        const verdictRow = quickOpenStartIndex(res, rows, { probing: false });
-        if (verdictRow !== activeIndex) setActive(verdictRow);
+        // 游标已在上面同步到判决行（判决路径不在候选里时是「无高亮」），这里不再改它。
         await openDirect(verdict);
         return;
       case "ambiguous":
