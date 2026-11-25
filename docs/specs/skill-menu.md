@@ -49,9 +49,11 @@ MUST NOT 让盒底越过 caret（不得把 caret 与 composer 当前行压住）
 可用空间再收缩，MUST NOT 另留硬编码上限。
 
 候选在窗口缩放、面板尺寸变化（含分隔条拖动）与同状态回包（token / 游标 / items 不变）后 SHALL 按新的
-真实 clip 重新夹取并揭示；这种重排 MUST NOT 重建 items、MUST NOT 改动游标。重排为读取自然高度会先清空
-inline `max-height`——这一步造成的滚动钳制 MUST NOT 泄漏到揭示判据：候选自身 `scrollTop` SHALL 在定高后
-恢复，已完整可见目标的 `scrollTop` MUST NOT 因此改变。
+真实 clip 重新夹取；揭示只在游标改变、或重排前完整可见的游标被新几何挤出带时发生——用户手动滚开的候选
+位置 MUST NOT 被同状态回包或尺寸变化拉回游标项（稳定阅读优先；resize 只为「原本可见的游标被裁掉」补
+揭示，MUST NOT 借机回弹到高亮首项）。这种重排 MUST NOT 重建 items、MUST NOT 改动游标。重排为读取自然
+高度会先清空 inline `max-height`——这一步造成的滚动钳制 MUST NOT 泄漏到揭示判据：候选自身 `scrollTop`
+SHALL 在定高后恢复，已完整可见目标的 `scrollTop` MUST NOT 因此改变。
 
 任意游标改变后，当前 option 的上下缘 SHALL 落在真实可见带内（允许 1px 几何取整容差）。若它已完整可见，
 候选 `scrollTop` MUST 不变；越界时只滚动候选到带边缘并保留一行上下文。首尾、长列表与指针/键盘交替满足

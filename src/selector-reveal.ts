@@ -62,31 +62,57 @@ export interface RevealClip {
   readonly bottom: number;
 }
 
+/** 滚动口的真实可见带：滚动口自身（扣掉边框与 padding）与祖先裁切 / 视口的交集，视口坐标。 */
+function revealBand(scroller: HTMLElement, clip: RevealClip): RevealBand | null {
+  const rect = scroller.getBoundingClientRect();
+  const style = scroller.ownerDocument.defaultView?.getComputedStyle(scroller);
+  const padTop = Number.parseFloat(style?.paddingTop ?? "0") || 0;
+  const padBottom = Number.parseFloat(style?.paddingBottom ?? "0") || 0;
+  const scrollportTop = rect.top + scroller.clientTop;
+  const scrollportBottom = scrollportTop + scroller.clientHeight;
+  const top = Math.max(scrollportTop + padTop, clip.top);
+  const bottom = Math.min(scrollportBottom - padBottom, clip.bottom);
+  return bottom > top ? { top, bottom } : null;
+}
+
+/**
+ * 目标是否已完整落在真实可见带内（与 `revealElementWithin` 同一套几何）。
+ *
+ * 调用方用它在**重排前**判「游标此刻是否完整可见」：重排前完整可见、重排后被新几何挤出带 ⇒
+ * 这次揭示是几何变化造成的，该揭示；重排前就不可见 ⇒ 用户自己滚开了，重排 MUST NOT 把它拉回。
+ */
+export function isFullyVisibleWithin(
+  scroller: HTMLElement,
+  target: HTMLElement,
+  clip: RevealClip,
+): boolean {
+  const band = revealBand(scroller, clip);
+  if (band === null) return false;
+  const rect = target.getBoundingClientRect();
+  return rect.top >= band.top - 0.5 && rect.bottom <= band.bottom + 0.5;
+}
+
 /**
  * DOM 适配：把 `target` 揭示进 `scroller` 的真实可见带（`clip` = 祖先裁切 ∩ 视口，
  * 视口坐标）。只写 `scroller.scrollTop`，绝不滚动祖先、页面或 `target` 之外的元素。
+ * 目标已完整可见时是空操作（C3「带内不动」）。
  */
 export function revealElementWithin(
   scroller: HTMLElement,
   target: HTMLElement,
   clip: RevealClip,
 ): void {
+  const band = revealBand(scroller, clip);
+  if (band === null) return;
   const rect = scroller.getBoundingClientRect();
-  const targetRect = target.getBoundingClientRect();
-  const style = scroller.ownerDocument.defaultView?.getComputedStyle(scroller);
-  const padTop = Number.parseFloat(style?.paddingTop ?? "0") || 0;
-  const padBottom = Number.parseFloat(style?.paddingBottom ?? "0") || 0;
   const scrollportTop = rect.top + scroller.clientTop;
-  const scrollportBottom = scrollportTop + scroller.clientHeight;
-  const bandTop = Math.max(scrollportTop + padTop, clip.top);
-  const bandBottom = Math.min(scrollportBottom - padBottom, clip.bottom);
-  if (bandBottom <= bandTop) return;
   const contentTop = scrollportTop - scroller.scrollTop;
+  const targetRect = target.getBoundingClientRect();
   const next = revealScrollTop({
     scrollTop: scroller.scrollTop,
     scrollHeight: scroller.scrollHeight,
     clientHeight: scroller.clientHeight,
-    band: { top: bandTop - scrollportTop, bottom: bandBottom - scrollportTop },
+    band: { top: band.top - scrollportTop, bottom: band.bottom - scrollportTop },
     itemTop: targetRect.top - contentTop,
     itemHeight: targetRect.height,
   });

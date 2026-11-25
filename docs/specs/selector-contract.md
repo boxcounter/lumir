@@ -48,7 +48,9 @@ Skill 候选允许向上覆盖 transcript；垂直夹取宿主 SHALL 是**面板
 的持有者），MUST NOT 是 composer 区。行高与高度估算 MUST 取实测值，MUST NOT 另留一份硬编码行高。
 `max-height` 上限的唯一真源是 CSS；该上限 MUST 取实测的受约束高度，MUST NOT 把 `getComputedStyle`
 的字符串按 px 解析（百分比等非 px 计算值会被静默误读）。真实 clip 变化（窗口缩放、祖先尺寸变化、同状态
-回包）后 SHALL 按新 clip 重新夹取；这种重排 MUST NOT 重建 items 或改动游标。
+回包）后 SHALL 按新 clip 重新夹取；这种重排 MUST NOT 重建 items、MUST NOT 改动游标，也 MUST NOT 顺手把
+用户手动滚开的滚动口拉回游标项——揭示的时机按 C3（只有游标改变，或重排前完整可见的游标被新几何挤出带
+时才揭示）。
 
 ### C3 — 最小揭示：带内不动，越界留一行上下文
 
@@ -62,6 +64,10 @@ Skill 候选允许向上覆盖 transcript；垂直夹取宿主 SHALL 是**面板
 - 揭示 MUST NOT 滚动整页、transcript、编辑器或 composer；MUST NOT 移动 composer caret。
 - 重排内部为测量清空 `max-height` 等动作造成的瞬时钳制 MUST NOT 泄漏到揭示判据：滚动口的 `scrollTop`
   SHALL 在定高后恢复，已完整可见目标 MUST NOT 因此改变位置。
+- 揭示的**时机**同样受约束：只有游标改变、或重排前已完整可见的游标被新几何挤出带时 SHALL 揭示。
+  同状态回包、窗口 / 祖先尺寸变化等没有游标变化的重排 MUST NOT 为「顺手对齐」把用户手动滚开的滚动口
+  拉回游标项——用户滚开是在读别处，稳定阅读优先于「游标永远在视野里」；resize 也不例外，它只为
+  「原本可见的游标被裁掉」补揭示，MUST NOT 借机回弹到高亮首项。
 
 推导这条规则的两个反例：每次居中会让列表每按一键都动、并让静止指针下的行被换掉；只在滚动口边缘
 贴边（零余量）则选中项永远贴边、下一项直接消失。

@@ -46,3 +46,10 @@
 - [x] R1 短视口收缩态连续导航：清空 `max-height` 前记 `scrollTop`、定高后恢复再揭示；补 320px ↓/↑ 各 11 拍逐拍断言（已完整可见步 `scrollTop` 不变）
 - [x] R2 `max-height` 非 px 计算值：删掉 `parseFloat`，改为实测受 CSS 约束的高度；补百分比上限浏览器用例（90% 下不得按误读的 90px 收缩）
 - [x] R3 状态去重与几何重排分开：`relayoutSkillMenu` 复用于同状态回包、窗口缩放与面板尺寸变化；补「缩放后重排」「同状态回包重排」两条用例（items 不重建）
+
+## 机械复核 N1–N4 收口（2026-11-25）
+
+- [x] N1 几何重排与主动揭示分开：`relayoutSkillMenu("cursor" | "if-clipped")`；同状态回包与 resize 只在「重排前完整可见、被新几何挤出带」时揭示，用户手动滚开的 `scrollTop` 不被拉回；补同状态 / 缩放两条浏览器用例
+- [x] N2 `max-height` 的 `em` / `vh` 实测路径各一条浏览器用例（percentage 已由 R2 覆盖）
+- [x] N3 两条重排用例补 `aria-selected` / `data-armed` / `aria-activedescendant` 快照与样式重写计数（证明重排真的跑过）
+- [x] N4 mission README 更新到当前 tip 与本轮红 / 绿证据

@@ -140,7 +140,7 @@ import {
 import type { HarnessContextBlock, HarnessContextSource } from "./harness-context";
 import { createHarnessDraftStore } from "./harness-draft";
 import { hoverSkillHighlight, moveSkillHighlight, sameSkillMenuState, skillMenuNavigationDelta, skillSelectionSpec, skillTokenAt, syncSkillMenuState } from "./skill-menu";
-import { revealElementWithin } from "./selector-reveal";
+import { isFullyVisibleWithin, revealElementWithin } from "./selector-reveal";
 import { scheduleCompositionSettle, cancelCompositionSettle } from "./composition-settle";
 import type { SkillMenuState } from "./skill-menu";
 import { skillCatalogRefreshEffect, skillChips } from "./skill-chips";
@@ -4487,17 +4487,37 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     });
     skillMenuEl.dataset.armed = state.armed ? "true" : "false";
     composerView.contentDOM.setAttribute("aria-activedescendant", `lumir-hp-skill-option-${highlighted}`);
-    relayoutSkillMenu();
+    relayoutSkillMenu("cursor");
   }
 
-  /** 只重排几何，不重建 items：resize / 分隔条拖动 / 同状态回包都只需要新的位置与揭示。
-   *  与 `renderSkillMenu`（重建 DOM）分开，状态去重才不会连带跳过几何（C2：盒必须等于真实 clip）。 */
-  function relayoutSkillMenu(): void {
+  /** 当前已渲染几何下的真实 clip：用来判「重排前游标是否完整可见」（几何重排的揭示判据）。 */
+  function currentSkillMenuClip(): { top: number; bottom: number } | null {
+    if (skillMenuEl.hidden) return null;
+    const clip = skillMenuClip(skillMenuEl.getBoundingClientRect(), panel.getBoundingClientRect());
+    return clip.bottom > clip.top ? clip : null;
+  }
+
+  /** 只重排几何，不重建 items：resize / 分隔条拖动 / 同状态回包都只需要新的位置。
+   *  与 `renderSkillMenu`（重建 DOM）分开，状态去重才不会连带跳过几何（C2：盒必须等于真实 clip）。
+   *
+   *  揭示分两种（C3）：
+   *  - `cursor`：游标刚变，按合同必揭示（越界才滚，带内不动）。
+   *  - `if-clipped`：游标没变。只揭示「重排前完整可见、被新几何挤出带」的游标——用户手动滚开的
+   *    阅读位置 MUST NOT 被同状态回包 / resize 拉回游标项（那不是几何变化造成的，是用户在读别处）。 */
+  function relayoutSkillMenu(reveal: "cursor" | "if-clipped"): void {
     const state = skillMenuState;
     if (state === null || skillMenuEl.hidden) return;
-    const clip = placeSkillMenu();
     const option = skillMenuEl.children[state.highlighted] as HTMLElement | undefined;
-    if (clip !== null && option !== undefined) revealElementWithin(skillMenuEl, option, clip);
+    if (option === undefined) {
+      placeSkillMenu();
+      return;
+    }
+    const clipBefore = reveal === "if-clipped" ? currentSkillMenuClip() : null;
+    const wasFullyVisible = clipBefore !== null && isFullyVisibleWithin(skillMenuEl, option, clipBefore);
+    const clip = placeSkillMenu();
+    if (clip === null) return;
+    if (reveal === "if-clipped" && !wasFullyVisible) return;
+    revealElementWithin(skillMenuEl, option, clip);
   }
 
   function highlightSkillMenuItem(index: number): void {
@@ -4660,7 +4680,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // IME settle、catalog 回包与文档回调可能对同一份最终文档各算一次：状态没变就不重建 DOM，
     // 但几何仍要重排——面板尺寸 / 位置可能已变（resize 后回包），盒必须仍等于真实 clip。
     if (sameSkillMenuState(skillMenuState, next)) {
-      relayoutSkillMenu();
+      relayoutSkillMenu("if-clipped");
       return;
     }
     skillMenuState = next;
@@ -6359,8 +6379,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (!selPop.hidden) placeSelPop();
     if (!effHint.hidden) placeEffHint();
     if (!sessPop.hidden) placeSessPop();
-    // Skill 候选的 clip 宿主是面板本身：窗口 / 面板尺寸变化后必须重排（不重建 items）。
-    relayoutSkillMenu();
+    // Skill 候选的 clip 宿主是面板本身：窗口 / 面板尺寸变化后必须重排（不重建 items），
+    // 只在几何把原本可见的游标挤出带时揭示——已经滚开去读别的行时不得被拉回。
+    relayoutSkillMenu("if-clipped");
   }
   const overlayResize = new ResizeObserver(() => reclampOpenOverlays());
   overlayResize.observe(panel);
