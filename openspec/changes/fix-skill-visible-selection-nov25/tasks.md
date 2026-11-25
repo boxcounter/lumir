@@ -33,4 +33,11 @@
 
 - [x] 3.1 `scripts/gate.sh visual` 全量通过：`GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0
       （visual-regression 1270s；新矩阵在 chromium 与 webkit-realua 两支各 7/7 PASS）
-- [ ] 3.2 真机待办（本批不执行）：868 末项 / 末段补 AX 可见性断言，并在含本修复的构建上复跑
+- [x] 3.2 868 末项 / 末段补 AX 可见性断言（867 同手法：AX 只暴露真实 clip 内的行，正反两向成对、
+      同一次运行里翻面）：首段 `acc-skill-00` 在场 + `acc-skill-11` 不在场；末段 `acc-skill-11` /
+      `acc-skill-10` 在场 + `acc-skill-00` 不在场；回退段 `acc-skill-10` 在场 + `acc-skill-00` 不在场。
+      静态校验：`node scripts/acceptance/run.mjs --check` 298 场景通过、`scripts/acceptance/check-suite.sh`
+      254/254、`bash scripts/docs-check.sh` PASS
+- [ ] 3.3 真机复跑 868（含本修复的构建；主会话串行执行，本批不占真机窗口）：末项 / 末段两步的 AX
+      可见性断言必须 PASS——修前构建上它们会红（r4 的 `04` 截图里 AX 只暴露 `acc-skill-05`–`09`，
+      游标行 `10` 不在 AX 里）

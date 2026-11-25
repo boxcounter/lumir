@@ -67,8 +67,11 @@ master（`46d7669`）已由 `selector-scroll-auto-select` 系列修掉这两处�
 4. **合同补判据**（`docs/specs/selector-contract.md` §证伪方式 + `harness` living spec 新增一条
    判据 requirement）：oracle 必须独立于实现；逐拍同时判「完整可见」与「标记同项」；真机场景
    必须用 AX 暴露判选中行可见，不得只留截图。
-5. **真机待办**（不在本批执行）：868 的末项 / 末段步骤补 AX 可见性断言（离屏行会被 AX 过滤，
-   与 867 同一手法），并在含本修复的构建上复跑。
+5. **真机判据补齐**（只改场景文本，不在本批跑真机）：868 的末项 / 末段步骤从「只留截图」改为
+   AX 可见性断言——AX 只暴露真实 clip 内的行（与 867 同一手法），判据按正反两向成对写并在同一次
+   运行里翻面（首段 `acc-skill-00` 在场 / `acc-skill-11` 不在场；末段 `acc-skill-11` 与
+   `acc-skill-10` 在场 / `acc-skill-00` 不在场；回退段 `acc-skill-10` 在场 / `acc-skill-00` 不在场）。
+   含本修复的构建上的真机复跑由主会话串行执行（tasks 3.3）。
 
 ## Non-goals
 

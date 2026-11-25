@@ -153,6 +153,10 @@ steps:
     expect:
       - label: 导航后候选仍在且正文未变
         editor: { unchangedSince: doc-before-skill-nav }
+      - label: 首屏首行在真实 clip 内（正向对照：同一判据在末项处必须翻面）
+        node: { role: AXStaticText, name: "^acc-skill-00 ", present: true }
+      - label: 末项行不在 AX 里＝它仍在候选窗口外（反向对照：AX 只暴露真实 clip 内的行）
+        node: { role: AXStaticText, name: "^acc-skill-11 ", present: false }
       - shot: 02-Ctrl-N-第三项
   - name: Ctrl+P 回第二项
     do: key
@@ -195,14 +199,23 @@ steps:
     expect:
       - label: 逐项导航仍未改编辑器
         editor: { unchangedSince: doc-before-skill-nav }
-      - label: 末项已完整滚入真实可见带（截图证据；几何断言在视觉套件）
-        shot: 04-滚动到末项-末项应完整可见
+      - label: 末项行（游标所在项）出现在 AX 里＝它完整落在真实 clip 内，不再只看截图
+        node: { role: AXStaticText, name: "^acc-skill-11 ", present: true }
+      - label: 倒数第二项行同样在 clip 内（缺陷现场最先消失的就是这一行）
+        node: { role: AXStaticText, name: "^acc-skill-10 ", present: true }
+      - label: 首屏首行离开 AX＝窗口真的滚到末段（与首段同一判据翻面，防恒绿）
+        node: { role: AXStaticText, name: "^acc-skill-00 ", present: false }
+      - shot: 04-滚动到末项-末项应完整可见
   - name: Ctrl+P 回到倒数第二项
     do: key
     key: "ctrl+p"
     expect:
       - label: 末段回退仍未改编辑器
         editor: { unchangedSince: doc-before-skill-nav }
+      - label: 倒数第二项行（游标所在项）在真实 clip 内
+        node: { role: AXStaticText, name: "^acc-skill-10 ", present: true }
+      - label: 首屏首行仍在窗口外（窗口没有回弹到顶部）
+        node: { role: AXStaticText, name: "^acc-skill-00 ", present: false }
       - shot: 04b-末段导航-倒数第二项应完整可见
   - name: Enter 接受倒数第二项
     do: key
@@ -438,8 +451,22 @@ steps:
 `/acc-skill-05 x`，没留则是 `/acc-skill-05x`，同一个判据同时锁住「空格」与「caret 落在空格之后」。同理 `/tmp`
 那一步的负向断言不再把空格写进判据串（旧写法 `"/tmp-acc "` 在裁掉空白的 AX 里永不可能命中，是恒真断言），
 改成 `not "/tmp-acc"` 与「transcript 里出现普通消息 `/tmp`」一正一负成对。
-长列表揭示、菜单外零滚动、修饰键 `defaultPrevented`、候选高亮与 20% 窄 pane 不越界的逐拍机器判据在
-`tests/visual/scenes/skill-hybrid.spec.ts`；真机 AX 读不到这些 DOM 事实，因此 868 用选区替换结果验证
-Shift/Ctrl+Shift 的原生路径，用候选存续验证 Meta、用精确组字结果验证 Alt，并用截图保留两者和窄 pane 现场，
-不把截图描述成已通过的像素断言。
+长列表揭示的**几何**（活动行 ⊆ 真实可见带、带内不动、留一行上下文、菜单外零滚动）仍由
+`tests/visual/scenes/skill-hybrid.spec.ts` 与 `skill-visible-selection-nov25.spec.ts` 的逐拍判据钉住；
+修饰键 `defaultPrevented`、候选高亮与 20% 窄 pane 不越界的机器判据同在那里。
+
+真机侧从此**不再只用截图**判「选中行可见」（change `fix-skill-visible-selection-nov25`）：WKWebView 的 AX
+快照只暴露**真实 clip 内的行**（`truncated: true [offscreen_filter]`，与本套件 867 同一手法），因此「选中
+行文本在 AX 里」就是「它在可见区内」。判据按**正反两向成对**写，并在同一次运行里翻面，所以不可能是恒真：
+
+- 首段（窗口在顶部）：`acc-skill-00` 行在场（正向对照）+ `acc-skill-11` 行不在场（反向对照）；
+- 末段（12 拍 ⌃N 到底）：`acc-skill-11` 与 `acc-skill-10` 行在场（游标行与它的上下文行都在 clip 内）
+  + `acc-skill-00` 行不在场（窗口真的滚走了）；
+- 回退到倒数第二项：`acc-skill-10` 行在场 + `acc-skill-00` 行不在场（窗口没有回弹到顶部）。
+
+AX 读不到 `aria-selected` / 左条样式，也读不到 `scrollTop`：**「哪一行是游标」由 Enter 的实际 ref 判定**
+（`/acc-skill-01`、`/acc-skill-10`），标记样式与几何由视觉套件判定——两者分工，截图只留现场。这条判据的
+必要性有现场证据：r4 那次 PASS 的 `04` 截图里，AX 列表只暴露 `acc-skill-05`–`09`、游标行 `10` 根本不在
+AX 里，缺陷已在证据中，只是当时没有任何断言读它。Shift/Ctrl+Shift 的原生路径仍用选区替换结果验证，
+Meta 用候选存续、Alt 用精确组字结果验证，不用截图冒充已通过的断言。
 所有 Skill 与描述均为合成 fixture，不读取真实配置或真实 vault。
