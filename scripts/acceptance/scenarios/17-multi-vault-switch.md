@@ -233,8 +233,28 @@ steps:
     expect:
       - label: 撤销提示点名被移除的 B
         ax: { has: '/已从列表移除「lumir-m102-acceptance-b」/' }
-      - label: B 的行已从列表消失（它独有的「还没有打开过文件」摘要不再在浮层里）
-        ax: { not: "还没有打开过文件" }
+      - label: B 的行已从列表消失（行标签形态 `AXStaticText (lumir-m102-acceptance-b …)` 只由列表行产生）
+        # 判据不能写「AX 里没有『还没有打开过文件』」：失效行 acc-gone 同样没有历史，也带这条摘要
+        # （2026-11-25 真机轮现场：删掉 B 之后 [232] AXList 里只剩 A 与 acc-gone 两行，而 acc-gone
+        # 那行是「…-gone 还没有打开过文件 路径不可用…」）。失效行是同一 change 第四轮才种下的，
+        # 这条负向断言写于只有 A / B 两行的版本，判据因此不再唯一。改名也解决不了「撤销提示里
+        # 含被删行名字」那一半：提示是 `AXStaticText = "已从列表移除「…-b」"`，而行是
+        # `AXStaticText (…-b …)`——按行标签形态（role + 括号 label + 名字后的空格）取，两者不同形。
+        ax: { not: '/AXStaticText \(lumir-m102-acceptance-b /' }
+
+  # 移除**不收起浮层**（`commitRemove` → `reload`，见 src/vault-switcher.ts），而 ⌘O 是开关语义
+  # （`vault.switcher` → `switcher.toggle`）：浮层开着时按下会把它关掉。2026-11-25 真机轮就是
+  # 这样静默关掉的——紧随其后的「浮层已展开 / 失效行在列表里 / 确认句点名 / 等移除生效」四条
+  # 一并级联失败（AX dump 里 element_count 从 239 掉到 230、没有 AXList）。因此先显式关：Esc 是
+  # 主动关闭（确认态已被提交清掉，这一次按下走关层），再走 ⌘O 的打开路径。
+  - name: Esc 收起浮层（移除后浮层仍开着，⌘O 会把它当开关关掉）
+    do: key
+    key: "escape"
+
+  - name: 等浮层收起（状态驱动）
+    do: waitFor
+    waitFor:
+      not: ["选择一个目录作为新 vault"]
 
   # change fix-selector-ime-aria-nov25（第四轮）：失效行同样在键盘游标空间里——`Delete` 走同一套
   # 两步确认、第二次按下移除。`Enter` 的重定位在真机上会起原生目录选择器（套件不驱动，见「不覆盖」），
@@ -315,6 +335,11 @@ steps:
 **纯键盘删除**（同一 change）：文末用「`↓` 到 B → `Delete` 进入确认句 → 再按一次 → 撤销提示点名
 B」判这条键真的走通；B 删掉后再对**失效行**走同一套三步（它同样在游标空间里，`available=false`
 只表示不能切换过去）。`Delete` 经 KimiCU 注入的是 keycode 51（WKWebView 读作 Backspace；浮层把
-`Delete` / `Backspace` 当同一个入口）。移除后**行消失**用各行独有的反证来判——B 用「还没有打开过
-文件」，失效行用「重新定位…」；撤销提示本身也含被删行的名字，不能用「AX 里没有这个名字」当判据。
-「已进入确认」与「真的删掉」由撤销提示区分：确认态一出现，行内的「重新定位…」就已经不在 DOM 里。
+`Delete` / `Backspace` 当同一个入口）。移除后**行消失**的判据按行标签形态取——B 用
+`/AXStaticText \(lumir-m102-acceptance-b /`（行是 `AXStaticText (…-b …)`，撤销提示是
+`AXStaticText = "已从列表移除「…-b」"`，两者不同形），失效行用「重新定位…」；「还没有打开过文件」
+**不是** B 独有的反证：没有历史的失效行（`acc-gone`）同样带这条摘要。撤销提示本身也含被删行的
+名字，因此「AX 里没有这个名字」当不了任何一条判据。「已进入确认」与「真的删掉」由撤销提示区分：
+确认态一出现，行内的「重新定位…」就已经不在 DOM 里。**移除不收起浮层**（`commitRemove` →
+`reload`），而 ⌘O 是开关语义——想在移除后再验一次打开路径，必须先 Esc + 等终态，否则那一次
+⌘O 是关层（2026-11-25 真机轮的级联现场）。

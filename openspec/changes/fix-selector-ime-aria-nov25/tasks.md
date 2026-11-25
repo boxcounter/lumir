@@ -130,6 +130,41 @@
       （组合期 Delete 那条的红根 = 失效行前置，须在说明里点明），以及只摘掉组合期守卫的 mutant
       红跑（证明守卫本身的区分度）。commit message 不再充当证据。
 
+## 8. 第五轮（2026-11-25 真机轮 FAIL 归因：13 / 17 两条场景判据收口）
+
+> 依据：真机轮 13 / 17 全红（13 有 4 条 FAIL、17 有 5 条，证据
+> `.local/acceptance/2026-11-25-selector-accessibility-final/`）。逐条读 steps / AX dump / 截图 /
+> 磁盘后归因：**9 条 FAIL 里没有一条是产品缺陷**——两条是场景判据本身错（8.2 / 8.3），一条是
+> 场景的寻址歧义（8.1），其余是它的级联（8.4）。键盘导航、查询串、删除确认流三处都排除了：
+> 17 的 `↓` / `Delete` / 确认句 / 撤销提示逐拍生效、13 的 `⌃N×4` / `⌃P×3` / `↓+Enter` 链条全部
+> 落在预期段上；两条场景的查询串为空（唯一有查询的 13 末段 `typeInNode` 回读逐字命中）。
+> 复跑证据（只跑 13 / 17）：`.local/acceptance/2026-11-25/`，2/2 PASS（13 62 条断言、17 56 条）。
+
+- [x] 8.1 13「鼠标点浮层条目」消歧：`target: { role: AXStaticText, name: "^乙小节$" }` 同时命中
+      **正文渲染标题**（`AXStaticText = "乙小节"`，dump 序在前、无 bbox 无 actions）与**浮层条目**
+      （`AXStaticText (乙小节)`，带 `AXPress`）。这一步实际点的是正文标题：光标落在标题文字中段
+      而不是行尾，下一步的 ⌃K 因此只删掉「节」、没并掉换行（磁盘 `## 乙小\n乙小节正文。`——jumpTo
+      的落点是 `heading.to`，正常只会并掉换行），连带后面两条链条断言一起红。按 README「同名消歧
+      优先 role 分流、其次 nth」补 `nth: 1`：两处 role 同为 AXStaticText，没有 role 可分流的余地。
+- [x] 8.2 13 的焦点判据不可达：`ax: { focused: "AXComboBox" }` 在浮层开着且游标有落点时恒不成立
+      ——WKWebView 把 `aria-activedescendant` 指向的**游标行**报成 focused（实测
+      `focused = AXStaticText (第 3 节 标题) actions=[AXPress]`，`AXComboBox (筛选)` 自己不带该标记）。
+      旁证「这不是焦点丢失」：17 的同一时刻 `Delete` 生效，而它的守卫是
+      `document.activeElement === this.input`（`removeFromKeyboard`）——DOM 焦点在输入框上，AX 只是
+      把标记记在被指向的行上。判据改判「focused 落在浮层条目上（不是编辑器）」，「打开即可打字」
+      由紧随其后的 `typeInNode` 回读（`AXValue` 逐字等于查询串）直接证明。
+- [x] 8.3 17「B 的行已从列表消失」的判据不再唯一：`not: "还没有打开过文件"` 同样被失效行
+      （`acc-gone`，也没有历史）满足——删除后 `AXList (vault)` 里确实只剩 A 与 acc-gone 两行，
+      是这条负向断言红，不是行没消失。改按行标签形态取
+      `not: '/AXStaticText \(lumir-m102-acceptance-b /'`（撤销提示是 `AXStaticText = "…"` 形态，
+      两者不同形，绕开「提示里也含被删行名字」那一半）。
+- [x] 8.4 17「⌘O 重开切换器」的前置状态错：移除**不收起浮层**（`commitRemove` → `reload`，浮层
+      照旧开着），而 ⌘O 是开关语义（`vault.switcher` → `switcher.toggle`）——那一下把浮层关掉了
+      （AX dump 从 239 节点掉到 230、`AXList` 消失），其后「浮层已展开 / 失效行在列表里 / 确认句
+      点名失效 vault / 等移除生效」四条是同一个根因的级联。补「Esc 收起 + waitFor 终态」再走 ⌘O。
+- [ ] 8.5 5.4 的另一半仍未做：真实中文 IME 下组合期 `↓` / `Enter` 不导航、不接受，组合结束后列表
+      按最终串刷新一次——需要真机时段与真人输入法，归主会话。
+
 ## 备注（合并时由主会话统一）
 
 - `docs/specs/selector-contract.md` 由并行 change（`fix/selector-scroll-auto-select-nov25`）落地，

@@ -28,9 +28,16 @@ steps:
       - label: H6 条目也在列表里（H1–H6 全覆盖）
         ax: { count: { pattern: "六层标题", min: 2 } }
 
+  # 消歧（2026-11-25 真机轮）：`^乙小节$` 在 AX 里有**两个**命中——同一段标题文本既以渲染态
+  # `AXStaticText = "乙小节"` 出现在正文里，又以浮层条目 `AXStaticText (乙小节)` 出现在列表里，
+  # 正文那次排在前（`findNode` 对 title / label / value 任一命中即算，见 README「已知边界」的
+  # `target.name` 条）。两处 role 同为 AXStaticText，没有 role 可分流的余地，故按 README 的
+  # 「其次才用 nth」取 nth: 1（= 浮层条目，dump 序与 DOM 序同源）。
+  # 漏写 nth 的现场：这一步点的是**正文标题**，光标落在标题文字中段而非行尾，下一步的 ⌃K 于是
+  # 只删掉「节」、没有并掉换行（磁盘 `## 乙小\n乙小节正文。`），连带后面两条链条断言一起红。
   - name: 鼠标点浮层里的「乙小节」条目跳转（AXPress 路径，确定性最高）
     do: click
-    target: { role: AXStaticText, name: "^乙小节$" }
+    target: { role: AXStaticText, name: "^乙小节$", nth: 1 }
     expect:
       - shot: 鼠标跳转后
       - label: 浮层已收起
@@ -313,8 +320,14 @@ steps:
     expect:
       - label: 浮层已展开、焦点落在筛选框上
         ax: { has: "⌃N⌃P 选择" }
-      - label: 焦点在可编辑的输入框上（AXComboBox 的读屏名恒为「筛选」）
-        ax: { focused: "AXComboBox" }
+      # 2026-11-25 真机轮订正：WKWebView 把 `aria-activedescendant` 指向的**游标行**报成 focused
+      # （实测 focused = `AXStaticText (第 3 节 标题) actions=[AXPress]`，筛选框本身不带该标记），
+      # 所以「focused 是 AXComboBox」这条在此态下恒不可达——它与 ARIA combobox 的焦点语义也相反：
+      # DOM 焦点在输入框上，AX 的 focused 标记落在被 activedescendant 指的那一行。判据改判
+      # 「focused 落在浮层条目（AXStaticText）上而不是编辑器」，「打开即可打字」由下一步的注入
+      # 回读（AXValue 逐字等于查询串，焦点不在输入框时字符会漏进别处）直接证明。
+      - label: 焦点在浮层的游标行上（AX 的 focused 跟 `aria-activedescendant` 走，不是筛选框）
+        ax: { focused: "AXStaticText" }
 
   - name: 用筛选框把远端条目收成唯一一条（M507 通道：原生输入原子注入，不逐字符丢键）
     do: typeInNode
@@ -358,10 +371,13 @@ modeline 显示当前标题路径（兼作位置指示），点击它或按 ⌘�
   `aria-label`；条目是 `AXStaticText (条目标题)`，带 `AXPress` 动作。**M148–M198 期间**键盘游标所在的
   那一条带 `(focused)` 标记（那时焦点在列表上），`↓` 的落点判据写成「同一行同时出现条目 label 与
   `(focused)`」（`/AXStaticText \(乙小节细节\).*\(focused\)/`）。
-  **M199 实测推翻这条通道**：筛选输入框接管焦点后，`(focused)` 跟着 `aria-activedescendant` 落在
-  `<input role="combobox">`（AX 里报成 `AXComboBox`）上，**条目上没有任何可见标记**（AX dump：
-  `AXList (大纲)` 下的条目全是裸 `AXStaticText`；实测现场
-  `.local/acceptance/2026-09-24/32-list-filter/ax/`）。因此游标落点改用**派生证据**——modeline
+  **M199 实测推翻这条通道**：筛选输入框接管焦点后，`(focused)` 跟着 `aria-activedescendant` 跑，
+  不再出现在「所有条目都没有标记」的旧形态里（AX dump：`.local/acceptance/2026-09-24/32-list-filter/ax/`）。
+  2026-11-25 真机轮补齐了这条映射的另一半：`aria-activedescendant` 挂在**持焦的输入框**上，但
+  WKWebView 把标记记在**被它指向的那一行**（实测 `focused` = `AXStaticText (第 3 节 标题)
+  actions=[AXPress]`，筛选框 `AXComboBox (筛选)` 自己不带该标记；现场
+  `.local/acceptance/2026-11-25-selector-accessibility-final/13-toc/ax/`）。因此「focused 是
+  AXComboBox」不是可达态，游标落点也不该靠 focused 标记判——它改用**派生证据**：modeline
   指示段的标题链（见下一条）；「浮层还开着」这种恒真断言仍不足以承担它，链条串里的 `›` 分隔符才是判据。
 - **⌃N / ⌃P 与 ↑↓ 等价，关闭后归还编辑器（M157；判据 M199 改写）**：浮层里这两条键与箭头共用同一份
   `move()`（`src/toc.ts` 的 onKeydown）。落点判据取**指示段的链条**：按完 ⌃N / ⌃P 后再按一次 `↓`
