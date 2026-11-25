@@ -16,7 +16,7 @@ seed:
     acc-skill-ux:
       panes:
         - { tabs: [harness-note.md], active: harness-note.md }
-      ratio: 0.6
+      ratio: 0.8
       harnessPane: true
 steps:
   - name: 合成 Skill 00（长描述用于宽度证据）
@@ -295,13 +295,9 @@ steps:
       - label: Alt 对照后 Escape 合同仍在
         ax: { not: "合成 Skill 00 的长描述" }
 
-  - name: 新建会话，准备 20% 窄 pane 几何证据
+  - name: 新建会话，seed 已固定文档侧 80% 与 harness 20%
     do: click
     target: { role: AXButton, name: "新会话" }
-  - name: 把文档侧从 60% 拖到 80%，harness 收窄到 20%
-    do: drag
-    target: { textareaEdge: "right" }
-    dx: 240
     expect:
       - label: 会话文件确认文档侧 80%（AX 读不到栏宽，盘上是比例事实源）
         file: { path: "env:vault-sessions/acc-skill-ux.json", has: '"pane_split_ratio": 0.8' }

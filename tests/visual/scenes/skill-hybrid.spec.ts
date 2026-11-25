@@ -73,6 +73,34 @@ async function setup(
 
 const sent = (page: Page) => page.evaluate(() => (window as unknown as { __sent: any[] }).__sent);
 
+async function composerSnapshot(page: Page) {
+  return page.evaluate(() => {
+    const view = (document.querySelector(".lumir-hp-composer .cm-content") as any).cmTile.root.view;
+    const fields: any[] = [];
+    const collectFields = (extension: any) => {
+      if (Array.isArray(extension)) {
+        for (const item of extension) collectFields(item);
+      } else if (extension && typeof extension.createF === "function" && typeof extension.updateF === "function") {
+        fields.push(extension);
+      }
+    };
+    collectFields(view.state.config.base);
+    const historyFields = fields.filter((field) => {
+      if (typeof field.spec.toJSON !== "function") return false;
+      const value = view.state.field(field, false);
+      if (value === undefined) return false;
+      const serialized = field.spec.toJSON(value);
+      return Array.isArray(serialized?.done) && Array.isArray(serialized?.undone);
+    });
+    if (historyFields.length !== 1) throw new Error(`Expected one registered history field, got ${historyFields.length}`);
+    return {
+      head: view.state.selection.main.head,
+      doc: view.state.doc.toString(),
+      history: view.state.toJSON({ history: historyFields[0] }).history,
+    };
+  });
+}
+
 test("Skill 候选被动态不抢 Enter，方向键选择后才提交 ref", async ({ page }) => {
   await setup(page);
   const composer = page.locator(".lumir-hp-composer .cm-content");
@@ -134,41 +162,36 @@ test("chip 只按 refs 与最新成功 catalog 标 missing/disabled，候选过�
   await expect(composer).toBeFocused();
 });
 
-test("候选打开时 ⌃N/⌃P 与方向键同路选择，消费事件且 composer 文档/caret/撤销栈不变", async ({ page }) => {
+test("候选打开时键盘与指针导航同路选择，composer 文档/caret/撤销栈不变", async ({ page }) => {
   for (const item of [
     { key: "Control+n", arrow: "ArrowDown", selected: 0 },
     { key: "Control+p", arrow: "ArrowUp", selected: 1 },
   ] as const) {
     await setup(page);
     await page.mouse.move(10, 10);
+    const empty = await composerSnapshot(page);
     await page.keyboard.type("abcdef");
+    const edited = await composerSnapshot(page);
+    expect(edited.history, "真实键入必须改变 history，证明快照不是空断言").not.toEqual(empty.history);
+    expect(edited.history.done.length).toBeGreaterThan(empty.history.done.length);
     await page.keyboard.press("Shift+Enter");
     await page.keyboard.type("xy");
     await page.keyboard.press("Shift+Enter");
     await page.keyboard.type("/acc");
     const menu = page.locator(".lumir-hp-skill-menu");
-    await expect(menu.locator("[role=option]")).toHaveCount(2);
-    const before = await page.evaluate(() => {
-      const view = (document.querySelector(".lumir-hp-composer .cm-content") as any).cmTile.root.view;
-      return {
-        head: view.state.selection.main.head,
-        doc: view.state.doc.toString(),
-        history: view.state.toJSON().history,
-      };
-    });
+    const options = menu.locator("[role=option]");
+    await expect(options).toHaveCount(2);
+    const before = await composerSnapshot(page);
     await page.keyboard.press(item.arrow);
     await expect(menu.locator("[role=option][aria-selected=true]")).toHaveAttribute("id", `lumir-hp-skill-option-${item.selected}`);
-    const arrowAfter = await page.evaluate(() => {
-      const view = (document.querySelector(".lumir-hp-composer .cm-content") as any).cmTile.root.view;
-      return {
-        head: view.state.selection.main.head,
-        doc: view.state.doc.toString(),
-        history: view.state.toJSON().history,
-      };
-    });
-    expect(arrowAfter).toEqual(before);
+    expect(await composerSnapshot(page)).toEqual(before);
     const arrowKeys = await page.evaluate(() => (window as unknown as { __keyDefaults: any[] }).__keyDefaults);
     expect(arrowKeys.at(-1)).toMatchObject({ key: item.arrow, prevented: true });
+
+    const pointerSelected = item.selected === 0 ? 1 : 0;
+    await options.nth(pointerSelected).hover();
+    await expect(options.nth(pointerSelected)).toHaveAttribute("aria-selected", "true");
+    expect(await composerSnapshot(page)).toEqual(before);
 
     await setup(page);
     await page.mouse.move(10, 10);
@@ -181,15 +204,7 @@ test("候选打开时 ⌃N/⌃P 与方向键同路选择，消费事件且 compo
     await page.keyboard.press(item.key);
     await expect(menu).toBeVisible();
     await expect(menu.locator("[role=option][aria-selected=true]")).toHaveAttribute("id", `lumir-hp-skill-option-${item.selected}`);
-    const after = await page.evaluate(() => {
-      const view = (document.querySelector(".lumir-hp-composer .cm-content") as any).cmTile.root.view;
-      return {
-        head: view.state.selection.main.head,
-        doc: view.state.doc.toString(),
-        history: view.state.toJSON().history,
-      };
-    });
-    expect(after).toEqual(before);
+    expect(await composerSnapshot(page)).toEqual(before);
     const keys = await page.evaluate(() => (window as unknown as { __keyDefaults: any[] }).__keyDefaults);
     expect(keys.find((event) => event.key === item.key.at(-1))?.prevented).toBe(true);
   }
