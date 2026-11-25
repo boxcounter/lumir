@@ -2,7 +2,8 @@
 
 > 来源：Alex 2026-11-25 在 Lumir 0.16.0 的三项实测缺陷报告。本文是
 > [渲染/交互缺陷合同先行规则](../process/rendering-defect-contract-first.md) 要求的专项质量合同；
-> 产品增量归 OpenSpec change `fix-skill-menu-ux-nov25`。
+> 产品增量归 OpenSpec change `fix-skill-menu-ux-nov25`，S1 / S2 的游标、武装与真实 clip 口径由
+> `selector-reveal-auto-select-nov25` 收紧。
 >
 > 转移语义与通用不变量（游标 / 武装 / 真实 clip / 最小揭示 / IME / ARIA）的统一居所是
 > [selector-contract.md](selector-contract.md)。本文只保留 Skill 表面的专属口径（S3 宽度、S4 滚动面、
@@ -13,7 +14,7 @@
 判据不得只覆盖一个名称或一个窗口。相关输入维度为：
 
 - **键盘类型**：ArrowDown / ArrowUp、Ctrl+N / Ctrl+P；另含 Shift+Arrow、Ctrl+Shift+N/P、带 Meta / Alt 的同名键与 IME composition 作不接管对照。
-- **列表长度**：单项、恰好一屏、超出一屏；高亮初态为未选择、首项、中间项、末项。
+- **列表长度**：单项、恰好一屏、超出一屏；游标初态为首项 / 按名字保留项 / 全名项，矩阵另含中间项与末项。
 - **可见窗口位置**：候选滚动区在顶部、中部、底部；高亮由键盘、指针悬停及二者交替改变。
 - **宿主可用宽度**：窄 pane（可用宽低于组件下限）、正常 pane、超宽 pane；内容含短名称/短描述与长名称/长描述。
 - **主题与缩放**：light / dark / eink，候选字号继续随共享 Harness 缩放比变化。
