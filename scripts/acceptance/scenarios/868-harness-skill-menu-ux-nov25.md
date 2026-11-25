@@ -124,6 +124,9 @@ steps:
     expect:
       - label: composer 已持焦
         ax: { focused: "AXTextArea" }
+  - name: 移开指针，确保候选从无 hover 的被动态打开
+    do: hover
+    target: { role: AXStaticText, name: "^harness-note$" }
   - name: 输入共同前缀，打开十二项长列表
     do: typeInNode
     target: { role: AXTextArea, name: "问点什么|/acc-skill" }
@@ -167,6 +170,9 @@ steps:
   - name: 再次聚焦空 composer
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
+  - name: 移开指针，确保候选从无 hover 的被动态打开
+    do: hover
+    target: { role: AXStaticText, name: "^harness-note$" }
   - name: 再次打开同一长列表
     do: typeInNode
     target: { role: AXTextArea, name: "问点什么|/acc-skill" }
@@ -199,6 +205,9 @@ steps:
   - name: 聚焦 Shift+Arrow 对照 composer
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
+  - name: 移开指针，确保候选从无 hover 的被动态打开
+    do: hover
+    target: { role: AXStaticText, name: "^harness-note$" }
   - name: 打开 Shift+Arrow 对照候选
     do: typeInNode
     target: { role: AXTextArea, name: "问点什么|/acc-skill" }
@@ -227,6 +236,9 @@ steps:
   - name: 聚焦 Ctrl+Shift 对照 composer
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
+  - name: 移开指针，确保候选从无 hover 的被动态打开
+    do: hover
+    target: { role: AXStaticText, name: "^harness-note$" }
   - name: 打开 Ctrl+Shift 对照候选
     do: typeInNode
     target: { role: AXTextArea, name: "问点什么|/acc-skill" }
@@ -253,6 +265,9 @@ steps:
   - name: 聚焦 Meta 对照 composer
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
+  - name: 移开指针，确保候选从无 hover 的被动态打开
+    do: hover
+    target: { role: AXStaticText, name: "^harness-note$" }
   - name: 打开 Meta 对照候选
     do: typeInNode
     target: { role: AXTextArea, name: "问点什么|/acc-skill" }
@@ -277,6 +292,9 @@ steps:
   - name: 聚焦 Alt 对照 composer
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
+  - name: 移开指针，确保候选从无 hover 的被动态打开
+    do: hover
+    target: { role: AXStaticText, name: "^harness-note$" }
   - name: 打开 Alt 对照候选
     do: typeInNode
     target: { role: AXTextArea, name: "问点什么|/acc-skill" }
@@ -284,6 +302,7 @@ steps:
   - name: Alt+N 不关闭候选，截图保留真实高亮状态
     do: key
     key: "alt+n"
+    channel: cgevent
     expect:
       - label: Alt 组合不走 Ctrl+N 的候选导航与关闭路径
         ax: { has: "合成 Skill 00 的长描述" }
@@ -305,6 +324,9 @@ steps:
   - name: 聚焦 20% 窄 pane composer
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
+  - name: 移开指针，确保候选从无 hover 的被动态打开
+    do: hover
+    target: { role: AXStaticText, name: "^harness-note$" }
   - name: 20% 窄 pane 打开长描述候选并保留几何现场截图
     do: typeInNode
     target: { role: AXTextArea, name: "问点什么|/acc-skill" }
