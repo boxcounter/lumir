@@ -53,7 +53,7 @@ pub struct PreflightError {
 }
 
 impl PreflightError {
-    fn new(code: WebErrorCode, message: impl Into<String>) -> Self {
+    pub(crate) fn new(code: WebErrorCode, message: impl Into<String>) -> Self {
         Self {
             code,
             message: message.into(),

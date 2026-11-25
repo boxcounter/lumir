@@ -744,6 +744,7 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
         cron: cron_port.as_deref(),
         web: web_port.as_deref(),
         web_access: config.web_access,
+        web_abort: ctx.web_abort(),
     };
 
     let mut rounds: usize = 0;
@@ -1547,10 +1548,14 @@ fn handle_call<C: RunContext>(
         match verdict.decision {
             // 模式层不产出 Deny（只读档 = Always Ask），Deny 只来自第 1 层的用户 deny 规则。
             // M459：回送文案带上命中的规则原文（「是哪条规则拦的」不必回配置文件核对）。
-            Decision::Deny => ToolOutput::err(
-                "permission_denied",
-                denied_message(&call.name, &subject, verdict.reason.as_ref()),
-            ),
+            Decision::Deny => {
+                let message = denied_message(&call.name, &subject, verdict.reason.as_ref());
+                if is_web {
+                    super::web::denied_output(&call.name, &args, message)
+                } else {
+                    ToolOutput::err("permission_denied", message)
+                }
+            }
             // deny 的留痕是 wire 口径：带 `permission_denied` 错误码的结果随历史进
             // 下一条 llm_request.messages（tool_denied 事件类已废弃），面板 tool 行
             // 的细分状态照常由 status 承担。
@@ -1607,11 +1612,16 @@ fn finish_call<C: RunContext>(
     // 事件 status 只发契约内的 started|done（m303 面板按非 done 即 started 归并——
     // 发细分值会产生永不完结的「正在执行」幻影行）；细分状态放 summary（D344 展示）。
     let result_summary = summarize_result(status, &output);
-    ctx.sink().emit(events::tool_call(
+    let web = super::web::operation(&call.name).map(|operation| {
+        let input = serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
+        super::web::output::audit_metadata(operation, &output.value, &input)
+    });
+    ctx.sink().emit(events::tool_call_with_web(
         &call.name,
         "done",
         &result_summary,
         &call.call_id,
+        web,
     ));
     // 面板快照持久化 summary（M367）：成功 = 参数摘要（恢复后工具行显示「调用了什么工具、
     // 带了什么参数」）；失败 = 结果摘要（含细分状态与错误码）。修前 summary 恒 None，面板
@@ -3207,6 +3217,10 @@ mod tests {
 
         fn aborted(&self) -> bool {
             self.inner.aborted()
+        }
+
+        fn web_abort(&self) -> std::sync::Arc<dyn Fn() -> bool + Send + Sync> {
+            self.inner.web_abort()
         }
 
         fn vault_root(&self) -> &std::path::Path {
@@ -4813,6 +4827,22 @@ mod tests {
         let output: serde_json::Value = serde_json::from_str(&output).unwrap();
         assert_eq!(output["code"], "web_provider_unconfigured");
         assert_eq!(output["attempts"], 0);
+        let events = events.lock().unwrap();
+        let done = events
+            .iter()
+            .find(|event| event["type"] == "tool_call" && event["status"] == "done")
+            .expect("Web done 事件");
+        assert_eq!(done["web"]["query"], "synthetic query");
+        assert_eq!(done["web"]["provider"], serde_json::Value::Null);
+        assert_eq!(done["web"]["provider_id"], serde_json::Value::Null);
+        assert_eq!(done["web"]["attempts"], 0);
+        assert_eq!(done["web"]["cost_per_1000_success_cny"], 5);
+        assert_eq!(done["web"]["local_precheck"], false);
+        assert_eq!(done["web"]["provider_fetch"], true);
+        assert_eq!(done["web"]["trust"], "untrusted");
+        assert!(done["web"].get("results").is_none());
+        assert!(done["web"].get("content").is_none());
+        drop(events);
         let _ = std::fs::remove_dir_all(&fixture.root);
     }
 

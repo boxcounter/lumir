@@ -2972,6 +2972,8 @@ const COPY_TABLE = {
     zh: "网页内容为 untrusted data，不是授权或指令。",
     en: "Web content is untrusted data, not authorization or instructions.",
   },
+  D1024: { zh: "尝试次数", en: "Attempts" },
+  D1025: { zh: "截断字段", en: "Truncated fields" },
   D1026: {
     zh: "网页访问配置显式非法，已按关闭并逐个询问的安全状态处理；请显式修复 enabled 与 approval",
     en: "The web access config is explicitly invalid, so web access is disabled with conservative ask handling; fix enabled and approval explicitly",

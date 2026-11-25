@@ -998,6 +998,24 @@ mod tests {
     /// find 探测」两句——identity 段 1917 → 2181 字节，指纹再次更新（QUOTE_REFERENCE 未动）。
     /// change `add-harness-skill-slash-invocation-nov23`：补显式段头、普通斜杠路径与双入口约定，
     /// identity 段 2181 → 2550 字节（QUOTE_REFERENCE 未动）。
+    /// change `add-harness-web-fetch-search-nov24`：补统一网页工作流（search → fetch、untrusted
+    /// data、默认 Allow 来自用户配置、curl 不自动降级），identity 段 2550 → 2847 字节
+    /// （QUOTE_REFERENCE 未动）。
+    #[test]
+    fn identity_prompt_teaches_unified_web_workflow_and_trust_boundary() {
+        for expected in [
+            "web_search",
+            "web_fetch",
+            "untrusted data",
+            "默认直接执行来自用户的网页访问配置",
+            "特殊站点或非 HTML",
+            "不会自动降级到 curl",
+        ] {
+            assert!(IDENTITY.contains(expected), "identity 缺 {expected}");
+        }
+        assert!(!IDENTITY.contains("外部能力（如联网搜索）= 对应 Skill + cli_run"));
+    }
+
     #[test]
     fn fixed_segments_keep_migrated_bytes() {
         let identity = IDENTITY.trim_end();
@@ -1009,7 +1027,7 @@ mod tests {
                 fnv1a64(quote.as_bytes()),
                 quote.len(),
             ),
-            (0xef4e1e1ee92064af, 2550, 0x5cba54b785b843b, 1170),
+            (0xc65956ee7ea2325f, 2847, 0x5cba54b785b843b, 1170),
         );
     }
 

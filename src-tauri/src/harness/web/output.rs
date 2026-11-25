@@ -187,6 +187,41 @@ impl WebEnvelope {
     }
 }
 
+pub fn audit_metadata(
+    operation: WebOperation,
+    output: &serde_json::Value,
+    input: &serde_json::Value,
+) -> serde_json::Value {
+    let query = output
+        .get("query")
+        .filter(|value| !value.is_null())
+        .or_else(|| input.get("query"))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let url = output
+        .get("source")
+        .and_then(|source| source.get("url"))
+        .filter(|value| !value.is_null())
+        .or_else(|| input.get("url"))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    serde_json::json!({
+        "operation": operation,
+        "query": query,
+        "url": url,
+        "provider": output.get("provider").cloned().unwrap_or(serde_json::Value::Null),
+        "provider_id": output.get("provider_id").cloned().unwrap_or(serde_json::Value::Null),
+        "attempts": output.get("attempts").and_then(serde_json::Value::as_u64).unwrap_or(0),
+        "cost_per_1000_success_cny": 5,
+        "local_precheck": operation == WebOperation::Fetch,
+        "provider_fetch": true,
+        "trust": "untrusted",
+        "truncated": output.get("truncated").and_then(serde_json::Value::as_bool).unwrap_or(false),
+        "truncated_fields": output.get("truncated_fields").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "code": output.get("code").cloned().unwrap_or(serde_json::Value::Null),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

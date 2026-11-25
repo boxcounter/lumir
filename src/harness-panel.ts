@@ -133,6 +133,8 @@ import type { HarnessEvent } from "./ipc";
 import type { DecisionReason } from "./bindings/DecisionReason";
 import type { WebApprovalPayload } from "./bindings/WebApprovalPayload";
 import type { WebProviderStatus } from "./bindings/WebProviderStatus";
+import { parseWebAudit, webAuditFromPanelText } from "./web-audit";
+import type { WebAuditMetadata } from "./web-audit";
 import type { ThinkingEffort } from "./bindings/ThinkingEffort";
 import {
   assembleHarnessContext,
@@ -986,6 +988,42 @@ function renderWebApprovalBlock(el: HTMLElement, preview: WebApprovalPayload): v
   trust.className = "lumir-hp-approval-note";
   trust.textContent = t("D1023");
   el.append(egress, trust);
+}
+
+function createWebAuditBlock(metadata: WebAuditMetadata): HTMLElement {
+  const el = document.createElement("section");
+  el.className = "lumir-hp-web-audit";
+  el.dataset.webAudit = metadata.operation;
+  const kv = document.createElement("dl");
+  kv.className = "lumir-hp-cron-kv";
+  const addRow = (label: CopyKey, value: string | null): void => {
+    if (value === null || value === "") return;
+    const dt = document.createElement("dt");
+    dt.textContent = t(label);
+    const dd = document.createElement("dd");
+    dd.textContent = value;
+    kv.append(dt, dd);
+  };
+  addRow("D1019", metadata.provider_id ?? t("D1020"));
+  addRow("D1024", String(metadata.attempts));
+  if (metadata.truncated) addRow("D1025", metadata.truncated_fields.join(", "));
+  el.append(kv);
+  const input = metadata.operation === "search" ? metadata.query : metadata.url;
+  if (input !== null && input !== "") {
+    const pre = document.createElement("pre");
+    pre.className = "lumir-hp-argv";
+    pre.setAttribute("aria-label", t(metadata.operation === "search" ? "D1016" : "D1017"));
+    pre.textContent = input;
+    el.append(pre);
+  }
+  const egress = document.createElement("p");
+  egress.className = "lumir-hp-approval-note";
+  egress.textContent = t(metadata.operation === "search" ? "D1021" : "D1022");
+  const trust = document.createElement("p");
+  trust.className = "lumir-hp-approval-note";
+  trust.textContent = t("D1023");
+  el.append(egress, trust);
+  return el;
 }
 
 /** 定时任务批准预览（change add-cron-conversational-registration design §6.3 契约）：形状由
@@ -7388,6 +7426,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     status: "started" | "done",
     summary: string,
     callId: string | null = null,
+    web?: unknown,
   ): void {
     // `task` 工具行由 run 事件驱动终态（design §12.2 第 2 条：行在调用时创建、之后只就地更新）。
     // 通用 done 配对会把并行多调用的行配错（`block.running` 只有一个），因此单独一条路径。
@@ -7485,6 +7524,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         follow.contentGrew();
         return;
       }
+    }
+    const audit = status === "done" ? parseWebAudit(web) : undefined;
+    if (audit !== undefined) {
+      const block = ensureToolsBlock();
+      const element = createWebAuditBlock(audit);
+      block.el.append(element);
+      block.rows.push(element);
     }
     const block = ensureToolsBlock();
     if (status === "started") {
@@ -9372,6 +9418,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           event.status === "done" ? "done" : "started",
           typeof event.summary === "string" ? event.summary : "",
           typeof event.call_id === "string" ? event.call_id : null,
+          event.web,
         );
         return;
       case "approval_request":
@@ -9904,6 +9951,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     );
     block.el.append(row);
     block.rows.push(row);
+    const audit = webAuditFromPanelText(record.text);
+    if (audit !== undefined) {
+      const element = createWebAuditBlock(audit);
+      block.el.append(element);
+      block.rows.push(element);
+    }
   }
 
   /**

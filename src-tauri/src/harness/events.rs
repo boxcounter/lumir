@@ -112,13 +112,27 @@ pub fn reasoning_chunk(text: &str, index: u32) -> serde_json::Value {
 /// 把 `subagent_started` / `tool_call done` 绑回**本次调用**的行，MUST NOT 靠 agent 名或到达
 /// 顺序猜测（评审 r3 P1-1）。
 pub fn tool_call(name: &str, status: &str, summary: &str, call_id: &str) -> serde_json::Value {
-    serde_json::json!({
+    tool_call_with_web(name, status, summary, call_id, None)
+}
+
+pub fn tool_call_with_web(
+    name: &str,
+    status: &str,
+    summary: &str,
+    call_id: &str,
+    web: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let mut value = serde_json::json!({
         "type": "tool_call",
         "name": name,
         "status": status,
         "summary": summary,
         "call_id": call_id,
-    })
+    });
+    if let Some(web) = web {
+        value["web"] = web;
+    }
+    value
 }
 
 /// `{"type":"approval_request","id":"...","tool":"...","diff":"...","argv":[...]}`

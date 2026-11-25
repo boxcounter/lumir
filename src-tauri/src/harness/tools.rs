@@ -56,6 +56,7 @@ pub struct ToolContext<'a> {
     pub cron: Option<&'a dyn cron::CronPort>,
     pub web: Option<&'a dyn super::web::WebToolPort>,
     pub web_access: super::web::config::WebAccessConfig,
+    pub web_abort: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
 /// 批准预览（ask 档 approval_request 事件的载荷来源）。
@@ -529,7 +530,7 @@ pub fn execute_with_revision(
     args: &serde_json::Value,
     ctx: &ToolContext,
     revision: Option<&str>,
-    aborted: &dyn Fn() -> bool,
+    _aborted: &dyn Fn() -> bool,
 ) -> ToolOutput {
     match name {
         "vault_read" => vault_read(args, ctx),
@@ -547,7 +548,7 @@ pub fn execute_with_revision(
         "cron_task_list" => cron_task_list(ctx),
         "cron_task_remove" => cron_task_remove(args, ctx),
         "web_search" | "web_fetch" => {
-            super::web::execute(name, args, ctx.web_access, ctx.web, aborted)
+            super::web::execute(name, args, ctx.web_access, ctx.web, ctx.web_abort.clone())
         }
         _ => ToolOutput::err("tool_unknown", format!("未知工具：{name}")),
     }
@@ -1647,6 +1648,7 @@ mod tests {
             cron: None,
             web: None,
             web_access: Default::default(),
+            web_abort: std::sync::Arc::new(|| false),
         }
     }
 
@@ -1682,7 +1684,7 @@ mod tests {
             &self,
             operation: super::super::web::output::WebOperation,
             _args: &serde_json::Value,
-            aborted: &dyn Fn() -> bool,
+            aborted: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
         ) -> super::super::web::output::WebEnvelope {
             use super::super::web::output::{WebEnvelope, WebErrorCode};
 
@@ -1701,6 +1703,8 @@ mod tests {
         let (root, policy) = fixture_vault("web-approved-abort");
         let skills = Vec::<SkillEntry>::new();
         let port = AbortProbe::default();
+        let aborted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let abort_flag = aborted.clone();
         let ctx = ToolContext {
             root: &root,
             policy: &policy,
@@ -1708,6 +1712,9 @@ mod tests {
             cron: None,
             web: Some(&port),
             web_access: Default::default(),
+            web_abort: std::sync::Arc::new(move || {
+                abort_flag.load(std::sync::atomic::Ordering::SeqCst)
+            }),
         };
         let args = serde_json::json!({"query": "synthetic"});
         let cancelled = execute_with_revision(
@@ -1719,6 +1726,7 @@ mod tests {
         );
         assert_eq!(cancelled.value["code"], "web_cancelled");
         assert_eq!(cancelled.value["attempts"], 0);
+        aborted.store(false, std::sync::atomic::Ordering::SeqCst);
         let executed = execute("web_search", &args, &ctx, &|| false);
         assert!(executed.succeeded(), "{executed:?}");
         assert_eq!(*port.observations.lock().unwrap(), vec![true, false]);
@@ -2643,6 +2651,7 @@ mod tests {
             cron: Some(port),
             web: None,
             web_access: Default::default(),
+            web_abort: std::sync::Arc::new(|| false),
         }
     }
 
@@ -3445,6 +3454,7 @@ mod tests {
             cron: None,
             web: None,
             web_access: Default::default(),
+            web_abort: std::sync::Arc::new(|| false),
         };
         let _counter_lock = skill_content_test_lock();
         reset_skill_content_load_count();

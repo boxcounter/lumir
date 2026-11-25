@@ -504,7 +504,7 @@ export type HarnessEvent = HarnessEventEnvelope &
   (
     | { type: "text_chunk"; text: string }
     | { type: "reasoning_chunk"; text: string; index: number }
-    | { type: "tool_call"; name: string; status: "started" | "done"; summary: string ; call_id: string }
+    | { type: "tool_call"; name: string; status: "started" | "done"; summary: string ; call_id: string; web?: unknown }
     // approval_request 的 argv 是**数组**（后端 events.rs 发完整 argv 的 JSON 数组；
     // M406 修类型错配——此前这里声明 string，live 渲染成逗号拼接、快照恢复整段丢弃）。
     // purpose 是 M407 契约的可选字段（模型自述的用途句，阅读辅助——卡片展示用，

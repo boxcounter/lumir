@@ -297,6 +297,9 @@ pub trait RunContext {
     /// 本轮是否已被请求停止。
     fn aborted(&self) -> bool;
 
+    /// Web 独立工作单元使用的同一取消事实源（拥有所有权，可跨阻塞 DNS / HTTP 轮询）。
+    fn web_abort(&self) -> std::sync::Arc<dyn Fn() -> bool + Send + Sync>;
+
     fn vault_root(&self) -> &Path;
 
     fn ignore_policy(&self) -> &IgnorePolicy;
@@ -411,6 +414,26 @@ pub struct SessionContext<'a> {
     /// **只在交互路径**（`tool_policy = None`）对模型可见 / 可执行（[`Self::cron_port`] 的判据）。
     /// 单测直接构造上下文时缺省 `None`。
     cron: Option<std::sync::Arc<dyn crate::cron::CronPort>>,
+}
+
+/// 回合取消的唯一事实源：主会话看 session 的停止标志，并在读到停止时广播给本回合起的子运行。
+/// `aborted()`（工具循环）与 `web_abort()`（Web 独立工作单元）共用这一处判据。
+fn session_aborted(
+    runtime: &Runtime,
+    scope: &VaultScope,
+    hub: Option<&subagents::SubagentHub>,
+) -> bool {
+    let aborted = runtime
+        .with_session(scope, |session| session.abort_requested())
+        .unwrap_or(false);
+    // 父回合停止是**广播**的（design §12.4）：本回合起的子运行在下一检查点收敛
+    // `Aborted`。只在读到停止时同步一次，正常路径零开销。
+    if aborted {
+        if let Some(hub) = hub {
+            hub.broadcast_abort();
+        }
+    }
+    aborted
 }
 
 /// 压缩跨边界的子运行种子（M822）：模型桶 + 逐 run 终态汇总。新文件没有旧的 `subrun` sidecar，
@@ -691,18 +714,14 @@ impl RunContext for SessionContext<'_> {
     }
 
     fn aborted(&self) -> bool {
-        let aborted = self
-            .runtime
-            .with_session(self.scope, |session| session.abort_requested())
-            .unwrap_or(false);
-        // 父回合停止是**广播**的（design §12.4）：本回合起的子运行在下一检查点收敛
-        // `Aborted`。只在读到停止时同步一次，正常路径零开销。
-        if aborted {
-            if let Some(hub) = &self.hub {
-                hub.broadcast_abort();
-            }
-        }
-        aborted
+        session_aborted(self.runtime, self.scope, self.hub.as_deref())
+    }
+
+    fn web_abort(&self) -> std::sync::Arc<dyn Fn() -> bool + Send + Sync> {
+        let runtime = self.runtime.clone();
+        let scope = self.scope.clone();
+        let hub = self.hub.clone();
+        std::sync::Arc::new(move || session_aborted(&runtime, &scope, hub.as_deref()))
     }
 
     fn vault_root(&self) -> &Path {
