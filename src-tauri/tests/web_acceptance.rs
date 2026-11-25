@@ -123,19 +123,20 @@ impl TestServer {
         listener.set_nonblocking(true).unwrap();
         let port = listener.local_addr().unwrap().port();
         let records = Arc::new(Mutex::new(Vec::new()));
+        let queue = Arc::new(Mutex::new(VecDeque::from(responses)));
         let stop = Arc::new(AtomicBool::new(false));
         let accept_records = records.clone();
+        let accept_queue = queue.clone();
         let accept_stop = stop.clone();
-        let mut queue: VecDeque<TestResponse> = responses.into();
         let join = thread::spawn(move || {
             while !accept_stop.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((stream, _)) => {
-                        let response = queue
-                            .pop_front()
-                            .unwrap_or_else(|| TestResponse::json(500, "{}"));
+                        // 响应只在读到真实请求行后才弹出：连接建立即弹会被空连接 / 端口复用
+                        // 的迟到连接吃掉一条响应，制造与产品无关的假失败。
                         let records = accept_records.clone();
-                        thread::spawn(move || serve(stream, response, &records));
+                        let queue = accept_queue.clone();
+                        thread::spawn(move || serve(stream, &queue, &records));
                     }
                     Err(_) => thread::park_timeout(Duration::from_millis(5)),
                 }
@@ -156,6 +157,16 @@ impl TestServer {
     fn records(&self) -> Vec<RequestRecord> {
         self.records.lock().unwrap().clone()
     }
+
+    fn wait_for_records(&self, count: usize) {
+        for _ in 0..2_000 {
+            if self.records().len() >= count {
+                return;
+            }
+            thread::park_timeout(Duration::from_millis(1));
+        }
+        panic!("等待 {count} 条请求记录超时：{:?}", self.records());
+    }
 }
 
 impl Drop for TestServer {
@@ -167,7 +178,11 @@ impl Drop for TestServer {
     }
 }
 
-fn serve(stream: TcpStream, response: TestResponse, records: &Arc<Mutex<Vec<RequestRecord>>>) {
+fn serve(
+    stream: TcpStream,
+    queue: &Arc<Mutex<VecDeque<TestResponse>>>,
+    records: &Arc<Mutex<Vec<RequestRecord>>>,
+) {
     let mut stream = stream;
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut request_line = String::new();
@@ -199,6 +214,11 @@ fn serve(stream: TcpStream, response: TestResponse, records: &Arc<Mutex<Vec<Requ
     }
     let mut body = vec![0; content_length];
     let _ = reader.read_exact(&mut body);
+    let response = queue
+        .lock()
+        .unwrap()
+        .pop_front()
+        .unwrap_or_else(|| TestResponse::json(500, "{}"));
     records.lock().unwrap().push(RequestRecord {
         method: method.clone(),
         path,
@@ -788,7 +808,8 @@ fn same_batch_tools_are_not_replayed_and_truncated_content_survives_jsonl() {
     assert_eq!(
         api.len(),
         4,
-        "429 + retry + second search + fetch: {:?}",
+        "429 + retry + second search + fetch: first={} records={:?}",
+        first["web"],
         api.iter()
             .map(|record| (&record.method, &record.path, &record.body))
             .collect::<Vec<_>>()
@@ -996,6 +1017,7 @@ fn provider_attempt_deadline_times_out_on_real_socket_without_retry() {
     let done = tool_done(&turn.sink.events(), "web_search");
     assert_eq!(done["web"]["code"], "web_timeout");
     assert_eq!(done["web"]["attempts"], 1, "超时不自动重试");
+    deepseek.wait_for_records(1);
     assert_eq!(deepseek.records().len(), 1, "只发一次 attempt");
 }
 
