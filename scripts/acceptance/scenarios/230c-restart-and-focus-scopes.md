@@ -11,6 +11,7 @@
 #      键盘注入能建立（composer 的焦点必须真实 mousedown，AXPress 不建 DOM 焦点）。
 #
 # 本组不覆盖（如实登记在正文「覆盖边界」）：候选列表的滚动手感、浮层弹出节奏（归 Alex 手感裁决）、
+# 候选高亮行（AX 无稳定读数形态，判在 chromium 的 quick-open-active-target 场景）、
 # 会话持久化的结构（tests/unit / Rust 侧）。
 id: "230c-restart-and-focus-scopes"
 item: 655
@@ -175,7 +176,10 @@ Enter 后结果断言不放宽；本组自带启动状态与 fixture，独立诊
 - **本组不判「外部文件恢复后内容是否还在」**：外部标签根本不该恢复，判据只是「不在」+「vault 内
   标签在」。外部内容的读取正确性由 230b 判。
 - **`⌘P` 的焦点作用域只有「输入面出现」一级**：候选集合与游标落点由
-  `tests/visual/scenes/quick-open.spec.ts` 用真实 DOM 钉住；本组不判候选内容。
+  `tests/visual/scenes/quick-open.spec.ts` 用真实 DOM 钉住；本组不判候选内容。候选高亮行
+  （「高亮 = Enter 目标」/「无对应候选时无高亮」）由
+  `tests/visual/scenes/quick-open-active-target.spec.ts` 钉住——AX dump 没有稳定读数形态能区分
+  高亮行，理由与落点见 230a 的「覆盖边界」同条。
 - **重启的耗时与恢复时序**：套件在 restart 后走严格就绪门（树行 + 编辑器在位）再 settle；
   恢复段本身的结构（`vault-sessions` 形状）不在真机断言，由 Rust 侧 / 单测覆盖。
 - **候选列表的滚动手感、浮层弹出节奏**：归 Alex 手感裁决，不进机器判据。

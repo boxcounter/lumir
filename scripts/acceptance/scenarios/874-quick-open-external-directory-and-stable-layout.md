@@ -202,4 +202,4 @@ steps:
         ax: { not: "尚未可保存" }
 ---
 
-本场景只写第二合成 vault `/tmp/lumir-m102-acceptance-b`。先证明外部精确文件路径不显示 direct action、保留通用帮助且 Enter 仍能只读打开，再验根层三项（固有 `beta.md`、新建 `root.md` 与 `sub/`）、缺失目录零项、子目录一项；根层候选不得出现 `sub/child.md`，证明没有递归。`geom.record` 与 `geom.unchangedSince` 在 0/1/3 候选和长提示之间逐值比较输入框 bbox，缺基线或 bbox 都 FAIL。精确宽度、三主题、100 条截断、pending/迟到与 resize 由 Chromium 矩阵承担；本场景不宣称覆盖这些读数。真机执行留待窗口空闲后由主会话串行。
+本场景只写第二合成 vault `/tmp/lumir-m102-acceptance-b`。先证明外部精确文件路径不显示 direct action、保留通用帮助且 Enter 仍能只读打开，再验根层三项（固有 `beta.md`、新建 `root.md` 与 `sub/`）、缺失目录零项、子目录一项；根层候选不得出现 `sub/child.md`，证明没有递归。`geom.record` 与 `geom.unchangedSince` 在 0/1/3 候选和长提示之间逐值比较输入框 bbox，缺基线或 bbox 都 FAIL。精确宽度、三主题、100 条截断、pending/迟到与 resize 由 Chromium 矩阵承担；本场景不宣称覆盖这些读数。候选高亮行同样不判（AX 无稳定读数形态，理由见 230a 的「覆盖边界」）：外部精确路径没有对应候选行时不亮、Enter 仍只读打开，由 `tests/visual/scenes/quick-open-active-target.spec.ts` 钉住，本场景只判 Enter 的实际目标与零写入。真机执行留待窗口空闲后由主会话串行。

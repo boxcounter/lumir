@@ -83,6 +83,10 @@ test("目录候选：相对/绝对 vault 目录与根只列一层，子目录接
   for (const raw of ["notes/", "/v/notes/"]) {
     await fill(page, raw);
     await expect(items).toHaveText(["notes/plan.md", "notes/spec.md", "notes/sub/"]);
+    // 可访问名是**连续**的整条显示路径：视觉上的 dirs / name / suffix 分段不得进入名字
+    // （真机 WKWebView 会在段边界插空格，230d 的连续路径断言据此判红）。
+    await expect(items.nth(0)).toHaveAccessibleName("notes/plan.md");
+    await expect(items.nth(2)).toHaveAccessibleName("notes/sub/");
     await expect(page.locator(".lumir-qo-hint")).toContainText("直接子项 3 条");
     await expect(items.filter({ hasText: "deep.md" })).toHaveCount(0);
     await expect(items.filter({ hasText: "notes-extra" })).toHaveCount(0);
@@ -116,6 +120,7 @@ test("lazy 与中文长路径：显式目录可见但不进普通索引，目录
     "title",
     `${CN_DIR}/归档`,
   );
+  await expect(page.locator('.lumir-qo-item[title$="归档"]')).toHaveAccessibleName(`${CN_DIR}/归档/`);
 });
 
 test("外部目录：进入子目录后文件仍走只读打开链", async ({ page }) => {
@@ -125,6 +130,9 @@ test("外部目录：进入子目录后文件仍走只读打开链", async ({ pa
     "/tmp/external/root.md",
     "/tmp/external/sub/",
   ]);
+  await expect(page.locator('.lumir-qo-item[title="/tmp/external/sub"]')).toHaveAccessibleName(
+    "/tmp/external/sub/",
+  );
   await page.locator('.lumir-qo-item[title="/tmp/external/sub"]').click();
   await expect(page.locator(".lumir-qo-input")).toHaveValue("/tmp/external/sub/");
   await expect(page.locator(".lumir-qo-item")).toHaveText(["/tmp/external/sub/child.md"]);
