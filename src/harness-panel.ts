@@ -4432,39 +4432,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     skillCatalogEpoch += 1;
   }
 
-  function renderSkillMenu(): void {
+  function updateSkillMenuHighlight(): void {
     const state = skillMenuState;
-    if (state === null) {
-      hideSkillMenu();
-      return;
-    }
-    skillMenuEl.hidden = false;
-    registerEscapeLayer("harness-skill-menu", closeSkillMenu);
-    skillMenuEl.replaceChildren();
-    state.items.forEach((item, index) => {
-      const option = document.createElement("div");
-      option.className = "lumir-hp-skill-option";
-      option.id = `lumir-hp-skill-option-${index}`;
-      option.setAttribute("role", "option");
-      option.setAttribute("aria-selected", String(state.highlighted === index));
-      if (state.highlighted === index) option.classList.add("is-selected");
-      const name = document.createElement("span");
-      name.className = "lumir-hp-skill-name";
-      name.textContent = item.name;
-      const description = document.createElement("span");
-      description.className = "lumir-hp-skill-description";
-      description.textContent = item.description;
-      option.append(name, description);
-      option.addEventListener("mousedown", (event) => event.preventDefault());
-      option.addEventListener("mouseenter", () => {
-        if (skillMenuState === null) return;
-        skillMenuState = { ...skillMenuState, highlighted: index };
-        renderSkillMenu();
-      });
-      option.addEventListener("click", () => selectSkillMenuItem());
-      skillMenuEl.append(option);
-    });
+    if (state === null) return;
     const highlighted = state.highlighted;
+    Array.from(skillMenuEl.children).forEach((option, index) => {
+      const selected = highlighted === index;
+      option.classList.toggle("is-selected", selected);
+      option.setAttribute("aria-selected", String(selected));
+    });
     if (highlighted === null) composerView.contentDOM.removeAttribute("aria-activedescendant");
     else composerView.contentDOM.setAttribute("aria-activedescendant", `lumir-hp-skill-option-${highlighted}`);
     placeSkillMenu();
@@ -4481,10 +4457,45 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }
 
+  function highlightSkillMenuItem(index: number): void {
+    if (skillMenuState === null || skillMenuState.highlighted === index) return;
+    skillMenuState = { ...skillMenuState, highlighted: index };
+    updateSkillMenuHighlight();
+  }
+
+  function renderSkillMenu(): void {
+    const state = skillMenuState;
+    if (state === null) {
+      hideSkillMenu();
+      return;
+    }
+    skillMenuEl.hidden = false;
+    registerEscapeLayer("harness-skill-menu", closeSkillMenu);
+    skillMenuEl.replaceChildren();
+    state.items.forEach((item, index) => {
+      const option = document.createElement("div");
+      option.className = "lumir-hp-skill-option";
+      option.id = `lumir-hp-skill-option-${index}`;
+      option.setAttribute("role", "option");
+      const name = document.createElement("span");
+      name.className = "lumir-hp-skill-name";
+      name.textContent = item.name;
+      const description = document.createElement("span");
+      description.className = "lumir-hp-skill-description";
+      description.textContent = item.description;
+      option.append(name, description);
+      option.addEventListener("mousedown", (event) => event.preventDefault());
+      option.addEventListener("mouseenter", () => highlightSkillMenuItem(index));
+      option.addEventListener("click", () => selectSkillMenuItem());
+      skillMenuEl.append(option);
+    });
+    updateSkillMenuHighlight();
+  }
+
   function moveSkillMenu(delta: number): void {
     if (skillMenuState === null) return;
     skillMenuState = moveSkillHighlight(skillMenuState, delta);
-    renderSkillMenu();
+    updateSkillMenuHighlight();
   }
 
   function placeSkillMenu(): void {

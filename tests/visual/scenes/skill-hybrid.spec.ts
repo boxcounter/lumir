@@ -134,7 +134,7 @@ test("chip 只按 refs 与最新成功 catalog 标 missing/disabled，候选过�
   await expect(composer).toBeFocused();
 });
 
-test("候选打开时 ⌃N/⌃P 与方向键同路选择，消费事件且 composer 文档/caret 不变", async ({ page }) => {
+test("候选打开时 ⌃N/⌃P 与方向键同路选择，消费事件且 composer 文档/caret/撤销栈不变", async ({ page }) => {
   for (const item of [
     { key: "Control+n", arrow: "ArrowDown", selected: 0 },
     { key: "Control+p", arrow: "ArrowUp", selected: 1 },
@@ -150,13 +150,21 @@ test("候选打开时 ⌃N/⌃P 与方向键同路选择，消费事件且 compo
     await expect(menu.locator("[role=option]")).toHaveCount(2);
     const before = await page.evaluate(() => {
       const view = (document.querySelector(".lumir-hp-composer .cm-content") as any).cmTile.root.view;
-      return { head: view.state.selection.main.head, doc: view.state.doc.toString() };
+      return {
+        head: view.state.selection.main.head,
+        doc: view.state.doc.toString(),
+        history: view.state.toJSON().history,
+      };
     });
     await page.keyboard.press(item.arrow);
     await expect(menu.locator("[role=option][aria-selected=true]")).toHaveAttribute("id", `lumir-hp-skill-option-${item.selected}`);
     const arrowAfter = await page.evaluate(() => {
       const view = (document.querySelector(".lumir-hp-composer .cm-content") as any).cmTile.root.view;
-      return { head: view.state.selection.main.head, doc: view.state.doc.toString() };
+      return {
+        head: view.state.selection.main.head,
+        doc: view.state.doc.toString(),
+        history: view.state.toJSON().history,
+      };
     });
     expect(arrowAfter).toEqual(before);
     const arrowKeys = await page.evaluate(() => (window as unknown as { __keyDefaults: any[] }).__keyDefaults);
@@ -175,7 +183,11 @@ test("候选打开时 ⌃N/⌃P 与方向键同路选择，消费事件且 compo
     await expect(menu.locator("[role=option][aria-selected=true]")).toHaveAttribute("id", `lumir-hp-skill-option-${item.selected}`);
     const after = await page.evaluate(() => {
       const view = (document.querySelector(".lumir-hp-composer .cm-content") as any).cmTile.root.view;
-      return { head: view.state.selection.main.head, doc: view.state.doc.toString() };
+      return {
+        head: view.state.selection.main.head,
+        doc: view.state.doc.toString(),
+        history: view.state.toJSON().history,
+      };
     });
     expect(after).toEqual(before);
     const keys = await page.evaluate(() => (window as unknown as { __keyDefaults: any[] }).__keyDefaults);
@@ -283,12 +295,11 @@ test("⇧Arrow 保留原生选区且不被候选消费", async ({ page }) => {
     const menu = page.locator(".lumir-hp-skill-menu");
     await expect(menu).toBeVisible();
     await page.keyboard.press(item.key);
-    const state = await page.evaluate(() => {
+    await expect.poll(() => page.evaluate(() => {
       const view = (document.querySelector(".lumir-hp-composer .cm-content") as any).cmTile.root.view;
       const main = view.state.selection.main;
       return { anchor: main.anchor, head: main.head, doc: view.state.doc.toString() };
-    });
-    expect(state).toEqual({ anchor: 4, head: item.head, doc: "/acc" });
+    })).toEqual({ anchor: 4, head: item.head, doc: "/acc" });
     const keys = await page.evaluate(() => (window as unknown as { __keyDefaults: any[] }).__keyDefaults);
     expect(keys.at(-1)).toMatchObject({ key: item.key.slice("Shift+".length), prevented: false, shiftKey: true });
   }
@@ -448,6 +459,58 @@ for (const length of [1, 6, 12]) {
   }
 }
 
+test("静止指针不抢键盘高亮，真实指针移动仍可接管且 option DOM 不重建", async ({ page }) => {
+  await setup(page, null, false, undefined, syntheticSkills(12));
+  await page.mouse.move(10, 10);
+  await page.keyboard.type("/skill");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  const options = menu.locator("[role=option]");
+  await expect(options).toHaveCount(12);
+  await options.nth(2).hover();
+  await expect(options.nth(2)).toHaveAttribute("aria-selected", "true");
+  await menu.evaluate((root) => {
+    const w = window as unknown as {
+      __skillOptionNodes: Element[];
+      __skillOptionMutations: number;
+      __skillOptionObserver: MutationObserver;
+    };
+    w.__skillOptionNodes = Array.from(root.children);
+    w.__skillOptionMutations = 0;
+    w.__skillOptionObserver = new MutationObserver((records) => {
+      w.__skillOptionMutations += records.filter((record) => record.type === "childList").length;
+    });
+    w.__skillOptionObserver.observe(root, { childList: true });
+  });
+  const expectStableDom = async (index: number) => {
+    await expect(options.nth(index)).toHaveAttribute("aria-selected", "true");
+    await page.waitForTimeout(120);
+    await expect(options.nth(index)).toHaveAttribute("aria-selected", "true");
+    const dom = await menu.evaluate((root) => {
+      const w = window as unknown as {
+        __skillOptionNodes: Element[];
+        __skillOptionMutations: number;
+      };
+      return {
+        mutations: w.__skillOptionMutations,
+        sameNodes: Array.from(root.children).every((node, nodeIndex) => node === w.__skillOptionNodes[nodeIndex]),
+      };
+    });
+    expect(dom, "高亮更新不得替换 option，静止指针下也不得持续重建").toEqual({ mutations: 0, sameNodes: true });
+  };
+
+  await page.keyboard.press("ArrowDown");
+  await expectStableDom(3);
+  await page.keyboard.press("Control+n");
+  await expectStableDom(4);
+  await options.nth(5).hover();
+  await expectStableDom(5);
+  await page.keyboard.press("ArrowDown");
+  await expectStableDom(6);
+  await menu.evaluate(() => {
+    (window as unknown as { __skillOptionObserver: MutationObserver }).__skillOptionObserver.disconnect();
+  });
+});
+
 test("指针悬停上缘部分可见项：真实 mouseenter 后只滚动菜单到最近可见位置", async ({ page }) => {
   await setup(page, null, false, undefined, syntheticSkills(12));
   await page.mouse.move(10, 10);
@@ -545,6 +608,41 @@ for (const viewport of SIZE_VIEWPORTS) {
     expect(geometry.width, "短内容应随可用空间加宽，同时不超过 48em/pane 上限").toBeCloseTo(target, 1);
   });
 }
+
+test("Skill 48em 上限随 --lumir-hp-scale 的字号实际增长", async ({ page }) => {
+  const measurements: Array<{ scale: number; fontSize: number; width: number; expected: number; avail: number }> = [];
+  for (const scale of [1, 0.8, 1.5]) {
+    await page.setViewportSize({ width: 2400, height: 1000 });
+    await setup(page, null, false, "light", syntheticSkills(2, "LONG-DESCRIPTION-".repeat(12)));
+    await page.locator(".lumir-harness").evaluate((el, value) => {
+      (el as HTMLElement).style.setProperty("--lumir-hp-scale", String(value));
+    }, scale);
+    await page.mouse.move(10, 10);
+    await page.keyboard.type("/skill");
+    const menu = page.locator(".lumir-hp-skill-menu");
+    await expect(menu.locator("[role=option]")).toHaveCount(2);
+    measurements.push(await menu.evaluate((el, value) => {
+      const host = el.parentElement!.getBoundingClientRect();
+      const fontSize = Number.parseFloat(getComputedStyle(el).fontSize);
+      const avail = Math.max(0, host.width - 16);
+      return {
+        scale: value,
+        fontSize,
+        width: el.getBoundingClientRect().width,
+        expected: Math.min(48 * fontSize, avail),
+        avail,
+      };
+    }, scale));
+  }
+  for (const geometry of measurements) {
+    expect(geometry.width, `scale=${geometry.scale} 必须按实际字号计算 48em 并受 pane 夹取`).toBeCloseTo(geometry.expected, 1);
+  }
+  expect(measurements[1].fontSize).toBeCloseTo(measurements[0].fontSize * 0.8, 5);
+  expect(measurements[2].fontSize).toBeCloseTo(measurements[0].fontSize * 1.5, 5);
+  expect(measurements[2].avail).toBeGreaterThan(48 * measurements[2].fontSize);
+  expect(measurements[2].width, "超宽 pane 中放大字号必须真实放大 em 宽度上限").toBeGreaterThan(measurements[0].width);
+  expect(measurements[1].width, "超宽 pane 中缩小字号必须真实缩小 em 宽度上限").toBeLessThan(measurements[0].width);
+});
 
 for (const item of [
   { name: "极窄", viewportWidth: 1000, availRange: [100, 180] },

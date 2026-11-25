@@ -181,6 +181,34 @@ test("Skill 宽度合同：可用宽度 × 自然宽 × 字号分布上目标宽
   }
 });
 
+test("Skill 宽度合同：独立数值期望钉住下限、自然宽、em 上限与极窄宿主", () => {
+  const cases = [
+    { host: 120, natural: 80, fontSize: 12, expected: 104 },
+    { host: 200, natural: 360, fontSize: 12, expected: 184 },
+    { host: 280, natural: 80, fontSize: 12, expected: 224.4 },
+    { host: 280, natural: 250, fontSize: 12, expected: 250 },
+    { host: 700, natural: 80, fontSize: 12, expected: 576 },
+    { host: 700, natural: 900, fontSize: 12, expected: 576 },
+    { host: 1200, natural: 1400, fontSize: 25.56, expected: 1184 },
+  ] as const;
+  for (const item of cases) {
+    const avail = Math.max(0, item.host - 16);
+    const solved = resolveOverlayWidth({
+      tier: "list",
+      natural: item.natural,
+      host: item.host,
+      fontSize: item.fontSize,
+      maxEm: 48,
+      minWidth: Math.max(200, 0.85 * avail),
+    });
+    assert.equal(
+      solved.width,
+      item.expected,
+      `host=${item.host} natural=${item.natural} fontSize=${item.fontSize}：独立期望值=${item.expected}`,
+    );
+  }
+});
+
 test("Skill 宽度合同：48em 是组件覆盖，通用 list 档仍保持 26em", () => {
   const input = { tier: "list", natural: 900, host: 1200, fontSize: 12 } as const;
   assert.equal(resolveOverlayWidth(input).width, 26 * 12);
