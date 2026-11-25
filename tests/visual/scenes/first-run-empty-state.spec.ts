@@ -78,6 +78,25 @@ for (const theme of ["light", "dark", "eink"] as const) {
       `${theme}: 文字 ${colors.color} / 底色 ${colors.backgroundColor} 对比 ${ratio.toFixed(2)}:1 低于 4.5:1`,
     ).toBeGreaterThanOrEqual(4.5);
   });
+
+  // 老用户空 vault 的「New note」（`.editor-notice-action`）与首启按钮同根因：只设背景不设
+  // 前景，深色下同样落 UA buttontext 近黑。两处各判一次，避免修复只覆盖其中一个入口。
+  pageTest(`老用户空 vault（${theme}）：New note 按钮文字对底色达 WCAG AA 4.5:1`, async (page) => {
+    await stubTauri(page, { ...EMPTY_VAULT, config: { language: "en", theme } });
+    await page.goto("/");
+
+    const newNote = page.getByRole("button", { name: "New note" });
+    await expect(newNote).toBeVisible();
+    const colors = await newNote.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { color: cs.color, backgroundColor: cs.backgroundColor };
+    });
+    const ratio = contrastRatio(colors.color, colors.backgroundColor);
+    expect(
+      ratio,
+      `${theme}: 文字 ${colors.color} / 底色 ${colors.backgroundColor} 对比 ${ratio.toFixed(2)}:1 低于 4.5:1`,
+    ).toBeGreaterThanOrEqual(4.5);
+  });
 }
 
 pageTest("真首启：启动态首启模式唯一 Add vault，整窗居中，无树空态/正文", async (page) => {

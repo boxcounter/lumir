@@ -218,5 +218,22 @@ Alex 在候选图上发现 `first-run-dark.png` 的「添加 vault」文字近�
   低于 `maxDiffPixelRatio 0.001`，因此门禁容差内不红。修复后的三主题启动态候选存为
   `startup-restoring-{light,dark,eink}.png`，供 Alex 过目后随 `startup-dark` 一并重录。
 
+## 10. 同根因第二处：老用户空 vault 的 New note（2026-11-25）
+
+K3 复审指出 `.editor-notice-action`（D107 空态「New note」入口）同根因：只设
+`background: var(--content-bg)`，未设 `color`，深色下同样落 UA `buttontext` 近黑。
+
+- 断言（先红）：`first-run-empty-state.spec.ts`「老用户空 vault（{theme}）：New note 按钮
+  文字对底色达 WCAG AA 4.5:1」三主题各一条，复用同一套相对亮度实现与 4.5:1 阈值。
+  修复前 dark 红：`rgb(0, 0, 0)` / `rgb(34, 35, 38)` = **1.34:1**（chromium 实测）。
+- 修复：`.editor-notice-action { color: var(--text); }`（最小改动，不动布局）。
+- 修复后（chromium 计算样式实测）：light `rgb(33,32,26)` / `rgb(253,253,252)` = **16.04:1**；
+  dark `rgb(227,226,219)` / `rgb(34,35,38)` = **12.10:1**；eink `rgb(0,0,0)` / `rgb(255,255,255)`
+  = **21.00:1**。像素采样一致（dark 候选字形像素 `rgb(227,226,219)`、底色 `rgb(34,35,38)`）。
+- 候选：`old-user-empty-{light,dark,eink}.png`（en，D107 引导 + New note）。
+- 既有正式基线影响：**无**。该按钮只在 `showEmptyVaultState` 创建；带像素断言的场景没有
+  拍 D107 态（`persistence-health-nov23` 的空 vault 用例仅结构断言，`app-main` 空态是无
+  vault 的 `.ft-empty`，不含该按钮）。
+
 剩余（主会话执行）：`877` / `263` 真机验收、完整 `gate.sh quick/visual`、正式视觉基线
 `--update`（Alex 过目候选后；含 `m645-startup-surface/startup-dark` 的陈旧基线与首启 / tips 新基线）。
