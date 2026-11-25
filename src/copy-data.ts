@@ -2919,6 +2919,18 @@ const COPY_TABLE = {
     zh: "目录不可读：{path}",
     en: "Folder unreadable: {path}",
   },
+  D992: {
+    zh: "网页访问配置显式非法，已按关闭并逐个询问的安全状态处理；请显式修复 enabled 与 approval",
+    en: "The web access config is explicitly invalid, so web access is disabled with conservative ask handling; fix enabled and approval explicitly",
+  },
+  D993: {
+    zh: "origin 非法：请输入 HTTP 或 HTTPS URL，且不得包含用户凭据",
+    en: "Invalid origin: enter an HTTP or HTTPS URL without user credentials",
+  },
+  D994: {
+    zh: "enabled 或 approval 非法：请选择有效值后再保存",
+    en: "enabled or approval is invalid: choose valid values before saving",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -3085,6 +3097,7 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   settings_provider_delete_active_requires_target: "D893",
   settings_naming_target_missing: "D894",
   settings_naming_model_missing: "D895",
+  settings_web_origin_invalid: "D993",
   // 流式 `error` 事件里的两个字面量 code（M858）：由 `events::error("<code>", …)` 构造，
   // 不在 `CommandError::new` / `field_error` 的构造面上——error-text 门禁单独扫事件字面量
   // （模板不带占位：事件没有 params）。消费点 `src/harness-panel.ts` 的 `case "error"`。
@@ -3142,6 +3155,7 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   harness_naming_model_empty: "D924",
   harness_naming_model_invalid: "D925",
   harness_naming_provider_unknown: "D926",
+  web_access_config_invalid: "D992",
   // 窗口底色同步（M525）：只走 console 降级、永不上屏（见 D462 条目注记）。
   window_background_failed: "D462",
 };
@@ -3160,6 +3174,7 @@ export const ERROR_COPY: Record<string, CopyKey> = {
  *   `settings.rs` 的 `plan_and_apply` 把它们经 `field_error(path, diagnostic.code, …)` 转成
  *   保存被拒的字段错误——同一句话在保存现场是错的（文件没变、什么都没被忽略）。字段错误档读
  *   D928–D939 的「改哪里才能保存」。
+ * - `web_access_config_invalid`：装载期安全关闭读 D992，保存被拒读 D994。
  *
  * MUST NOT 往这里加「两条信封都能用同一模板」的 code：那种 code 直接进 `ERROR_COPY`。
  */
@@ -3177,6 +3192,7 @@ export const FIELD_ERROR_COPY: Record<string, CopyKey> = {
   harness_base_url_required: "D937",
   harness_provider_preset_invalid: "D938",
   harness_provider_id_invalid: "D939",
+  web_access_config_invalid: "D994",
 };
 
 /**

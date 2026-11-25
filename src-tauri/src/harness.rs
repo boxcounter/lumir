@@ -57,6 +57,7 @@ pub mod thinking;
 pub mod title;
 pub mod tools;
 pub mod turn;
+pub mod web;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;

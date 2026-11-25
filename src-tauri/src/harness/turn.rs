@@ -736,11 +736,14 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
     // 调度工具端口在回合开始时取一次（与工具定义快照同刻）：交互路径有、交接契约槽位与
     // 子运行没有。`Arc` 由这里持有，`ToolContext` 只借它的 trait object。
     let cron_port = ctx.cron_port();
+    let web_port = ctx.web_port();
     let tctx = ToolContext {
         root: &root,
         policy: &policy,
         skills: &skills,
         cron: cron_port.as_deref(),
+        web: web_port.as_deref(),
+        web_access: config.web_access,
     };
 
     let mut rounds: usize = 0;
@@ -1504,14 +1507,23 @@ fn handle_call<C: RunContext>(
     // 三件调度工具只在交互路径「已知」：判据与定义注册面、`ToolContext::cron` 同源——
     // 无人值守运行 / 子运行里同名调用仍是清单外的工具名（change
     // add-cron-conversational-registration design §2.2）。
+    let is_web = super::web::WEB_TOOL_NAMES.contains(&call.name.as_str());
+    let invalid_web = is_web
+        && tctx.web.is_some()
+        && tctx.web_access.status == super::web::config::WebAccessConfigStatus::Invalid;
     let known = tools::TOOL_NAMES.contains(&call.name.as_str())
-        || (tools::CRON_TOOL_NAMES.contains(&call.name.as_str()) && tctx.cron.is_some());
+        || (tools::CRON_TOOL_NAMES.contains(&call.name.as_str()) && tctx.cron.is_some())
+        || (is_web && (tctx.web.is_some() || !ctx.tool_allowed(&call.name)));
     let subject = tools::permission_subject(&call.name, &args);
 
     // 批准闸决定（面板 decision 字段的数据源，M413）：只有 ask 档批准闸产出
     // approved / rejected；allow / deny / 重定向路径没有批准动作，字段缺席。
     let mut gate_decision: Option<&'static str> = None;
-    let output = if !known {
+    let output = if invalid_web {
+        super::web::execute(&call.name, &args, tctx.web_access, tctx.web, &|| {
+            ctx.aborted()
+        })
+    } else if !known {
         ToolOutput::err("tool_unknown", format!("未知工具：{}", call.name))
     } else if !ctx.tool_allowed(&call.name) {
         // 执行层二次校验（design §8.2）：子运行只拿到定义白名单里的工具，未声明的调用
@@ -1542,6 +1554,11 @@ fn handle_call<C: RunContext>(
             // deny 的留痕是 wire 口径：带 `permission_denied` 错误码的结果随历史进
             // 下一条 llm_request.messages（tool_denied 事件类已废弃），面板 tool 行
             // 的细分状态照常由 status 承担。
+            Decision::Allow if is_web => {
+                super::web::execute(&call.name, &args, tctx.web_access, tctx.web, &|| {
+                    ctx.aborted()
+                })
+            }
             Decision::Allow => tools::execute(&call.name, &args, tctx),
             Decision::Ask => {
                 // 判定依据（M459）随批准请求进批准闸——事件与快照两条通道同取这一个值。
@@ -3144,6 +3161,10 @@ mod tests {
             self.inner.cron_port()
         }
 
+        fn web_port(&self) -> Option<std::sync::Arc<dyn crate::harness::web::WebToolPort>> {
+            self.inner.web_port()
+        }
+
         fn decide(
             &self,
             tool: &str,
@@ -4374,6 +4395,81 @@ mod tests {
                 assert!(wire.contains("permission_denied"));
                 let _ = std::fs::remove_dir_all(&fixture.root);
             }
+        }
+    }
+
+    #[test]
+    fn web_hallucination_distinguishes_disabled_from_invalid() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        for (name, web_access, cron_contract, expected_code) in [
+            (
+                "disabled",
+                crate::harness::web::config::WebAccessConfig {
+                    enabled: false,
+                    ..Default::default()
+                },
+                false,
+                "tool_unknown",
+            ),
+            (
+                "invalid",
+                crate::harness::web::config::validate_web_access(Some(&serde_json::json!(null))).0,
+                false,
+                "web_access_config_invalid",
+            ),
+            (
+                "invalid-cron",
+                crate::harness::web::config::validate_web_access(Some(&serde_json::json!(null))).0,
+                true,
+                "tool_unknown",
+            ),
+        ] {
+            let fixture = fixture(&format!("web-hallucination-{name}"));
+            let mut config = fixture.config.clone();
+            config.web_access = web_access;
+            let runtime = Runtime::default();
+            runtime.acquire_turn(&fixture.scope, &config).unwrap();
+            if cron_contract {
+                runtime.set_tool_policy(
+                    &fixture.scope,
+                    crate::harness::run::ToolPolicy {
+                        allow: tools::TOOL_NAMES.map(str::to_string).to_vec(),
+                    },
+                );
+            }
+            let script = r#"{"responses":[
+              {"tool_calls":[{"id":"web-1","name":"web_search","arguments":"{\"query\":\"synthetic\"}"}]},
+              {"text":"done"}
+            ]}"#;
+            let mut client = llm::MockClient::from_str(script, "web-hallucination").unwrap();
+            run_turn_for(
+                &NullSink,
+                &runtime,
+                &fixture.scope,
+                &config,
+                "question",
+                None,
+                &mut client,
+            );
+            runtime.release_turn(&fixture.scope);
+            let input = runtime
+                .with_session(&fixture.scope, |session| session.input().to_vec())
+                .unwrap();
+            let output = input
+                .iter()
+                .find(|item| item["type"] == "function_call_output")
+                .expect("Web 幻觉调用必须有 output")["output"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let output: serde_json::Value = serde_json::from_str(&output).unwrap();
+            assert_eq!(output["code"], serde_json::json!(expected_code), "{output}");
+            if expected_code == "web_access_config_invalid" {
+                assert_eq!(output["provider"], serde_json::Value::Null);
+                assert_eq!(output["provider_id"], serde_json::Value::Null);
+                assert_eq!(output["attempts"], serde_json::json!(0));
+            }
+            let _ = std::fs::remove_dir_all(&fixture.root);
         }
     }
 }

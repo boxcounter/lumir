@@ -3,6 +3,7 @@ import type { AutomationPatch } from "./AutomationPatch";
 import type { FieldEdit } from "./FieldEdit";
 import type { NamingPatch } from "./NamingPatch";
 import type { ProviderEdit } from "./ProviderEdit";
+import type { WebAccessPatch } from "./WebAccessPatch";
 
 /**
  * 一次保存的完整 patch（design §6）：只携带本次改动的字段，MUST NOT 携带整份配置。
@@ -12,4 +13,4 @@ export type SettingsPatch = {
  * 设置面 revision（覆盖 provider 条目、active、四个开关、两个命名目标的 provider/model；
  * **不含** `providers.<id>.model`）。
  */
-base_revision: string, active_provider?: FieldEdit<string>, providers: Array<ProviderEdit>, automation: AutomationPatch, naming?: NamingPatch, };
+base_revision: string, active_provider?: FieldEdit<string>, providers: Array<ProviderEdit>, automation: AutomationPatch, naming?: NamingPatch, web_access?: WebAccessPatch, };

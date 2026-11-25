@@ -4,17 +4,17 @@
 
 ## 1. 网页访问设置、注册与 provider 解析
 
-- [ ] 1.1 按 design §2 固化 `web_search` / `web_fetch` 输入 schema、`WebSource`、统一成功 / 失败信封、`trust`、`attempts`、`truncated` 与 `truncated_fields`；先写字段形状与反例测试
+- [x] 1.1 按 design §2 固化 `web_search` / `web_fetch` 输入 schema、`WebSource`、统一成功 / 失败信封、`trust`、`attempts`、`truncated` 与 `truncated_fields`；先写字段形状与反例测试
 - [ ] 1.2 新增 `harness.web_access.enabled`（缺省 true）与 `.approval`（缺省 `allow_all`，可选 `ask`）及「设置 → 自动化 → 网页访问」区；默认注册并直接执行，显式 false 才不注册、幻觉调用 `tool_unknown`、零网络请求
 - [ ] 1.3 设置快照 / patch / revision 覆盖两键，经既有 `settings_apply` 原子写通道在下一回合生效；恢复默认 / 页级还原 = 删键，关闭不删除 provider、origin deny 或历史，页级还原不顺带清空 deny
 - [ ] 1.4 设置区复用 provider 单一解析口，显示实际 id / 未配置 / 歧义 / 自定义 base URL，并跳回模型接入对应条目；不显示 / 复制 Key，不建第二 provider 选择器
-- [ ] 1.5 新增交互主会话的 `WEB_TOOL_NAMES`，把定义与执行接入同一注册 / 已知工具判据；保持 vault `TOOL_NAMES`、cron 白名单、内建 `general` 与子运行闭集合不变
+- [x] 1.5 新增交互主会话的 `WEB_TOOL_NAMES`，把定义与执行接入同一注册 / 已知工具判据；保持 vault `TOOL_NAMES`、cron 白名单、内建 `general` 与子运行闭集合不变
 - [ ] 1.6 更新工具描述与系统固定段：默认 search → fetch、网页为 untrusted data、默认 Allow 来自用户配置而非网页授权、curl 仅用于特殊站点 / 非 HTML，不引入搜索别名
-- [ ] 1.7 实现 design §3.1 的 provider 单一解析口：active DeepSeek 优先且不暗换；active 非 DeepSeek 时只接受唯一官方候选；Key / base URL 同出一条目，不消费模型清单
-- [ ] 1.8 对无 Key、零 / 多候选、active / 非 active 自定义 base URL 返回 `web_provider_unconfigured`；断言零 HTTP、零 curl，且不拿自定义条目 Key 改投官方地址
+- [x] 1.7 实现 design §3.1 的 provider 单一解析口：active DeepSeek 优先且不暗换；active 非 DeepSeek 时只接受唯一官方候选；Key / base URL 同出一条目，不消费模型清单
+- [x] 1.8 对无 Key、零 / 多候选、active / 非 active 自定义 base URL 返回 `web_provider_unconfigured`；断言零 HTTP、零 curl，且不拿自定义条目 Key 改投官方地址
 - [ ] 1.9 固定官方 `/v1/tools/search` 与 `/v1/tools/fetch` 请求；Search 只发 query / count / need_content，Fetch 只发 url，不发 `ori_question` / `localization`
-- [ ] 1.10 局部校验 `web_access`：只有表 / 键缺失使用 enabled=true / allow_all；整表错形状、enabled 非布尔、approval 非字符串 / 未知枚举均为 `web_access_config_invalid`，安全读数 enabled=false / ask，不注册、零请求，不触发整文件回落
-- [ ] 1.11 用既有 provider / origin deny 反例证明非法配置不会变成 allow_all、不清 deny、不联网；显式合法值可修复，非法 patch 文件逐字节不变
+- [x] 1.10 局部校验 `web_access`：只有表 / 键缺失使用 enabled=true / allow_all；整表错形状、enabled 非布尔、approval 非字符串 / 未知枚举均为 `web_access_config_invalid`，安全读数 enabled=false / ask，不注册、零请求，不触发整文件回落
+- [x] 1.11 用既有 provider / origin deny 反例证明非法配置不会变成 allow_all、不清 deny、不联网；显式合法值可修复，非法 patch 文件逐字节不变
 
 ## 2. `web_read` 默认 Allow、可选 Ask 与 origin deny
 
@@ -28,14 +28,14 @@
 - [ ] 2.8 移除 / 清空只恢复当前 approval：默认 `allow_all` 下恢复允许，`ask` 下恢复 Ask；不得暗改 approval 或重写会话历史
 - [ ] 2.9 跨 origin redirect 不另开批准：每跳先校验 scheme / 凭据 / host / origin deny，未封禁才继续 DNS / 连接 / 内容类型校验；封禁目标零连接、零 DeepSeek
 - [ ] 2.10 **全量回扫既有验收场景里的权限 / 批准闸期望并逐条改准**，包括 allow_all、ask、deny、三档模式与 curl；不得只新增 Web 场景
-- [ ] 2.11 整块更新 settings「设置写通道」：snapshot 带 Web 状态与 origin deny，revision 覆盖 Web 两键与 allow / deny；同一写锁完成 revision → patch（含 deny）→ 重载校验 → 原子写，clear 只清规范 Fetch origin
+- [x] 2.11 整块更新 settings「设置写通道」：snapshot 带 Web 状态与 origin deny，revision 覆盖 Web 两键与 allow / deny；同一写锁完成 revision → patch（含 deny）→ 重载校验 → 原子写，clear 只清规范 Fetch origin
 - [ ] 2.12 增加独立 `DecisionReason::WebAccessPolicy{approval:"ask"}`，事件 / 快照同源，不显示 ModeDefault 或权限档释义；覆盖 full_access + ask、allow_all 无卡、deny 无卡
 
 ## 3. 统一输出、可空 provider、预算与错误映射
 
 - [ ] 3.1 Search 映射 URL / title / snippet / summary / content / site / date / authority；Fetch 返回同一 `WebSource`，未知 date / authority 用 null，不伪造 final URL
-- [ ] 3.2 `provider` / `provider_id` 仅解析成功时填实际值；无配置、歧义、解析前参数错误分别精确断言二者为 null 且 `attempts=0`，不伪造 `"deepseek"` 为配置 id
-- [ ] 3.3 title 始终为 string，Fetch 空标题固定 `""`；其它可空字段才用 null，并写字段形状反例
+- [x] 3.2 `provider` / `provider_id` 仅解析成功时填实际值；无配置、歧义、解析前参数错误分别精确断言二者为 null 且 `attempts=0`，不伪造 `"deepseek"` 为配置 id
+- [x] 3.3 title 始终为 string，Fetch 空标题固定 `""`；其它可空字段才用 null，并写字段形状反例
 - [ ] 3.4 Search 默认 `count=5`、本地允许 1–10、`need_content=false`；空 results 为成功空结果，Fetch 空 Markdown 为 `web_empty_content`
 - [ ] 3.5 实现 title / snippet / summary / content / 聚合 / provider_message 的字符预算与 Search / Fetch 的 2 / 4 MiB 字节上限；超限 / 裁剪全部显式标记
 - [ ] 3.6 聚合裁剪按 content → summary → snippet 顺序，结果只能整条移除；URL / date / authority / provider 不裁，JSON 始终完整
@@ -87,8 +87,8 @@
 - [ ] 7.8 覆盖 search → fetch 链路、默认无正文需第二跳、统一引用字段、untrusted content 不改变权限
 - [ ] 7.9 覆盖三 client wire / 历史恢复 / 显式重试，以及工具内部重试不重放其它工具
 - [ ] 7.10 对安全与预算关键断言做反向验证：构造必须 FAIL 的输入并确认测试会红，再恢复正确实现；不得用「读不到 = 空」通过
-- [ ] 7.11 覆盖 `web_access` 表 / enabled / approval 的缺失与非法矩阵：`web_access_config_invalid`、enabled=false / ask、零请求、provider / origin deny 不变；合法修复成功、非法 patch 文件不变
-- [ ] 7.12 两个同 revision 请求分别改 approval 与 origin deny：只有一笔成功，另一笔 `settings_revision_conflict`，revision 变化且文件不变；单项删除 / 全部清空保留 allow、其它 deny 与非规范规则，错形状权限表不被重置
+- [x] 7.11 覆盖 `web_access` 表 / enabled / approval 的缺失与非法矩阵：`web_access_config_invalid`、enabled=false / ask、零请求、provider / origin deny 不变；合法修复成功、非法 patch 文件不变
+- [x] 7.12 两个同 revision 请求分别改 approval 与 origin deny：只有一笔成功，另一笔 `settings_revision_conflict`，revision 变化且文件不变；单项删除 / 全部清空保留 allow、其它 deny 与非规范规则，错形状权限表不被重置
 - [ ] 7.13 覆盖 `full_access + approval=ask` 的独立 `WebAccessPolicy` 依据，断言不是 ModeDefault；allow_all 与 deny 不产卡
 
 ## 8. 隔离真机验收与文档
@@ -100,8 +100,8 @@
 - [ ] 8.5 反向断言普通 config、真实 vault、生产 `pnpm tauri dev` 与发布构建不能激活注入，生产仍 official endpoint only 且 URL / DNS 拒绝规则不变
 - [ ] 8.6 新增 / 更新 `scripts/acceptance` 场景与 `COVERAGE.md`，证据落主仓 `.local/acceptance/`；报告逐场景 PASS 计数，不写未验为已验
 - [ ] 8.7 为网页访问设置区、默认无卡审计与可选 Ask 预览的完整 query / URL、origin、provider、费用 / 外发说明、deny 单项 / 清空补结构断言；动视觉面后跑本地 `gate.sh visual`，基线 `--update` 前先由 Alex 过目
-- [ ] 8.8 运行 `bash scripts/gate.sh quick`；照抄最终 `GATE RESULT` 原文与退出码，视觉门禁另列，不把 SKIP 并入 PASS
+- [x] 8.8 运行 `bash scripts/gate.sh quick`；照抄最终 `GATE RESULT` 原文与退出码，视觉门禁另列，不把 SKIP 并入 PASS
 - [ ] 8.9 同步 `docs/specs/config-reference.md` 的 `harness.web_access.enabled` / `.approval` 字段面、缺失默认与显式非法 fail-closed 语义，以及 settings / deny revision 生效时机；保持行为真源在本 change 的 harness / settings delta，不复制 provider 或 origin 状态
-- [ ] 8.10 运行 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`、`bash scripts/docs-check.sh` 与指定 change 的 archive-check，确认 delta 无静默丢段
-- [ ] 8.11 审查 diff 与信息卫生：只含批准的本 change 实现 / 测试 / 文档面，无真实 vault 内容、无 Key、无公网依赖、无 Tavily / Brave 适配器、无兼容别名
+- [x] 8.10 运行 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`、`bash scripts/docs-check.sh` 与指定 change 的 archive-check，确认 delta 无静默丢段
+- [x] 8.11 审查 diff 与信息卫生：只含批准的本 change 实现 / 测试 / 文档面，无真实 vault 内容、无 Key、无公网依赖、无 Tavily / Brave 适配器、无兼容别名
 - [ ] 8.12 实现完成后逐条核对 tasks 与真实 PASS 证据；归档跟踪与节点 2 材料按流程另办，本提案任务不代表已获归档放行

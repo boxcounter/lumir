@@ -54,6 +54,8 @@ pub struct ToolContext<'a> {
     /// （`SessionContext::cron_port` 在交接契约槽位返回 `None`）。`None` 时三件调度工具对这个
     /// 运行而言就是清单外的工具名——可见面与可执行面由同一个判据控制。
     pub cron: Option<&'a dyn cron::CronPort>,
+    pub web: Option<&'a dyn super::web::WebToolPort>,
+    pub web_access: super::web::config::WebAccessConfig,
 }
 
 /// 批准预览（ask 档 approval_request 事件的载荷来源）。
@@ -525,6 +527,9 @@ pub fn execute_with_revision(
         "cron_task_create" => cron_task_create(args, ctx),
         "cron_task_list" => cron_task_list(ctx),
         "cron_task_remove" => cron_task_remove(args, ctx),
+        "web_search" | "web_fetch" => {
+            super::web::execute(name, args, ctx.web_access, ctx.web, &|| false)
+        }
         _ => ToolOutput::err("tool_unknown", format!("未知工具：{name}")),
     }
 }
@@ -1606,6 +1611,8 @@ mod tests {
             policy,
             skills,
             cron: None,
+            web: None,
+            web_access: Default::default(),
         }
     }
 
@@ -2536,6 +2543,8 @@ mod tests {
             policy,
             skills,
             cron: Some(port),
+            web: None,
+            web_access: Default::default(),
         }
     }
 
@@ -3328,6 +3337,8 @@ mod tests {
             policy: &policy,
             skills: &skills,
             cron: None,
+            web: None,
+            web_access: Default::default(),
         };
         let _counter_lock = skill_content_test_lock();
         reset_skill_content_load_count();

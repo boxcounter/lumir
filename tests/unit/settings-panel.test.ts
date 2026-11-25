@@ -139,6 +139,14 @@ function snapshot(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {
     providers: withRefs,
     active,
     active_explicit: false,
+    web_access: {
+      enabled: { kind: "absent" },
+      approval: { kind: "absent" },
+      effective: { enabled: true, approval: "allow_all", status: "valid" },
+      invalid: null,
+      provider: { provider: null, provider_id: null, status: "missing" },
+      origins: [],
+    },
     automation: {
       auto_compact: { value: true, explicit: false },
       session_naming: { value: true, explicit: false },
@@ -182,6 +190,7 @@ function snapshot(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {
       provider_order: ["kimi", "deepseek", "generic", "mock"],
       model_window_min: 1n,
       model_window_max: 10_000_000n,
+      web_approval_options: ["allow_all", "ask"],
     },
     defaults: {
       auto_compact: true,
@@ -189,6 +198,8 @@ function snapshot(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {
       attachment_naming_enabled: true,
       subagents_enabled: true,
       model_window: 131072n,
+      web_access_enabled: true,
+      web_access_approval: "allow_all",
     },
     diagnostics: [],
     ...overrides,
