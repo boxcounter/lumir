@@ -87,11 +87,15 @@ test("键盘类型 × 列表长度 × 高亮位置：Ctrl+N/P 与方向键逐步
   }
 });
 
-test("候选导航不接管 Meta/Alt 组合；大小写 N/P 与方向键走各自既有条件", () => {
+test("候选导航不接管 Shift/Meta/Alt 组合；无修饰 Ctrl+N/P 仍严格分流", () => {
   for (const key of ["n", "N", "p", "P"]) {
     assert.equal(skillMenuNavigationDelta({ key, ctrlKey: true, metaKey: true, altKey: false }), null);
     assert.equal(skillMenuNavigationDelta({ key, ctrlKey: true, metaKey: false, altKey: true }), null);
     assert.equal(skillMenuNavigationDelta({ key, ctrlKey: true, metaKey: false, altKey: false, shiftKey: true }), null);
+    assert.equal(skillMenuNavigationDelta({ key, ctrlKey: true, metaKey: false, altKey: false, shiftKey: false }), key.toLowerCase() === "n" ? 1 : -1);
+  }
+  for (const key of ["ArrowDown", "ArrowUp"]) {
+    assert.equal(skillMenuNavigationDelta({ key, ctrlKey: false, metaKey: false, altKey: false, shiftKey: true }), null);
   }
   assert.equal(skillMenuNavigationDelta({ key: "ArrowDown", ctrlKey: true, metaKey: false, altKey: false }), null);
   assert.equal(skillMenuNavigationDelta({ key: "ArrowUp", ctrlKey: false, metaKey: true, altKey: false }), null);

@@ -2736,7 +2736,6 @@
   z-index: 40;
   box-sizing: border-box;
   width: max-content;
-  min-width: 200px;
   max-width: 48em;
   max-height: 200px;
   padding: var(--sp-1);

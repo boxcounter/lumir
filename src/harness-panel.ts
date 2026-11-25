@@ -4469,7 +4469,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     else composerView.contentDOM.setAttribute("aria-activedescendant", `lumir-hp-skill-option-${highlighted}`);
     placeSkillMenu();
     if (highlighted !== null) {
-      (skillMenuEl.children[highlighted] as HTMLElement | undefined)?.scrollIntoView({ block: "nearest" });
+      const option = skillMenuEl.children[highlighted] as HTMLElement | undefined;
+      if (option !== undefined) {
+        const menuRect = skillMenuEl.getBoundingClientRect();
+        const optionRect = option.getBoundingClientRect();
+        const viewportTop = menuRect.top + skillMenuEl.clientTop;
+        const viewportBottom = viewportTop + skillMenuEl.clientHeight;
+        if (optionRect.top < viewportTop) skillMenuEl.scrollTop += optionRect.top - viewportTop;
+        else if (optionRect.bottom > viewportBottom) skillMenuEl.scrollTop += optionRect.bottom - viewportBottom;
+      }
     }
   }
 

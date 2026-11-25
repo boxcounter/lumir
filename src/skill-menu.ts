@@ -75,10 +75,9 @@ export interface SkillMenuNavigationKey {
 }
 
 export function skillMenuNavigationDelta(event: SkillMenuNavigationKey): number | null {
-  if (event.metaKey || event.altKey) return null;
+  if (event.metaKey || event.altKey || event.shiftKey) return null;
   const key = event.key.toLowerCase();
   if (event.ctrlKey) {
-    if (event.shiftKey === true) return null;
     if (key === "n") return 1;
     if (key === "p") return -1;
     return null;

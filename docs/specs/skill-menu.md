@@ -8,7 +8,7 @@
 
 判据不得只覆盖一个名称或一个窗口。相关输入维度为：
 
-- **键盘类型**：ArrowDown / ArrowUp、Ctrl+N / Ctrl+P；另含带 Meta / Alt 的同名键与 IME composition 作不接管对照。
+- **键盘类型**：ArrowDown / ArrowUp、Ctrl+N / Ctrl+P；另含 Shift+Arrow、Ctrl+Shift+N/P、带 Meta / Alt 的同名键与 IME composition 作不接管对照。
 - **列表长度**：单项、恰好一屏、超出一屏；高亮初态为未选择、首项、中间项、末项。
 - **可见窗口位置**：候选滚动区在顶部、中部、底部；高亮由键盘、指针悬停及二者交替改变。
 - **宿主可用宽度**：窄 pane（可用宽低于组件下限）、正常 pane、超宽 pane；内容含短名称/短描述与长名称/长描述。
@@ -20,7 +20,7 @@
 
 候选打开且非 IME composition 时，Ctrl+N 与 ArrowDown 恒产生相同的下一项状态，Ctrl+P 与 ArrowUp 恒产生相同上一项状态。对任意列表长度与当前高亮，四类键均到端停住、不环绕；从被动态按下方向键 / Ctrl+N 到首项，按上方向键 / Ctrl+P 到末项。
 
-候选消费这四次导航：事件 MUST `preventDefault`，composer 文档、caret 与撤销栈 MUST 不变。候选关闭时本合同不接管按键，既有 Emacs 行移动 MUST 保持。Ctrl+Shift+N/P 继续走旧的关候选但不消费路径，既有扩选 MUST 保持；Meta / Alt 组合与 IME composition MUST NOT 被这条候选导航吞掉；Enter / Tab 接受、Escape 关闭的既有合同不变。
+候选消费这四次导航：事件 MUST `preventDefault`，composer 文档、caret 与撤销栈 MUST 不变。候选关闭时本合同不接管按键，既有 Emacs 行移动 MUST 保持。Shift+Arrow 与 Ctrl+Shift+N/P 继续走原生选区路径且不被候选消费，后者仍按旧路径关闭候选，既有扩选 MUST 保持；Meta / Alt 组合与 IME composition MUST NOT 被这条候选导航吞掉；Enter / Tab 接受、Escape 关闭的既有合同不变。
 
 ### S2 — 高亮项始终完整可见
 
