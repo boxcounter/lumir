@@ -93,9 +93,12 @@ if [ "$runtime" = "1" ]; then
   echo "== 运行态（真实 pnpm tauri dev + 哨兵端点） =="
   log_dir=".local/acceptance/2026-11-25-stage5-web"
   mkdir -p "$log_dir"
-  LUMIR_ACCEPTANCE_WEB_ENDPOINTS='{"deepseek":"http://127.0.0.1:9","targets":{"prod-probe.test":9}}' \
-    node scripts/acceptance/run.mjs 876 2>&1 | tee "$log_dir/stage5-production-runtime-876.log"
-  grep -q "876-harness-web-production-no-injection.*PASS" "$log_dir/stage5-production-runtime-876.log" \
+  if ! LUMIR_ACCEPTANCE_WEB_ENDPOINTS='{"deepseek":"http://127.0.0.1:9","targets":{"prod-probe.test":9}}' \
+    node scripts/acceptance/run.mjs 876 2>&1 | tee "$log_dir/stage5-production-runtime-876.log"; then
+    echo "FAIL 生产 dev 运行态反向验收运行失败（见 $log_dir/stage5-production-runtime-876.log）" >&2
+    exit 1
+  fi
+  grep -q "结论：1/1 PASS" "$log_dir/stage5-production-runtime-876.log" \
     || { echo "FAIL 生产 dev 运行态反向验收未 PASS（见 $log_dir/stage5-production-runtime-876.log）" >&2; exit 1; }
   echo "PASS 生产 dev 忽略验收注入；localhost 仍被拒绝"
 fi
