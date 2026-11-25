@@ -5,7 +5,7 @@
 系统 SHALL 自动发现 user-wide（`~/.agents/skills/`）与 vault-wide（`<vault>/.agents/skills/`）两处的 Skill（SKILL.md 约定），vault-wide 同名覆盖 user-wide。Skill 索引（name + description）SHALL 注入系统上下文；`skill_load(name)` 工具 SHALL 按名加载 SKILL.md 全文，路径解析 MUST 限定在两个 Skill 根内（只读、防逃逸）。与网页无关的外部能力 SHALL 以「Skill + 对应 CLI」形态接入；统一 `web_search` / `web_fetch` 是本条明确列入工具集的外部网页阅读合同，首个 provider 为 DeepSeek。后续搜索 / 抓取 provider MUST 并入同一工具合同，MUST NOT 为特定服务另造专用工具名、别名或第二套结果形状。
 
 除模型自主判断外，用户 SHALL 可经输入区显式选择点名 Skill，由后端确定性加载；两条入口的缺省、分控、
-权限与留存见「Skill 的混合调用与入口策略」。文本里的 `/名字` 字样 MUST NOT 被当作显式调用依据。
+权限与留存见「Skill 的混合调用、入口策略与候选交互」。文本里的 `/名字` 字样 MUST NOT 被当作显式调用依据。
 该新增入口 MUST NOT 改变默认 Skill 的索引注入与模型自主 `skill_load` 能力；索引仍是会话建立 / 新会话 /
 压缩时装配一次的会话快照。
 
@@ -468,7 +468,7 @@ DeepSeek 抓取」的双路外发与计费说明。provider 尚未解析成功�
 - **THEN** 不产生逐次批准卡或 Web 专用持久 allow 动作，调用直接执行；工具行 / 结果仍保留完整
   query / URL、provider、费用与 `trust:"untrusted"`
 
-### Requirement: Skill 的混合调用与入口策略
+### Requirement: Skill 的混合调用、入口策略与候选交互
 
 系统 SHALL 同时提供两条 Skill 调用入口：**用户显式选择**与**模型自主 `skill_load`**。显式选择 SHALL
 由后端确定性加载 SKILL.md 全文；模型自主入口 SHALL 保留既有「索引（name + description）→ 模型按相关性
@@ -512,11 +512,25 @@ MUST NOT 被当作显式调用依据；`/tmp`、`/usr/local` 等斜杠开头路�
 解析技能名。历史消息里的 token / 选择 MUST NOT 在后续轮次重新触发显式注入；重试 SHALL 原样回放该轮输入。
 
 **候选与被动选择**：键入 `/` 且满足边界与名字前缀匹配时 SHALL 显示候选；候选初始无高亮。被动态下
-`Enter` / `Tab` MUST NOT 被候选消费；`↑` / `↓` 或指针悬停 SHALL 进入选择态。选择态下无修饰的
-`↑` / `↓` 移动高亮（到端停住、不环绕），无修饰的 `Enter` / `Tab` 选中，`Esc` 关闭，鼠标点击选中
-且按下时 MUST NOT 夺走输入区焦点。带修饰键的同名键 MUST NOT 被候选消费。`⌃N` / `⌃P` MUST NOT 被
-候选消费，但 SHALL 主动关闭候选，即使光标未移动。`Esc` SHALL 走共享浮层层栈，一次只关最上层，
-MUST NOT 收起面板或移动焦点。
+`Enter` / `Tab` MUST NOT 被候选消费；`↑` / `↓`、候选打开时无 Shift 的 `⌃N` / `⌃P` 或指针悬停 SHALL 进入选择态。
+选择态下无修饰的 `↑` / `↓` 与候选打开时无 Shift 的 `⌃N` / `⌃P` SHALL 经同一路径移动高亮（下一项 / 上一项，
+到端停住、不环绕），事件 SHALL 被候选消费且 MUST NOT 同时移动 composer caret、改变文档或产生撤销步。
+候选关闭时的 `⌃N` / `⌃P` SHALL 保留 composer 既有 Emacs 行移动；`⌃⇧N` / `⌃⇧P` SHALL 保留既有扩选，
+候选按原有关闭路径结束但 MUST NOT 消费该组合键。无修饰的 `Enter` / `Tab` 选中，
+`Esc` 关闭，鼠标点击选中且按下时 MUST NOT 夺走输入区焦点。带修饰键的同名方向键 MUST NOT 被候选消费；
+`⇧↑` / `⇧↓` SHALL 保留原生扩选，扩选使 caret 离开 Skill token 后候选按既有选区同步路径关闭，MUST NOT
+为保留候选而阻断或重写原生选区。`Esc` SHALL 走共享浮层层栈，一次只关最上层，MUST NOT 收起面板或移动焦点。
+
+**候选高亮可见性**：高亮经键盘或指针改变后，当前 option SHALL 完整落在候选滚动视口内；已完整可见时
+候选滚动位置 MUST NOT 改变，离开视口时 SHALL 只滚动候选到最近可见位置。首尾、长列表与指针 / 键盘混合
+输入均 SHALL 满足同一不变量，MUST NOT 通过滚动整页、transcript 或 composer 完成揭示。候选 SHALL 继续
+归滚动条细条档，右缘 12px 内 MUST NOT 新增常驻可交互件。
+
+**候选响应式尺寸**：候选 SHALL 按 composer 宿主可用宽度加宽。令 `avail = max(0, hostWidth − 16px)`、
+`cap = min(48em, avail)`、`target = min(max(200px, 0.85 × avail), cap)`，最终宽度 SHALL 为
+`min(max(naturalWidth, target), cap)`。窄 pane MUST NOT 越界，正常 pane 的短内容 SHALL 取得可用空间驱动的
+目标宽，超宽 pane MUST 受 48em 上限，长描述 SHALL 可超过旧 26em；em 上限 SHALL 随共享 Harness 字号缩放。
+该 Skill 专用目标宽与上限 MUST NOT 改写其它 list 浮层的 26em 档。
 
 输入法组合期 MUST NOT 触发候选、响应候选导航键或吞掉确认候选的 `Enter`；组合开始时已打开的候选 SHALL
 立即关闭。
@@ -612,14 +626,31 @@ Skill 内容引发的 `cli_run`；invocation policy MUST NOT 替代或放宽权�
 
 #### Scenario: 选择态键位与 IME
 
-- **WHEN** 候选已进入选择态，用户使用方向键 / Enter / Tab / Esc；另一次在中文输入法组合期键入或确认
-- **THEN** 选择态只消费相应导航与选中键，Esc 只关候选；组合期不触发、不导航、不吞确认 Enter，
-  组合开始关闭已有候选
+- **WHEN** 候选已进入选择态，用户使用方向键 / Ctrl+N / Ctrl+P / Enter / Tab / Esc；另一次在中文输入法组合期键入或确认
+- **THEN** 选择态只消费相应导航与选中键，Ctrl+N / Ctrl+P 与方向键分别同义且不改 composer caret 或文档；
+  Esc 只关候选；组合期不触发、不导航、不吞确认 Enter，组合开始关闭已有候选
 
-#### Scenario: `⌃N` / `⌃P` 主动关候选但不消费
+#### Scenario: Shift+Arrow 保留原生扩选并关闭候选
 
-- **WHEN** 候选打开时按 `⌃N` 或 `⌃P`（分别覆盖单行末尾、单行开头、多行跨行）
-- **THEN** 候选关闭且事件不被候选 `preventDefault`；光标按输入区既有行移动语义处理；消息不发送、文本不变
+- **WHEN** 候选已显示，caret 位于多行 composer 的 Skill token 末尾，用户按 `⇧↑` 或 `⇧↓`
+- **THEN** 事件不被候选消费，原生扩选非空且文档不变；caret 离开 Skill token 后候选按既有选区同步路径关闭
+
+#### Scenario: 长列表高亮始终可见且不带动整页
+
+- **WHEN** 候选长度覆盖不足一屏、恰好一屏与超出一屏，用户用两类键盘从首项到末项再返回，并在中部交替使用指针与键盘
+- **THEN** 每次高亮后当前 option 均完整可见；已可见时滚动位置不变，越出时只滚动候选到最近位置；
+  首尾不环绕，整页、transcript 与 composer 的滚动位置不变
+
+#### Scenario: 三类宿主宽度与三主题下的响应式尺寸
+
+- **WHEN** 在 light / dark / eink 下分别把 Harness pane 置于窄、正常、超宽可用宽度，并显示短描述与长描述候选
+- **THEN** 短内容宽度随可用空间增长，长内容可超过 26em 但不超过 48em 或 pane 可用宽；菜单始终不越出宿主，
+  其它 list 浮层宽度不变
+
+#### Scenario: 候选关闭后 `⌃N` / `⌃P` 保留行移动
+
+- **WHEN** 候选未打开，composer 光标位于多行文本中，用户按 `⌃N` 或 `⌃P`
+- **THEN** 光标按输入区既有行移动语义处理，事件不被候选消费，消息不发送、文本不变
 
 #### Scenario: 选中后改文本使引用失效
 

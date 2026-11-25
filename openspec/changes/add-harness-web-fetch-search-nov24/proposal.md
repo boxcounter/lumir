@@ -125,7 +125,7 @@ D1 / D2 已批准，不再列默认批准策略裁决点。以下 fail-closed �
 ## Impact
 
 - **specs**：`harness` 修改「配置节 [harness]」「Skill 支持」「工具循环」「权限机制」
-  「批准闸呈现与决策后收敛」「Skill 的混合调用与入口策略」，新增统一 Web 工具、访问策略、
+  「批准闸呈现与决策后收敛」「Skill 的混合调用、入口策略与候选交互」，新增统一 Web 工具、访问策略、
   provider 与隐私、目标安全、可靠性、untrusted content 与真实 HTTP 验收装配合同；
   `harness-subagents` 保持子运行闭集合；`settings` 修改「设置面板的形态与范围」「设置写通道」
   并新增「网页访问设置」。
