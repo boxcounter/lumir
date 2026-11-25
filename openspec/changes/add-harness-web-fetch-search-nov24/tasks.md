@@ -2,7 +2,7 @@
 
 > 历史：2026-11-24 的初始提交只含提案制品；D1 / D2 已由 Alex 批准。原提案期「不得提前实现」约束不描述后续实现提交。
 >
-> 当前：阶段1已落地输出合同、provider 解析、注册闭集合与 settings 后端写通道；本提交继续收口取消传递、执行层参数错误、字面量绑定与直接 revision 测试。真实 executor、权限管线、Ask 预览和设置 UI 均归阶段2。当前分支是**本地中间态，不能 merge 或 dogfood**。
+> 当前：阶段1已落地输出合同、provider 解析、注册闭集合与 settings 后端写通道，并收口取消传递、执行层参数错误、字面量绑定、直接 revision 测试及 origin 同 patch 冲突语义。真实 executor、权限管线、Ask 预览和设置 UI 均归阶段2。当前分支是**本地中间态，不能 merge 或 dogfood**。
 >
 > 勾选口径：只勾已完整完成项；部分完成在项内写明阶段归属，不用勾项掩盖未完成面。
 
@@ -32,7 +32,7 @@
 - [ ] 2.8 移除 / 清空只恢复当前 approval：默认 `allow_all` 下恢复允许，`ask` 下恢复 Ask；不得暗改 approval 或重写会话历史
 - [ ] 2.9 跨 origin redirect 不另开批准：每跳先校验 scheme / 凭据 / host / origin deny，未封禁才继续 DNS / 连接 / 内容类型校验；封禁目标零连接、零 DeepSeek
 - [ ] 2.10 **全量回扫既有验收场景里的权限 / 批准闸期望并逐条改准**，包括 allow_all、ask、deny、三档模式与 curl；不得只新增 Web 场景
-- [x] 2.11 整块更新 settings「设置写通道」：snapshot 带 Web 状态与 origin deny，revision 覆盖 Web 两键与 allow / deny；同一写锁完成 revision → patch（含 deny）→ 重载校验 → 原子写，clear 只清规范 Fetch origin。**阶段1后端写通道与测试已完成；此勾项不表示 1.3 / 1.4 的设置 UI 已完成。**
+- [x] 2.11 整块更新 settings「设置写通道」：snapshot 带 Web 状态与 origin deny，revision 覆盖 Web 两键与 allow / deny；同一写锁完成 revision → patch（含 deny）→ 重载校验 → 原子写，clear 只清规范 Fetch origin；clear 与 add / remove 互斥，同一规范 origin 不得同时 add / remove，不同 origin 可同 patch。**阶段1后端写通道与测试已完成；此勾项不表示 1.3 / 1.4 的设置 UI 已完成。**
 - [ ] 2.12 增加独立 `DecisionReason::WebAccessPolicy{approval:"ask"}`，事件 / 快照同源，不显示 ModeDefault 或权限档释义；覆盖 full_access + ask、allow_all 无卡、deny 无卡
 
 ## 3. 统一输出、可空 provider、预算与错误映射
@@ -92,7 +92,7 @@
 - [ ] 7.9 覆盖三 client wire / 历史恢复 / 显式重试，以及工具内部重试不重放其它工具
 - [ ] 7.10 对安全与预算关键断言做反向验证：构造必须 FAIL 的输入并确认测试会红，再恢复正确实现；不得用「读不到 = 空」通过
 - [x] 7.11 覆盖 `web_access` 表 / enabled / approval 的缺失与非法矩阵：`web_access_config_invalid`、enabled=false / ask、零请求、provider / origin deny 不变；合法修复成功、非法 patch 文件不变
-- [x] 7.12 两个同 revision 请求分别改 approval 与 origin deny：只有一笔成功，另一笔 `settings_revision_conflict`，revision 变化且文件不变；单项删除 / 全部清空保留 allow、其它 deny 与非规范规则，错形状权限表不被重置
+- [x] 7.12 两个同 revision 请求分别改 approval 与 origin deny：只有一笔成功，另一笔 `settings_revision_conflict`，revision 变化且文件不变；单项删除 / 全部清空保留 allow、其它 deny 与非规范规则，错形状权限表不被重置；clear+add / remove、同字面及 canonicalization 后相同的 add / remove 均返回 `settings_patch_invalid` 且文件 / revision 不变，不同 origin 的非规范输入可合法组合
 - [ ] 7.13 覆盖 `full_access + approval=ask` 的独立 `WebAccessPolicy` 依据，断言不是 ModeDefault；allow_all 与 deny 不产卡
 
 ## 8. 隔离真机验收与文档

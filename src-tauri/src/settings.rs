@@ -2723,6 +2723,14 @@ fn apply_web_origins(
     let Some(patch) = &patch.web_access else {
         return Ok(());
     };
+    let clear = patch.clear_origins == Some(true);
+    if clear && (patch.add_origin.is_some() || patch.remove_origin.is_some()) {
+        return Err(ApplyStop::Blocked(vec![field_error(
+            "web_access.clear_origins",
+            "settings_patch_invalid",
+            "clear_origins 不得与 add_origin / remove_origin 同 patch；请拆成两次保存",
+        )]));
+    }
     let add = patch
         .add_origin
         .as_deref()
@@ -2749,7 +2757,17 @@ fn apply_web_origins(
             })
         })
         .transpose()?;
-    let clear = patch.clear_origins == Some(true);
+    if add
+        .as_ref()
+        .zip(remove.as_ref())
+        .is_some_and(|(add, remove)| add == remove)
+    {
+        return Err(ApplyStop::Blocked(vec![field_error(
+            "web_access.remove_origin",
+            "settings_patch_invalid",
+            "同一规范 origin 不得同时 add_origin / remove_origin；请拆成两次保存",
+        )]));
+    }
     if add.is_none() && remove.is_none() && !clear {
         return Ok(());
     }
@@ -4804,6 +4822,107 @@ mod tests {
         );
         assert_eq!(value["future_top_key"], serde_json::json!({"keep": true}));
         assert!(outcome.snapshot.web_access.origins.is_empty());
+    }
+
+    #[test]
+    fn web_patch_rejects_origin_operation_conflicts_without_mutation() {
+        let cases = [
+            (
+                "add_and_clear",
+                serde_json::json!({
+                    "add_origin": "HTTPS://EXAMPLE.NET:443/a?q=1",
+                    "clear_origins": true
+                }),
+            ),
+            (
+                "remove_and_clear",
+                serde_json::json!({
+                    "remove_origin": "https://example.com/a",
+                    "clear_origins": true
+                }),
+            ),
+            (
+                "same_origin",
+                serde_json::json!({
+                    "add_origin": "https://example.net",
+                    "remove_origin": "https://example.net"
+                }),
+            ),
+            (
+                "same_origin_after_canonicalization",
+                serde_json::json!({
+                    "add_origin": "HTTPS://EXAMPLE.NET:443/a?q=1",
+                    "remove_origin": "https://example.net/another"
+                }),
+            ),
+        ];
+        for (name, web_access) in cases {
+            let dir = TempDir::new("web-origin-conflict");
+            dir.write(WEB_BASE);
+            let before = dir.read();
+            let before_revision = revision(&dir);
+            let outcome = apply(
+                &dir,
+                patch_with(&dir, serde_json::json!({ "web_access": web_access })),
+            );
+            assert_eq!(outcome.status, SettingsApplyStatus::Blocked, "{name}");
+            assert_eq!(
+                outcome
+                    .errors
+                    .iter()
+                    .map(|error| error.code.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["settings_patch_invalid"],
+                "{name}"
+            );
+            assert_eq!(dir.read(), before, "{name}");
+            assert_eq!(revision(&dir), before_revision, "{name}");
+        }
+    }
+
+    #[test]
+    fn web_patch_allows_noncanonical_add_and_remove_for_different_origins() {
+        let dir = TempDir::new("web-origin-distinct");
+        dir.write(WEB_BASE);
+        let before_revision = revision(&dir);
+        let outcome = apply(
+            &dir,
+            patch_with(
+                &dir,
+                serde_json::json!({"web_access": {
+                    "add_origin": "HTTPS://EXAMPLE.NET:443/a?q=1",
+                    "remove_origin": "https://example.com/a"
+                }}),
+            ),
+        );
+        assert_eq!(
+            outcome.status,
+            SettingsApplyStatus::Applied,
+            "{:?}",
+            outcome.errors
+        );
+        assert_ne!(revision(&dir), before_revision);
+        let value = file_json(&dir);
+        assert_eq!(
+            value["harness"]["permissions"]["deny"],
+            serde_json::json!([
+                "web_fetch(https://example.org:8443)",
+                "cli(rm *)",
+                "web_fetch(HTTPS://EXAMPLE.COM)",
+                "web_fetch(https://example.com:443)",
+                "web_fetch(https://example.com/path)",
+                17,
+                "unknown_rule",
+                "web_fetch(https://example.net)"
+            ])
+        );
+        assert_eq!(
+            outcome.snapshot.web_access.origins,
+            vec![
+                "https://example.org:8443".to_string(),
+                "https://example.net".to_string()
+            ]
+        );
     }
 
     #[test]

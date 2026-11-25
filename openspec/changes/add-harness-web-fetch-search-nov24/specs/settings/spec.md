@@ -127,9 +127,13 @@ patch SHALL 只携带本次改动的字段，MUST NOT 携带整份配置。patch
 MUST NOT 依赖处理顺序）。patch SHALL 支持 `harness.web_access.enabled` 与 `.approval` 的写入 /
 删键（删键分别回到 true / allow_all），并支持 `add_origin` / `remove_origin` / `clear_origins`
 操作既有 `harness.permissions.deny` 中规范 `web_fetch(origin)`；origin 操作 MUST NOT 改 allow、
-其它 deny 或未知 / 非规范规则，权限表错形状 MUST NOT 被静默重置为空。校验 SHALL 以 Rust 的
-装载期校验为唯一来源；前端 MUST NOT 在 TypeScript 里复制窗口区间、枚举表、id 规则或互斥关系，
-只做输入整形（数字输入、trim、按能力矩阵置灰选项）。
+其它 deny 或未知 / 非规范规则，权限表错形状 MUST NOT 被静默重置为空。`clear_origins=true` MUST NOT
+与 `add_origin` / `remove_origin` 同 patch；同一规范 origin MUST NOT 同时 add / remove，是否相同 SHALL
+在 origin 规范化后判定，仅大小写、默认 port、path 等字面差异不构成不同 origin。不同 origin 的 add /
+remove 可以同 patch。两类冲突 SHALL 返回 `settings_patch_invalid`，文件逐字节不变且 revision 不推进，
+MUST NOT 依赖 add / remove / clear 的处理顺序。校验 SHALL 以 Rust 的装载期校验为唯一来源；前端 MUST NOT
+在 TypeScript 里复制窗口区间、枚举表、id 规则或互斥关系，只做输入整形（数字输入、trim、按能力矩阵
+置灰选项）。
 
 保存 SHALL 在配置写锁内完成「严格读文件 → 校验 revision → 应用 patch（添加 / 更新 / 删除 /
 重定向 / active / 命名目标 / 开关 / Web 两键 / origin deny）→ 以装载同一路径重新解析并校验 →
@@ -165,6 +169,19 @@ revision 不一致时 SHALL 返回 `settings_revision_conflict`，文件逐字�
 保存请求进行中，面板 SHALL 禁用全部编辑控件（输入 / 选择 / 开关 / 命名目标选择 / 模型行增删 /
 添加 provider / 删除 / 设为当前使用 / 逐项恢复默认 / 页级还原 / 底栏「取消」），MUST NOT 允许请求期间的编辑被返回
 快照覆盖；保存完成（成功或进入需修正）后 SHALL 解锁。
+
+#### Scenario: 矛盾的 origin 组合不依赖处理顺序
+
+- **WHEN** 同一 patch 携带 `clear_origins=true` 与 `add_origin` 或 `remove_origin`，或同时 add / remove
+  同一 origin（包括仅在 canonicalization 后才相同的非规范字面输入）
+- **THEN** 保存返回「需要修正」与 `settings_patch_invalid`；`config.json` 逐字节不变，revision 不推进；
+  MUST NOT 按 add / remove / clear 的某种私有顺序产生结果
+
+#### Scenario: 不同 origin 可在同一 patch 添加与移除
+
+- **WHEN** 同一 patch 以可规范化的非规范字面输入 add 一个 origin、remove 另一个 origin
+- **THEN** 保存成功，add 按规范 origin 去重追加，remove 精确删除对应规范 deny；其它 deny、allow 与
+  非规范规则保持原样，revision 正常推进
 
 #### Scenario: 越界窗口被拒绝且文件不变
 

@@ -221,7 +221,11 @@ deny 与其它配置原样保留；设置修复写不会顺手清空 origin deny
 `clear_origins`。revision 的 canonical 集合增加这两个 Web 键与 permissions.allow / deny。
 保存仍在同一写锁内完成「严格读 → revision → patch（含 deny）→ 重载校验 → 原子写」。
 权限 writer 必须支持 deny 的新增 / 精确删除 / 定向清空；只清规范 `web_fetch(origin)`，不改 allow、
-其它 deny 或未知 / 非规范规则。权限表错形状不得被静默重置为空。
+其它 deny 或未知 / 非规范规则。权限表错形状不得被静默重置为空。`clear_origins=true` 不得与
+`add_origin` / `remove_origin` 同 patch；同一规范 origin 也不得同时 add / remove，比较发生在 origin
+规范化之后，因此仅大小写、默认 port、path 等字面差异不构成不同 origin。不同 origin 的 add / remove
+可以同 patch。两类冲突均返回 `settings_patch_invalid`，文件逐字节不变且 revision 不推进，不定义或依赖
+add / remove / clear 的处理顺序。
 
 同一 revision 的并发保存只有一笔成功，另一笔返回 `settings_revision_conflict`，revision 已变化且
 文件逐字节不变。以本页为准只在当前文件重应用同一 patch，不用旧快照覆盖。非法规格 patch 或非法
