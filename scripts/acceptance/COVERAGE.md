@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：288
-- 验收项（不同 item 编号）：257
-- 分档：core 32 / full 246 / bundle 5 / evidence 5（full 批 = 全部 288 个，含其余各档）
+- 场景：289
+- 验收项（不同 item 编号）：258
+- 分档：core 32 / full 247 / bundle 5 / evidence 5（full 批 = 全部 289 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -239,8 +239,8 @@
 | 552 | `161-harness-path-link`<br>`221-harness-path-line-range` | harness 输出里的 vault 路径可点击（新标签 + 行号锚定 + 卡片路径）<br>harness 输出里的行范围路径可点击（:起-止 落到起始行，畸形形态不吞半截） | full<br>full |
 | 553 | `162-harness-dir-link` | harness 输出里的 vault 目录引用可点击（左栏定位） | full |
 | 554 | `168-paste-image-semantic-name` | 贴图后异步语义改名 + 正文引用同步 + toast 撤销（change add-semantic-image-naming） | full |
-| 655 | `230a-path-forms`<br>`230b-lazy-and-external-readonly`<br>`230c-restart-and-focus-scopes`<br>`230d-quick-open-select-all-dir-children` | 按路径快速打开（⌘P）之一：深层路径一次 Enter 落文件 / 冒号文件名整串优先 / path:line 落点不重开 / vault 内零命中<br>按路径快速打开（⌘P）之二：索引外惰性文件按精确路径打开 / vault 外只读打开（⌘S 不写盘、键入不生效）/ 外部路径不存在按找不到处置<br>按路径快速打开（⌘P）之三：重启后 vault 外标签不回来、vault 内标签照常恢复、文件树与 harness composer 焦点下同样命中<br>按路径快速打开（⌘P）之四：输入框内 ⌘A 全选输入串 / 目录语境只列直接子级文件、深层后代不混入 | full<br>full<br>full<br>full |
-| 702 | `231-quick-open-long-path-width`<br>`232-harness-ctxpop-width` | 快速打开浮层宽度：长路径下输入面按 26em 展开、路径全文仍在 AX 里<br>Context 气泡：长读数 hover 翻出、三段内容齐全且确实绘制（P 档 34em 上限；宽度数字归 chromium 矩阵） | full<br>full |
+| 655 | `230a-path-forms`<br>`230b-lazy-and-external-readonly`<br>`230c-restart-and-focus-scopes`<br>`230d-quick-open-select-all-dir-children` | 按路径快速打开（⌘P）之一：深层路径一次 Enter 落文件 / 冒号文件名整串优先 / path:line 落点不重开 / vault 内零命中<br>按路径快速打开（⌘P）之二：索引外惰性文件按精确路径打开 / vault 外只读打开（⌘S 不写盘、键入不生效）/ 外部路径不存在按找不到处置<br>按路径快速打开（⌘P）之三：重启后 vault 外标签不回来、vault 内标签照常恢复、文件树与 harness composer 焦点下同样命中<br>按路径快速打开（⌘P）之四：输入框内 ⌘A 全选输入串 / 目录语境只列一层文件与子目录、深层后代不混入 | full<br>full<br>full<br>full |
+| 702 | `231-quick-open-long-path-width`<br>`232-harness-ctxpop-width` | 快速打开浮层宽度：长路径下输入面按 50vw 响应式档展开、路径全文仍在 AX 里<br>Context 气泡：长读数 hover 翻出、三段内容齐全且确实绘制（P 档 34em 上限；宽度数字归 chromium 矩阵） | full<br>full |
 | 703 | `234-harness-table-horizontal-scroll` | harness 对话宽表：固有宽铺开、横向滚轮在表格区域执行、滚动前后截图（几何归 chromium 矩阵） | full |
 | 704 | `252-cron-click-after-exit`<br>`252-harness-activity-presence`<br>`253-harness-vault-activity` | 应用退出后点击通知：跨进程恢复、快照会话与四类拒绝（change add-cron-notification-relaunch §8.2）<br>harness 面板的活动在场：收起期间的在途 / 未读提示，打开面板即清算，停止不点亮<br>harness 跨 vault 往返的在途准确：切回仍在途不呈空闲、续渲染并对账；完成后往返呈未读并在面板在场时清算 | bundle<br>full<br>full |
 | 705 | `269-harness-path-line-sentence-period` | 句末句号不吞行号（path:line. 仍是整段可点并落到目标行） | full |
@@ -275,3 +275,4 @@
 | 734 | `734-default-note-name` | 新建文件默认名：始终预填并全选、键入替换、Enter 接受、Escape 取消、撞名递增、焦点落正文 | full |
 | 865 | `865-wikilink-caret-reveal-nov24` | wikilink 键盘 / 指针进入源码、修饰键旧语义与精确 undo / save | full |
 | 866 | `866-wikilink-suggestion-nov24` | 行内 [[ 候选：过滤 / 键鼠接受 / Escape / 空态 / 特殊扩展名与零隐式写入 | full |
+| 874 | `874-quick-open-external-directory-and-stable-layout` | Quick Open 外部目录一层候选、子目录进入、外部文件只读与输入框 bbox 稳定 | full |

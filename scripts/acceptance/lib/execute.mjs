@@ -909,6 +909,8 @@ export function checkScenario(scenario) {
     if (step.do === "vaultSparse" && !step.file) push(`${at} do=vaultSparse 需要 file`);
     if (step.do === "vaultSparse" && step.vault !== undefined && step.vault !== "second")
       push(`${at} do=vaultSparse 的 vault 只能是 "second"（缺省 = 验收 vault）`);
+    if (step.do === "vaultWrite" && step.vault !== undefined && step.vault !== "second")
+      push(`${at} do=vaultWrite 的 vault 只能是 "second"（缺省 = 验收 vault）`);
     // 合成图片置剪贴板（M416）：只有 width/height/seed 三个正整数参数。键名写错会静默走缺省
     // （合成出不是场景以为的那张图），因此在静态检查里挡掉。
     if (step.do === "clipboardImage") {
@@ -1152,6 +1154,11 @@ export function checkScenario(scenario) {
         for (const k of ["minWidth", "minHeight"])
           if (spec[k] !== undefined && (typeof spec[k] !== "number" || spec[k] <= 0))
             push(`${at} expect[${j}] geom.${k} 需要正数，实际 ${JSON.stringify(spec[k])}`);
+        for (const k of ["record", "unchangedSince"])
+          if (spec[k] !== undefined && (typeof spec[k] !== "string" || spec[k].trim() === ""))
+            push(`${at} expect[${j}] geom.${k} 需要非空字符串基线名`);
+        if (spec.record !== undefined && spec.unchangedSince !== undefined)
+          push(`${at} expect[${j}] geom.record 与 unchangedSince 互斥（记录与比较分两步写）`);
         if (spec.painted !== undefined) {
           if (!isPlainTable(spec.painted)) push(`${at} expect[${j}] geom.painted 需要对象`);
           else {
@@ -1161,7 +1168,7 @@ export function checkScenario(scenario) {
           }
         }
         for (const k of Object.keys(spec)) {
-          if (!["target", "minWidth", "minHeight", "painted"].includes(k))
+          if (!["target", "minWidth", "minHeight", "painted", "record", "unchangedSince"].includes(k))
             push(`${at} expect[${j}] geom 未知键 ${k}（拼错即静默不判）`);
         }
       }
@@ -2325,6 +2332,15 @@ export async function readStableEditor(readOnce, { attempts = 6, gapMs = 200 } =
   };
 }
 
+export function geomBaselineProblem(baseline, current) {
+  if (!baseline) return "缺已记录的 bbox 基线";
+  if (!current) return "当前目标缺 bbox";
+  const changes = ["x", "y", "w", "h"]
+    .filter((key) => baseline[key] !== current[key])
+    .map((key) => `${key}: ${baseline[key]} → ${current[key]}`);
+  return changes.length === 0 ? null : `bbox 逐值变化（${changes.join("，")}）`;
+}
+
 /**
  * 跑一个场景。ctx: { cu, app, evidence, resultsRoot, restartApp() }
  * 返回 { status, fails, records }
@@ -2594,6 +2610,14 @@ export async function runScenario(ctx, scenario) {
       if (!node) return fail(`${label}（找不到节点 ${JSON.stringify(t)}）`, "", ax);
       if (!node.bbox) return fail(`${label}（节点 ${JSON.stringify(t)} 没有 bbox——AX 量不到几何）`, "", ax);
       const { x, y, w, h } = node.bbox;
+      vars.geomBaselines ??= {};
+      if (spec.record !== undefined) vars.geomBaselines[spec.record] = { x, y, w, h };
+      if (spec.unchangedSince !== undefined) {
+        const problem = geomBaselineProblem(vars.geomBaselines[spec.unchangedSince], node.bbox);
+        if (problem !== null) {
+          return fail(`${label}（${spec.unchangedSince}：${problem}）`, `当前包围盒 @${x},${y} ${w}×${h}`, ax);
+        }
+      }
       const minW = spec.minWidth ?? 1;
       const minH = spec.minHeight ?? 1;
       const problems = [];
@@ -2624,6 +2648,8 @@ export async function runScenario(ctx, scenario) {
       }
       const detail =
         `包围盒 @${x},${y} ${w}×${h}（视口 ${shot.w}×${shot.h}，宽高下限 ${minW}×${minH}）` +
+        (spec.record ? `；已记录基线 ${spec.record}` : "") +
+        (spec.unchangedSince ? `；与基线 ${spec.unchangedSince} 逐值一致` : "") +
         (painted
           ? `；区域最大亮度跨度 ${painted.spread} @${painted.x},${painted.y}（采样方块 ${paintedPatch}px）`
           : "");
@@ -4939,7 +4965,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       );
     }
     case "vaultWrite": {
-      const file = path.join(vaultDir(), step.file);
+      const file = path.join(step.vault === "second" ? secondVaultDir() : vaultDir(), step.file);
       await mkdirp(path.dirname(file)); // 嵌套路径（M221 场景 36 起）：目录行的 chevron 对齐需要真目录
       await writeFile(file, step.content ?? "");
       return file;

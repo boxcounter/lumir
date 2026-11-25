@@ -24,6 +24,7 @@ import {
   fsCreateDir,
   fsCreateFile,
   fsMoveEntry,
+  fsListExternalDir,
   fsReadAttachment,
   fsReadExternal,
   fsReadSnapshot,
@@ -1529,6 +1530,7 @@ const quickOpen = createQuickOpen({
   // 目录判定复用装配层已有的那一份（`isVaultDirPath`：树未就绪时恒假，隔开构造时序窗口）。
   isDir: (path) => isVaultDirPath(path),
   probe: (paths) => fsPathsExist([...paths]),
+  scanDirectory: (path, external) => external ? fsListExternalDir(path) : fsScanDir(path),
   // 打开意图取 "new"（D4：与文件树点击同落点）。行跳转走 `jumpPlanFor`，与 harness 路径点击
   // 共用同一份「打开 → 落点 → 下一帧复核」编排。
   openVaultPath: (path, line) => {

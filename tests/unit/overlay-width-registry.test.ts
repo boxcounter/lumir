@@ -54,11 +54,14 @@ const REGISTRY: RegistryEntry[] = [
   {
     tier: "list",
     shape: "relative",
-    selectors: [".lumir-qo", ".lumir-toc"],
-    note:
-      "快速打开 / 大纲：`min(26em, 100vw − 28px)`（容器 font-size = 行文本 12.5px ⇒ 325px）。" +
-      "26em 的上限按「典型 48 字符 vault 路径 302px」定；列表宽度不随输入抖动，深路径靠行的" +
-      "两段结构（目录可省略 + 文件名完整 + title）承担。",
+    selectors: [".lumir-qo"],
+    note: "Quick Open：`clamp(26em,50vw,56em)` + viewport 夹取；只随视口/字号变，O7 输入框置底。",
+  },
+  {
+    tier: "list",
+    shape: "relative",
+    selectors: [".lumir-toc"],
+    note: "TOC 保持 `min(26em, 100vw − 28px)`；Quick Open 的独立宽度不得改到这里。",
   },
   {
     tier: "list",

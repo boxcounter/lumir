@@ -20,7 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, isStaleIndexError, KEY_CHANNELS, keyChannel, keysTarget, loadScenario, matcher, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, resolveKeysTarget, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, scopedAxOrder, screenshotSize, settleEditorless } from "./execute.mjs";
+import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, geomBaselineProblem, isStaleIndexError, KEY_CHANNELS, keyChannel, keysTarget, loadScenario, matcher, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, resolveKeysTarget, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, scopedAxOrder, screenshotSize, settleEditorless } from "./execute.mjs";
 import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
 import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, SETTLE_SAMPLE_MS, settle, StepError } from "./drive.mjs";
 import { InfraError, repoRoot } from "./util.mjs";
@@ -3449,4 +3449,31 @@ test("scoped AX：scope 缺失或不唯一、AXTextArea 不可读都 FAIL", () =
   assert.equal(scopedAxOrder(nodes, { role: "AXTextArea" }, ["CW-CARD-A"]).ok, false);
   const unread = nodes.map((node) => node.role === "AXTextArea" && node.depth > 0 ? { ...node, value: null } : node);
   assert.equal(scopedAxOrder(unread, { role: "AXGroup", name: "composer" }, ["CW-CARD-A"]).ok, false);
+});
+
+test("geom bbox 基线：缺基线/缺 bbox 必须 FAIL，逐值相同才通过，任一值变化都红", () => {
+  const baseline = { x: 10, y: 20, w: 300, h: 22 };
+  assert.match(geomBaselineProblem(undefined, baseline), /缺已记录/);
+  assert.match(geomBaselineProblem(baseline, undefined), /缺 bbox/);
+  assert.equal(geomBaselineProblem(baseline, { ...baseline }), null);
+  for (const [key, value] of [["x", 11], ["y", 19], ["w", 299], ["h", 23]]) {
+    assert.match(geomBaselineProblem(baseline, { ...baseline, [key]: value }), new RegExp(`${key}:`));
+  }
+});
+
+test("geom record/unchangedSince 静态校验：合法形态通过，空名/互斥/未知键报 problem", () => {
+  const scenario = (geom) => ({ id: "geom-bbox-check", item: 0, steps: [{ name: "g", expect: [{ geom }] }] });
+  const target = { role: "AXComboBox", name: "按路径快速打开文件" };
+  assert.deepEqual(checkScenario(scenario({ target, record: "qo-input" })), []);
+  assert.deepEqual(checkScenario(scenario({ target, unchangedSince: "qo-input" })), []);
+  assert.ok(checkScenario(scenario({ target, record: "" })).some((p) => p.includes("geom.record")));
+  assert.ok(checkScenario(scenario({ target, record: "a", unchangedSince: "a" })).some((p) => p.includes("互斥")));
+  assert.ok(checkScenario(scenario({ target, unchangedSince: "a", bogus: true })).some((p) => p.includes("未知键 bogus")));
+});
+
+test("vaultWrite 第二合成 vault 只接受 second，其它取值静态报 problem", () => {
+  const scenario = (vault) => ({ id: "second-vault-check", item: 0, steps: [{ name: "w", do: "vaultWrite", file: "a.md", content: "a", vault }] });
+  assert.deepEqual(checkScenario(scenario("second")), []);
+  assert.deepEqual(checkScenario(scenario(undefined)), []);
+  assert.ok(checkScenario(scenario("real")).some((p) => p.includes("vaultWrite") && p.includes("second")));
 });

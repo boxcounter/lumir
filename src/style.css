@@ -2642,27 +2642,10 @@ body {
   color: var(--sel-text);
 }
 
-/* 轻量大纲浮层（M148）与按路径快速打开浮层（M655 的 `.lumir-qo`）：**同一条几何**、两个名字。
-   为什么写成选择器列表而不是复制一份规则：几何/配色/滚动口径只有一份真源（REVIEW.md
-   「同一语义两处真源」条）——快速打开浮层（change quick-open-file-oct23 的 design §8）要求
-   直接复用本段几何、MUST NOT 新增色值 / 字号 / 圆角 token。两个 class 是**互斥的**（各自
-   查各自的浮层），`.lumir-qo` 因此不继承 `.lumir-toc` 的任何选择器语义。
-   绝对定位贴**指示段上方**，不占任何常驻空间。
-   壳 = --preview-bg + 1px --border + --shadow-raise（tokens v1.1 浮层配方；eink 无阴影，
-   分层改由白底 + 实心黑框承担）。
-   定位块是 modeline（M211 前挂在已删除的标题区）：指示段今天在**窗口最后一行**，浮层因此向上展开
-   （`bottom: 100%`）。左端偏移由 src/toc.ts 的 place() 按指示段视口坐标算，内边距常量与
-   modeline 的左右内边距同值（14px）。
-
-   高度口径（M157 需求）：上限是**窗口内容区高的 80%**，约束的是浮层**总高**——列向 flex +
-   全局 `* { box-sizing: border-box }`，所以这里的 max-height 天然含顶部内边距与底部提示，
-   不要再写 `calc(80vh - 提示高)` 那类减法（会引入第二处高度真源）。60 条标题的 fixture 下
-   整体高度就是这条上限，列表成为唯一滚动容器（`.lumir-toc-list` 的 flex + min-height: 0）。
-   vh 随窗口重排即时生效，不需要 JS 监听 resize。
-   已知边界（M211 重算）：浮层底边贴 modeline 上沿，向上取 min(80vh, 自然高)。窗口内容区高
-   H 下，可用高度 = H − 42（标题栏）− 25（modeline）：`H − 67 ≥ 0.8H` ⇔ `H ≥ 335px`；
-   更矮的窗口下浮层上沿可能越出窗口顶部（不加钳制，见 change toc-popover-emacs-keys-and-max-height
-   的非目标）。标题条数少时约束换成自然高度（输入行 + 列表 + 提示）。 */
+/* TOC 与 Quick Open 共用 modeline 锚点、浮层 token 和行样式，不再共用宽度/高度布局。
+   TOC 保持 26em flex 形态及其短窗口既有边界。Quick Open（O7）改用网格：候选/空态同区域、
+   提示居中、输入框置底；总高同时受 80vh 与 modeline 上方实际可用高度（100vh − 67px）约束，
+   正常窗口候选区至少 6 行，短窗口只压缩结果区，输入框不得被推出视口。 */
 .lumir-toc,
 .lumir-qo {
   position: absolute;
@@ -2671,12 +2654,6 @@ body {
   z-index: 15;
   display: flex;
   flex-direction: column;
-  /* 宽度（M702，change overlay-width-contract-oct24 的 L 档）：内容上限 26em，字体基准取
-     行文本字号（--fs-ui-s = 12.5px，故 26em = 325px）——M698 实测典型 48 字符 vault 路径
-     固有宽 302px，旧定值 300px 恰好裁掉 8.8%（文件名尾段）。右侧留 14px 与左端 --sp-7 对称，
-     窗口比浮层窄时按 100vw 收窄、不越出窗口。列表宽度 MUST NOT 随输入逐帧抖动：
-     深层路径的超长部分由行的两段结构（目录前缀可省略 + 文件名完整）承担。 */
-  width: min(26em, calc(100vw - 28px));
   font-size: var(--fs-ui-s);
   max-height: 80vh;
   padding: var(--sp-3) 0 0;
@@ -2685,6 +2662,16 @@ body {
   /* 浮层归 r10（定稿 .ovl-pop，index.html:685；M217 裁决，tokens 出处表补记随 M220 批次）。 */
   border-radius: var(--r10);
   box-shadow: var(--shadow-raise);
+}
+.lumir-toc {
+  width: min(26em, calc(100vw - 28px));
+}
+.lumir-qo {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  width: clamp(26em, 50vw, 56em);
+  max-width: calc(100vw - 28px);
+  max-height: min(80vh, calc(100vh - 67px));
 }
 /* 优先级 0-2-0 > `.lumir-toc` 的 0-1-0：加了 display: flex 之后这里的隐藏仍然生效
    （空态与关闭态的防线是 tests/visual 的 toc-outline 场景）。 */
@@ -2706,6 +2693,23 @@ body {
 .lumir-toc-list[hidden],
 .lumir-qo-list[hidden] {
   display: none;
+}
+.lumir-qo-list,
+.lumir-qo-empty {
+  grid-area: 1 / 1;
+  min-height: calc(6 * 26px + 2 * var(--sp-2));
+}
+.lumir-qo-hint {
+  grid-row: 2;
+}
+.lumir-qo-input {
+  grid-row: 3;
+}
+@media (max-height: 479px) {
+  .lumir-qo-list,
+  .lumir-qo-empty {
+    min-height: 0;
+  }
 }
 /* 输入筛选行（change list-filter）：列向 flex 的固定行，MUST NOT 被压缩——浮层总高上限
    （80vh）因此不含它的伸缩。下划线形态（底线 --border、focus 转 --accent），与搜索面板的

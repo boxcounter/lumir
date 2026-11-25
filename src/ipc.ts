@@ -9,6 +9,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { CommandError } from "./bindings/CommandError";
 import type { ReadSnapshot } from "./bindings/ReadSnapshot";
 import type { ExternalTextSnapshot } from "./bindings/ExternalTextSnapshot";
+import type { ExternalDirEntry } from "./bindings/ExternalDirEntry";
 import type { FsFileMeta } from "./bindings/FsFileMeta";
 import type { ConfigSnapshot } from "./bindings/ConfigSnapshot";
 import type { SettingsSnapshot } from "./bindings/SettingsSnapshot";
@@ -134,6 +135,11 @@ export function fsReadSnapshot(path: string): Promise<ReadSnapshot> {
  */
 export function fsReadExternal(path: string): Promise<ExternalTextSnapshot> {
   return invoke<ExternalTextSnapshot>("fs_read_external", { path });
+}
+
+/** Quick Open 显式尾斜杠目录的一层只读枚举；安全校验全在 Rust，payload 只有 path + kind。 */
+export function fsListExternalDir(path: string): Promise<ExternalDirEntry[]> {
+  return invoke<ExternalDirEntry[]>("fs_list_external_dir", { path });
 }
 
 /** 读 vault 内单文件元数据（M218 doc-meta「修改于」的 mtime 数据源）。 */

@@ -840,15 +840,15 @@ const DEEP_VAULT: VaultFixture = {
   links: {},
 };
 
-test("目录输入：候选只列直接子级文件，深层后代与同前缀兄弟目录不混入", async ({ page }) => {
+test("目录输入：候选只列一层文件与子目录，深层后代与同前缀兄弟目录不混入", async ({ page }) => {
   await stubTauri(page, DEEP_VAULT);
   await page.goto("/");
   await openQuickOpen(page);
   await page.keyboard.type("notes");
 
   // 逐条文本断言（不是计数）：深层后代与 `notes-extra` 都是全路径子串匹配会混进来的形态
-  await expect(page.locator(".lumir-qo-item")).toHaveText(["notes/plan.md", "notes/spec.md"]);
-  await expect(page.locator(".lumir-qo-hint")).toHaveText("notes 是目录 · 直接子级文件 2 条");
+  await expect(page.locator(".lumir-qo-item")).toHaveText(["notes/plan.md", "notes/spec.md", "notes/sub/"]);
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("notes 是目录 · 直接子项 3 条");
   await expect(page.locator(".lumir-qo-direct")).toHaveCount(0);
   await expect(page.locator(".lumir-qo-empty")).toBeHidden();
 });
@@ -859,8 +859,8 @@ test("尾斜杠目录：与裸目录同一份直接子级筛选；Enter 的既�
   await openQuickOpen(page);
   await page.keyboard.type("notes/");
 
-  await expect(page.locator(".lumir-qo-item")).toHaveText(["notes/plan.md", "notes/spec.md"]);
-  await expect(page.locator(".lumir-qo-hint")).toHaveText("notes 是目录 · 直接子级文件 2 条");
+  await expect(page.locator(".lumir-qo-item")).toHaveText(["notes/plan.md", "notes/spec.md", "notes/sub/"]);
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("notes 是目录 · 直接子项 3 条");
   await expect(page.locator(".lumir-qo-direct")).toHaveCount(0);
 
   // 尾斜杠只改筛选与提示，不改 Enter：游标候选一次打开（与改动前 `notes/` 的既有行为一致）
@@ -877,18 +877,18 @@ test("中文长路径目录：直接子级只列一层，深层与同前缀兄�
   const dir = "项目资料/2026 年度/会议记录";
   await page.keyboard.type(dir);
 
-  await expect(page.locator(".lumir-qo-item")).toHaveText([`${dir}/第一次会议.md`]);
-  await expect(page.locator(".lumir-qo-hint")).toHaveText(`${dir} 是目录 · 直接子级文件 1 条`);
+  await expect(page.locator(".lumir-qo-item")).toHaveText([`${dir}/第一次会议.md`, `${dir}/归档/`]);
+  await expect(page.locator(".lumir-qo-hint")).toHaveText(`${dir} 是目录 · 直接子项 2 条`);
   await expect(page.locator(".lumir-qo-empty")).toBeHidden();
 
   // 尾斜杠同一语义（目录断言的另一种输入形态）
   await page.keyboard.press("Meta+a");
   await page.keyboard.type(`${dir}/`);
-  await expect(page.locator(".lumir-qo-item")).toHaveText([`${dir}/第一次会议.md`]);
-  await expect(page.locator(".lumir-qo-hint")).toHaveText(`${dir} 是目录 · 直接子级文件 1 条`);
+  await expect(page.locator(".lumir-qo-item")).toHaveText([`${dir}/第一次会议.md`, `${dir}/归档/`]);
+  await expect(page.locator(".lumir-qo-hint")).toHaveText(`${dir} 是目录 · 直接子项 2 条`);
 });
 
-test("不存在的目录尾斜杠：不进入目录语境（空态 + 找不到），不凭空造目录提示", async ({ page }) => {
+test("不存在的目录尾斜杠：目录缺失分态，不与普通搜索空态混淆", async ({ page }) => {
   await stubTauri(page, DEEP_VAULT);
   await page.goto("/");
   await openQuickOpen(page);
@@ -896,34 +896,33 @@ test("不存在的目录尾斜杠：不进入目录语境（空态 + 找不到�
 
   await expect(page.locator(".lumir-qo-item")).toHaveCount(0);
   await expect(page.locator(".lumir-qo-empty")).toBeVisible();
-  await expect(page.locator(".lumir-qo-empty")).toHaveText("没有匹配的条目");
-  await expect(page.locator(".lumir-qo-hint")).toHaveText("输入路径或文件名；可加 :12 这样的行号后缀");
+  await expect(page.locator(".lumir-qo-empty")).toHaveText("目录不存在或不是目录：ghost");
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("目录不存在或不是目录：ghost");
 
   await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-qo")).toBeVisible();
-  await expect(page.locator(".lumir-qo-hint")).toHaveText("找不到：ghost/");
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("目录不存在或不是目录：ghost");
   await expect(page.locator(".tab-open")).toHaveCount(0);
 });
 
-test("目录没有直接子级文件：候选为空、提示如实说明，深层文件不混入", async ({ page }) => {
+test("目录只有直接子目录：深层文件不混入，接受子目录后才显示下一层", async ({ page }) => {
   await stubTauri(page, DEEP_VAULT);
   await page.goto("/");
   await openQuickOpen(page);
   await page.keyboard.type("empty-dir");
 
-  await expect(page.locator(".lumir-qo-item")).toHaveCount(0);
-  await expect(page.locator(".lumir-qo-empty")).toBeVisible();
-  await expect(page.locator(".lumir-qo-empty")).toHaveText("没有匹配的条目");
-  await expect(page.locator(".lumir-qo-hint")).toHaveText("empty-dir 是目录 · 没有直接子级文件");
-  // 深层文件 `empty-dir/child/grand.md` 不得被当成直接子级混进来
+  await expect(page.locator(".lumir-qo-item")).toHaveText(["empty-dir/child/"]);
+  await expect(page.locator(".lumir-qo-empty")).toBeHidden();
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("empty-dir 是目录 · 直接子项 1 条");
   await expect(page.locator(".lumir-qo-direct")).toHaveCount(0);
+  await expect(page.locator('.lumir-qo-item[title="empty-dir/child/grand.md"]')).toHaveCount(0);
 
-  // 尾斜杠 + 没有候选：Enter 不打开任何目标，给「是目录」的原因（不是「找不到」）
   await page.keyboard.press("Meta+a");
   await page.keyboard.type("empty-dir/");
-  await expect(page.locator(".lumir-qo-hint")).toHaveText("empty-dir 是目录 · 没有直接子级文件");
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("empty-dir 是目录 · 直接子项 1 条");
   await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-qo")).toBeVisible();
-  await expect(page.locator(".lumir-qo-hint")).toHaveText("empty-dir 是目录，不能打开");
+  await expect(page.locator(".lumir-qo-input")).toHaveValue("empty-dir/child/");
+  await expect(page.locator(".lumir-qo-item")).toHaveText(["empty-dir/child/grand.md"]);
   await expect(page.locator(".tab-open")).toHaveCount(0);
 });
