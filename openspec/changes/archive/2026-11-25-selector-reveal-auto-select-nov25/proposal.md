@@ -36,6 +36,11 @@
 > `openspec-links` 700/700 PASS。`node scripts/openspec-archive-check.mjs --archived
 > selector-reveal-auto-select-nov25` **PASS**（2 条 MODIFIED，对比 76 段；人工恢复 0 段，声明认领 0 段，
 > 2026-11-25T21:04+08:00）。
+> 归档后连带修复：本次归档改了 living 的同名 requirement 段落，活跃 change
+> `add-harness-web-fetch-search-nov24` 的同 requirement MODIFIED delta 会静默删掉新增段落 →
+> 已把它的 MODIFIED 块重基到归档后的 living（只补抄本合同新增的段落与 Scenario，保留它自己那条
+> 「自动入口默认行为不削弱」scenario 改写）；门禁模式 archive-check 恢复 PASS（11 份 delta / 16 条
+> MODIFIED / 378 段 / 0 丢段）。
 
 ## Why
 
