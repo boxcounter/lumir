@@ -24,11 +24,12 @@
 > 1. **方案已批准**：节点 1「选择器按推荐」+ 同日追加批准「采纳建议」（四项代价与 `settled` 复用
 >    边界）；实现期唯一新增面是 230d 真机首跑暴露的候选行可访问名缺陷（同批真机发现，已在「真机验收
 >    补充」段登记并随本 change 修掉，非静默扩 scope）。
-> 2. **独立评审层（有缺口，如实记录）**：机械核验报告（tip `27f0486a`，
+> 2. **独立评审层**：机械核验报告（tip `27f0486a`，
 >    `.local/reviews/quick-open-active-target-nov25/mechanical.md`）结论「未发现产品 FAIL」、F1–F7
->    全部 CLOSED、剩 4 项 P3；最终 tip `6127c5c8` 的 `8a1f53a1`（复位语义 / 翻转用例）与文档收口即
->    P3 收口，`d521a8fc` 为可访问名修复。**该报告未覆盖 `27f0486a..6127c5c8`，最终 tip 未再取一次
->    独立 judgment-layer verdict**——按 tower 指示放行，作为归档后遗留事项登记。
+>    全部 CLOSED；归档后 K3.1 Pro 独立终审补齐 `27f0486a..6127c5c8` 判断层，最终 verdict
+>    **clean/merge**（绑定产品 tip `6127c5c8`、归档 tip `5e6431b6`，P1/P2/P3 均无；
+>    `.local/reviews/quick-open-active-target-nov25/final-judgment.md`）。首轮唯一 finding 来自派发
+>    提示写反复用合同，复核批准原文后撤回，产品无需修改。
 > 3. **tasks 完成**：全部勾选（5.2 本次勾选，证据见该条）。
 > 4. **门禁与真机证据**：完整 `gate visual` 原文 `GATE RESULT: 15/15 PASS（SKIP 0）`、exit 0，
 >    `visual-regression` 971s（`.local/missions/quick-open-active-target/gate-visual-final.log`）；
