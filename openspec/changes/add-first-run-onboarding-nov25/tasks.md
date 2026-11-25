@@ -214,3 +214,10 @@
       mission 号 + 五要件状态），供归档门禁核对；当前 backlog 已在 80/80 硬上限，若届时仍满，
       先按维护规则删掉已完成 / 无出口的僵尸条目再加，不为压行数删活条目。归档时补
       `first-run-onboarding` 的 Purpose 并跑 `--archived` 审计。
+- [x] 9.6 验收基建修复（2026-11-26 复审追加）：877 / 263 首跑 INVALID 的根因是 `waitAppReady`
+      不认识首启终态（启动面盖住树与编辑器，`requireVault: false` 下仍只认 D5/D6 空态）。
+      修复：仅 `requireVault: false` 时接受 AX 里真实 `AXButton`（读屏名精确
+      `添加 vault` / `Add vault`）为首启终态，`editorReady` 同用该正观测；严格门不变、空 AX /
+      同名静态文本不放行。补 6 条 `waitAppReady` 单测（zh/en 正例、严格门 / 空 AX / 静态文本
+      反例、严格门回归）；旧实现下两条正例红、新实现全绿。`drive.test.mjs` 与
+      `check-suite.sh` 通过。

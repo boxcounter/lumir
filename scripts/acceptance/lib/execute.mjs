@@ -4680,8 +4680,8 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         editor: { ...(cur.editor ?? {}), ...(step.editor ?? {}) },
       };
       await writeConfig(next);
-      // requireVault: false 只对本步的重启生效（该步期待「未打开空态」，就绪门里「树里有
-      // .md 行」这一条必然不成立）；非重启场景照旧走严格门。
+      // requireVault: false 只对本步的重启生效（该步期待「未打开空态」或首启模式，就绪门里
+      // 「树里有 .md 行」这一条必然不成立）；非重启场景照旧走严格门。
       if (step.restart !== false) await ctx.restartApp({ requireVault: step.requireVault !== false });
       return next;
     }
