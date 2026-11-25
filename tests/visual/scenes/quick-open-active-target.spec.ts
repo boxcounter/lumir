@@ -17,6 +17,11 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 // （旧实现亮首行、Enter 却打开索引外文件）；本场景用一条带延迟的探测把「在途」与「落地」
 // 两段都钉住，并证明落地后仍不亮、Enter 打开的是那条精确路径。
 //
+// 探测次数的两端（section 4）：输入后 <120ms 立即 Enter 由 Enter 发起那唯一一次、停驻计时器
+// 随后加入同一在途 promise；离开再回到同一输入按输入原文复用已落地判决，不重探、也不重新
+// 验证外部变化。两处都同时数「发起」与「应答」，并各配一个必须让它翻转的现场（旧 src /
+// re-stub 出来的「外部变化」）。
+//
 // 本场景不覆盖：解析次序矩阵（tests/unit/quick-open.test.ts）、纯策略起点与异步保位/回落
 // 的纯函数判据（同文件的「游标起点」「异步补帧的保位」段）、真机 WKWebView 手感
 // （验收场景 230a/230b/230c/230d/231/874）。
@@ -104,28 +109,44 @@ const VAULT: VaultFixture = {
 };
 
 /** 给桩补 `fs_paths_exist`：惰性文件的探测在真后端由忽略规则产生。`delayMs` 造「探测在途」。
- *  每次应答落进 `__probeAnswers`——断言可以钉在「探测已经回来之后」，而不是靠猜时间。 */
-async function stubPathsExist(page: Page, present: string[], delayMs = 0): Promise<void> {
+ *  每次**发起**落 `__probeCalls`、每次**应答**落 `__probeAnswers`——「发了几次」与「探测已经
+ *  回来之后」是两件事，精确次数断言要能分别钉住（复用探测的用例看发起次数，旧实现会多发一次）。
+ *  `resetCounters: false` 用于同一用例中途改桩（模拟「离开期间外部世界变了」）：计数不清零，
+ *  新桩**替换**而不是套在旧桩外面。 */
+async function stubPathsExist(
+  page: Page,
+  present: string[],
+  delayMs = 0,
+  opts: { resetCounters?: boolean } = {},
+): Promise<void> {
   await page.evaluate(
-    ({ present, delayMs }) => {
-      const w = window as unknown as { __probeAnswers?: Array<{ paths: string[]; found: string[] }> };
-      w.__probeAnswers = [];
-      const internals = (
-        w as unknown as {
-          __TAURI_INTERNALS__: { invoke: (...args: any[]) => Promise<unknown> };
-        }
-      ).__TAURI_INTERNALS__;
-      const inner = internals.invoke.bind(internals);
+    ({ present, delayMs, resetCounters }) => {
+      const w = window as unknown as {
+        __probeAnswers?: Array<{ paths: string[]; found: string[] }>;
+        __probeCalls?: number;
+        __probeOrigInvoke?: (...args: any[]) => Promise<unknown>;
+        __TAURI_INTERNALS__: { invoke: (...args: any[]) => Promise<unknown> };
+      };
+      const internals = w.__TAURI_INTERNALS__;
+      // 原始 invoke 只保管一次：重复 stub 若继续包上一层，旧桩会先截住命令（用旧 present 应答），
+      // 新桩永远看不到——「外部世界变了」的现场就造不出来。
+      w.__probeOrigInvoke ??= internals.invoke.bind(internals);
+      if (resetCounters) {
+        w.__probeAnswers = [];
+        w.__probeCalls = 0;
+      }
+      const orig = w.__probeOrigInvoke;
       internals.invoke = async (cmd: string, args?: { paths?: string[] }, ...rest: unknown[]) => {
-        if (cmd !== "fs_paths_exist") return inner(cmd, args, ...rest);
+        if (cmd !== "fs_paths_exist") return orig(cmd, args, ...rest);
         const paths = args?.paths ?? [];
+        w.__probeCalls = (w.__probeCalls ?? 0) + 1;
         if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
         const found = paths.filter((path) => present.includes(path));
         (w.__probeAnswers ??= []).push({ paths, found });
         return found;
       };
     },
-    { present, delayMs },
+    { present, delayMs, resetCounters: opts.resetCounters ?? true },
   );
 }
 
@@ -134,6 +155,11 @@ function probeAnswers(page: Page): Promise<number> {
   return page.evaluate(
     () => ((window as unknown as { __probeAnswers?: unknown[] }).__probeAnswers ?? []).length,
   );
+}
+
+/** 已**发起**的探测次数（不等应答）：分辨「复用同一次探测」与「又发了一次」。 */
+function probeCalls(page: Page): Promise<number> {
+  return page.evaluate(() => (window as unknown as { __probeCalls?: number }).__probeCalls ?? 0);
 }
 
 async function openQuickOpen(page: Page): Promise<void> {
@@ -437,4 +463,63 @@ test("目录语境：首行高亮，两段式 Enter 与进入子目录后的复�
   await expect(page.locator(".lumir-qo-input")).toHaveValue("notes/sub/");
   await expect(page.locator(".lumir-qo-item")).toHaveText(["notes/sub/deep.md"]);
   await expectActiveRow(page, "notes/sub/deep.md");
+});
+
+// ---------------------------------------------------------------------------
+// 4）探测复用：停驻窗口前后都只发 1 次，离开再回来也不重发
+// ---------------------------------------------------------------------------
+
+// 停驻 + Enter 已由上面各条钉住（普通查询 / 角落 / path:line / 保位 / 判决行自身各 1 次）。
+// 这里补「停驻窗口本身」的两端：Enter 抢在去抖到点之前按下，以及输入离开再回来。
+// 判据用**发起次数**（`__probeCalls`）而不只是应答次数——旧实现的毛病正是多发一次
+// `fs_paths_exist`，两次都成功应答时只看应答次数也能数出来，但发起次数能把「没发」与
+// 「发了又丢弃」分开。
+test("输入后 <120ms 立即 Enter：与停驻计时器共用同一次探测，总计 1 次", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await page.goto("/");
+  // 400ms 应答：Enter 与去抖计时器无论谁先到，都落进同一次探测的在途窗口
+  await stubPathsExist(page, [], 400);
+  await openQuickOpen(page);
+  await fill(page, "plan");
+  // 停驻去抖（120ms）到点之前按 Enter：这次探测由 Enter 发起，打开的是首行
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".lumir-qo")).toBeHidden({ timeout: 5000 });
+  // 去抖计时器随后到点：必须加入在途 / 复用已落地的那一份（旧实现无条件再 resolve 一次 ⇒ 2）
+  await page.waitForTimeout(300);
+  expect(await probeCalls(page)).toBe(1);
+  expect(await probeAnswers(page)).toBe(1);
+  await expect(page.locator(".cm-content")).toContainText("QO-TARGET-PLAN");
+});
+
+// 复用键是**输入原文**（design §6 / spec「离开再回到同一输入复用已落地判决」）：同一浮层里清空输入
+// 不清 `settled`，回到同一串直接按旧判决渲染。用例同时在离开期间把探测桩改答「plan 存在」——
+// 若实现重新探测，判决定改成 open plan、高亮消失、Enter 目标换人，三者都会翻转。
+test("离开再回到同一输入：复用已落地判决，不重探、不重新验证外部变化，回到即高亮", async ({ page }) => {
+  await start(page);
+  await stubPathsExist(page, [], 0);
+  await fill(page, "plan");
+  // 落地为「找不到」⇒ 普通搜索的首行承诺：首条候选高亮
+  await expectActiveRow(page, "notes/plan.md");
+  await expect.poll(() => probeAnswers(page)).toBe(1);
+
+  // 离开期间外部世界变了：盘上出现了名为 plan 的文件（re-stub 替换旧桩，计数不清零）
+  await stubPathsExist(page, ["plan"], 0, { resetCounters: false });
+
+  // 离开：清空输入（浮层不关，判决记忆按输入原文仍在）
+  await fill(page, "");
+  await expect(page.locator(".lumir-qo-item")).toHaveCount(0);
+
+  // 回到同一串：直接复用旧判决——同步就有高亮（重探的实现这里还在未定窗口，读到 0）
+  await fill(page, "plan");
+  expect(await page.locator(".lumir-qo-item.is-active").count()).toBe(1);
+  await expectActiveRow(page, "notes/plan.md");
+  await page.waitForTimeout(250);
+  expect(await probeCalls(page)).toBe(1);
+  expect(await probeAnswers(page)).toBe(1);
+
+  // Enter 同样复用：打开旧判决的游标行，而不是新探测可能改判的 plan
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".lumir-qo")).toBeHidden();
+  expect(await probeCalls(page)).toBe(1);
+  await expect(page.locator(".cm-content")).toContainText("QO-TARGET-PLAN");
 });
