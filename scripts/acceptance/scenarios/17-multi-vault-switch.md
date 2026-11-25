@@ -8,6 +8,10 @@ seed:
   registry:
     - { id: acc-a, path: $vault, lastOpenedAt: 1757000002000 }
     - { id: acc-b, path: $vault2, lastOpenedAt: 1757000001000 }
+    # 惰性缺失的注册项（change fix-selector-ime-aria-nov25 第四轮）：路径不存在 ⇒ 列表里的
+    # 失效行（available=false），用来判「失效行同样可被键盘清理」。首次治理只记 missing_since，
+    # 不归档，列表照常可见。
+    - { id: acc-gone, path: /tmp/lumir-m102-acceptance-gone, lastOpenedAt: 1757000000000 }
 steps:
   - name: 打开 tabs-a.md（单击 = 预览标签），随后键入把它固定住
     do: open
@@ -71,7 +75,7 @@ steps:
     target: { any: "点击查看全部 vault" }
     expect:
       - shot: 切换器浮层
-      - label: 列表里有两个 vault（B 的名字只可能来自列表行——它的目录从没被打开过）
+      - label: 列表里有两个可用 vault（B 的名字只可能来自列表行——它的目录从没被打开过）
         ax: { has: "lumir-m102-acceptance-b" }
       - label: 当前项带「当前」标且摘要是「2 个标签 · 现在打开」（标签数来自会话落盘，不是前端镜像）
         ax: { has: "当前 2 个标签 · 现在打开" }
@@ -231,6 +235,46 @@ steps:
         ax: { has: '/已从列表移除「lumir-m102-acceptance-b」/' }
       - label: B 的行已从列表消失（它独有的「还没有打开过文件」摘要不再在浮层里）
         ax: { not: "还没有打开过文件" }
+
+  # change fix-selector-ime-aria-nov25（第四轮）：失效行同样在键盘游标空间里——`Delete` 走同一套
+  # 两步确认、第二次按下移除。`Enter` 的重定位在真机上会起原生目录选择器（套件不驱动，见「不覆盖」），
+  # 那条链路由视觉场景用 vault_open 的重映射候选桩判。
+  - name: ⌘O 重开切换器（此时只剩当前项 A 与失效行）
+    do: key
+    key: "cmd+o"
+    expect:
+      - label: 浮层已展开
+        ax: { has: "选择一个目录作为新 vault" }
+      - label: 失效行在列表里（「重新定位…」只由失效行给出）
+        ax: { has: "重新定位…" }
+
+  - name: ↓ 把游标移到失效行（它排在可用项之后，是最后一行）
+    do: key
+    key: "down"
+
+  - name: 第一次 Delete 进入两步确认（确认句点名失效 vault）
+    do: key
+    key: "delete"
+    expect:
+      - shot: 失效行的删除确认
+      - label: 确认句点名失效 vault，浮层未收起（还没发起移除）
+        ax: { has: '/从列表移除「lumir-m102-acceptance-gone」/' }
+
+  - name: 第二次 Delete 提交移除
+    do: key
+    key: "delete"
+
+  - name: 等失效行移除生效（撤销提示是唯一能区分「进入确认」与「真的删掉」的终端信号）
+    do: waitFor
+    waitFor:
+      has: ["已从列表移除「lumir-m102-acceptance-gone」"]
+    timeoutMs: 15000
+    expect:
+      - shot: 失效行已移除
+      - label: 撤销提示点名失效 vault
+        ax: { has: '/已从列表移除「lumir-m102-acceptance-gone」/' }
+      - label: 失效行从列表消失（唯一带「重新定位…」的行不在了）
+        ax: { not: "重新定位…" }
 ---
 
 说明：本条对应 change `multi-vault-workspaces` 的任务 6.1 ①，覆盖四条会互相牵连的行为：
@@ -258,14 +302,19 @@ steps:
 所以 A 的行用 `"/lumir-m102-acceptance /"`（名称后紧跟空格）排除 B 的行。
 
 **不覆盖**：新增 vault → 系统目录选择器（套件不驱动原生对话框，见 README「已知边界」）；
-双击 / ⌘-点击固定标签（同上，另一条通道覆盖）。**浮层列表的滚动条形态**（M660 #1）同样不在
-本场景：AX 读不到滚动条，本场景的注册表只有两个 vault、列表不溢出；隐藏档与「不压行尾移除钮」
+双击 / ⌘-点击固定标签（同上，另一条通道覆盖）。**失效行的 `Enter` 重定位**同样会起原生目录选择器
+（`vault_open` 选目录 → `vault_remap`），真机侧只判「失效行在、能被游标指向」，完整链路
+（映射点名稳定 id、按新根装载）由 `tests/visual/scenes/selector-aria-ime-nov25.spec.ts` 的桩判。
+**浮层列表的滚动条形态**（M660 #1）同样不在
+本场景：AX 读不到滚动条，本场景的注册表只有三个 vault、列表不溢出；隐藏档与「不压行尾移除钮」
 的溢出态判据在 `tests/visual/scenes/mv-vault-switcher.spec.ts` 的 M660 #1 用例。
 **Tab 遍历与 ARIA 属性**（change fix-selector-ime-aria-nov25）：本场景只判终端事实「两次 Tab 后
 浮层收起」；行 / 删除钮的 `tabindex`、`aria-selected` / `aria-current` 与 option id 归 chromium
 矩阵（`tests/visual/scenes/selector-aria-ime-nov25.spec.ts`），AX 读不到这些属性。
 
 **纯键盘删除**（同一 change）：文末用「`↓` 到 B → `Delete` 进入确认句 → 再按一次 → 撤销提示点名
-B」判这条键真的走通。`Delete` 经 KimiCU 注入的是 keycode 51（WKWebView 读作 Backspace；浮层把
-`Delete` / `Backspace` 当同一个入口）。移除后**行消失**用 B 独有的摘要「还没有打开过文件」的反证
-来判——撤销提示本身也含 B 的名字，不能用「AX 里没有 B 的名字」当判据。
+B」判这条键真的走通；B 删掉后再对**失效行**走同一套三步（它同样在游标空间里，`available=false`
+只表示不能切换过去）。`Delete` 经 KimiCU 注入的是 keycode 51（WKWebView 读作 Backspace；浮层把
+`Delete` / `Backspace` 当同一个入口）。移除后**行消失**用各行独有的反证来判——B 用「还没有打开过
+文件」，失效行用「重新定位…」；撤销提示本身也含被删行的名字，不能用「AX 里没有这个名字」当判据。
+「已进入确认」与「真的删掉」由撤销提示区分：确认态一出现，行内的「重新定位…」就已经不在 DOM 里。

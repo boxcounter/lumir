@@ -14,6 +14,7 @@ import type { VaultSession } from "../../src/bindings/VaultSession.ts";
 import type { EditorSession, ScrollSnapshot } from "../../src/editor.ts";
 import type { ToastAction, VaultSwitchBlock } from "../../src/save-controller.ts";
 import { commandError, installBackend } from "./harness.ts";
+import { registerEscapeLayer, unregisterEscapeLayer } from "../../src/escape-router.ts";
 import { resetRelabels, runRelabels, setLanguageRoot } from "../../src/copy.ts";
 import type { FakeBackend } from "./harness.ts";
 import { NO_MATCH_TEXT } from "../../src/list-filter.ts";
@@ -2243,6 +2244,42 @@ test("浮层：组合期与带修饰键的 Esc 不撤确认", async () => {
   assert.equal(rig.popover().hidden, false);
 });
 
+test("浮层：确认态的 Esc 尊重层栈——更高层在场时先关顶层，不抢撤确认", async () => {
+  const rig = await openRemoveRig();
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
+  rig.popover().fire("keydown", keyPress("Delete").event);
+  const confirmCount = () => rig.popover().find("vault-row-confirm").length;
+  assert.equal(confirmCount(), 1);
+
+  // 后开的层（hover 提示一类）登记到栈顶：第一拍 Escape 归路由，关的是它——确认态不动。
+  let hoverClosed = 0;
+  registerEscapeLayer("test-hover-above-switcher", () => void (hoverClosed += 1));
+  try {
+    const first = keyPress("Escape");
+    rig.popover().fire("keydown", first.event);
+    assert.equal(first.consumed(), true);
+    assert.equal(hoverClosed, 1, "第一次 Esc 关的是更高层");
+    assert.equal(confirmCount(), 1, "更高层在场时 MUST NOT 抢着撤确认");
+    assert.equal(rig.popover().hidden, false, "浮层与确认态都保持");
+
+    // 顶层已关：再按一次才轮到确认态（栈顶回到本浮层）。
+    const second = keyPress("Escape");
+    rig.popover().fire("keydown", second.event);
+    assert.equal(second.consumed(), true);
+    assert.equal(confirmCount(), 0, "栈顶是本层时第一次 Esc 撤确认");
+    assert.equal(rig.popover().hidden, false);
+    assert.equal(rig.focusedEditor, 0, "撤确认不交还编辑器焦点");
+    assert.equal(rig.activeRowId(), "gone-vault", "确认行回到游标");
+
+    // 确认已撤：第三拍走既有规则关层并交还焦点。
+    rig.popover().fire("keydown", keyPress("Escape").event);
+    assert.equal(rig.popover().hidden, true);
+    assert.equal(rig.focusedEditor, 1);
+  } finally {
+    unregisterEscapeLayer("test-hover-above-switcher");
+  }
+});
+
 test("浮层：组合期的 Delete / Backspace 不进入确认、也不提交（IME 守卫覆盖这两个键）", async () => {
   const rig = await openRemoveRig();
   rig.popover().fire("keydown", keydownEvent("ArrowDown"));
@@ -2658,6 +2695,39 @@ test("确认态：确认只发一次请求，重拉列表且该行消失（不�
     "被移除的行从列表消失（数据来自重新拉取，不是本地删改）",
   );
   assert.equal(rig.popover().hidden, false, "移除后浮层保持打开");
+});
+
+test("确认态唯一：指针先后对两行点 × 只留一处确认，后进入的替换前一份、提交只有一次", async () => {
+  const rig = await openRemoveRig();
+
+  // 先对失效行点 ×（它也是可清理的行）
+  rowWrap(rig, "gone-vault").find("vault-row-del")[0].fire("click", { stopPropagation: () => {} });
+  assert.deepEqual(
+    rig.popover().find("vault-row-confirm").map((el) => el.textContent),
+    ["从列表移除「gone-vault」？磁盘上的目录与文件不受影响。"],
+  );
+
+  // 再对 sandbox 点 ×：先前那份确认先撤掉——屏幕上永远只有一处确认
+  rowWrap(rig, "sandbox").find("vault-row-del")[0].fire("click", { stopPropagation: () => {} });
+  assert.equal(rig.popover().find("vault-row-confirm").length, 1, "确认态唯一");
+  assert.deepEqual(
+    rig.popover().find("vault-row-confirm").map((el) => el.textContent),
+    ["从列表移除「sandbox」？磁盘上的目录与文件不受影响。"],
+  );
+  assert.equal(rowWrap(rig, "gone-vault").find("vault-row").length, 1, "先前那行逐字还原");
+  assert.equal(rowWrap(rig, "gone-vault").find("vault-row-del").length, 1, "移除钮一起回来");
+  assert.deepEqual(rig.removed, [], "替换不产生任何移除请求");
+
+  // 只有一处「移除」可点：提交一次，只移除 sandbox，gone-vault 仍在列表里
+  confirmWrap(rig).find("vault-row-confirm-yes")[0].fire("click", { stopPropagation: () => {} });
+  await flush();
+  assert.deepEqual(rig.removed.map((row) => row.id), ["sandbox"]);
+  assert.deepEqual(
+    rig.list().find("vault-row").map((row) => row.dataset.vault),
+    ["notes", "gone-vault"],
+    "先前替换掉的确认行 MUST NOT 被删",
+  );
+  assert.equal(rig.popover().find("vault-row-confirm").length, 0);
 });
 
 test("确认失败：行还原、不重拉列表（提示由装配层给）", async () => {

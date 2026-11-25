@@ -116,6 +116,8 @@ export function summaryText(
 const ITEM_ID_PREFIX = "lumir-vault-opt-";
 /** 列表的 id（输入框的 `aria-controls` 指认它）。 */
 const LIST_ID = "lumir-vault-list";
+/** 本浮层在 `escapeRouter` 里的层 id：确认态的 Esc 只在它是栈顶时撤确认（见 `onKeydown`）。 */
+const ESCAPE_LAYER_ID = "vault-switcher";
 
 // ---------------------------------------------------------------------------
 // 纯函数：会话快照 / 恢复计划 / 摘要里的时间与路径
@@ -928,7 +930,7 @@ class VaultSwitcher implements VaultSwitcherHandle {
     }
   >();
 
-  /** 行内确认态在场时的键盘出口（见 `enterConfirm`）：`commit` 是 Delete / Backspace 第二次按下，
+  /** 行内确认态（单一，见 `enterConfirm`）：`commit` 是 Delete / Backspace 第二次按下，
    *  `cancel` 是取消（Esc 第一次按下 / 游标移动 / 点取消钮）。确认态把切换钮移出了游标空间，
    *  没有「游标行」可按——两个动作只存在于当前这份 DOM 里，随任何重建（`render` / `close` /
    *  取消 / 提交）一起作废。`rowId` 是确认行的身份：浮层被外部事件重建行 DOM 时按它把游标放回
@@ -1101,7 +1103,7 @@ class VaultSwitcher implements VaultSwitcherHandle {
         this.open = true;
         this.popover.hidden = false;
         // 层栈登记与开合同源（change fix-escape-overlay-close-oct24）：注销在 close()。
-        registerEscapeLayer("vault-switcher", () => this.close());
+        registerEscapeLayer(ESCAPE_LAYER_ID, () => this.close());
         this.deps.expanded(true);
         this.place(entry);
         // 焦点落到输入框（不是列表）：打开即可打字，且就地键经它的冒泡照常生效。
@@ -1119,7 +1121,7 @@ class VaultSwitcher implements VaultSwitcherHandle {
   close(restoreFocus = true): void {
     if (!this.open) return;
     this.open = false;
-    unregisterEscapeLayer("vault-switcher");
+    unregisterEscapeLayer(ESCAPE_LAYER_ID);
     this.popover.hidden = true;
     this.deps.expanded(false);
     // 查询与游标随关闭丢弃（spec）：下次打开从空查询与全量态起点开始。
@@ -1409,6 +1411,10 @@ class VaultSwitcher implements VaultSwitcherHandle {
     switchButton: HTMLButtonElement,
     del: HTMLButtonElement,
   ): void {
+    // 确认态**唯一**（change fix-selector-ime-aria-nov25 第三轮）：指针仍可能先后对 A、B 两行点
+    // ×——先前那份确认先撤掉（该行逐字还原），后进入的替换它。屏幕上因此永远只有一处确认，
+    // 「移除」的提交路径（点确认钮 / 第二次 Delete）也只可能有一条。
+    if (this.pendingConfirm !== null) this.pendingConfirm.cancel();
     const position = this.suspendRow(switchButton);
     const prompt = document.createElement("span");
     prompt.className = "vault-row-confirm";
@@ -1607,7 +1613,8 @@ class VaultSwitcher implements VaultSwitcherHandle {
     if (next !== this.activeIndex) this.setActive(next);
   }
 
-  /** 键盘游标（rows 下标）映射回列表行（rows 只含可用行）。 */
+  /** 键盘游标（rows 下标）映射回列表行。`rows` 是本次渲染的全部行（含失效行），所以游标停在
+   *  失效行上时同样能取到它——`Enter` 的重定位分支依赖这一条。 */
   private activeRow(): VaultListEntry | undefined {
     const el = this.rows[this.activeIndex];
     if (el === undefined) return undefined;
@@ -1653,7 +1660,15 @@ class VaultSwitcher implements VaultSwitcherHandle {
     // 与带修饰键的口径与窗口兜底逐字一致），只是这次「关闭」落在确认态这一层上。层栈不注销
     // ——第二次 Esc 照旧经 `escapeRouter.handle` 关掉整个浮层（既有规则）。这一步不能下沉到
     // `escapeRouter`：它关层后无条件把该层移出栈，撤确认与关层必须是两次独立的按键。
-    if (this.pendingConfirm !== null && escapeDisposition(event) === "close") {
+    // **层栈顶**（同 bindings-panel / settings-panel 的既有准入）：别的层（后开的 hover 提示等）
+    // 在本浮层之上时，这一拍 Escape 归路由——先关栈顶，MUST NOT 抢着撤确认；栈顶是本层（或栈
+    // 意外为空）时才轮到确认态。
+    const topLayer = escapeRouter.top();
+    if (
+      this.pendingConfirm !== null &&
+      (topLayer === null || topLayer.id === ESCAPE_LAYER_ID) &&
+      escapeDisposition(event) === "close"
+    ) {
       event.preventDefault();
       this.pendingConfirm.cancel();
       return;

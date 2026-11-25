@@ -82,10 +82,10 @@
       理由：把「清理失效项」留给指针等于把主用例关在键盘之外，而「筛出失效行再按 Delete」这条
       替代路径被「查询非空不消费」封死（筛出它必须输入查询）。`aria-disabled` 保留（只表示
       「不能切换过去」，与原生 `disabled` 不同）；`Enter` 落在失效行上走既有的重定位分支（此前
-      是不可达的死代码）。**行为变更**：`↑↓` 现在会停在失效行上，master 的
-      `tests/visual/scenes/mv-vault-switcher.spec.ts` 与 `list-filter.spec.ts` 的相应断言随之更新
-      （合并前须 Alex 过目）。delta 的「失效行 MUST NOT 进入游标空间」整句改写为「同样在游标
-      空间里」。
+      是不可达的死代码）。**行为变更（Alex 已采纳）**：失效行进入游标空间、`Delete` 删除、`Enter`
+      重定位；`↑↓` 因此会停在失效行上，master 的 `tests/visual/scenes/mv-vault-switcher.spec.ts`
+      与 `list-filter.spec.ts` 的相应断言随之更新。delta 的「失效行 MUST NOT 进入游标空间」整句
+      改写为「同样在游标空间里」。
 - [x] 6.2 `src/vault-switcher.ts`：`Delete` / `Backspace` 只在 `document.activeElement === input`
       时接管（keydown 挂在浮层容器上，Tab 到「新增 vault…」后按键照样冒泡）。焦点矩阵有单测与
       chromium 用例。
@@ -94,13 +94,41 @@
       游标在别处就**不**把它搬过去。
 - [x] 6.4 `Esc` 第一次只撤确认、第二次才关层：撤确认走浮层就地处理器 + 同一份 `escapeDisposition`
       准入（组合期 / 带修饰键口径与窗口兜底一致），层栈不注销——不能下沉到 `escapeRouter`，它
-      关层后会无条件把该层移出栈。取消钮加 `aria-keyshortcuts="Escape"`。
+      关层后会无条件把该层移出栈。撤确认前先看 `escapeRouter.top()`：别的层在栈顶时这一拍归
+      路由（关顶层），MUST NOT 抢着撤确认（第四轮收口，见 7.1）。取消钮加
+      `aria-keyshortcuts="Escape"`。
 - [x] 6.5 `onVaultLoaded` 重建行 DOM 时按 id 保游标（确认态在场时按确认行 id）：装载不再把用户
       挪开的游标抢回当前项，重建丢掉确认态后下一次 `Delete` 仍指向同一行。
 - [x] 6.6 组合期 `Delete` / `Backspace` 反例：单测两条（`isComposing` 与 `keyCode === 229`，含
       确认态在场时不提交）+ chromium 组合矩阵扩到 9 键。
 - [x] 6.7 验收场景 17 补「Esc 第一次只撤确认 → 再按 Delete 重新武装 → 第二次提交」三步（真机
       复跑归主会话）。
+
+## 7. 第四轮（机械核验第三轮剩余项收口）
+
+> 依据：`.local/reviews/selector-ime-aria-nov25/mechanical.md` §4 的 2 / 3 / 4 / 5 / 6 / 9 六项。
+> 证据落 `.local/probes/selector-ime-aria-nov25/`（`r4-green-*.log` / `r4-red-*.log`），索引与红根
+> 说明见同目录 `r4-red-roots.md`（7.6）。
+
+- [x] 7.1 `Esc` 撤确认尊重层栈：撤确认分支先看 `escapeRouter.top()`，别的层在栈顶时把这一拍交给
+      `escapeRouter.handle`（关顶层），确认态不动；栈顶是本层时第一次 Esc 才撤确认（`onKeydown`）。
+      单测「确认态的 Esc 尊重层栈」用后登记的层演更高层，逐拍断言：关顶层 → 撤确认 → 关浮层。
+- [x] 7.2 确认态唯一：`enterConfirm` 进入时若已有确认，先撤掉它（该行逐字还原）再进入新的——
+      指针先后对 A、B 两行点 × 只剩一处确认，提交路径只有一条、只发一次移除。单测钉住
+      「替换后先前那行还在、提交只移除后者」。
+- [x] 7.3 失效行 `Delete` 端到端：视觉场景补「↑ 到失效行 → 第一次 Delete 确认 → 第二次移除」；
+      验收场景 17 追加同一条（seed 一条惰性缺失的注册项，`vault_list` 按目录存在性给
+      `available=false`）。
+- [x] 7.4 失效行 `Enter` 重定位：视觉场景用 `vault_open` 的重映射候选桩跑完整链路
+      （`vault_open → vault_remap → vault_open_path`），断言映射点名失效项稳定 id、按新根装载、
+      不发起切换。真机侧受原生目录选择器限制（套件不驱动原生对话框），由视觉层判。
+- [x] 7.5 当前失效行 `is-current` + `is-missing`：补计算样式与 WCAG 对比度断言（行底色 / 前景 /
+      名称与「路径不可用…」两处文字 ≥ 4.5:1，且与可用 vault 的当前行逐值一致——失效不另起一套
+      色）。未改动 `src/style.css`。
+- [x] 7.6 证据落盘：目标视觉 / 24 条回归 / 全量单测 / 两条 tsc / `docs-check` / `openspec validate`
+      的绿跑日志，加两份**分开的红证据**：回退 `src/vault-switcher.ts` 到 `37cebd2c` 的整份红跑
+      （组合期 Delete 那条的红根 = 失效行前置，须在说明里点明），以及只摘掉组合期守卫的 mutant
+      红跑（证明守卫本身的区分度）。commit message 不再充当证据。
 
 ## 备注（合并时由主会话统一）
 
@@ -114,8 +142,8 @@
 - 第三轮的区分度：把 `src/vault-switcher.ts` 临时回退到 `37cebd2c` 后，本轮新增的 6 条单测全部
   判红（焦点矩阵、失效行清理、游标移动 / 查询变化取消、Esc 两次、组合期 Delete / Backspace、
   按 id 保位），恢复后全绿——新用例对旧代码有区分度。回退期间未提交、未改其它文件。
-- **合并前须 Alex 过目的一项行为变更**：失效行进入键盘游标空间后，`↑↓` 会停在失效行上（此前
-  跳过）。这改写了 master 既有产品行为，`tests/visual/scenes/mv-vault-switcher.spec.ts` 与
-  `list-filter.spec.ts` 的相应断言已同步更新。若 Alex 不接受该变更，需要退回的是
-  `renderRow` 的 `this.rows.push(el)`（恢复 `if (row.available)` 门）连同本 delta 与上述三处
-  测试的对应段落；其余五项（焦点矩阵 / 取消语义 / Esc / 组合期反例 / 按 id 保位）不依赖它。
+- **行为变更已获 Alex 采纳**：失效行进入键盘游标空间后，`↑↓` 会停在失效行上（此前跳过），
+  并且 `Delete` 可清理它、`Enter` 走重新定位。master 的 `tests/visual/scenes/mv-vault-switcher.spec.ts`
+  与 `list-filter.spec.ts` 的相应断言已同步更新。变更面：`renderRow` 的 `this.rows.push(el)`
+  （失效行也进游标空间）连同本 delta 与上述测试的对应段落；其余项（焦点矩阵 / 取消语义 / Esc /
+  组合期反例 / 按 id 保位 / 单一确认态 / 层栈准入）不依赖它。

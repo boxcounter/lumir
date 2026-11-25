@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { invokes, stubTauri, type VaultFixture, type VaultListRow } from "./tauri-stub";
+import { invokes, remapCalls, stubTauri, type VaultFixture, type VaultListRow } from "./tauri-stub";
 
 // 选择器浮层（大纲 / vault）的键盘、ARIA 与焦点口径（change fix-selector-ime-aria-nov25）。
 //
@@ -53,6 +53,17 @@ const MISSING_CURRENT: VaultFixture = {
   ],
 };
 
+/** 「重新定位…」的落点（vault_open 在重映射门返回的候选 + 选中后的完整 fixture）。
+ *  Enter 落在失效行上走的是这条链，不是「切换已注册 vault」。 */
+const MOVED_ROOT = "/Users/alex/moved-vault";
+const MOVED_VAULT: VaultFixture & { root: string } = {
+  root: MOVED_ROOT,
+  entries: [{ path: "moved.md", kind: "file", size: 8, mtime_ms: 0 }],
+  files: { "moved.md": "# Moved\n\n重定位后的 vault。\n" },
+  vault_id: "vault-gone",
+  remapCandidates: [{ id: "vault-gone", path: MOVED_ROOT }],
+};
+
 async function openToc(page: Page): Promise<void> {
   await stubTauri(page, VAULT);
   await page.goto("/");
@@ -104,6 +115,58 @@ async function installFocusLog(page: Page): Promise<void> {
 
 async function focusLog(page: Page): Promise<string[]> {
   return page.evaluate(() => (window as unknown as { __focusLog: string[] }).__focusLog);
+}
+
+/** 一个元素的「前景 vs 实际背景」对比度（WCAG 2.1 相对亮度比）。
+ *
+ *  背景按祖先链逐层 alpha 合成（dark 的 `--sel` 是半透明白；只读一层的 `backgroundColor`
+ *  会拿到 `rgba(...)`，与前景算比值没有意义）；前景自身若半透明也先合成到背景上。 */
+async function contrastRatioOf(
+  page: Page,
+  selector: string,
+): Promise<{ ratio: number; color: string; background: string }> {
+  return page.locator(selector).evaluate((el) => {
+    interface Rgba {
+      r: number;
+      g: number;
+      b: number;
+      a: number;
+    }
+    const parse = (value: string): Rgba => {
+      const m = /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)/.exec(value);
+      if (m === null) throw new Error(`无法解析颜色：${value}`);
+      return { r: Number(m[1]), g: Number(m[2]), b: Number(m[3]), a: m[4] === undefined ? 1 : Number(m[4]) };
+    };
+    const over = (top: Rgba, bottom: Rgba): Rgba => ({
+      r: top.r * top.a + bottom.r * (1 - top.a),
+      g: top.g * top.a + bottom.g * (1 - top.a),
+      b: top.b * top.a + bottom.b * (1 - top.a),
+      a: 1,
+    });
+    const layers: Rgba[] = [];
+    for (let node: Element | null = el; node !== null; node = node.parentElement) {
+      const bg = parse(getComputedStyle(node).backgroundColor);
+      if (bg.a > 0) layers.push(bg);
+    }
+    let background: Rgba = { r: 255, g: 255, b: 255, a: 1 };
+    for (let i = layers.length - 1; i >= 0; i -= 1) background = over(layers[i] as Rgba, background);
+    const style = getComputedStyle(el);
+    const color = over(parse(style.color), background);
+    const luminance = (c: Rgba): number => {
+      const channel = (v: number): number => {
+        const s = v / 255;
+        return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+      };
+      return 0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b);
+    };
+    const front = luminance(color);
+    const back = luminance(background);
+    return {
+      ratio: (Math.max(front, back) + 0.05) / (Math.min(front, back) + 0.05),
+      color: style.color,
+      background: style.backgroundColor,
+    };
+  });
 }
 
 /** 组合期可派发的按键：裸 key，或带 ctrlKey 的 chord（`⌃N` / `⌃P` 与 `↑` / `↓` 共用一条守卫）。 */
@@ -499,6 +562,33 @@ test("vault：当前 vault 失效时保留 aria-current=true 与 ✓ /「当前�
   await expect(currentMissing).toHaveAttribute("aria-selected", "false");
 });
 
+test("vault：当前失效行 is-current + is-missing 的计算样式与对比度（失效不另起一套色、文字仍可读）", async ({ page }) => {
+  /** 当前行三个读点：行底色 / 行前景 / 名称前景——「失效」不得改变任何一项。 */
+  const readCurrent = async (): Promise<{ background: string; color: string; nameColor: string }> =>
+    page.locator('.vault-row[aria-current="true"]').evaluate((el) => {
+      const style = getComputedStyle(el);
+      const name = el.querySelector(".vault-row-name");
+      if (name === null) throw new Error("当前行没有名称节点");
+      return { background: style.backgroundColor, color: style.color, nameColor: getComputedStyle(name).color };
+    });
+
+  // 基线：可用 vault 的当前行
+  await openSwitcher(page);
+  const normal = await readCurrent();
+  const normalName = await contrastRatioOf(page, '.vault-row[aria-current="true"] .vault-row-name');
+  expect(normalName.ratio, `当前行名称对比度不足：${JSON.stringify(normalName)}`).toBeGreaterThanOrEqual(4.5);
+
+  // 现场：同一个当前 vault 变成失效（盘拔出 / 目录改名）。身份色不得因可用性换一套，
+  // 名称与「路径不可用…」两处文字仍须达到 AA 正文对比度。
+  await openSwitcherWith(page, MISSING_CURRENT);
+  const missing = await readCurrent();
+  expect(missing).toEqual(normal);
+  const missingName = await contrastRatioOf(page, '.vault-row[aria-current="true"] .vault-row-name');
+  expect(missingName.ratio, `当前失效行名称对比度不足：${JSON.stringify(missingName)}`).toBeGreaterThanOrEqual(4.5);
+  const warn = await contrastRatioOf(page, '.vault-row[aria-current="true"] .vault-row-sub.is-warn');
+  expect(warn.ratio, `当前失效行「路径不可用」对比度不足：${JSON.stringify(warn)}`).toBeGreaterThanOrEqual(4.5);
+});
+
 test("vault：Delete / Backspace 在游标行上走同一套两步确认，查询编辑与当前项不被接管", async ({ page }) => {
   await openSwitcher(page);
   const popover = page.locator(".vault-pop");
@@ -540,6 +630,54 @@ test("vault：Delete / Backspace 在游标行上走同一套两步确认，查�
   await expect(page.locator(".vault-row-name")).toHaveText(["gone-vault", "demo-vault", "sandbox-vault"]);
   await expect(popover).toBeVisible();
   expect((await invokes(page)).filter((cmd) => cmd === "vault_remove")).toEqual(["vault_remove"]);
+});
+
+test("vault：失效行 Delete 走同一套两步确认并移除（端到端，覆盖到「第二次按下真的删掉」）", async ({ page }) => {
+  await openSwitcher(page);
+  const input = page.locator(".vault-filter");
+  const popover = page.locator(".vault-pop");
+  const confirm = page.locator(".vault-row-confirm");
+  const removes = async (): Promise<string[]> => (await invokes(page)).filter((cmd) => cmd === "vault_remove");
+
+  // 游标从当前项 ↑ 落到失效行（它在前端不重排，仍是第一行）
+  await page.keyboard.press("ArrowUp");
+  const active = page.locator(".vault-row.is-active");
+  await expect(active.locator(".vault-row-name")).toHaveText("gone-vault");
+  await expect(active).toHaveAttribute("aria-disabled", "true");
+
+  // 第一次 Delete：与指针同一套两步确认，确认句点名失效行，零移除请求、浮层不收起
+  await page.keyboard.press("Delete");
+  await expect(confirm).toHaveText(/gone-vault/);
+  await expect(popover).toBeVisible();
+  await expect(input).toBeFocused();
+  expect(await removes()).toEqual([]);
+
+  // 第二次 Backspace：只发一次请求，失效行消失，其余行序不变
+  await page.keyboard.press("Backspace");
+  await expect(page.locator(".vault-row")).toHaveCount(3);
+  await expect(page.locator(".vault-row-name")).toHaveText(["demo-vault", "notes-vault", "sandbox-vault"]);
+  await expect(popover).toBeVisible();
+  expect(await removes()).toEqual(["vault_remove"]);
+});
+
+test("vault：失效行 Enter 走重定位（选目录 → vault_remap → 按新根装载），不发起切换", async ({ page }) => {
+  await openSwitcherWith(page, { ...VAULT, switchTo: MOVED_VAULT });
+  const popover = page.locator(".vault-pop");
+
+  // 游标 ↑ 到失效行，Enter：不是切换（那条路径只对可用行开放），是「重新定位…」
+  await page.keyboard.press("ArrowUp");
+  await expect(page.locator(".vault-row.is-active .vault-row-name")).toHaveText("gone-vault");
+  await page.keyboard.press("Enter");
+  await expect(popover).toBeHidden();
+
+  // 映射意图点名失效项的稳定 id + 用户选中的新目录，随后按新根装载
+  await expect.poll(() => remapCalls(page)).toEqual([{ id: "vault-gone", path: MOVED_ROOT }]);
+  await expect(page.locator(".ft-vault-name")).toHaveText("moved-vault");
+  await expect(page.locator('.ft-row[title="moved.md"]')).toBeVisible();
+  // 走的是重定位链（vault_open → vault_remap → vault_open_path），不是「打开另一个已注册 vault」
+  const calls = await invokes(page);
+  expect(calls.filter((cmd) => cmd === "vault_remap")).toHaveLength(1);
+  expect(calls.filter((cmd) => cmd === "vault_open_path")).toHaveLength(1);
 });
 
 test("vault：Delete / Backspace 只在筛选输入框持焦时接管（Tab 到新增入口后不触发）", async ({ page }) => {
