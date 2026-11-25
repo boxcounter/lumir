@@ -147,6 +147,7 @@ test("$vault2 步骤级解析：874 的 text/target/ax/record/file 不残留字�
   assert.ok(rootReady.waitFor.has.includes(`${external}sub/`));
   const rootState = scenario.steps.find((step) => step.do === "settle" && JSON.stringify(step.expect).includes("直接子项 3 条"));
   assert.ok(rootState, "874 应在扫描落定后断言三项真实候选");
+  assert.equal(scenario.steps.filter((step) => step.do === "typeInNode" && step.replace === true).length, 2, "两次目录查询切换都应使用真实替换通道");
   const record = scenario.steps.find((step) => step.do === "record");
   assert.equal(record.file, `${external}sub/child.md`);
 });
@@ -216,6 +217,57 @@ test("$vault2 从 loadScenario 到执行器同源：typeInNode/ax/record/file �
   const { status, records } = await drive(root, scenario, { cu });
   assert.deepEqual(injected, [`${second}/`]);
   assert.equal(status, "PASS", JSON.stringify(records));
+});
+
+test("typeInNode replace：焦点后先全选再替换，追加默认不变且非法配置静态报 problem", async () => {
+  const root = tmpRoot("type-in-node-replace");
+  useTmpEnv(root);
+  let inputValue = "";
+  let replaceOnType = false;
+  const events = [];
+  const axText = () => [
+    "# Lumir App State",
+    "",
+    "- app: Lumir",
+    "- pid: 123",
+    "- window_bounds: x=8 y=40 w=1200 h=800 (screen points)",
+    "",
+    "```text",
+    '- [0] AXApplication "Lumir"',
+    '  - [1] AXWindow "Lumir" @0,0 1200×800',
+    "    - [2] AXWebArea (Lumir)",
+    `      - [9] AXTextArea (Quick Open) = "${inputValue}" (focused)`,
+    "```",
+  ].join("\n");
+  const cu = {
+    state: async () => ({ text: axText(), image: null }),
+    pressKey: async (_pid, key) => {
+      events.push(`key:${key}`);
+      if (key === "cmd+a") replaceOnType = true;
+      return { json: { ok: true } };
+    },
+    typeText: async (_pid, text) => {
+      events.push(`type:${text}`);
+      inputValue = replaceOnType ? text : inputValue + text;
+      replaceOnType = false;
+      return { json: { ok: true } };
+    },
+  };
+  const scenario = {
+    steps: [
+      { name: "默认追加", do: "typeInNode", target: { role: "AXTextArea", name: "^Quick Open$" }, text: "root/" },
+      { name: "全选替换", do: "typeInNode", target: { role: "AXTextArea", name: "^Quick Open$" }, text: "missing/", replace: true },
+      { name: "终值精确", expect: [{ label: "旧查询不残留", ax: { has: 'AXTextArea (Quick Open) = "missing/"' } }] },
+    ],
+  };
+  const { status, records } = await drive(root, scenario, { cu });
+  assert.equal(status, "PASS", JSON.stringify(records));
+  assert.equal(inputValue, "missing/");
+  assert.deepEqual(events, ["type:root/", "key:cmd+a", "type:missing/"]);
+  const problems = checkScenario({
+    steps: [{ name: "非法 replace", do: "typeInNode", target: { role: "AXTextArea", name: "x" }, text: "x", replace: "yes" }],
+  });
+  assert.ok(problems.some((problem) => problem.includes("replace 需要布尔值")), JSON.stringify(problems));
 });
 
 test("多键 file 断言逐键判：exists + has + not 各落一条记录", async () => {

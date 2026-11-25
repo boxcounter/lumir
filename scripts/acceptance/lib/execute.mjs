@@ -756,6 +756,8 @@ export function checkScenario(scenario) {
         push(`${at} do=typeInNode 不接受 gapMs（整串一次粘贴，无逐键间隔——迁移自 do:keys 时请删掉）`);
       if (step.keys !== undefined)
         push(`${at} do=typeInNode 与 keys 互斥（迁移自 do:keys 时把 keys 数组合成 text 字符串后删掉 keys）`);
+      if (step.replace !== undefined && typeof step.replace !== "boolean")
+        push(`${at} do=typeInNode 的 replace 需要布尔值（缺省 false=追加；true=全选后替换）`);
     }
     if (step.do === "waitFor") {
       // 轮询判据（M296）：`has` / `not` 两份字符串清单，至少一项非空；写错键名会静默变成
@@ -4081,6 +4083,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         text: step.text,
         retries: step.retries ?? 3,
         label: JSON.stringify(t),
+        replace: step.replace === true,
       });
       if (!out.focused) {
         evidence.record({
@@ -4117,13 +4120,13 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       }
       if (out.verdict === "partial") {
         throw new Error(
-          `typeInNode 注入部分落地：目标串「${step.text}」出现 ${countOf(out.lastValue)} 次（期望 ${out.baseline + 1}），但目标内容已变——` +
+          `typeInNode 注入部分落地：目标串「${step.text}」出现 ${countOf(out.lastValue)} 次（期望 ${step.replace === true ? `整个值=${JSON.stringify(step.text)}` : out.baseline + 1}），但目标内容已变——` +
             `不重试：再注入整串会拼出脏文本。基线=${JSON.stringify(out.baselineValue.slice(0, 200))} ` +
             `现值=${JSON.stringify(out.lastValue.slice(0, 200))}`,
         );
       }
       throw new Error(
-        `typeInNode 注入未落地：${out.attempts} 次注入后目标串「${step.text}」出现 ${countOf(out.lastValue)} 次（期望 ${out.baseline + 1}）；` +
+        `typeInNode 注入未落地：${out.attempts} 次注入后目标串「${step.text}」出现 ${countOf(out.lastValue)} 次（期望 ${step.replace === true ? `整个值=${JSON.stringify(step.text)}` : out.baseline + 1}）；` +
           `目标内容每次注入前后逐字节一致（丢在注入链路；前置诊断：目标节点${out.focused ? "有" : "无"} (focused) 标记，` +
           "无标记时注入落在当前焦点元素上、回读必然未落地）",
       );

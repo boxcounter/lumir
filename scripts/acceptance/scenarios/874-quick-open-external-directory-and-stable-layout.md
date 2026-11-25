@@ -98,16 +98,11 @@ steps:
           record: qo-874-input
       - shot: 02-外部目录三项候选
 
-  - name: 切到不存在的外部目录，形成零候选与长提示（先清空，避免追加型注入点击守卫破坏全选）
-    do: keys
-    keys: ["cmd+a", "backspace"]
-    expect:
-      - label: 查询已清空、输入框持焦，后续 typeInNode 不需再点击建立焦点
-        ax: { focused: "AXComboBox" }
-  - name: 输入不存在的外部目录
+  - name: 切到不存在的外部目录，形成零候选与长提示（聚焦后全选，再用真实键盘注入替换）
     do: typeInNode
     target: { role: AXComboBox, name: "按路径快速打开文件|$vault2" }
     text: "$vault2/missing-with-a-long-name-for-stable-hint/"
+    replace: true
   - name: 等不存在目录状态落定
     do: waitFor
     waitFor:
@@ -124,16 +119,11 @@ steps:
           unchangedSince: qo-874-input
       - shot: 03-零候选长提示
 
-  - name: 返回外部根目录（先清空，再让追加型注入落在持焦输入框）
-    do: keys
-    keys: ["cmd+a", "backspace"]
-    expect:
-      - label: 查询已清空、输入框持焦
-        ax: { focused: "AXComboBox" }
-  - name: 再次输入外部根目录
+  - name: 返回外部根目录（同一真实替换通道）
     do: typeInNode
     target: { role: AXComboBox, name: "按路径快速打开文件|$vault2" }
     text: "$vault2/"
+    replace: true
   - name: 等三项候选恢复
     do: waitFor
     waitFor:
