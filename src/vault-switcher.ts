@@ -888,6 +888,11 @@ class VaultSwitcher implements VaultSwitcherHandle {
   private activeIndex = -1;
   /** 输入法组合进行中：组合期不刷新结果集（同大纲浮层，拼音串必然零命中）。 */
   private composing = false;
+  /**
+   * 上一次按查询串重建结果集时的输入值：`compositionend` 之后引擎补发的同值 `input` 按它去重，
+   * 保证组合结束只刷新一次（change fix-selector-ime-aria-nov25）。
+   */
+  private lastRenderedQuery: string | null = null;
   /** 打开请求的令牌：拉取是异步的，回来时若已被关闭 / 又开过一次，本次结果整体丢弃。 */
   private openToken = 0;
   /** 当前 vault 的 id（列表里的当前项标记）。 */
@@ -964,16 +969,18 @@ class VaultSwitcher implements VaultSwitcherHandle {
     // 列表内导航：↑↓ / ⌃N⌃P 移动，Enter 切换，Esc 关闭。挂点在**浮层容器**上：持焦点的是输入框，
     // 它的键冒泡到这里；行为口径一字不改（仍是就地消费 + preventDefault）。
     popover.addEventListener("keydown", (event) => this.onKeydown(event));
-    // 输入即筛（组合期不刷新，见 composing 的说明）。
+    // 输入即筛（组合期不刷新，见 composing 的说明）。组合结束按**最终串**刷一次；引擎在
+    // `compositionend` 之后补发的同值 `input` 按 `lastRenderedQuery` 去重（不刷第二次）。
     input.addEventListener("compositionstart", () => {
       this.composing = true;
     });
     input.addEventListener("compositionend", () => {
       this.composing = false;
-      this.render(this.rowEntries);
+      if (this.input.value !== this.lastRenderedQuery) this.render(this.rowEntries);
     });
     input.addEventListener("input", (event) => {
       if (this.composing || (event as InputEvent).isComposing) return;
+      if (this.input.value === this.lastRenderedQuery) return;
       this.render(this.rowEntries);
     });
     // 浮层内的行不夺焦点（与 .lumir-toc 的条目、标签栏同一手法）：mousedown 一旦夺焦，
@@ -1081,6 +1088,9 @@ class VaultSwitcher implements VaultSwitcherHandle {
     // 查询与游标随关闭丢弃（spec）：下次打开从空查询与全量态起点开始。
     this.input.value = "";
     this.filter.reset();
+    this.lastRenderedQuery = null;
+    // 关闭态不保留「游标指向谁」的 ARIA 关系（下次打开会重建）。
+    this.input.removeAttribute("aria-activedescendant");
     if (restoreFocus) this.handOffFocus();
   }
 
@@ -1153,6 +1163,7 @@ class VaultSwitcher implements VaultSwitcherHandle {
       this.input.value,
       this.rowEntries.map((row) => row.name),
     );
+    this.lastRenderedQuery = this.input.value;
     // 换整份行 DOM 是浮层自己发起的最大的那次重建：走 `rebuild` 的收口（M668）。
     this.rebuild(() =>
       this.list.replaceChildren(
@@ -1192,15 +1203,24 @@ class VaultSwitcher implements VaultSwitcherHandle {
     el.type = "button";
     el.className = "vault-row";
     el.setAttribute("role", "option");
-    el.setAttribute("aria-selected", String(current));
+    // `aria-selected` 只表示键盘游标（由 setActive 更新）；当前 vault 是另一件事，用 aria-current
+    // 与既有 ✓ / 「当前」标记表示（change fix-selector-ime-aria-nov25 的选择器合同）。
+    el.setAttribute("aria-selected", "false");
+    el.setAttribute("aria-current", String(current));
+    // listbox 里的原生 button 会让 Tab 在浮层内形成不可预测遍历（行按钮 + 删除钮的个数随行而变）：
+    // 行与删除钮一律不进 Tab 序列，指针点击与键盘 Enter 的语义不变。
+    el.tabIndex = -1;
     el.dataset.vault = row.id;
+    // 每个 option 都要有唯一 id（含失效行）：`aria-activedescendant` 只能指向 option，失效行
+    // 虽不在游标空间里，仍要被 ARIA 关系闭合覆盖，便于读屏逐项浏览。
+    el.id = `${ITEM_ID_PREFIX}${source}`;
     if (row.available) {
-      el.id = `${ITEM_ID_PREFIX}${source}`;
       if (current) el.classList.add("is-current");
       this.rows.push(el);
     } else {
-      // 不可用：仍是可聚焦的一行（键盘要能走到「重新定位…」），语义是「不可选中」，
-      // 点击不发起打开（spec「失效 vault 的处置与清理」）。
+      // 不可用：仍是列表里的一行（指针可点、读屏可逐项浏览），语义是「不可选中」，点击不发起
+      // 打开（spec「失效 vault 的处置与清理」）。它不在键盘游标空间里（`rows` 只收可用行），
+      // 行本身 `tabindex=-1` 不进 Tab 序列——「重新定位…」的入口是指针 / 读屏的 AXPress。
       el.classList.add("is-missing");
       el.setAttribute("aria-disabled", "true");
     }
@@ -1260,6 +1280,7 @@ class VaultSwitcher implements VaultSwitcherHandle {
       del.className = "vault-row-del";
       del.setAttribute("aria-label", REMOVE_LABEL(row.name));
       del.title = REMOVE_LABEL(row.name);
+      del.tabIndex = -1;
       del.textContent = "×"; // i18n-exempt: glyph（乘号图形，非文案）
       del.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -1329,10 +1350,12 @@ class VaultSwitcher implements VaultSwitcherHandle {
     const yes = document.createElement("button");
     yes.type = "button";
     yes.className = "vault-row-confirm-yes";
+    yes.tabIndex = -1;
     yes.textContent = REMOVE_CONFIRM_YES();
     const no = document.createElement("button");
     no.type = "button";
     no.className = "vault-row-confirm-no";
+    no.tabIndex = -1;
     no.textContent = CANCEL_TEXT();
     const restoreRow = (): void => {
       this.rebuild(() => wrap.replaceChildren(switchButton, del));
@@ -1385,6 +1408,7 @@ class VaultSwitcher implements VaultSwitcherHandle {
     if (this.activeIndex === index) {
       this.activeIndex = -1;
       row.classList.remove("is-active");
+      row.setAttribute("aria-selected", "false");
       this.input.removeAttribute("aria-activedescendant");
     } else if (this.activeIndex > index) {
       this.activeIndex -= 1;
@@ -1440,7 +1464,10 @@ class VaultSwitcher implements VaultSwitcherHandle {
 
   private setActive(index: number): void {
     const previous = this.rows[this.activeIndex];
-    if (previous) previous.classList.remove("is-active");
+    if (previous) {
+      previous.classList.remove("is-active");
+      previous.setAttribute("aria-selected", "false");
+    }
     this.activeIndex = index;
     const row = this.rows[index];
     if (!row) {
@@ -1448,6 +1475,7 @@ class VaultSwitcher implements VaultSwitcherHandle {
       return;
     }
     row.classList.add("is-active");
+    row.setAttribute("aria-selected", "true");
     // 挂在**持焦点**的输入框上（ARIA 要求 aria-activedescendant 落在焦点元素上）；列表靠
     // `aria-controls` 指认，不再持有该属性。
     this.input.setAttribute("aria-activedescendant", row.id);
@@ -1501,6 +1529,10 @@ class VaultSwitcher implements VaultSwitcherHandle {
   }
 
   private onKeydown(event: KeyboardEvent): void {
+    // 输入法组合期归输入法：`↑↓` / `Enter` 在组合期是被输入法用来选候选的，浮层 MUST NOT 移动
+    // 游标、MUST NOT 发起切换 / 重定位，也不消费该键。与 Quick Open 的同一行守卫同源；
+    // `escapeRouter` 的组合期让路只覆盖 Escape，本守卫覆盖全部就地键。
+    if (event.isComposing || event.keyCode === 229) return;
     // Escape 归**窗口级兜底同一个** `escapeRouter.handle`（change fix-escape-overlay-close-oct24）：
     // 按层的打开序关**栈顶**（不持焦的 hover 提示可以后开在下层之上），关闭实现是该层登记时的
     // 既有 close；准入（无修饰才关、组合期让路、已消费让路）也只有那一份。无修饰才关层；带修饰键只消费

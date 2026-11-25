@@ -97,6 +97,29 @@ steps:
       - label: Esc 收起浮层（关闭后列表内容不在 AX 里）
         ax: { not: "选择一个目录作为新 vault" }
 
+  # change fix-selector-ime-aria-nov25：Esc 是主动关闭，焦点交还编辑器并保持阅读位置。
+  - name: Esc 之后焦点交还编辑器
+    do: settle
+    expect:
+      - label: 焦点在编辑器正文（AXTextArea）上，而不是停在已隐藏的筛选框里
+        ax: { focused: "AXTextArea" }
+
+  - name: ⌘O 再打开（判 Tab 遍历口径）
+    do: key
+    key: "cmd+o"
+    expect:
+      - label: 浮层已展开
+        ax: { has: "选择一个目录作为新 vault" }
+
+  # 行切换钮与删除钮 tabindex=-1（change fix-selector-ime-aria-nov25）：新实现第一次 Tab 落到
+  # 「新增 vault…」、第二次离开浮层；旧实现第二次 Tab 会落到行尾删除钮，浮层保持打开。
+  - name: Tab 两次（行与删除钮不进 Tab 序列）
+    do: keys
+    keys: ["tab", "tab"]
+    expect:
+      - label: 浮层收起（MUST NOT 让 Tab 在 listbox 的行 / 删除钮之间遍历）
+        ax: { not: "选择一个目录作为新 vault" }
+
   - name: ⌘O 再打开一次
     do: key
     key: "cmd+o"
@@ -185,3 +208,6 @@ steps:
 双击 / ⌘-点击固定标签（同上，另一条通道覆盖）。**浮层列表的滚动条形态**（M660 #1）同样不在
 本场景：AX 读不到滚动条，本场景的注册表只有两个 vault、列表不溢出；隐藏档与「不压行尾移除钮」
 的溢出态判据在 `tests/visual/scenes/mv-vault-switcher.spec.ts` 的 M660 #1 用例。
+**Tab 遍历与 ARIA 属性**（change fix-selector-ime-aria-nov25）：本场景只判终端事实「两次 Tab 后
+浮层收起」；行 / 删除钮的 `tabindex`、`aria-selected` / `aria-current` 与 option id 归 chromium
+矩阵（`tests/visual/scenes/selector-aria-ime-nov25.spec.ts`），AX 读不到这些属性。

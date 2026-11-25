@@ -105,6 +105,29 @@ steps:
       - label: Esc 只关浮层，不动文档
         editor: { has: "乙小节细节正文。" }
 
+  # change fix-selector-ime-aria-nov25：关闭路径的焦点口径按主动 / 被动区分——Esc 是主动关闭，
+  # 焦点回编辑器；点浮层外的被动关闭不抢焦点。真机 AX 只判主动关闭这一半（被动关闭的落点归
+  # 浏览器默认行为，chromium 矩阵已覆盖）。
+  - name: Esc 之后焦点交还编辑器
+    do: settle
+    expect:
+      - label: 焦点在编辑器正文（AXTextArea）上，而不是停在已隐藏的筛选框里
+        ax: { focused: "AXTextArea" }
+
+  - name: ⌘⇧O 再开，按 Tab 把焦点移出浮层
+    do: key
+    key: "cmd+shift+o"
+    expect:
+      - label: 浮层已展开
+        ax: { has: "⌃N⌃P 选择" }
+
+  - name: Tab 两次（浮层不消费 Tab，焦点离开即收起）
+    do: keys
+    keys: ["tab", "tab"]
+    expect:
+      - label: 浮层收起（MUST NOT 留下浮层开着、焦点在外）
+        ax: { not: "⌃N⌃P 选择" }
+
   - name: 打开标题数远超一屏的长文（60 条标题，条目数远超浮层可视区）
     do: open
     file: toc-long.md
@@ -386,6 +409,10 @@ modeline 显示当前标题路径（兼作位置指示），点击它或按 ⌘�
   落点，M754 起与 `editor.jumpToLine` 同一交接口径），故 ⌃K 紧跟跳转；若把 ⌃K 挪到别的上下文，
   需要先 `clickEditor` 或先做一次跳转。
 - **鼠标跳转**：点浮层条目走的是与键盘同一跳转实现（`src/toc.ts` 的 `jumpTo`）。
+- **IME 组合期与 ARIA 属性不在这条通道里**（change fix-selector-ime-aria-nov25）：AX 读不到
+  option 的 `aria-selected` / `aria-current`，组合期按键序列也无法由套件稳定注入。代码级判据在
+  `tests/visual/scenes/selector-aria-ime-nov25.spec.ts`；真机只做手工复核（真实中文输入法下组合期
+  `↓` / `Enter` 不导航、不接受，组合结束后列表按最终串刷新一次），清单见该 change 的完工报告。
 
 ## 环境与副作用
 

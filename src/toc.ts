@@ -306,6 +306,12 @@ class Toc implements TocHandle {
   private currentSource = -1;
   /** 输入法组合进行中：组合期不刷新结果集（拼音串必然零命中，刷新会闪一下）。 */
   private composing = false;
+  /**
+   * 上一次按查询串重建结果集时的输入值。`compositionend` 之后真实引擎还会补发一次
+   * `isComposing=false` 的同值 `input`——按值去重，保证组合结束只刷新一次（change
+   * fix-selector-ime-aria-nov25）。
+   */
+  private lastRenderedQuery: string | null = null;
   /** 浮层打开态与键盘游标（结果集的下标）。 */
   private open = false;
   private activeIndex = -1;
@@ -380,16 +386,18 @@ class Toc implements TocHandle {
     // 就地键挂在**浮层容器**上：持焦点的是输入框，它的键冒泡到这里；列表已不是焦点路径。
     // 行为口径一字不改（仍是就地消费 + preventDefault，未消费的键照常走原生路径）。
     popover.addEventListener("keydown", (event) => this.onKeydown(event));
-    // 输入即筛。组合期不刷新（见 composing 的说明），组合结束后补一次。
+    // 输入即筛。组合期不刷新（见 composing 的说明）；组合结束按**最终串**刷一次——真实引擎在
+    // `compositionend` 之后还会补发一次同值 `input`，按 `lastRenderedQuery` 去重，MUST NOT 刷两次。
     input.addEventListener("compositionstart", () => {
       this.composing = true;
     });
     input.addEventListener("compositionend", () => {
       this.composing = false;
-      this.render();
+      if (this.input.value !== this.lastRenderedQuery) this.render();
     });
     input.addEventListener("input", (event) => {
       if (this.composing || (event as InputEvent).isComposing) return;
+      if (this.input.value === this.lastRenderedQuery) return;
       this.render();
     });
     // 焦点离开**浮层**才收起（Tab 出去、点到别处、窗口失活都走这条）——挂点必须外移到容器：
@@ -400,12 +408,14 @@ class Toc implements TocHandle {
       if (next instanceof Node && popover.contains(next)) return;
       this.close(false);
     });
-    // 点击浮层与指示段之外的地方收起（编辑器、文件树、toast…）。
+    // 点击浮层与指示段之外的地方收起（编辑器、文件树、toast…）。这条是**被动关闭**：焦点归用户
+    // 刚点的目标（点编辑器时由编辑器自然接手），MUST NOT 用交还焦点的路径把焦点拽回编辑器
+    // （change fix-selector-ime-aria-nov25；主动关闭只有 Esc / 再次触发命令）。
     document.addEventListener("mousedown", (event) => {
       if (!this.open) return;
       const target = event.target;
       if (target instanceof Node && (popover.contains(target) || this.indicator.contains(target))) return;
-      this.close();
+      this.close(false);
     });
 
     // 视图挂钩不再在构造期自带：装配层为现存与新建 pane 各调一次 `track(view)`（M317 2.1）。
@@ -577,12 +587,17 @@ class Toc implements TocHandle {
       this.input.value,
       this.entries.map((item) => item.text),
     );
+    this.lastRenderedQuery = this.input.value;
     this.items = this.visible.map((source, index) => {
       const item = this.entries[source] as OutlineItem;
       const element = document.createElement("div");
       element.className = "lumir-toc-item";
       element.id = `${ITEM_ID_PREFIX}${source}`;
       element.setAttribute("role", "option");
+      // `aria-selected` 只表示键盘游标（由 setActive 更新）；当前段是另一件事，用 aria-current
+      // 与既有 is-current 视觉标记表示（change fix-selector-ime-aria-nov25 的选择器合同）。
+      element.setAttribute("aria-selected", "false");
+      element.setAttribute("aria-current", String(source === this.currentSource));
       element.dataset.level = String(item.level);
       element.dataset.line = String(item.line);
       // 缩进归一（见文件头）：只用 H2/H3 的文档不浪费一层空缩进；code 侧的深嵌套同口径。
@@ -639,9 +654,11 @@ class Toc implements TocHandle {
 
   /**
    * 收起浮层。`restoreFocus` 为假时不抢焦点——焦点本来就去了别处（Tab 到别的控件、点了别的
-   * 窗口）时把焦点拽回编辑器是无礼的；Esc / 再按一次 ⌘⇧O 这些「在浮层里做的关闭」才需要
-   * 交还焦点。**跳转（Enter / 点条目）不走这里交还焦点**：它自己 `view.focus()` 并落点（见
-   * `jumpTo`，M754）——本方法的默认分支会把跳转前的阅读位置在下一帧写回，覆盖跳转本身。
+   * 窗口、点浮层外）时把焦点拽回编辑器是无礼的；Esc / 再按一次 ⌘⇧O 这些「在浮层里做的关闭」
+   * 才是主动关闭，需要交还焦点（change fix-selector-ime-aria-nov25：点浮层外改为被动关闭，
+   * 焦点归用户刚点的目标）。**跳转（Enter / 点条目）不走这里交还焦点**：它自己 `view.focus()`
+   * 并落点（见 `jumpTo`，M754）——本方法的默认分支会把跳转前的阅读位置在下一帧写回，覆盖跳转
+   * 本身。
    *
    * 交还焦点走 `focusPreservingReadingPosition`（M280 收口）：把焦点放进编辑器是浏览器接管的
    * 视口动作，裸 `view.focus()` 会把视口拽回光标处——光标在视口外时表现为「收起大纲，正文
@@ -655,6 +672,9 @@ class Toc implements TocHandle {
     // 查询与游标随关闭丢弃（spec）：下次打开从空查询与全量态起点开始。
     this.input.value = "";
     this.filter.reset();
+    this.lastRenderedQuery = null;
+    // 关闭态不保留「游标指向谁」的 ARIA 关系（下次打开会重建）。
+    this.input.removeAttribute("aria-activedescendant");
     if (restoreFocus) focusPreservingReadingPosition(this.view());
   }
 
@@ -708,6 +728,10 @@ class Toc implements TocHandle {
   }
 
   private onKeydown(event: KeyboardEvent): void {
+    // 输入法组合期归输入法：`↑↓` / `Enter` 在组合期是被输入法用来选候选的，浮层 MUST NOT 移动
+    // 游标、MUST NOT 接受，也不消费该键。与 Quick Open 的同一行守卫（src/quick-open.ts）同源；
+    // `escapeRouter` 内部再有组合期让路只覆盖 Escape，本守卫覆盖全部就地键。
+    if (event.isComposing || event.keyCode === 229) return;
     // Escape 归**窗口级兜底同一个** `escapeRouter.handle`（change fix-escape-overlay-close-oct24）：
     // 按层的打开序关**栈顶**（不持焦的 hover 提示可以后开在下层之上），关闭实现是该层登记时的
     // 既有 close；准入（无修饰才关、组合期让路、已消费让路）也只有那一份。无修饰才关层；带修饰键只消费
