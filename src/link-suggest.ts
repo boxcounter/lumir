@@ -195,6 +195,9 @@ interface PlaceMeasurement {
  *    是在读别处，同状态刷新 / resize / 滚动 MUST NOT 把它拉回活动行。 */
 type RevealMode = "cursor" | "if-clipped";
 
+/** 候选盒的高度上限：`measurePlace` 的可用空间上限与首次放置前的临时可滚盒共用同一真源。 */
+const LINK_SUGGEST_MAX_HEIGHT = 272;
+
 function sameOpenState(left: OpenState, right: OpenState): boolean {
   return left.active === right.active &&
     left.trigger.openerFrom === right.trigger.openerFrom &&
@@ -217,8 +220,12 @@ class LinkSuggestView {
   private composing = false;
   private settling = false;
   private destroyed = false;
-  /** 已排队的几何重排（read/write 跨拍）。见 `schedulePlace`：清样式的瞬时塌缩不得回灌成用户滚动。 */
+  /** 已排队的几何重排（read/write 跨拍）：窗口里到达的 scroll 事件不再触发又一次重排，
+   *  写拍自己读最新位置（见 `schedulePlace` / `writePlace`）。 */
   private placementPending = false;
+  /** 上一次放置确立的滚动位置与活动行可见性——`if-clipped` 的「原本完整可见」判据。 */
+  private placedScrollTop = 0;
+  private placedActiveVisible = false;
 
   constructor(view: EditorView, files: () => readonly string[], enabled: () => boolean, id: string) {
     this.view = view;
@@ -378,28 +385,26 @@ class LinkSuggestView {
   }
 
   private schedulePlace(reveal: RevealMode): void {
-    // 清样式会把列表从「可滚」打成「内容高」，scrollTop 同步归零——先记下来，写回定高后再恢复。
-    // 「重排前是否完整可见」也必须在清样式之前判：清完列表已展开，旧几何不存在了。
-    const preservedScrollTop = this.list.scrollTop;
-    const wasFullyVisible = reveal === "if-clipped" && this.activeFullyVisible();
-    // 跨拍重排的塌缩拍里，scroll 事件读到的是被钳成 0 的 scrollTop：那不是用户滚动，不许回灌
-    // 成 place() 的新位置（否则写回 0 会把刚记下的阅读位置抹掉）。write 之后再恢复监听。
+    // 「原本完整可见」按**上一次放置确立的几何**判，不按此刻的 clip：resize / 面板收缩的事件到达时
+    // 浏览器已把新尺寸应用到 clip 上，此刻读到的往往已经是「被裁掉」，正分支永远不会触发（N5）。
+    const wasFullyVisible = reveal === "if-clipped" && this.activeVisibleAtLastPlacement();
+    const scrollTopAtSchedule = this.list.scrollTop;
+    // 跨拍重排只清宽度：清 max-height 会把列表打回不可滚、把窗口里的滚动钳成 0（T1）。
+    // 写拍按此刻的真实位置恢复，窗口里滚过的位置因此不会被窗口前的旧值覆盖。
     this.placementPending = true;
-    this.clearPlaceStyles();
+    this.clearPlaceWidths();
     this.view.requestMeasure({
       read: () => this.measurePlace(),
       write: (measured) => {
         this.placementPending = false;
-        this.writePlace(measured, preservedScrollTop, reveal, wasFullyVisible);
+        this.writePlace(measured, scrollTopAtSchedule, reveal, wasFullyVisible);
       },
       key: this,
     });
   }
 
-  /** 当前已渲染几何下活动行是否完整落在真实可见带内（与 `revealElementWithin` 同一套几何）。
-   *  重排前完整可见、重排后被挤出带 ⇒ 这次揭示由几何变化造成，该揭示；
-   *  重排前就不可见 ⇒ 用户自己滚开了，同状态重排 MUST NOT 把它拉回。 */
-  private activeFullyVisible(): boolean {
+  /** 此刻活动行是否完整落在真实可见带内（与 `revealElementWithin` 同一套几何）。 */
+  private activeFullyVisibleNow(): boolean {
     const state = this.state;
     if (state === null || state.active < 0) return false;
     const active = this.list.children[state.active] as HTMLElement | undefined;
@@ -408,10 +413,15 @@ class LinkSuggestView {
     return isFullyVisibleWithin(this.list, active, { top: 0, bottom: win.innerHeight });
   }
 
-  private clearPlaceStyles(): void {
+  /** `if-clipped` 的判据：上次放置时活动行完整可见，且此后用户没有滚动过列表（位置仍是我们留下的）。
+   *  可见性变化只能来自几何 ⇒ 该揭示；用户滚开 ⇒ 那是阅读位置，重排 MUST NOT 拉回（N1）。 */
+  private activeVisibleAtLastPlacement(): boolean {
+    return this.placedActiveVisible && Math.abs(this.list.scrollTop - this.placedScrollTop) <= 0.5;
+  }
+
+  private clearPlaceWidths(): void {
     this.root.style.width = "";
     this.root.style.minWidth = "";
-    this.root.style.maxHeight = "";
   }
 
   private relabel(): void {
@@ -458,15 +468,18 @@ class LinkSuggestView {
     else this.view.contentDOM.removeAttribute("aria-activedescendant");
     // 揭示归 writePlace：这里只重建行。曾经的 scrollIntoView 会被紧随其后的 schedulePlace
     // 清掉 max-height 而把 scrollTop 归零，长列表的滚动位置永远累积不起来。
+    // 首次放置前先给候选一个可滚盒：自然高（30 项 ≈ 814px）会让它在跨拍窗口里不可滚，用户 /
+    // 脚本的滚动被浏览器钳成 0（T1）。上限与 measurePlace 同源，写拍再按真实可用空间收一次。
+    if (this.root.style.maxHeight === "") this.root.style.maxHeight = `${LINK_SUGGEST_MAX_HEIGHT}px`;
     this.schedulePlace("cursor");
   }
 
   private place(): void {
     // resize / 编辑器或列表滚动：没有游标变化，只为「原本可见却被新几何挤出」补揭示。
-    const preservedScrollTop = this.list.scrollTop;
-    const wasFullyVisible = this.activeFullyVisible();
-    this.clearPlaceStyles();
-    this.writePlace(this.measurePlace(), preservedScrollTop, "if-clipped", wasFullyVisible);
+    const wasFullyVisible = this.activeVisibleAtLastPlacement();
+    const scrollTopAtSchedule = this.list.scrollTop;
+    this.clearPlaceWidths();
+    this.writePlace(this.measurePlace(), scrollTopAtSchedule, "if-clipped", wasFullyVisible);
   }
 
   private measurePlace(): PlaceMeasurement | null {
@@ -487,9 +500,14 @@ class LinkSuggestView {
     const below = win.innerHeight - caret.bottom - 12;
     const above = caret.top - 12;
     const direction = below >= 80 || below >= above ? "below" : "above";
-    const available = Math.max(0, Math.min(272, direction === "below" ? below : above));
+    const available = Math.max(0, Math.min(LINK_SUGGEST_MAX_HEIGHT, direction === "below" ? below : above));
     if (available < 26) return null;
-    const height = Math.min(this.root.getBoundingClientRect().height, available);
+    // 自然高不再靠清 max-height 实测（清掉会把列表打成不可滚，跨拍窗口里的滚动随之被钳成 0）：
+    // root 的固定部分 = 当前高 − 列表盒高，加上列表内容高即不受约束时的自然高。
+    const naturalHeight = this.root.getBoundingClientRect().height
+      - this.list.getBoundingClientRect().height
+      + this.list.scrollHeight;
+    const height = Math.min(naturalHeight, available);
     const top = direction === "below" ? caret.bottom + 4 : caret.top - height - 4;
     const offsetParent = this.root.offsetParent as HTMLElement | null;
     const baseLeft = offsetParent?.getBoundingClientRect().left ?? 0;
@@ -503,7 +521,7 @@ class LinkSuggestView {
 
   private writePlace(
     measured: PlaceMeasurement | null,
-    preservedScrollTop: number,
+    scrollTopAtSchedule: number,
     reveal: RevealMode,
     wasFullyVisible: boolean,
   ): void {
@@ -511,19 +529,28 @@ class LinkSuggestView {
       this.close();
       return;
     }
+    // 跨拍窗口里列表一直可滚：此刻的 scrollTop 就是最新位置。窗口里滚过就采用它，不写回窗口前的值。
+    const scrollTop = this.list.scrollTop;
+    // 游标变化之后、写拍之前用户已经滚动过 ⇒ 他的动作比这次揭示更晚，揭示 MUST NOT 覆盖它：
+    // 初始放置与游标揭示都一样（跨拍窗口里刚滚开的候选不得被「补揭示」搬回来）。
+    const scrolledInWindow = Math.abs(scrollTop - scrollTopAtSchedule) > 0.5;
     applyOverlayPlacement(this.root, measured.placement, measured.baseLeft);
     this.root.style.maxHeight = `${measured.available}px`;
     this.root.style.top = `${measured.top}px`;
     // 定高之后再恢复滚动位置（先设 scrollTop 会被不可滚的列表钳成 0），最后按真实可见带揭示活动行。
-    this.list.scrollTop = preservedScrollTop;
-    // 游标没变且重排前就不完整可见 ⇒ 用户自己滚开了，不得借重排把阅读位置拉回活动行。
-    if (reveal === "if-clipped" && !wasFullyVisible) return;
+    this.list.scrollTop = scrollTop;
     const state = this.state;
-    if (state === null || state.active < 0) return;
-    const active = this.list.children[state.active] as HTMLElement | undefined;
-    if (active === undefined) return;
-    const viewportHeight = this.view.dom.ownerDocument.defaultView?.innerHeight ?? 0;
-    revealElementWithin(this.list, active, { top: 0, bottom: viewportHeight });
+    const active = state === null || state.active < 0
+      ? undefined
+      : this.list.children[state.active] as HTMLElement | undefined;
+    // 游标没变且重排前就不完整可见 ⇒ 用户自己滚开了，不得借重排把阅读位置拉回活动行。
+    if (active !== undefined && !scrolledInWindow && (reveal === "cursor" || wasFullyVisible)) {
+      const viewportHeight = this.view.dom.ownerDocument.defaultView?.innerHeight ?? 0;
+      revealElementWithin(this.list, active, { top: 0, bottom: viewportHeight });
+    }
+    // 本次放置确立的几何：下一次 if-clipped 的「原本完整可见」判据。
+    this.placedScrollTop = this.list.scrollTop;
+    this.placedActiveVisible = this.activeFullyVisibleNow();
   }
 
   private onKeyDown = (event: KeyboardEvent): void => {

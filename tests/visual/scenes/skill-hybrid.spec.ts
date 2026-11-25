@@ -1659,6 +1659,42 @@ test("窗口缩放不得把用户手动滚开的候选拉回高亮项", async ({
   expect(probe.a11y, "缩放重排不得改动游标 / 武装 / aria-activedescendant").toEqual(probe.a11yBefore);
 });
 
+// ── 机械复核 N5：if-clipped 的正分支——原本完整可见、被新几何挤出带 ⇒ 必须揭示 ──────
+// 现有「不拉回」用例只覆盖反分支（用户滚开 ⇒ 不动）。本用例把高亮项停在可见带底部，
+// 再收缩视口把带缩短：高亮项在几何变化前完整可见，变化后必须被揭示回新带内。
+test("高亮项原本贴底完整可见、视口收缩把带缩短后必须揭示", async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 340 });
+  await setup(page, null, false, undefined, syntheticSkills(20));
+  await page.mouse.move(10, 10);
+  await page.keyboard.type("/skill");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  await expect(menu.locator("[role=option]")).toHaveCount(20);
+  // 往下走到高亮项贴住带底：每次游标揭示都留一行上下文，连续下移后高亮项落在带底附近。
+  for (let index = 0; index < 6; index += 1) await page.keyboard.press("ArrowDown");
+  await expect(menu.locator("[role=option][aria-selected=true]")).toContainText("skill-06");
+  const before = await skillMenuPlacement(page);
+  const beforeDetail = JSON.stringify(before);
+  expect(before.overflow, `前提：候选必须真实溢出，揭示断言才不是空测量：${beforeDetail}`).toBe(true);
+  expect(before.optionTop, `前提：高亮项上缘必须完整可见：${beforeDetail}`).toBeGreaterThanOrEqual(before.clipTop - 0.5);
+  expect(before.optionBottom, `前提：高亮项下缘必须完整可见：${beforeDetail}`).toBeLessThanOrEqual(before.clipBottom + 0.5);
+  await installSkillMenuDomProbe(page);
+  await page.setViewportSize({ width: 1000, height: 240 });
+  await expect.poll(async () => (await skillMenuPlacement(page)).menuHeight, {
+    timeout: 3000,
+    message: "视口收缩后候选必须真的缩短（高度未变 = 没重排）",
+  }).toBeLessThan(before.menuHeight - 20);
+  const after = await skillMenuPlacement(page);
+  const detail = `${beforeDetail} => ${JSON.stringify(after)}`;
+  console.log("SKILL_N5", detail);
+  expect(after.clipBottom - after.clipTop, `前提：新可见带仍须容得下一行：${detail}`).toBeGreaterThan(26);
+  expect(after.optionTop, `高亮项被新几何挤出带（if-clipped 正分支必须揭示）：${detail}`).toBeGreaterThanOrEqual(after.clipTop - 0.5);
+  expect(after.optionBottom, `高亮项被新几何挤出带（if-clipped 正分支必须揭示）：${detail}`).toBeLessThanOrEqual(after.clipBottom + 0.5);
+  const probe = await readSkillMenuDomProbe(page);
+  expect({ mutations: probe.mutations, sameNodes: probe.sameNodes }, "收缩重排不得重建 items")
+    .toEqual({ mutations: 0, sameNodes: true });
+  expect(probe.styleWrites, "收缩后必须真的重排几何（样式未被重写 = 没重排）").toBeGreaterThan(0);
+});
+
 // ── 机械复核 N2：max-height 的 em / vh 实测路径 ────────────────────────────────
 // percentage 是 R2 的代表形态（computed 保留 %）；em / vh 在 computed 里已由浏览器解析成 px，
 // JS 只许用「清空 inline 后实测的受约束高度」。旧 parseFloat 实现会把 7em 读成 7px、30vh 读成 30px。

@@ -60,3 +60,10 @@
 - [x] 清 `max-height` 的瞬时塌缩不再回灌：排队的重排跨拍期间挂起 `placementPending`，塌缩拍的 scroll 事件不得被当成用户新位置写回
 - [x] 补 4 条浏览器用例：手动滚开后同状态刷新 / 窗口缩放 / 1px 极端 clip 边界不拉回，游标变化仍揭示；复用 `selector-reveal` 的 `revealBand` / `isFullyVisibleWithin` 单一几何
 - [x] 守住既有能力：`preservedScrollTop` 恢复、read/write 分离、IME「零刷新 / 仅一次」计数路径不变
+
+## 机械复核 T1 / T2 / N5 收口（2026-11-25）
+
+- [x] T1 跨拍窗口不丢用户滚动：`schedulePlace` 不再清 `max-height`（自然高改算术还原），窗口里列表全程可滚；写拍采用此刻真实 `scrollTop`；窗口内已滚动时揭示不再覆盖（用户的滚动更晚）；首次放置前先给候选一个可滚盒，MUST NOT 以自然高展开
+- [x] T1 补两条浏览器用例（首次 placement 窗口可滚且滚动不被写回 / 同状态重排窗口采用最新位置），`--repeat-each=10` 在 tsc + docs + acceptance 并行负载下 70/70
+- [x] T2 证据卫生：`green5-wikilink-reveal-timing.log` 实为 4 failed（早于 dist 重建），改名 `…SUPERSEDED-4failed.log`；重建后重跑 4 条 → `green7-wikilink-reveal-timing.log` 4 passed，README 只引用最终绿
+- [x] N5 `if-clipped` 正分支：两侧判据改为「上一次放置确立的几何」（上次放置后完整可见 + 此后用户未滚动），MUST NOT 用几何变化后的 clip；Skill / wikilink 各补一条「原本贴底完整可见、被收缩挤出带 ⇒ 揭示」用例（wikilink 在旧实现上实测红：高亮行被留在带外）

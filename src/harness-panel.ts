@@ -4431,9 +4431,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   let skillMenuIntentFrom: number | null = null;
   let skillCatalogInFlight: { vault: string | null; epoch: number } | null = null;
   let programmaticComposerReset = 0;
+  /** 上一次放置确立的滚动位置与游标可见性——`if-clipped` 的「原本完整可见」判据。 */
+  let skillMenuPlacedScrollTop = 0;
+  let skillMenuPlacedActiveVisible = false;
 
   function hideSkillMenu(): void {
     skillMenuState = null;
+    skillMenuPlacedActiveVisible = false;
     skillMenuEl.hidden = true;
     skillMenuEl.replaceChildren();
     skillMenuEl.removeAttribute("data-armed");
@@ -4490,34 +4494,43 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     relayoutSkillMenu("cursor");
   }
 
-  /** 当前已渲染几何下的真实 clip：用来判「重排前游标是否完整可见」（几何重排的揭示判据）。 */
-  function currentSkillMenuClip(): { top: number; bottom: number } | null {
-    if (skillMenuEl.hidden) return null;
-    const clip = skillMenuClip(skillMenuEl.getBoundingClientRect(), panel.getBoundingClientRect());
-    return clip.bottom > clip.top ? clip : null;
-  }
-
   /** 只重排几何，不重建 items：resize / 分隔条拖动 / 同状态回包都只需要新的位置。
    *  与 `renderSkillMenu`（重建 DOM）分开，状态去重才不会连带跳过几何（C2：盒必须等于真实 clip）。
    *
    *  揭示分两种（C3）：
    *  - `cursor`：游标刚变，按合同必揭示（越界才滚，带内不动）。
-   *  - `if-clipped`：游标没变。只揭示「重排前完整可见、被新几何挤出带」的游标——用户手动滚开的
-   *    阅读位置 MUST NOT 被同状态回包 / resize 拉回游标项（那不是几何变化造成的，是用户在读别处）。 */
+   *  - `if-clipped`：游标没变。只揭示「上一次放置时完整可见、被新几何挤出带」的游标——可见性
+   *    判据取上一次放置确立的几何（`skillMenuActiveVisibleAtLastPlacement`），不取此刻的 clip：
+   *    面板 / 视口收缩的事件到达时浏览器已经把新尺寸应用到 clip 上。用户手动滚开的阅读位置
+   *    MUST NOT 被同状态回包 / resize 拉回游标项（那不是几何变化造成的，是用户在读别处）。 */
   function relayoutSkillMenu(reveal: "cursor" | "if-clipped"): void {
     const state = skillMenuState;
     if (state === null || skillMenuEl.hidden) return;
     const option = skillMenuEl.children[state.highlighted] as HTMLElement | undefined;
     if (option === undefined) {
       placeSkillMenu();
+      skillMenuPlacedActiveVisible = false;
       return;
     }
-    const clipBefore = reveal === "if-clipped" ? currentSkillMenuClip() : null;
-    const wasFullyVisible = clipBefore !== null && isFullyVisibleWithin(skillMenuEl, option, clipBefore);
+    // 「原本完整可见」按上一次放置确立的几何判，不按此刻的 clip：面板 / 视口收缩的事件到达时
+    // 浏览器已把新尺寸应用到 clip 上，此刻读到的往往已经是「被裁掉」，正分支永远不会触发（N5）。
+    const wasFullyVisible = reveal === "if-clipped" && skillMenuActiveVisibleAtLastPlacement();
     const clip = placeSkillMenu();
-    if (clip === null) return;
-    if (reveal === "if-clipped" && !wasFullyVisible) return;
-    revealElementWithin(skillMenuEl, option, clip);
+    if (clip === null) {
+      skillMenuPlacedActiveVisible = false;
+      return;
+    }
+    if (reveal === "cursor" || wasFullyVisible) revealElementWithin(skillMenuEl, option, clip);
+    // 本次放置确立的几何：下一次 if-clipped 的「原本完整可见」判据。
+    skillMenuPlacedScrollTop = skillMenuEl.scrollTop;
+    skillMenuPlacedActiveVisible = isFullyVisibleWithin(skillMenuEl, option, clip);
+  }
+
+  /** `if-clipped` 的判据：上次放置时游标完整可见，且此后用户没有滚动过候选（位置仍是我们留下的）。
+   *  可见性变化只能来自几何 ⇒ 该揭示；用户滚开 ⇒ 那是阅读位置，重排 MUST NOT 拉回（N1）。 */
+  function skillMenuActiveVisibleAtLastPlacement(): boolean {
+    return skillMenuPlacedActiveVisible &&
+      Math.abs(skillMenuEl.scrollTop - skillMenuPlacedScrollTop) <= 0.5;
   }
 
   function highlightSkillMenuItem(index: number): void {

@@ -10,7 +10,7 @@
 
 列表揭示 SHALL 遵守 `docs/specs/selector-contract.md` C3：先恢复正确的 `max-height` 再揭示，MUST NOT 在写入定位样式之前清掉定高——清掉会把列表从「可滚」变成「内容高」、把 `scrollTop` 归零，揭示随之丢失。活动行 SHALL 完整落在 `listRect ∩ viewport`（扣掉列表自身 padding）内；已可见时 `scrollTop` MUST NOT 改变；越界时只滚动列表并保留一行上下文；MUST NOT 滚动编辑器、页面或任何祖先。
 
-揭示的**时机** SHALL 同一合同：只有游标改变、或重排前已完整可见的活动行被新几何挤出可见带时才揭示。同状态刷新、窗口缩放与滚动等没有游标变化的重排 MUST NOT 把用户手动滚开的列表拉回活动行（稳定阅读优先，resize 也不得借机回弹首项）；重排为测量清空 `max-height` 造成的瞬时钳制 MUST NOT 回灌成新的滚动位置。重排 MUST NOT 重建候选行、MUST NOT 改动游标或 `aria-activedescendant`。
+揭示的**时机** SHALL 同一合同：只有游标改变、或重排前已完整可见的活动行被新几何挤出可见带时才揭示。同状态刷新、窗口缩放与滚动等没有游标变化的重排 MUST NOT 把用户手动滚开的列表拉回活动行（稳定阅读优先，resize 也不得借机回弹首项）；重排为测量清空 `max-height` 造成的瞬时钳制 MUST NOT 回灌成新的滚动位置。重排 MUST NOT 重建候选行、MUST NOT 改动游标或 `aria-activedescendant`。判定「重排前已完整可见」SHALL 依据上一次放置确立的几何（上一次放置后活动行完整在带内，且此后用户没有滚动过列表），MUST NOT 依据几何变化后的 clip；放置跨拍期间列表 SHALL 保持可滚、写拍 SHALL 采用此刻的真实 `scrollTop`，首次放置完成前 SHALL 先给列表一个可滚盒。
 
 #### Scenario: 三主题与长路径均不透明且不越界
 

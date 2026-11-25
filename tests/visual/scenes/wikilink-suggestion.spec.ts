@@ -626,6 +626,119 @@ test("极端 clip 边界：活动行只被裁掉 1px 也属于「原本不可见
   expect(resized.activeTop).toBeLessThan(resized.clipTop - 0.5);
 });
 
+// ── 机械复核 T1：跨拍重排窗口不得吞掉 / 抹掉用户滚动 ────────────────────────────────
+// 旧实现有两拍会把位置写丢：首次 placement 前候选按自然高展开（30 项 ≈ 814px），列表不可滚，
+// 窗口里的滚动被浏览器钳成 0；同状态重排同步清 max-height 把列表打成不可滚，窗口里滚动同样无效，
+// 写拍又按窗口前的旧值写回。两拍都必须「窗口里列表可滚 + 写拍采用窗口里的最新位置」。
+
+test("首次 placement 的跨拍窗口里候选已可滚：滚动不得被吞掉", async ({ page }) => {
+  await openDoc(page, "", MANY_PATHS);
+  // 行插入后的第一个微任务里下发滚动：此时首次 placement 的 read / write 拍都还没跑。
+  await page.evaluate(() => {
+    const w = window as unknown as Record<string, any>;
+    w.__suggestWindow = null;
+    const observer = new MutationObserver(() => {
+      const list = document.querySelector<HTMLElement>(".lumir-link-suggest-list");
+      if (list === null || list.children.length === 0) return;
+      const before = {
+        rows: list.children.length,
+        scrollHeight: list.scrollHeight,
+        clientHeight: list.clientHeight,
+        scrollable: list.scrollHeight > list.clientHeight,
+        scrollTopBefore: list.scrollTop,
+      };
+      list.scrollTop = 140;
+      w.__suggestWindow = { ...before, scrollTopAfterSet: list.scrollTop };
+      observer.disconnect();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  });
+  await page.keyboard.type("[[");
+  await expect(page.locator(ROW)).toHaveCount(31);
+  const atWindow = await page.evaluate(() => (window as unknown as Record<string, any>).__suggestWindow);
+  const detail = JSON.stringify(atWindow);
+  expect(atWindow, "前提：行插入时必须已经建立候选列表").not.toBeNull();
+  expect(atWindow.scrollable,
+    `首次 placement 的窗口里候选必须可滚（按自然高展开时滚动会被钳成 0）：${detail}`).toBe(true);
+  expect(atWindow.scrollTopAfterSet, `窗口里的滚动不得被浏览器吞掉：${detail}`).toBeCloseTo(140, 0);
+  await settleFrames(page);
+  const after = await suggestGeometry(page);
+  const afterDetail = `${detail} => ${JSON.stringify(after)}`;
+  expect(after.overflowing, `写拍后候选仍须真实溢出：${afterDetail}`).toBe(true);
+  // 写拍不得把窗口里刚滚到的位置写回 0：用户的滚动比这次放置更晚，优先级更高。
+  expect(after.scrollTop, `写拍不得覆盖窗口里的滚动位置：${afterDetail}`).toBeCloseTo(140, 0);
+  expect(after.activeBottom, `写拍不得把用户滚开的活动行补揭示回来：${afterDetail}`).toBeLessThan(after.clipTop);
+  const placed = await page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>(".lumir-link-suggest")!;
+    const rect = root.getBoundingClientRect();
+    return { top: rect.top, bottom: rect.bottom, inlineMaxHeight: root.style.maxHeight, viewport: innerHeight };
+  });
+  expect(placed.inlineMaxHeight, `首次 placement 必须真的写入定高：${afterDetail}`).not.toBe("");
+  expect(placed.top, `首次 placement 的盒必须落在视口内：${JSON.stringify(placed)}`).toBeGreaterThanOrEqual(0);
+  expect(placed.bottom, `首次 placement 的盒必须落在视口内：${JSON.stringify(placed)}`).toBeLessThanOrEqual(placed.viewport);
+});
+
+test("同状态重排的跨拍窗口里采用最新滚动位置，不写回窗口前的旧值", async ({ page }) => {
+  await openDoc(page, "[[", MANY_PATHS);
+  await expect(page.locator(ROW)).toHaveCount(31);
+  await settleFrames(page);
+  const atWindow = await page.locator(".cm-content").evaluate((content) => {
+    const view = (content as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const list = document.querySelector<HTMLElement>(".lumir-link-suggest-list")!;
+    list.scrollTop = 140;
+    const before = { scrollTop: list.scrollTop };
+    const head = view.state.selection.main.head;
+    view.dispatch({ changes: { from: view.state.doc.length, insert: "x" }, selection: { anchor: head } });
+    const windowState = {
+      scrollable: list.scrollHeight > list.clientHeight,
+      scrollTopAfterSchedule: list.scrollTop,
+    };
+    list.scrollTop = 300;
+    return { before, windowState, scrollTopAfterSetInWindow: list.scrollTop };
+  });
+  await settleFrames(page);
+  await settleFrames(page);
+  const after = await suggestGeometry(page);
+  const detail = `${JSON.stringify(atWindow)} => ${JSON.stringify(after)}`;
+  expect(atWindow.before.scrollTop, `前提：窗口前的滚动位置必须先生效：${detail}`).toBeCloseTo(140, 0);
+  expect(atWindow.windowState.scrollable,
+    `重排窗口里候选必须仍可滚（清 max-height 会把列表打成不可滚）：${detail}`).toBe(true);
+  expect(atWindow.scrollTopAfterSetInWindow, `窗口里的滚动必须真的生效：${detail}`).toBeCloseTo(300, 0);
+  expect(after.scrollTop, `写拍必须采用窗口里的最新位置，而不是窗口前的旧值：${detail}`).toBeCloseTo(300, 0);
+  expect(after.activeBottom, `用户滚开后重排不得揭示活动行：${detail}`).toBeLessThan(after.clipTop);
+});
+
+// ── 机械复核 N5：if-clipped 的正分支——原本完整可见、被新几何挤出带 ⇒ 必须揭示 ──────
+// 「不拉回」用例只覆盖反分支（原本不可见 ⇒ 不动）。本用例把活动行停在可见带底部，再收缩视口
+// 把带缩短：活动行在几何变化前完整可见，变化后必须被揭示回新带内。判据不能用变化后的 clip——
+// resize 事件到达时浏览器已把新尺寸应用到 clip 上，那样读到的是「已经被裁掉」。
+test("活动行原本贴底完整可见、视口收缩后被挤出带时必须揭示", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await openDoc(page, "[[", MANY_PATHS);
+  await expect(page.locator(ROW)).toHaveCount(31);
+  for (let index = 0; index < 9; index += 1) await page.keyboard.press("ArrowDown");
+  await settleFrames(page);
+  const before = await suggestGeometry(page);
+  const beforeDetail = JSON.stringify(before);
+  expect(before.overflowing, `前提：长列表必须真实溢出：${beforeDetail}`).toBe(true);
+  expect(before.activeTop, `前提：活动行上缘必须完整可见：${beforeDetail}`).toBeGreaterThanOrEqual(before.clipTop - 0.5);
+  expect(before.activeBottom, `前提：活动行下缘必须完整可见：${beforeDetail}`).toBeLessThanOrEqual(before.clipBottom + 0.5);
+  await installSuggestProbe(page);
+  await page.setViewportSize({ width: 1200, height: 300 });
+  await expect.poll(async () => (await suggestGeometry(page)).clipBottom, {
+    timeout: 3000,
+    message: "视口收缩后必须重排几何（可见带未被缩短 = 没重排）",
+  }).toBeLessThan(before.clipBottom - 20);
+  await settleFrames(page);
+  const after = await suggestGeometry(page);
+  const detail = `${beforeDetail} => ${JSON.stringify(after)}`;
+  expect(after.activeTop, `活动行被新几何挤出带（if-clipped 正分支必须揭示）：${detail}`).toBeGreaterThanOrEqual(after.clipTop - 0.5);
+  expect(after.activeBottom, `活动行被新几何挤出带（if-clipped 正分支必须揭示）：${detail}`).toBeLessThanOrEqual(after.clipBottom + 0.5);
+  const probe = await readSuggestProbe(page);
+  expect(probe.childMutations, "重排不得重建候选行").toBe(0);
+  expect(probe.styleWrites, "收缩后必须真的重排几何").toBeGreaterThan(0);
+});
+
 let fixtureServer: ViteDevServer;
 let fixtureOrigin: string;
 test.beforeAll(async () => {
