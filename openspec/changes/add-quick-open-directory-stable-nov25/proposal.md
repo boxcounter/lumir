@@ -12,7 +12,21 @@
 > 追加确认（2026-11-25）：Alex 明确去掉「按 Enter 打开 ……」direct action 伪候选的视觉展示，因为它与
 > 真实候选太像；精确路径 Enter 直接打开、普通/目录候选与 `:行号` 行为不变。该行不再占用列表、AX 或
 > 游标空间，也不新增另一段相似提示。此前候选图未包含这项变化，不得视为已获 Alex 批准。
-> 节点 2（归档放行）：未开始；本 worker 不归档。
+> 节点 2（归档放行，2026-11-25）：**机器 + 独立评审放行**（`docs/process/openspec-workflow.md` 五要件）。
+> 1. **方案已批准**：节点 1 Alex 2026-11-25 原话「Quick Open 按推荐」；direct action 伪候选删除为同日追加确认，
+>    实现期无静默扩 scope。
+> 2. **独立 reviewer clean / merge**：tower 主模型 verdict **clean / merge**，绑定 tip
+>    `e2f38af965a4f9a1ae6ba924acfe6b69d4a48889`，P1 / P2 / P3 无新增，原 K3 P1-1 已关闭；报告
+>    `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/quick-open-directory-stable-nov25/tower-verdict.md`。
+> 3. **tasks 完成**：全部勾选（5.5 于本归档批次收口），无放弃项。
+> 4. **门禁与真机证据**：最终 tip 完整 `gate visual` 原始行 `GATE RESULT: 15/15 PASS（SKIP 0）`、exit 0
+>    （`/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/quick-open-directory-stable-nov25/gate-visual-final-tip.log`）；
+>    真机 230a / 230b / 230c / 707 / 874 **PASS 5 / FAIL 0 / INVALID 0，合计 176 断言**
+>    （`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-quick-open-direct-contract-r3/`）。
+>    静态复验 289 场景、执行器 122/122、docs-check、OpenSpec 39/39 均 PASS。45 张视觉候选是 git 外审查材料、
+>    Alex 2026-11-25 已认可其视觉；**未写入正式视觉基线，本批新增像素基线 0**。
+> 5. **规格对账**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS（13 份 delta / 20 条 MODIFIED /
+>    428 段，无静默丢段）；`openspec validate --all --strict` 39 passed / 0 failed；归档跟踪队列唯一条目。
 
 ## Why
 

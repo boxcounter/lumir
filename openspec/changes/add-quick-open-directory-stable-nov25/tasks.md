@@ -32,13 +32,13 @@
 - [x] 4.1 `geom` bbox record/unchangedSince，缺基线或 bbox fail-closed，并补套件自测与 README
 - [x] 4.2 新增 `874-quick-open-external-directory-and-stable-layout`，第二合成 vault、只读与零写入判据；`$vault2` 步骤级解析与套件端到端自测已通过，真机 PASS（33 断言）
 - [x] 4.3 全库回扫 direct action 旧合同并更新 230a/230b/230c/230d/231/707：真实候选或通用帮助为正向观测，无 direct 行；230a 以 ⌥G 预填值 `39` 精确断言行号落点。静态检查通过，230a/230b/230c/707 真机 PASS（40/34/20/49 断言）
-- [x] 4.4 874 增加外部精确路径无 direct action、通用帮助保留、无普通空态、Enter 仍只读打开的静态合同；真机执行仍留主会话
+- [x] 4.4 874 增加外部精确路径无 direct action、通用帮助保留、无普通空态、Enter 仍只读打开的静态合同；真机 PASS（33 断言）
 
 ## 5. 验证与交付
 
 - [x] 5.1 前端单测、三份 tsc、Rust fmt/clippy/test 与 bindings 漂移检查通过（cargo mkdir 原子锁）
-- [x] 5.2 独立端口 Chromium 目标场景通过；完整 gate visual 留主会话串行，不更新视觉基线
+- [x] 5.2 独立端口 Chromium 目标场景通过；最终 tip 完整 `gate visual` `GATE RESULT: 15/15 PASS（SKIP 0）`，未更新视觉基线
 - [x] 5.3 `bash scripts/docs-check.sh` 与 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
-- [x] 5.4 初版完整视觉候选与精确清单落 `.local/reviews/quick-open-directory-stable-nov25/`；未获 Alex 批准
-- [x] 5.6 在 direct action 删除后的最终树重生成 45 候选并更新 MANIFEST commit；视觉基线零改动，完整 quick/visual 与真机 874 留主会话
-- [ ] 5.5 证据落 `.local/missions/quick-open-directory-stable-nov25/`；最终 commit 由 worker 提交，评审与后续收尾勾选归 tower；不 push/merge/archive
+- [x] 5.4 完整视觉候选与精确清单落 `.local/reviews/quick-open-directory-stable-nov25/`；Alex 2026-11-25 已批准，45 张候选非正式基线
+- [x] 5.6 在 direct action 删除后的最终树重生成 45 候选并更新 MANIFEST commit；视觉基线零改动，完整 `gate visual` 15/15 PASS、真机 874 PASS
+- [x] 5.5 证据落 `.local/missions/quick-open-directory-stable-nov25/`（r3 真机、静态复验与最终 gate 日志）；最终 commit `e2f38af9`；tower verdict clean/merge；节点 2 归档按五要件执行，不 push/merge
