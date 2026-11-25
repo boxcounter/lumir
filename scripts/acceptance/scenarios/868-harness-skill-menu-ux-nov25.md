@@ -236,12 +236,21 @@ steps:
     do: key
     key: enter
     expect:
-      - label: 全名自动接受把 token 换成带尾随空格的完整名
-        ax: { has: '/AXTextArea = "/acc-skill-05 "/' }
+      - label: 全名接受后候选关闭
+        ax: { not: "AXList (Select a Skill)" }
       - label: 未接受相邻 Skill
-        ax: { not: '/AXTextArea = "/acc-skill-04 "/' }
+        ax: { not: '/AXTextArea = "/acc-skill-04"/' }
       - label: 编辑器仍未变
         editor: { unchangedSince: doc-before-skill-nav }
+  - name: 接受后继续键入一个字符，证明 token 之后留了空格
+    do: keys
+    keys: ["x"]
+    expect:
+      - label: 完整名之后留空格，后续输入另起一词（没留空格会拼成 /acc-skill-05x）
+        ax: { has: '/AXTextArea = "/acc-skill-05 x"/' }
+      - label: 继续输入不重新打开候选
+        ax: { not: "AXList (Select a Skill)" }
+      - shot: 04d-全名接受后留空格
 
   - name: 新建会话，准备 Shift+Arrow 原生选区对照
     do: click
@@ -411,7 +420,9 @@ steps:
     key: enter
     expect:
       - label: 候选不得把被动态 Enter 变成一次 Skill 调用
-        ax: { not: '/AXTextArea = "/tmp-acc /' }
+        ax: { not: '/AXTextArea = "/tmp-acc"/' }
+      - label: 普通文本被当成消息发出（transcript 出现 /tmp）
+        node: { role: AXStaticText, name: "^/tmp$", present: true }
       - label: 候选已关闭
         ax: { not: "AXList (Select a Skill)" }
       - label: 编辑器仍未变
@@ -420,6 +431,13 @@ steps:
 ---
 
 本场景用 Enter 后的实际 ref 判定 Ctrl+N/P 的导航结果，不以「AX 里能看到 option 文本」冒充高亮或滚动位置断言。
+全名接受写入的是 `/名字 `（带尾随空格，见 `tests/unit/skill-menu.test.ts` 对 `skillSelectionSpec` 的断言与
+`tests/visual/scenes/skill-hybrid.spec.ts` 的全名用例），但**真机 AX 的 `AXTextArea = "…"` 会把值尾的空白裁掉**
+（同场景「Enter 接受第二项」按 `/acc-skill-01` 无空格判 PASS，走的是同一条插入路径），因此尾随空格不能靠
+「期望值里写一个空格」来证明——那条断言在任何实现下都恒红。改为接受后继续键入一个字符：留了空格才会得到
+`/acc-skill-05 x`，没留则是 `/acc-skill-05x`，同一个判据同时锁住「空格」与「caret 落在空格之后」。同理 `/tmp`
+那一步的负向断言不再把空格写进判据串（旧写法 `"/tmp-acc "` 在裁掉空白的 AX 里永不可能命中，是恒真断言），
+改成 `not "/tmp-acc"` 与「transcript 里出现普通消息 `/tmp`」一正一负成对。
 长列表揭示、菜单外零滚动、修饰键 `defaultPrevented`、候选高亮与 20% 窄 pane 不越界的逐拍机器判据在
 `tests/visual/scenes/skill-hybrid.spec.ts`；真机 AX 读不到这些 DOM 事实，因此 868 用选区替换结果验证
 Shift/Ctrl+Shift 的原生路径，用候选存续验证 Meta、用精确组字结果验证 Alt，并用截图保留两者和窄 pane 现场，
