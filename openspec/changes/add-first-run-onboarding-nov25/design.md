@@ -442,15 +442,29 @@ change 占号），中英双列必填：
 场景、以及 `m645-startup-surface` 的恢复态都会落入首启模式：
 
 - `VaultFixture` / `stubTauri` 支持 `lastVault`（含无 fixture 的非首启空态，例如
-  `stubTauri(page, null, { lastVault: "/mock/missing-vault" })`）；**缺省值必须复用
-  `vault_current` 的同一份 root 派生与 fallback**：`current === null ? null : (current.lastVault !== undefined ? current.lastVault :
-  (current.root ?? "/Users/alex/demo-vault"))`；`stubTauri(page, null)` 仍为 `null`（真首启）。不能只写 `current.root ?? null`——`root` 是可选字段，大量 fixture
-  （例如 `m831` 的 `VAULT`）不写 root，桩的实际 vault 根回落到 `/Users/alex/demo-vault`
-  （`tests/visual/scenes/tauri-stub.ts:428`、`:720`），只取 `root` 会把这些老用户 fixture
-  误判成首启。
+  `stubTauri(page, null, { lastVault: "/mock/missing-vault" })`）。**第三参优先与 fixture
+  缺省派生分开计算**：`config_get` 使用独立的 `initialLastVault`，`current` 继续保持 `null`：
+
+  ```ts
+  const initialLastVault =
+    options?.lastVault !== undefined
+      ? options.lastVault
+      : vault === null
+        ? null
+        : vault.lastVault !== undefined
+          ? vault.lastVault
+          : vault.root ?? "/Users/alex/demo-vault";
+  ```
+
+  `stubTauri(page, null)` 仍为 `null`（真首启）。不能只写 `current.root ?? null`——`root` 是
+  可选字段，大量 fixture（例如 `m831` 的 `VAULT`）不写 root，桩的实际 vault 根回落到
+  `/Users/alex/demo-vault`（`tests/visual/scenes/tauri-stub.ts:428`、`:720`），只取 `root` 会把
+  这些老用户 fixture 误判成首启。也不能让 `vault === null` 先短路掉 `options.lastVault`。
 - 新增桩测试：**fixture 省略 `root` ⇒ 非首启**（`last_vault` 取同一 fallback）；显式
-  `lastVault: null` ⇒ 首启；`stubTauri(page, null)` ⇒ 首启。反向验证一次：改回
-  `current.root ?? null` 时该测试必红。
+  `lastVault: null` ⇒ 首启；`stubTauri(page, null)` ⇒ 首启。**新增正向用例**：
+  `stubTauri(page, null, { lastVault: "/mock/missing-vault" })` ⇒ 非首启；启动面按 `no_vault`
+  撤下、既有 `.ft-empty` 可见。当前三条测试覆盖不到这个反例。反向验证一次：改回
+  `current.root ?? null`（或在 `vault === null` 处短路）时该用例必红。
 - 审计所有 `stubTauri(page, null)` 场景：`app-main`、`toc-outline`、`quick-open`、
   `m293-eink-literal-tokens`、`m149-tabs`、`first-run-empty-state`、`startup-restore`、
   `m831-harness-composer-codemirror`。它们若要旧的无 vault 工作区，必须显式给非 null 的

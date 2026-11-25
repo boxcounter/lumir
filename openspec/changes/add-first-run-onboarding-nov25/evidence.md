@@ -76,12 +76,27 @@
 - **视觉桩**：`tests/visual/scenes/tauri-stub.ts:589` 的 `config_get` 恒写 `last_vault: null`。
   若不修，所有带 fixture 的视觉场景、以及 `m645-startup-surface` 的恢复态都会被
   `firstRun` 判成首启模式。修法：`VaultFixture` / `stubTauri` 支持 `lastVault`（含无 fixture 的
-  非首启空态）；**缺省值复用 `vault_current` 的同一 root 派生与 fallback**：
-  `current === null ? null : (current.lastVault !== undefined ? current.lastVault :
-  (current.root ?? "/Users/alex/demo-vault"))`；`stubTauri(page, null)` 仍为 `null`（真首启）。不能只写
-  `current.root ?? null`——`root` 可选，`m831` 等 fixture 不写 root，实际根回落到
-  `/Users/alex/demo-vault`（`tauri-stub.ts:428`、`:720`）。补桩测试「fixture 省略 root ⇒
-  非首启」，并反向验证改回 `current.root ?? null` 时必红。
+  非首启空态）。**第三参优先与 fixture 缺省派生分开计算**：`config_get` 使用独立的
+  `initialLastVault`，`current` 保持 `null`：
+
+  ```ts
+  const initialLastVault =
+    options?.lastVault !== undefined
+      ? options.lastVault
+      : vault === null
+        ? null
+        : vault.lastVault !== undefined
+          ? vault.lastVault
+          : vault.root ?? "/Users/alex/demo-vault";
+  ```
+
+  `stubTauri(page, null)` 仍为 `null`（真首启）。不能只写 `current.root ?? null`——`root` 可选，
+  `m831` 等 fixture 不写 root，实际根回落到 `/Users/alex/demo-vault`（`tauri-stub.ts:428`、
+  `:720`）；也不能让 `vault === null` 先短路掉 `options.lastVault`。补桩测试「fixture 省略
+  root ⇒ 非首启」，并新增正向用例
+  `stubTauri(page, null, { lastVault: "/mock/missing-vault" })` ⇒ 非首启、启动面按 `no_vault`
+  撤下、既有 `.ft-empty` 可见；反向验证改回 `current.root ?? null`（或在 `vault === null` 处
+  短路）时该用例必红。
 - **受影响的 `stubTauri(page, null)` 场景**（必须逐个核对是否要旧无 vault 工作区）：
   `app-main`、`toc-outline`、`quick-open`、`m293-eink-literal-tokens`、`m149-tabs`、
   `first-run-empty-state`、`startup-restore`、`m831-harness-composer-codemirror`。
@@ -131,7 +146,7 @@
 |---|---|
 | P1-1 shell.inert / 命令穿透 | design §4.4（`#app` inert + 命令闸门：默认 Keymap / `applyKeyConfig` 重装 / `onMenuCommand` 同一谓词；`Cmd-,` / `Cmd-Shift-A` / `Cmd-/` 无 DOM / IPC / 布局副作用；`#app.inert` 撤下后为 false）；app-startup delta 加入闸门条款与 Scenario；tasks 2.10 / 2.11 / 6.7 / 7.3 |
 | P2-1 vaultOpenPath 只调 IPC | design §9.3 验收动作契约：`switchToVault` 完整链路，不重启 / reload；DEV + 验收注入双约束；普通 dev 无桥 / 端点 404、production build grep 为 0；tasks 7.4 / proposal 影响节 |
-| P2-2 视觉桩 lastVault 缺省 | design §9.2 与 tasks 6.1：复用 `vault_current` 的 `current.root ?? "/Users/alex/demo-vault"` fallback；fixture 省略 root ⇒ 非首启，反向验证；evidence 同条 |
+| P2-2 视觉桩 lastVault 缺省 | design §9.2 与 tasks 6.1/6.2：独立 `initialLastVault`，`options.lastVault` 优先，其次 `vault === null ? null`，再 `vault.lastVault`，最后 `vault.root ?? "/Users/alex/demo-vault"`；`current` 保持 `null`。补正向用例 `stubTauri(page, null, { lastVault: "/mock/missing-vault" })` ⇒ 非首启 / `no_vault` 撤下 / `.ft-empty` 可见；反向验证短路时必红 |
 | P2-3 tips 资格竞态 | design §3.3 / §5.2 与 first-run-onboarding spec：`applyVault` 入口 claim + vaultId 令牌；首个 applyVault 收尾无论有无标签都清；补「首 vault 恢复标签 → 切空 vault」场景；tasks 3.6 / 3.9 |
 | P2-4 877 老用户回归污染 | design §9.3 步骤 8 与 tasks 7.3：先关标签 + harness、等布局落盘再重启；`configWrite` 自带 restart 不叠加 |
 | P3-1 无 JSONL 断言 | design §9.3 步骤 6 与 tasks 7.3：目录级 `glob exact: 0` + harness 在场 / `harness_pane:true` 正观测；明确不用 `file.count: 0` |

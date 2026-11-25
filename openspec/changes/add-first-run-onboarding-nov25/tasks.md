@@ -102,16 +102,30 @@
 ## 6. 视觉测试与基线
 
 - [ ] 6.1 修 `tests/visual/scenes/tauri-stub.ts`：`VaultFixture` / `stubTauri` 支持 `lastVault`
-      （含无 fixture 的非首启空态）；**缺省值复用 `vault_current` 的同一 root 派生与 fallback**：
-      `current === null ? null : (current.lastVault !== undefined ? current.lastVault :
-      (current.root ?? "/Users/alex/demo-vault"))`；`stubTauri(page, null)` 仍为 `null`（真首启）。不能只写
-      `current.root ?? null`——`root` 可选，`m831` 等 fixture 不写 root，实际根回落到
-      `/Users/alex/demo-vault`。
+      （含无 fixture 的非首启空态）。**第三参优先与 fixture 缺省派生分开计算**：`config_get`
+      使用独立的 `initialLastVault`，`current` 继续保持 `null`：
+
+      ```ts
+      const initialLastVault =
+        options?.lastVault !== undefined
+          ? options.lastVault
+          : vault === null
+            ? null
+            : vault.lastVault !== undefined
+              ? vault.lastVault
+              : vault.root ?? "/Users/alex/demo-vault";
+      ```
+
+      `stubTauri(page, null)` 仍为 `null`（真首启）。不能只写 `current.root ?? null`——`root`
+      可选，`m831` 等 fixture 不写 root，实际根回落到 `/Users/alex/demo-vault`；也不能让
+      `vault === null` 先短路掉 `options.lastVault`。
 - [ ] 6.2 审计所有 `stubTauri(page, null)` 场景（`app-main`、`toc-outline`、`quick-open`、
       `m293-eink-literal-tokens`、`m149-tabs`、`first-run-empty-state`、`startup-restore`、
       `m831-harness-composer-codemirror`）：要旧无 vault 工作区的，显式给失效的非 null
-      `lastVault`；否则会被首启模式覆盖。补桩测试「fixture 省略 root ⇒ 非首启」，并做一次
-      反向验证：改回 `current.root ?? null` 时该测试必红。
+      `lastVault`；否则会被首启模式覆盖。补桩测试「fixture 省略 root ⇒ 非首启」，并新增正向
+      用例 `stubTauri(page, null, { lastVault: "/mock/missing-vault" })` ⇒ 非首启、启动面按
+      `no_vault` 撤下、既有 `.ft-empty` 可见。反向验证：改回 `current.root ?? null`（或在
+      `vault === null` 处短路）时该用例必红。
 - [ ] 6.3 `m645-startup-surface` 的 `RESTORING` 场景显式给非 null `lastVault`，保持既有骨架 /
       产品标记 / 阶段行断言；另加首启模式用例（无侧栏 / 产品标记 / 阶段行、只有居中按钮）。
 - [ ] 6.4 更新 `tests/visual/scenes/first-run-empty-state.spec.ts`：真首启（`#startup.startup-first-run`
