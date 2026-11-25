@@ -38,6 +38,13 @@
 > 5. **规格对账**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS（扫过 13 份 delta，17 条
 >    MODIFIED，对比 383 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目）；
 >    `openspec validate --all --strict` 39 passed / 0 failed。
+> 归档已完成（2026-11-26T07:29:35+0800）：归档提交 `e50c4895`；包装器输出
+> `Totals: + 2, ~ 1, - 0, → 0`（toc-outline +1 ADDED / ~1 MODIFIED，vault-workspace +1 ADDED），
+> 归档副本修链 **0 处**（扫过 5 篇 Markdown / 0 条相对链接），`openspec-links` **700/700 PASS**；
+> `node scripts/openspec-archive-check.mjs --archived fix-selector-ime-aria-nov25` **PASS**
+> （1 条 MODIFIED / 对比 24 段 / 人工恢复 0 段 / 声明认领 0 段）；`bash scripts/docs-check.sh` **PASS**
+> （同一时间）。归档队列条目在归档前为机器检查落账、归档后按 80 行硬上限核销——`docs/backlog.md`
+> 保持 80 行，本条即台账；未改产品代码或视觉基线。
 
 ## Why
 
