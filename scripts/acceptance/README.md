@@ -89,6 +89,20 @@ item 13 与所有 13x 前缀场景——按「跑第 13 项」的读法把整个
 前提：本机已装 KimiCU.app（`/Applications/KimiCU.app`）并授予辅助功能 + 屏幕录制。套件自身零新增
 依赖——只用 Node 内置模块 + 仓库已有的 `js-yaml`，GUI 通道复用 KimiCU 官方 MCP server。
 
+### 生产反向断言（Web 验收装配）
+
+Web 的测试 provider / transport / resolver 注入面只在显式 `--features acceptance-web` 的构建里
+编译；普通 `dev` / `release` / 单测构建不读取 `LUMIR_ACCEPTANCE_WEB_ENDPOINTS`，生产装配仍只用
+`DeepSeekWebProvider::official`。机器判据：
+
+```bash
+bash scripts/acceptance/web-production-check.sh
+```
+
+它编译不带 feature 的 lib，核源码与 rlib 均不含该环境变量，并确认生产 Web 装配点仍是 official
+constructor。Web 合成 HTTP 全链路的开发侧测试入口：
+`cargo test --features acceptance-web --test web_acceptance`。
+
 ### 实例 flavour：dev（缺省）/ bundle（通知点击链路）
 
 缺省起 `pnpm tauri dev`（dev flavour）。**通知点击回调在 dev flavour 下验不到**：dev 档按

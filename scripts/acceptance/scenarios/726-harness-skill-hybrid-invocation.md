@@ -20,6 +20,9 @@ seed:
         - { tabs: [harness-note.md], active: harness-note.md }
       ratio: 0.6
       harnessPane: true
+    # 本场景不验证 Web；显式关闭以固定工具面（阶段5回扫）。
+    web_access:
+      enabled: false
 steps:
   - name: 预置 v3 草稿 refs（禁手动/非法项走旧引用复核；不含 acc-deploy，留给真实候选选择）
     do: envWrite

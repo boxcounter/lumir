@@ -22,6 +22,9 @@ config:
     fixture: "$fixtures/harness-mock-approval-visibility.json"
     # vault_patch 只在 read_only 档逐个问（默认 vault_write 自动放行、无闸——同 72 的归因）。
     permission_mode: read_only
+    # 本场景不验证 Web；显式关闭以固定工具面（阶段5回扫）。
+    web_access:
+      enabled: false
 steps:
   - name: ⌘⇧A 打开 harness pane（旁侧分栏）
     do: keys

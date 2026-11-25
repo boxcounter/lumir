@@ -34,7 +34,7 @@ impl WebExecutor {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "acceptance-web"))]
     pub fn with_dependencies_for_test(
         provider: Arc<DeepSeekWebProvider>,
         permissions: HarnessPermissions,

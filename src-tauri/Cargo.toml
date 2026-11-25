@@ -185,6 +185,15 @@ rustls-pemfile = "2"
 # 白屏（空文档，控制台报 "Could not connect to the server http://127.0.0.1:1420/"），不弹任何错误。
 # 裸 debug 二进制直连 dist 的验证方式：cargo build --features custom-protocol。
 custom-protocol = ["tauri/custom-protocol"]
+# 独立验收装配（阶段5）：只在显式 `--features acceptance-web` 的验收构建里编译测试 provider /
+# transport / resolver 的注入面。普通 dev / release / 单测构建都不带它，生产装配仍只有 official
+# endpoint；验收套件激活时还必须显式设 LUMIR_ACCEPTANCE_WEB_ENDPOINTS（见 web::acceptance）。
+acceptance-web = []
+
+[[test]]
+# 阶段5的 Web 合成 HTTP 全链路：只有验收构建带注入面；默认 cargo test 不编译本测试。
+name = "web_acceptance"
+required-features = ["acceptance-web"]
 
 [profile.release]
 panic = "abort"

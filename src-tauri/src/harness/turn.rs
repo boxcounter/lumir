@@ -473,6 +473,36 @@ pub fn run_turn_for_with_skills(
     );
 }
 
+/// 验收构建专用（`acceptance-web` feature）：与 [`run_turn_for`] 同一条循环，但把 Web 端口
+/// 换成合成 HTTP 装配。普通构建不编译本函数。
+#[cfg(feature = "acceptance-web")]
+#[allow(clippy::too_many_arguments)]
+pub fn run_turn_for_with_web_port(
+    sink: &dyn EventSink,
+    runtime: &Runtime,
+    scope: &VaultScope,
+    config: &HarnessConfig,
+    parts: impl Into<DeliveryInput>,
+    context_section: Option<String>,
+    client: &mut dyn LlmClient,
+    web_port: std::sync::Arc<dyn super::web::WebToolPort>,
+) {
+    runtime.seed_permissions(&config.permissions);
+    let mut ctx =
+        SessionContext::new(sink, runtime, scope, config).with_web_port_for_acceptance(web_port);
+    let _ = run_turn_core_with_mode(
+        &mut ctx,
+        config,
+        TurnInput::User {
+            parts: parts.into(),
+            context_section,
+            skill_names: Vec::new(),
+        },
+        TurnOrigin::Interactive,
+        client,
+    );
+}
+
 /// 显式重试的单测入口（change add-harness-turn-retry-nov23 R4 / R5 / R10 的落点）：
 /// 与生产 [`run_turn_resume`] 同一实现（`TurnInput::Resume` + `TurnOrigin::Retry`），不接
 /// `AppHandle`——调用方已用 [`Runtime::begin_retry`] 完成守卫与 `begin_turn`。

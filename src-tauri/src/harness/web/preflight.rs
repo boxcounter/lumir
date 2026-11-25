@@ -108,11 +108,11 @@ pub struct TransportResponse {
 
 #[derive(Default)]
 pub struct ReqwestWebTransport {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "acceptance-web"))]
     addr_mapper: Option<Arc<dyn Fn(SocketAddr) -> SocketAddr + Send + Sync>>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "acceptance-web"))]
     root_certificates: Vec<reqwest::Certificate>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "acceptance-web"))]
     use_system_proxy: bool,
 }
 
@@ -121,7 +121,7 @@ impl ReqwestWebTransport {
         Self::default()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "acceptance-web"))]
     pub fn with_test_mapping(
         mapper: impl Fn(SocketAddr) -> SocketAddr + Send + Sync + 'static,
     ) -> Self {
@@ -132,7 +132,7 @@ impl ReqwestWebTransport {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "acceptance-web"))]
     pub fn with_test_mapping_and_roots(
         mapper: impl Fn(SocketAddr) -> SocketAddr + Send + Sync + 'static,
         root_certificates: Vec<Vec<u8>>,
@@ -147,14 +147,14 @@ impl ReqwestWebTransport {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "acceptance-web"))]
     pub fn with_system_proxy_for_negative_test(mut self) -> Self {
         self.use_system_proxy = true;
         self
     }
 
     fn mapped_addrs(&self, addrs: &[SocketAddr]) -> Vec<SocketAddr> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "acceptance-web"))]
         if let Some(mapper) = &self.addr_mapper {
             return addrs.iter().copied().map(|addr| mapper(addr)).collect();
         }
@@ -174,7 +174,7 @@ impl WebTransport for ReqwestWebTransport {
         let host = resolution_host(&url)?;
         let addrs = self.mapped_addrs(addrs);
         let builder = Client::builder();
-        #[cfg(test)]
+        #[cfg(any(test, feature = "acceptance-web"))]
         let builder = if self.use_system_proxy {
             builder
         } else {
@@ -188,13 +188,13 @@ impl WebTransport for ReqwestWebTransport {
             .connect_timeout(timeout)
             .timeout(timeout)
             .resolve_to_addrs(&host, &addrs);
-        #[cfg(test)]
+        #[cfg(any(test, feature = "acceptance-web"))]
         let mut builder = builder;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "acceptance-web"))]
         if !self.root_certificates.is_empty() {
             builder = builder.tls_built_in_root_certs(false);
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "acceptance-web"))]
         for certificate in &self.root_certificates {
             builder = builder.add_root_certificate(certificate.clone());
         }

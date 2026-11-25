@@ -67,13 +67,13 @@ pub struct DeepSeekWebProvider {
     provider_id: String,
     api_key: String,
     endpoint: String,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "acceptance-web"))]
     timings: Option<TestTimings>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "acceptance-web"))]
     resolve: Option<(String, std::net::SocketAddr)>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "acceptance-web"))]
 #[derive(Clone, Copy)]
 struct TestTimings {
     attempt: Duration,
@@ -86,14 +86,14 @@ impl DeepSeekWebProvider {
             provider_id: provider_id.into(),
             api_key: api_key.into(),
             endpoint: OFFICIAL_ENDPOINT.to_string(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "acceptance-web"))]
             timings: None,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "acceptance-web"))]
             resolve: None,
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "acceptance-web"))]
     pub fn with_endpoint_for_test(endpoint: &str, provider_id: &str, api_key: &str) -> Self {
         Self {
             provider_id: provider_id.to_string(),
@@ -104,7 +104,7 @@ impl DeepSeekWebProvider {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "acceptance-web"))]
     pub fn with_timings_for_test(
         endpoint: &str,
         provider_id: &str,
@@ -121,7 +121,7 @@ impl DeepSeekWebProvider {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "acceptance-web"))]
     pub fn with_resolved_endpoint_for_test(
         endpoint: &str,
         host: &str,
@@ -162,7 +162,7 @@ impl DeepSeekWebProvider {
     /// 整次 provider 阶段的上限（含退避）。executor 用它把本地预检与 DeepSeek 阶段
     /// 放进**同一个** deadline；Search 100 秒、Fetch 150 秒。
     pub fn total_timeout(&self, operation: WebOperation) -> Duration {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "acceptance-web"))]
         if let Some(timings) = self.timings {
             return timings.total;
         }
@@ -220,7 +220,7 @@ impl DeepSeekWebProvider {
             WebOperation::Search => (SEARCH_ATTEMPT_TIMEOUT, SEARCH_RESPONSE_LIMIT),
             WebOperation::Fetch => (FETCH_ATTEMPT_TIMEOUT, FETCH_RESPONSE_LIMIT),
         };
-        #[cfg(test)]
+        #[cfg(any(test, feature = "acceptance-web"))]
         let attempt_timeout = self
             .timings
             .map(|timings| timings.attempt)
@@ -412,7 +412,7 @@ impl DeepSeekWebProvider {
             .retry(reqwest::retry::never())
             .connect_timeout(CONNECT_TIMEOUT.min(timeout))
             .timeout(timeout);
-        #[cfg(test)]
+        #[cfg(any(test, feature = "acceptance-web"))]
         let builder = if let Some((host, addr)) = &self.resolve {
             builder.resolve(host, *addr)
         } else {

@@ -414,6 +414,10 @@ pub struct SessionContext<'a> {
     /// **只在交互路径**（`tool_policy = None`）对模型可见 / 可执行（[`Self::cron_port`] 的判据）。
     /// 单测直接构造上下文时缺省 `None`。
     cron: Option<std::sync::Arc<dyn crate::cron::CronPort>>,
+    /// 验收构建（`acceptance-web` feature）的 Web 端口覆盖：普通构建没有这个字段，
+    /// 生产装配始终从官方 provider 现建。只在合成 HTTP 集成测试里注入。
+    #[cfg(feature = "acceptance-web")]
+    web_port_override: Option<std::sync::Arc<dyn super::web::WebToolPort>>,
 }
 
 /// 回合取消的唯一事实源：主会话看 session 的停止标志，并在读到停止时广播给本回合起的子运行。
@@ -500,7 +504,19 @@ impl<'a> SessionContext<'a> {
             hub,
             tool_policy,
             cron: None,
+            #[cfg(feature = "acceptance-web")]
+            web_port_override: None,
         }
+    }
+
+    /// 验收构建专用：把合成 HTTP 端口交给本回合（只有 `acceptance-web` feature 下存在）。
+    #[cfg(feature = "acceptance-web")]
+    pub fn with_web_port_for_acceptance(
+        mut self,
+        port: std::sync::Arc<dyn super::web::WebToolPort>,
+    ) -> Self {
+        self.web_port_override = Some(port);
+        self
     }
 
     /// 注入调度工具端口（`turn::run_turn` 的接线点）：交互路径持有一个，
@@ -566,6 +582,10 @@ impl RunContext for SessionContext<'_> {
     }
 
     fn web_port(&self) -> Option<std::sync::Arc<dyn super::web::WebToolPort>> {
+        #[cfg(feature = "acceptance-web")]
+        if let Some(port) = &self.web_port_override {
+            return Some(port.clone());
+        }
         if !self.is_interactive()
             || (self.config.web_access.status == super::web::config::WebAccessConfigStatus::Valid
                 && !self.config.web_access.enabled)

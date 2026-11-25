@@ -1,3 +1,5 @@
+#[cfg(feature = "acceptance-web")]
+pub mod acceptance;
 pub mod budget;
 pub mod config;
 pub mod executor;
@@ -78,20 +80,24 @@ pub trait WebToolPort: Send + Sync {
 
 pub struct ConfiguredWebToolPort {
     config: HarnessConfig,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "acceptance-web"))]
     executor: Option<WebExecutor>,
 }
 
 impl ConfiguredWebToolPort {
     pub fn new(config: &HarnessConfig) -> Self {
+        #[cfg(feature = "acceptance-web")]
+        if let Some(port) = acceptance::from_env(config) {
+            return port;
+        }
         Self {
             config: config.clone(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "acceptance-web"))]
             executor: None,
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "acceptance-web"))]
     pub fn with_executor_for_test(config: &HarnessConfig, executor: WebExecutor) -> Self {
         Self {
             config: config.clone(),
@@ -200,7 +206,7 @@ impl WebToolPort for ConfiguredWebToolPort {
             },
             BasicWebArgs::Fetch { url, .. } => WebProviderRequest::Fetch { url },
         };
-        #[cfg(test)]
+        #[cfg(any(test, feature = "acceptance-web"))]
         if let Some(executor) = &self.executor {
             return executor.execute(request, aborted);
         }

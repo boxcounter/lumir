@@ -13,6 +13,9 @@ config:
     # Alex 裁决）——本场景判的批准闸（vault_patch 逐个问）只在该档成立。默认档 vault_write 下
     # vault_patch 自动放行、无闸，本场景必红（M480 归因，M481 回扫）。
     permission_mode: read_only
+    # 本场景不验证 Web；显式关闭以固定工具面（阶段5回扫）。
+    web_access:
+      enabled: false
 steps:
   - name: 记下基线（sha256 + mtime）
     do: record

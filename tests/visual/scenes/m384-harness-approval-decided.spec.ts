@@ -789,3 +789,61 @@ test("Web Search Ask：完整 query 与可空 provider 不伪造配置身份", a
   await expect(card.locator('[data-act="approve-remember"]')).toHaveCount(0);
   await expect(card.locator('[data-act="approve-persist"]')).toHaveCount(0);
 });
+
+// ── 阶段5：默认无卡 Web 审计的结构（不建像素基线）────────────────────────────
+//
+// change add-harness-web-fetch-search-nov24 的 D1024 / D1025 审计块：工具行在前、审计在后；
+// 未配置 / 未外发时不得渲染 D1021 / D1022 的外发说明。判据是 DOM 顺序与文本，不是像素——
+// 审计块已由 m734 的 Web 设置与既有 Ask 场景覆盖视觉面，本用例只钉结构不变量。
+
+test("默认无卡 Web 审计：工具行→审计顺序，未外发时不渲染外发说明", async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as unknown as Record<string, unknown>).__pendingApprovalList = [];
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await fire(page, { type: "auto_turn_started", chain_index: 1 });
+  await fire(page, {
+    type: "tool_call",
+    name: "web_fetch",
+    status: "started",
+    summary: "https://example.com/a",
+    call_id: "call_audit",
+  });
+  await fire(page, {
+    type: "tool_call",
+    name: "web_fetch",
+    status: "done",
+    summary: "完成",
+    call_id: "call_audit",
+    web: {
+      operation: "fetch",
+      query: null,
+      url: "https://example.com/a",
+      provider: null,
+      provider_id: null,
+      attempts: 0,
+      cost_per_1000_success_cny: 5,
+      local_precheck: false,
+      provider_fetch: false,
+      trust: "untrusted",
+      truncated: false,
+      truncated_fields: [],
+      code: "web_provider_unconfigured",
+    },
+  });
+  const block = page.locator(".lumir-hp-tools");
+  const audit = block.locator(".lumir-hp-web-audit");
+  await expect(audit).toHaveCount(1);
+  await expect(audit).toContainText("未解析");
+  await expect(audit).toContainText("尝试次数");
+  await expect(audit).toContainText("untrusted data");
+  await expect(audit).not.toContainText("HEAD / Range GET");
+  const order = await block.evaluate((el) => [...el.children].map((child) => child.className));
+  const rowIndex = order.findIndex((name) => name.includes("lumir-hp-tool-row"));
+  const auditIndex = order.findIndex((name) => name.includes("lumir-hp-web-audit"));
+  expect(rowIndex).toBeGreaterThanOrEqual(0);
+  expect(auditIndex).toBeGreaterThan(rowIndex);
+});

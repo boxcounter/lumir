@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "网页工具不可用时也不自动改走 curl；先试统一 Web，再按权限问 curl。",
+      "tool_calls": [
+        {
+          "id": "call_web_search",
+          "name": "web_search",
+          "arguments": "{\"query\":\"stage5 fallback\"}"
+        },
+        {
+          "id": "call_curl",
+          "name": "cli_run",
+          "arguments": "{\"command\":\"curl\",\"args\":[\"https://example.com/a\"],\"purpose\":\"检查网页工具不可用时是否仍按原权限问 curl\"}"
+        }
+      ]
+    },
+    {
+      "text": "WEB-FALLBACK-DONE"
+    }
+  ]
+}
