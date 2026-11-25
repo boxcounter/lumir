@@ -64,15 +64,20 @@
 
 - [x] 5.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（39 passed / 0 failed）。
 - [x] 5.2 `bash scripts/docs-check.sh` 通过（含归档对账、验收场景契约与覆盖表）。
-- [x] 5.3 目标测试：`bash scripts/visual/run.sh scenes/selector-aria-ime-nov25.spec.ts` 全绿（12 条：
-      原 10 条 + 焦点矩阵 + Esc / 游标移动取消）；回归 `list-filter` / `mv-vault-switcher` /
-      `m668-vault-remove-focus` / `toc-outline` 24 条全绿；`pnpm test` 2001 pass / 0 fail；
-      `tsc --noEmit` 与 `tests/visual` 的 tsc 均 exit 0。
-- [ ] 5.4 真机复跑（主会话串行）：`node scripts/acceptance/run.mjs 13`、`17` 通过；另按真机清单
-      手工复核组合期行为（真实中文 IME 下组合期 `↓` / `Enter` 不导航、不接受，组合结束后列表
-      按最终串刷新一次）。
-- [ ] 5.5 完整门禁由主会话执行：`bash scripts/gate.sh quick` 与 `bash scripts/gate.sh visual`
-      （动过 `src/style.css`，像素层必跑）。
+- [x] 5.3 目标测试：`bash scripts/visual/run.sh scenes/selector-aria-ime-nov25.spec.ts` 全绿（17 条：
+      原 10 条 + 焦点矩阵 + Esc / 游标移动取消 + ⌘A 全选与组合期反例 2 条）；回归 `list-filter` /
+      `mv-vault-switcher` / `m668-vault-remove-focus` / `toc-outline` 24 条全绿；`pnpm test` 2003
+      pass / 0 fail；`tsc --noEmit` 与 `tests/visual` 的 tsc 均 exit 0。
+- [x] 5.4 真机复跑（主会话串行）：13-toc **PASS / 65 断言 / 0 失败**、17-multi-vault-switch
+      **PASS / 59 断言 / 0 失败**。原始证据
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/worktrees/nov25/selector-accessibility/.local/acceptance/2026-11-25/`；
+      耐久副本（summary / results / 两场景 steps）
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-selector-accessibility-cmd-a-final/`。
+      组合期手工复核见 8.5（Alex 原生中文 IME PASS）。
+- [x] 5.5 完整门禁由主会话执行：最终 tip `d9b85e93` 的 `gate visual`（含 quick）原始行
+      `GATE RESULT: 15/15 PASS（SKIP 0）`、exit 0；visual-regression 1240s；日志
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/selector-accessibility/gate-visual-cmd-a.log`。
+      未更新视觉基线。
 
 ## 6. 第三轮（机械复核第二轮剩余边界）
 
@@ -162,8 +167,9 @@
       照旧开着），而 ⌘O 是开关语义（`vault.switcher` → `switcher.toggle`）——那一下把浮层关掉了
       （AX dump 从 239 节点掉到 230、`AXList` 消失），其后「浮层已展开 / 失效行在列表里 / 确认句
       点名失效 vault / 等移除生效」四条是同一个根因的级联。补「Esc 收起 + waitFor 终态」再走 ⌘O。
-- [ ] 8.5 5.4 的另一半仍未做：真实中文 IME 下组合期 `↓` / `Enter` 不导航、不接受，组合结束后列表
-      按最终串刷新一次——需要真机时段与真人输入法，归主会话。
+- [x] 8.5 真实中文 IME 手工复核完成：Alex 原生输入法下 TOC / Vault 组合期 `↓` / `Enter` 不导航、
+      不接受，组合结束按最终串刷新；原话「IME 通过。」，记录见
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-ime-matrix/ledger.md`。
 
 ## 9. 输入面 ⌘A 全选（2026-11-25 用户实测缺陷，同 change 增补）
 
@@ -180,7 +186,9 @@
       条款正文。
 - [x] 9.5 目标矩阵 17 条全绿；两条 tsc、docs-check、`openspec validate --all --strict` 通过（读数
       见完工报告）。
-- [ ] 9.6 真机 13 / 17 的 `cgevent` ⌘A 步骤与完整 quick / visual 由主会话在新 tip 重跑。
+- [x] 9.6 真机 13 / 17 的 `cgevent` ⌘A 步骤 PASS：13-toc 65 断言、17-multi-vault-switch 59
+      断言、均 0 失败；两份 `steps.md` 的「⌘A 全选筛选串（真实键盘事件）」与「输入框已空」逐条
+      PASS（证据同 5.4）。完整 quick / visual 见 5.5（`GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0）。
 
 ## 备注（合并时由主会话统一）
 

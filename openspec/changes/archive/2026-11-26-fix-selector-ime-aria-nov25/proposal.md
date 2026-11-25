@@ -15,6 +15,29 @@
 > 诊断依据：四选择器盘点报告（2026-11-25，`.tower` 会话产出；本 proposal 引用的行号已按当前
 > 工作树复核）。合同居所 `docs/specs/selector-contract.md` 由并行 change 落地，本 change 只引用
 > 该路径、不编辑它，也不在 delta 里复制合同条款。
+> 节点 2（归档放行，2026-11-26）：**机器 + 独立评审放行**（`docs/process/openspec-workflow.md` 五要件）。
+> 1. **方案已批准**：节点 1 Alex 2026-11-25 原话「选择器按推荐」；实现期 ⌘A 增补为同日用户实测缺陷，
+>    Alex 要求在同一 change 内按 Quick Open 的总输入面合同修复，范围仍限于 TOC / Vault 两个筛选框，
+>    无静默扩 scope。
+> 2. **独立 reviewer clean / merge**：**K3 clean / merge**（无新增 P1 / P2 / P3），绑定产品 tip
+>    `9b92d42c8e945355338bfda49b3045d839adce14`；后续 `b80d0561`、`d9b85e93` 仅修验收场景 13 断言
+>    （test-only，不改产品代码），最终 tip `d9b85e931b0e709d6aa83ddc357c62d11077062e`。机械层报告
+>    `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/selector-ime-aria-nov25/mechanical.md`。
+> 3. **tasks 完成**：全部勾选（5.4 / 5.5 / 8.5 / 9.6 于本归档批次收口），无放弃项。
+> 4. **门禁与真机证据**：最终 tip 完整 `gate visual`（含 quick）原始行 `GATE RESULT: 15/15 PASS（SKIP 0）`、
+>    exit 0；visual-regression 1240s；日志
+>    `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/selector-accessibility/gate-visual-cmd-a.log`。
+>    真机 13-toc **PASS / 65 断言 / 0 失败**、17-multi-vault-switch **PASS / 59 断言 / 0 失败**；⌘A 的
+>    `cgevent` 步骤（「⌘A 全选筛选串（真实键盘事件）」→ 一次 Backspace → 「输入框已空」）在两份
+>    `steps.md` 里逐条 PASS。证据
+>    `/Users/boxcounter/Code/Boxcounter/lumir/.local/worktrees/nov25/selector-accessibility/.local/acceptance/2026-11-25/`，
+>    耐久副本 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-selector-accessibility-cmd-a-final/`。
+>    Alex 原生中文 IME PASS（「IME 通过。」），记录
+>    `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-ime-matrix/ledger.md`。
+>    未更新视觉基线。
+> 5. **规格对账**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS（扫过 13 份 delta，17 条
+>    MODIFIED，对比 383 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目）；
+>    `openspec validate --all --strict` 39 passed / 0 failed。
 
 ## Why
 
