@@ -173,9 +173,13 @@ editorPane、`openHarnessPane(false)` 无 JSONL / preflight、877 未被占用�
 - `pnpm --dir tests/visual exec tsc --noEmit`：通过（视觉桩 / 场景类型）。
 - `pnpm test`：`tests 2042 / pass 2042 / fail 0`。
 - 目标视觉（`LUMIR_VISUAL_PORT=4174`，不碰 Cargo）：
-  - `first-run-empty-state.spec.ts` 3/3 PASS（首启模式居中、命令闸门含原生菜单、tips +
-    默认 harness、只读、打开文档撤下 tips、老用户 D107 + New note）；
-  - `app-main` + `startup-restore` + `m645-startup-surface` 14/14 PASS；
+  - `first-run-empty-state.spec.ts` 4/4 PASS（首启模式居中、命令闸门含原生菜单、tips +
+    默认 harness、只读、打开文档撤下 tips、首 vault restore 延迟竞态、老用户 D107 + New note）；
+    竞态用例先做了一次变异（把 `onEmptyVault` 的 claim 判据临时换成 `firstRunPending`），
+    在 `.first-run-tips` 上如实判红，恢复后绿灯；
+  - `startup-restore.spec.ts` 5/5 PASS（含 P1 回归：非首启恢复中打开设置 → 树就绪 →
+    设置仍开且 `#app.inert` 仍 true；关闭后才 false；修复前该断言红）；
+  - `app-main` 6/6 + `m645-startup-surface` 4/4 PASS；
   - `toc-outline` + `quick-open` + `m149-tabs` + `m293-eink-literal-tokens` +
     `m831-harness-composer-codemirror` 69/69 PASS。
 - `bash scripts/acceptance/check-suite.sh`：PASS（877 静态契约 + COVERAGE 生成一致）。
@@ -183,6 +187,8 @@ editorPane、`openHarnessPane(false)` 无 JSONL / preflight、877 未被占用�
 - `bash scripts/docs-check.sh`：PASS。
 - `pnpm build` 后 `dist/assets/*.js` grep `__lumirAcceptanceVaultOpen` /
   `__LUMIR_ACCEPTANCE_VAULT_OPEN__` / `__lumir-acceptance-vault-open` 为 0（production 无桥）。
+- 877 的“打开文档”段增加真实键入 `TIP-EDIT-877`、`editor.has` 与 `cmd+s` 落盘断言；保存而非
+  撤销，后续老用户回归前无 dirty 污染。
 - 基线候选（未 `--update`）：`.local/reviews/first-run-onboarding-nov25/baseline-candidates/`
   下 `first-run-{light,dark,eink}.png` 与 `tips-{light,dark,eink}.png` + README 清单。
 

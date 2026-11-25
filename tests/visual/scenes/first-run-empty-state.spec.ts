@@ -108,6 +108,36 @@ pageTest("真首启：启动态首启模式唯一 Add vault，整窗居中，无
   await expect(page.locator("#startup.startup-first-run")).toBeVisible();
 });
 
+/** 竞态现场：首 vault 有恢复标签，正文读取被延迟；第二个空 vault 先完成空态。 */
+const SECOND_EMPTY: VaultFixture & { root: string } = {
+  root: "/Users/alex/second-empty-vault",
+  vault_id: "second-empty",
+  entries: [],
+  files: {},
+};
+
+const FIRST_RUN_RACE: VaultFixture = {
+  root: "/Users/alex/first-tabbed-vault",
+  vault_id: "first-tabbed",
+  entries: [{ path: "readme.md", kind: "file", size: 20, mtime_ms: 1 }],
+  files: { "readme.md": "# First vault\n" },
+  sessions: { "first-tabbed": { tabs: ["readme.md"], active: "readme.md" } },
+  snapshotDelayMs: { "readme.md": 1800 },
+  lastVault: null,
+  config: { language: "en" },
+  vaults: [
+    {
+      id: "second-empty",
+      path: "/Users/alex/second-empty-vault",
+      name: "second-empty-vault",
+      available: true,
+      last_opened_at: null,
+      tab_count: 0,
+    },
+  ],
+  switchTo: SECOND_EMPTY,
+};
+
 /** 首启 workspace：有文件但没有会话历史——按首启规则出 tips + 默认 harness。 */
 const FIRST_RUN_VAULT: VaultFixture = {
   root: "/Users/alex/first-run-vault",
@@ -162,6 +192,36 @@ pageTest("首启空工作区：tips + 默认 harness，无 D107 / New note / D36
   const editorContent = page.locator(".editor-pane .cm-content").first();
   await expect(editorContent).toContainText("Note");
   expect(await editorContent.getAttribute("contenteditable")).not.toBe("false");
+});
+
+pageTest("首 vault restore 延迟、第二空 vault 先完成：第二不继承 tips / 默认 harness", async (page) => {
+  await stubTauri(page, FIRST_RUN_RACE);
+  await page.goto("/");
+
+  // 正观测：首 vault 的树与标签壳已建立（正文读取仍在 1800ms 延迟里）。
+  await expect(page.locator('.ft-row[title="readme.md"]')).toBeVisible();
+  await expect(page.locator("#startup")).toHaveCount(0);
+  await expect(page.locator(".tab-name")).toHaveText("readme.md");
+
+  // 首个 restore 未收尾时切到第二个空 vault（走 vault 切换器；不是重启 / reload）。
+  await page.keyboard.press("Meta+O");
+  const second = page.locator('.vault-row[data-vault="second-empty"]');
+  await expect(second).toBeVisible();
+  await second.click();
+  // 先等切换真的完成（树头部点名第二个 vault），再看空态；首个 restore 的延迟与切换
+  // 收尾可能交错，固定 5s 断言容易把「还在装载」误读成产品 FAIL。
+  await expect(page.locator(".ft-vault-name")).toHaveText("second-empty-vault", { timeout: 10_000 });
+
+  // 第二个空 vault 先完成空态：资格仍属于第一个 vault，第二个不得继承 tips / harness。
+  // 先判 tips / harness（本用例的核心），再判 D107；首个 restore 的迟到覆盖层不遮盖这条判据。
+  await expect(page.locator(".first-run-tips")).toHaveCount(0);
+  await expect(page.locator(".pane-divider")).toHaveCount(0);
+  await expect(page.locator(".editor-notice")).toContainText("No files opened in this vault yet", { timeout: 10_000 });
+
+  // 等过第一个 restore 的延迟窗：迟到的首个 restore 也不得把 tips / harness 补到第二个。
+  await page.waitForTimeout(2400);
+  await expect(page.locator(".first-run-tips")).toHaveCount(0);
+  await expect(page.locator(".pane-divider")).toHaveCount(0);
 });
 
 pageTest("老用户空 vault：D107 可执行引导 + 可见 New note；新建默认 .md、显式扩展名保留", async (page) => {

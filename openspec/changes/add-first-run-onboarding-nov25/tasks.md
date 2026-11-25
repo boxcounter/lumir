@@ -140,6 +140,8 @@
       harness / bindings overlay 不出现、无 `settings_get` / `config_set`、pane 与布局零变化；
       造一次 `[keys]` 重绑后的重装现场复跑；首启撤下后同一组键恢复原行为；断言 `#app.inert`
       撤下后为 false。
+- [x] 6.8 P1 回归：非首启恢复中打开设置 → 树就绪 → 设置 overlay 仍可见且 `#app.inert`
+      仍为 true；关闭设置后才由设置 owner 恢复 false（`startup-restore.spec.ts`）。
 
 ## 7. 真机验收
 

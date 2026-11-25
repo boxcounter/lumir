@@ -662,6 +662,9 @@ function reconcilePaneLedger(): void {
 // （打开文档后不再回来），`clear` 在首个 applyVault 的恢复收尾清掉 claim。
 let firstRunPending = false;
 let firstRunCommandsBlocked = false;
+// 只清理由**首启路径自己建立**的 #app 隔离：非首启恢复中设置面板可能先把同一个 #app 置为
+// inert，启动面撤下时不能替它解除。
+let firstRunIsolationActive = false;
 let firstRunTipsVisible = false;
 let firstRunTipsEl: HTMLElement | null = null;
 const firstRunClaim = createFirstRunClaim();
@@ -4645,6 +4648,7 @@ firstRunPending = startup?.firstRun === true;
 // 并打开命令总闸门（inert 挡不住 window 键位与原生菜单）。撤下时在 onDismiss 里统一清。
 if (firstRunPending && startup?.visible === true) {
   firstRunCommandsBlocked = true;
+  firstRunIsolationActive = true;
   app.inert = true;
   app.setAttribute("aria-hidden", "true");
 }
@@ -4670,8 +4674,13 @@ startup?.setOpenHandler(() => requestAddVault());
 // 用户可继续等或另选 vault。降级撤下不补这一层——那时既有启动路径由启动层 / 浏览器照常接管。
 startup?.onDismiss((reason) => {
   firstRunCommandsBlocked = false;
-  app.inert = false;
-  app.removeAttribute("aria-hidden");
+  // 只有首启路径建立过 #app 隔离时才清；非首启恢复中设置面板的 inert 归设置 owner，
+  // 启动面撤下 MUST NOT 替它解除（否则面板还开着、背景却已可交互）。
+  if (firstRunIsolationActive) {
+    firstRunIsolationActive = false;
+    app.inert = false;
+    app.removeAttribute("aria-hidden");
+  }
   if (reason !== "timeout" || firstRunPending) return;
   if (lastVaultStatus === null || lastVaultStatus.restore_pending) tree.showEmpty(RESTORING_NOTICE());
 });

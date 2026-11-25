@@ -116,6 +116,23 @@ steps:
         ax: { has: "beta.md" }
       - shot: 04-打开文档后无-tips
 
+  - name: 在正文键入真实文本，验证 tips 撤下后编辑器确实可编辑
+    do: type
+    text: "TIP-EDIT-877"
+    expect:
+      - label: 键入的文本进入正文（不是只撤下 tips 的假可编辑）
+        editor: { has: "TIP-EDIT-877" }
+      - label: tips 仍不在场
+        ax: { not: "开始使用" }
+      - shot: 05-可编辑-正文变化
+
+  - name: 保存刚才的编辑，避免 dirty 状态污染后续老用户回归
+    do: key
+    key: "cmd+s"
+    expect:
+      - label: 编辑落盘（保存而非撤销，老用户空态仍无标签）
+        file: { path: "$vault-b/beta.md", has: "TIP-EDIT-877" }
+
   - name: 关闭标签与 harness，等布局落盘
     do: key
     key: "cmd+w"
@@ -145,7 +162,7 @@ steps:
         ax: { not: "开始使用" }
       - label: 老用户不默认展开 harness
         ax: { not: "与当前文档对话" }
-      - shot: 05-老用户空vault回归
+      - shot: 06-老用户空vault回归
 ---
 
 # 877-first-run-onboarding
