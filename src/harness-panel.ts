@@ -2409,13 +2409,12 @@ export function renderMarkdownInto(
 }
 
 /**
- * 流式源 → 「已完成块 / 进行中尾块」切分：块边界 = 代码围栏之外的空行。围栏内（``` / ~~~
- * 之间）的空行不是边界——那是代码的一部分。返回 finalized（可安全一次性渲染、渲染后不
- * 再变）与 tail（每帧重渲）的分界偏移。
+ * 流式源 → 「已完成块 / 进行中尾块」切分：块边界 = 代码围栏之外的空行。列表内部与末尾列表
+ * 之后的空行只作候选：后续缩进续段仍可能属于该列表，须等后续顶层块确认列表关闭后才定稿。
  */
-function finalizedUpTo(source: string): number {
+export function finalizedUpTo(source: string): number {
   let inFence: string | null = null;
-  let boundary = 0;
+  const boundaries: number[] = [];
   let offset = 0;
   for (const line of source.split("\n")) {
     const fence = /^\s*(```+|~~~+)/.exec(line);
@@ -2423,12 +2422,24 @@ function finalizedUpTo(source: string): number {
       if (inFence === null) inFence = fence[1][0];
       else if (fence[1][0] === inFence) inFence = null;
     } else if (inFence === null && line.trim() === "") {
-      // +1 把空行本身吃进 finalized：末块从重渲区里整段退出。
-      boundary = offset + line.length + 1;
+      boundaries.push(offset + line.length + 1);
     }
     offset += line.length + 1;
   }
-  return boundary;
+  const top = mdParser.parse(source).topNode;
+  for (let index = boundaries.length - 1; index >= 0; index--) {
+    const boundary = boundaries[index];
+    let insideOpenList = false;
+    for (let node = top.firstChild; node !== null; node = node.nextSibling) {
+      if (node.name !== "BulletList" && node.name !== "OrderedList") continue;
+      if (node.from < boundary && (node.nextSibling === null || boundary <= node.to)) {
+        insideOpenList = true;
+        break;
+      }
+    }
+    if (!insideOpenList) return boundary;
+  }
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
