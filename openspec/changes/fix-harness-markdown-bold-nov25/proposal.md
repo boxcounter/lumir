@@ -37,6 +37,7 @@ living spec「对话面板」已要求模型输出按 Markdown（GFM 基本面�
 - 不改 `StrongEmphasis` inline 分支、不改字体/字重、间距、720px 阅读宽、进度尾行、引用/工具/审批卡。
 - 不改会话协议、Rust 后端、配置、源文档或持久化格式。
 - 不更新视觉基线；如出现候选差异，只放 `.local/reviews/harness-markdown-bold-nov25/` 供 Alex 裁决。
+- **不修 K3 标注的 F1 trailing newline 边界缺陷**：它是基线既有独立缺陷，本 change 未改该路径，新增 fixture 也不覆盖该形态；F1 按 K3 结论另立 change 处理，不并入本 change。
 - 不在本分支 push、merge、archive，不访问真实配置或 vault。
 
 ## Impact
@@ -45,3 +46,22 @@ living spec「对话面板」已要求模型输出按 Markdown（GFM 基本面�
 - 影响的代码/系统：`src/harness-panel.ts` 的流式定稿边界；真实渲染件单测、目标 Chromium 场景与真机验收 fixture。
 - 关联约束：living spec「对话面板」、`refine-harness-typography-nov23` 的既有排版、
   `docs/process/rendering-defect-contract-first.md`、视觉基线人肉裁决纪律。
+
+## 归档记录
+
+### 归档前（节点 2 五要件）
+
+1. **节点 1 批准依据**：Alex 2026-11-25 实测报告「同一条消息中普通段落 `**粗体**` 正常，部分有序列表项仍显示字面 `**`」并明确授权「增加一个工作」；见文首节点 1。实现期未新增行为裁决。
+2. **独立评审**：K3 最终 **clean**（无 P1 / P2 / P3；oracle 未削弱），绑定 tip `12e5eeaef16111bf332041c0d5c045348dc4f68c`，报告 `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/harness-markdown-bold-nov25/k3-final.md`；承接 clean recheck `15b0d673`。K3 列出的完整 gate 前置已由同一 tip 的 gate 证据补齐；真机 875 前置由 r3 证据闭合。
+3. **tasks 完成**：`tasks.md` 9/9 全勾；3.3 完整 gate、3.4 真机 875 的证据路径见下。
+4. **门禁与真机证据**：
+   - 完整 `bash scripts/gate.sh visual`（含 quick 层）在 `12e5eeae`：`GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0；日志 `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/harness-markdown-bold-nov25/gate-visual-final-tip.log`；`visual-regression` 931s；基线未更新。
+   - 真机 875：`875-harness-markdown-bold` **1/1 PASS**、19 断言、0 failed、22.272s；证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-harness-markdown-bold-r3/`（`results.json`、`summary.md`、`steps.md`、三张截图与 AX）。
+   - 最后两个提交只改验收制品（场景 marker 与 mock fixture JSON），产品实现为前序 clean recheck 所审版本；`tests/visual/baselines/` 零改动。
+   - **F1 trailing newline**：K3 标注的**基线既有独立缺陷**（P2），本 change 未修、未宣称修复，fixture 也不覆盖该形态；按 K3 结论另立 change 处理，不并入本 change。
+5. **规格对账（归档前读数）**：
+   - `node scripts/openspec-archive-check.mjs --change fix-harness-markdown-bold-nov25` → `PASS（扫过 1 份 delta，0 条 MODIFIED，对比 0 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目（--change fix-harness-markdown-bold-nov25））`。
+   - 默认门禁模式 → `PASS（扫过 12 份 delta，16 条 MODIFIED，对比 351 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目）`。
+   - `pnpm exec openspec validate --all --strict` → `39 passed, 0 failed (39 items)`。
+   - `bash scripts/docs-check.sh` → `PASS`（含归档对账、队列齐备、backlog 出口与 80 行上限）。
+   - `docs/backlog.md` 队列有且仅有一条本 change 条目；因 80 行硬上限，按既有先例移除已归档的 `add-harness-skill-slash-invocation-nov23` 旧条目，记录保留在其归档 proposal 与 git 历史。
