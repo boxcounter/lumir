@@ -1018,11 +1018,26 @@ function createWebAuditBlock(metadata: WebAuditMetadata): HTMLElement {
   }
   const egress = document.createElement("p");
   egress.className = "lumir-hp-approval-note";
-  egress.textContent = t(metadata.operation === "search" ? "D1021" : "D1022");
+  // 只陈述**实际发生**的外发路径：未配置 / 权限拒绝 / 参数非法时 query 与 URL 都没有离开
+  // 本机；预检失败时 URL 到了本地预检但没有发往 DeepSeek。两种情形都不渲染外发说明，
+  // 避免把「将要」写成「已经」（预览卡仍按路线描述，见 renderWebApprovalBlock）。
+  const egressKey =
+    metadata.operation === "search"
+      ? metadata.provider_fetch
+        ? ("D1021" as const)
+        : null
+      : metadata.local_precheck && metadata.provider_fetch
+        ? ("D1022" as const)
+        : null;
   const trust = document.createElement("p");
   trust.className = "lumir-hp-approval-note";
   trust.textContent = t("D1023");
-  el.append(egress, trust);
+  if (egressKey !== null) {
+    egress.textContent = t(egressKey);
+    el.append(egress, trust);
+  } else {
+    el.append(trust);
+  }
   return el;
 }
 
@@ -6906,6 +6921,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return activeTools;
   }
 
+  /** 审计块统一追加点：**先有工具行、再追加审计**，并进 `rows`（折叠计数与逐行显隐）。 */
+  function appendWebAuditToBlock(block: ToolsBlock, audit: WebAuditMetadata): void {
+    const element = createWebAuditBlock(audit);
+    block.el.append(element);
+    block.rows.push(element);
+  }
+
   /** 轮次终态收尾（幂等；done / aborted / error 经 finalizeStreamingMessage 共用本出口，
    *  新用户消息与恢复路径在 appendUserMessage / restoreSnapshot 各调一次）：≥2 行的块
    *  折叠为一行摘要钮（data-count 存行数，applyLabels 经 relabelToolSummaries 重渲），
@@ -7000,6 +7022,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   interface SettledApprovalCall {
     name: string;
     row: HTMLElement;
+    /** 该行所在的工具块：done 到达时审计块必须追加到同一块、同一行之后。 */
+    block: ToolsBlock;
     approved: boolean;
     consumed: boolean;
     /** 认领该记录的 done call_id；快照兜底项在第一次 done 后升级，重复同 id done 因此幂等。 */
@@ -7520,18 +7544,18 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
             text.append(document.createTextNode(" "), outEl);
           }
         }
+        if (slot.approved) {
+          // 批准执行的 Web 调用与 allow_all 同形：attempts / truncated / provider 错误细节
+          // 必须可见（D1024 / D1025）。拒绝没有执行，不建审计块。
+          const audit = parseWebAudit(web);
+          if (audit !== undefined) appendWebAuditToBlock(slot.block, audit);
+        }
         if (callId !== null) doneCallIds.add(callId);
         follow.contentGrew();
         return;
       }
     }
     const audit = status === "done" ? parseWebAudit(web) : undefined;
-    if (audit !== undefined) {
-      const block = ensureToolsBlock();
-      const element = createWebAuditBlock(audit);
-      block.el.append(element);
-      block.rows.push(element);
-    }
     const block = ensureToolsBlock();
     if (status === "started") {
       const row = document.createElement("div");
@@ -7583,6 +7607,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       block.el.append(row);
       block.rows.push(row);
     }
+    // 审计块排在工具行之后（行已在上一分支落位）：无 running 行的乱序 done 也保持
+    // 「工具行 → 审计」顺序，不能把审计先追加到块尾再建行。
+    if (audit !== undefined) appendWebAuditToBlock(block, audit);
     if (status === "done" && callId !== null) doneCallIds.add(callId);
     syncEmptyHint();
     follow.contentGrew();
@@ -7953,16 +7980,21 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     pending.wrap.replaceWith(term);
 
     // 块内行替换成终态单元（折叠时整单元随块隐藏）+ running 指针清掉 + done 抑制槽。
+    let owningBlock: ToolsBlock | null = null;
     for (const block of [activeTools, ...sealedToolBlocks]) {
       if (block === null) continue;
       const index = block.rows.indexOf(row);
-      if (index >= 0) block.rows[index] = term;
+      if (index >= 0) {
+        block.rows[index] = term;
+        owningBlock = block;
+      }
       if (block.running === row) block.running = null;
     }
     {
       const entry: SettledApprovalCall = {
         name: pending.tool,
         row,
+        block: owningBlock ?? ensureToolsBlock(),
         approved,
         consumed: false,
         callId: pending.callId ?? null,
@@ -9930,6 +9962,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       } else {
         block.el.append(row);
         block.rows.push(row);
+      }
+      if (approved) {
+        // 与 live 的 ask 批准后路径同形：恢复出来的已批准 Web 调用也显示完整审计
+        // （attempts / truncated / provider 错误细节）。拒绝没有执行，不建块。
+        const audit = webAuditFromPanelText(record.text);
+        if (audit !== undefined) appendWebAuditToBlock(block, audit);
       }
       return;
     }

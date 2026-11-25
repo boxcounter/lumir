@@ -348,7 +348,7 @@ fn preflight_failure_maps_to_fetch_envelope_without_provider_attempts() {
     assert_eq!(value["attempts"], serde_json::json!(0));
 }
 
-static PROXY_ENV_LOCK: Mutex<()> = Mutex::new(());
+pub(super) static PROXY_ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn system_and_manual_proxies_are_bypassed() {

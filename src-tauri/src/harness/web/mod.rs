@@ -388,7 +388,13 @@ fn args_error(
     envelope_output(WebEnvelope::failure(operation, code, message, None, 0))
 }
 
-fn envelope_output(envelope: WebEnvelope) -> ToolOutput {
+fn envelope_output(mut envelope: WebEnvelope) -> ToolOutput {
+    // 所有 Web 失败信封的统一出口：message / provider_message / request_id / provider_code
+    // 都在这里按 1,000 字符限长并写入 truncated_fields。provider 与 preflight 各自也做一次，
+    // 这里是兜底（参数非法、权限拒绝、未配置等未经过网络层的路径同样受合同约束）。
+    if !envelope.ok {
+        budget::failure_budget(&mut envelope);
+    }
     ToolOutput {
         value: serde_json::to_value(envelope).expect("Web 信封一定可序列化"),
     }

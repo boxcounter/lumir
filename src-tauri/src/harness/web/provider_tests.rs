@@ -1,6 +1,9 @@
 use super::executor::WebExecutor;
 use super::output::{WebErrorCode, WebOperation};
-use super::preflight::{ReqwestWebTransport, WebDnsResolver};
+use super::preflight::{
+    PreflightError, ReqwestWebTransport, TransportMethod, TransportResponse, WebDnsResolver,
+    WebTransport,
+};
 use super::provider::{DeepSeekWebProvider, WebBackoff, WebProviderRequest};
 use super::ConfiguredWebToolPort;
 use super::WebToolPort;
@@ -99,6 +102,11 @@ fn search_real_http_uses_exact_fields_and_maps_sources_and_empty_results() {
     );
     assert!(first.ok);
     assert_eq!(first.attempts, 1);
+    assert_eq!(
+        serde_json::to_value(&first).unwrap()["local_precheck"],
+        serde_json::json!(false),
+        "Search 不执行本地预检"
+    );
     assert_eq!(first.query.as_deref(), Some("  full synthetic query  "));
     let results = first.results.unwrap();
     assert_eq!(results.len(), 1);
@@ -139,7 +147,7 @@ fn search_real_http_uses_exact_fields_and_maps_sources_and_empty_results() {
 
 #[test]
 fn redirects_and_proxy_do_not_receive_bearer_or_follow_location() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = super::preflight_tests::PROXY_ENV_LOCK.lock().unwrap();
     let location = TestServer::start(vec![TestResponse::json(200, "{}".to_string())]);
     let proxy = TestServer::start(vec![TestResponse::json(502, "{}".to_string())]);
     let _proxy_env = ProxyEnv::set(&proxy);
@@ -161,6 +169,52 @@ fn redirects_and_proxy_do_not_receive_bearer_or_follow_location() {
     }
     assert_eq!(location.records().len(), 0);
     assert_eq!(proxy.records().len(), 0);
+    // 正向基线：同一进程环境下，默认 client 确实会使用系统代理。没有这一半，
+    // 「代理零请求」只能证明「代理没被用到」，不能证明是 provider 的 `.no_proxy()` 让它没被用到。
+    let baseline = reqwest::blocking::Client::new()
+        .get("http://lumir-proxy-baseline.invalid/probe")
+        .send();
+    assert!(
+        baseline.is_ok(),
+        "反例：系统代理配置下普通 client 应触达代理"
+    );
+    assert!(!proxy.records().is_empty(), "反例必须证明环境代理确实生效");
+}
+
+#[test]
+fn no_proxy_is_what_keeps_a_non_loopback_endpoint_off_the_system_proxy() {
+    let _env_lock = super::preflight_tests::PROXY_ENV_LOCK.lock().unwrap();
+    let target = TestServer::start(vec![TestResponse::json(
+        200,
+        serde_json::json!({"results": []}).to_string(),
+    )]);
+    let proxy = TestServer::start(vec![TestResponse::json(502, "{}")]);
+    let _proxy_env = ProxyEnv::set(&proxy);
+    let provider = Arc::new(DeepSeekWebProvider::with_resolved_endpoint_for_test(
+        &format!("http://provider.test:{}", target.port()),
+        "provider.test",
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), target.port()),
+        "deepseek-test",
+        CANARY,
+    ));
+    let envelope = execute(
+        &provider,
+        search("resolved endpoint"),
+        RecordingBackoff::default(),
+    );
+    assert!(envelope.ok, "{:?}", envelope.code);
+    assert_eq!(target.records().len(), 1);
+    assert_eq!(proxy.records().len(), 0, "no_proxy 必须绕过系统代理");
+    // 正向基线：同一环境下普通 client 确实会触达代理（去掉 `.no_proxy()` 的反例见
+    // stage4-rework/red-no-proxy.log）。
+    let baseline = reqwest::blocking::Client::new()
+        .get("http://provider.test/probe")
+        .send();
+    assert!(
+        baseline.is_ok(),
+        "反例：系统代理配置下普通 client 应触达代理"
+    );
+    assert!(!proxy.records().is_empty(), "反例必须证明环境代理确实生效");
 }
 
 #[test]
@@ -319,6 +373,36 @@ fn retryable_statuses_use_bounded_backoff_and_other_statuses_never_retry() {
 }
 
 #[test]
+fn retry_exhaustion_names_the_initial_request_and_retries_without_claiming_no_retry() {
+    let exhausted = TestServer::start(vec![
+        TestResponse::json(500, "{}"),
+        TestResponse::json(500, "{}"),
+        TestResponse::json(500, "{}"),
+    ]);
+    let envelope = execute(
+        &provider(&exhausted),
+        search("exhaust wording"),
+        RecordingBackoff::default(),
+    );
+    assert_eq!(envelope.attempts, 3);
+    let message = envelope.message.unwrap();
+    assert!(!message.contains("未自动重试"), "{message}");
+    assert!(message.contains("已尝试 3 次"), "{message}");
+    assert!(message.contains("初次"), "{message}");
+
+    let single = TestServer::start(vec![TestResponse::json(404, "{}")]);
+    let envelope = execute(
+        &provider(&single),
+        search("single failure wording"),
+        RecordingBackoff::default(),
+    );
+    assert_eq!(envelope.attempts, 1);
+    let message = envelope.message.unwrap();
+    assert!(message.contains("未自动重试"), "{message}");
+    assert!(!message.contains("已尝试"), "{message}");
+}
+
+#[test]
 fn cancellation_during_headers_body_and_backoff_stops_without_new_attempt() {
     let headers = TestServer::start(vec![TestResponse::delayed(
         200,
@@ -474,6 +558,99 @@ fn budgets_and_error_redaction_are_explicit_and_preserve_json() {
 }
 
 #[test]
+fn request_id_provider_code_and_provider_message_each_stay_within_budget() {
+    let long_request = "r".repeat(3_000);
+    let long_code = "c".repeat(3_000);
+    let long_message = "m".repeat(3_000);
+    let body = serde_json::json!({
+        "error": {"code": long_code, "message": long_message, "type": "synthetic"}
+    })
+    .to_string();
+    let server = TestServer::start(vec![TestResponse::with_headers(
+        400,
+        "application/json",
+        &body,
+        &[("x-request-id", long_request.as_str())],
+    )]);
+    let envelope = execute(
+        &provider(&server),
+        search("metadata budget"),
+        RecordingBackoff::default(),
+    );
+    assert_eq!(envelope.code, Some(WebErrorCode::WebHttpError));
+    for (name, text) in [
+        ("request_id", envelope.request_id.as_deref()),
+        ("provider_code", envelope.provider_code.as_deref()),
+        ("provider_message", envelope.provider_message.as_deref()),
+    ] {
+        let text = text.unwrap_or_else(|| panic!("{name} 必须存在"));
+        assert!(
+            text.chars().count() <= 1_000,
+            "{name} 超限：{}",
+            text.chars().count()
+        );
+        assert!(
+            envelope.truncated_fields.iter().any(|field| field == name),
+            "{name} 必须进入 truncated_fields"
+        );
+    }
+    assert!(envelope.truncated);
+}
+
+#[test]
+fn retry_after_http_date_is_parsed_and_bounded_while_obsolete_forms_fall_back() {
+    let future = (chrono::Utc::now() + chrono::Duration::hours(1))
+        .format("%a, %d %b %Y %H:%M:%S GMT")
+        .to_string();
+    let server = TestServer::start(vec![
+        TestResponse::with_headers(429, "application/json", "{}", &[("Retry-After", &future)]),
+        TestResponse::json(200, serde_json::json!({"results": []}).to_string()),
+    ]);
+    let backoff = RecordingBackoff::default();
+    let delays = backoff.delays.clone();
+    let envelope = execute(&provider(&server), search("http date future"), backoff);
+    assert!(envelope.ok);
+    assert_eq!(*delays.lock().unwrap(), vec![Duration::from_secs(2)]);
+
+    let past = TestServer::start(vec![
+        TestResponse::with_headers(
+            429,
+            "application/json",
+            "{}",
+            &[("Retry-After", "Sun, 06 Nov 1994 08:49:37 GMT")],
+        ),
+        TestResponse::json(200, serde_json::json!({"results": []}).to_string()),
+    ]);
+    let backoff = RecordingBackoff::default();
+    let delays = backoff.delays.clone();
+    let envelope = execute(&provider(&past), search("http date past"), backoff);
+    assert!(envelope.ok);
+    assert_eq!(*delays.lock().unwrap(), vec![Duration::ZERO]);
+
+    // 精确边界：只认 RFC 2822 / IMF-fixdate。obsolete RFC 850 与 asctime 形态不解析，
+    // 按「缺失」走默认退避（250ms）。
+    for obsolete in [
+        "Sunday, 06-Nov-94 08:49:37 GMT",
+        "Sun Nov  6 08:49:37 1994",
+        "not-a-date",
+    ] {
+        let server = TestServer::start(vec![
+            TestResponse::with_headers(429, "application/json", "{}", &[("Retry-After", obsolete)]),
+            TestResponse::json(200, serde_json::json!({"results": []}).to_string()),
+        ]);
+        let backoff = RecordingBackoff::default();
+        let delays = backoff.delays.clone();
+        let envelope = execute(&provider(&server), search("obsolete"), backoff);
+        assert!(envelope.ok, "{obsolete}");
+        assert_eq!(
+            *delays.lock().unwrap(),
+            vec![Duration::from_millis(250)],
+            "{obsolete}"
+        );
+    }
+}
+
+#[test]
 fn executor_preflights_redirect_and_submits_only_b_url_without_permission_changes() {
     let b = TestServer::start(vec![TestResponse::new(200, "text/html", "<html>b</html>")]);
     let a = TestServer::start(vec![TestResponse::redirect(
@@ -512,9 +689,9 @@ fn executor_preflights_redirect_and_submits_only_b_url_without_permission_change
     assert!(envelope.ok, "{:?}", envelope.code);
     assert_eq!(envelope.attempts, 1);
     let expected = format!("{}/b", b.endpoint()).replace("127.0.0.1", "other.test");
-    let source = envelope.source.unwrap();
+    let source = envelope.source.as_ref().unwrap();
     assert_eq!(source.url, expected);
-    assert!(source.content.unwrap().contains("自动批准"));
+    assert!(source.content.as_deref().unwrap().contains("自动批准"));
     assert_eq!(permissions, HarnessPermissions::default());
     assert_eq!(a.records().len(), 1);
     assert_eq!(b.records().len(), 1);
@@ -525,6 +702,15 @@ fn executor_preflights_redirect_and_submits_only_b_url_without_permission_change
     assert_eq!(body, serde_json::json!({"url": expected}));
     assert!(!a.records()[0].authorization_matches);
     assert!(!b.records()[0].authorization_matches);
+    let value = serde_json::to_value(&envelope).unwrap();
+    assert_eq!(value["local_precheck"], serde_json::json!(true));
+    let audit = super::output::audit_metadata(
+        WebOperation::Fetch,
+        &value,
+        &serde_json::json!({"url": value["source"]["url"]}),
+    );
+    assert_eq!(audit["local_precheck"], serde_json::json!(true));
+    assert_eq!(audit["provider_fetch"], serde_json::json!(true));
 }
 
 #[test]
@@ -552,9 +738,105 @@ fn executor_preflight_failure_has_null_provider_zero_attempts_and_no_deepseek_re
     assert_eq!(envelope.provider, None);
     assert_eq!(envelope.provider_id, None);
     assert_eq!(envelope.attempts, 0);
-    assert_eq!(envelope.source.unwrap().url, original);
+    assert_eq!(envelope.source.as_ref().unwrap().url, original);
+    let value = serde_json::to_value(&envelope).unwrap();
+    assert_eq!(
+        value["local_precheck"],
+        serde_json::json!(true),
+        "预检确实执行过（失败也是事实）"
+    );
+    let audit = super::output::audit_metadata(
+        WebOperation::Fetch,
+        &value,
+        &serde_json::json!({"url": original}),
+    );
+    assert_eq!(audit["local_precheck"], serde_json::json!(true));
+    assert_eq!(audit["provider_fetch"], serde_json::json!(false));
     assert_eq!(target.records().len(), 1);
     assert_eq!(api.records().len(), 0);
+}
+
+#[test]
+fn executor_preflight_failure_message_is_budgeted_and_marked() {
+    let long_url = format!("https://target.test/{}", "a".repeat(2_000));
+    let message = format!("connect failed for {long_url}");
+    let executor = WebExecutor::with_dependencies_for_test(
+        provider(&TestServer::start(Vec::new())),
+        HarnessPermissions::default(),
+        Arc::new(ExecutorDns::new([("target.test", 443)])),
+        Arc::new(LongErrorTransport {
+            message: message.clone(),
+        }),
+        Arc::new(RecordingBackoff::default()),
+    );
+    let envelope = executor.execute(
+        WebProviderRequest::Fetch {
+            url: long_url.clone(),
+        },
+        Arc::new(|| false),
+    );
+    assert_eq!(envelope.code, Some(WebErrorCode::WebNetworkFailed));
+    let budgeted = envelope.message.clone().unwrap();
+    assert_eq!(budgeted.chars().count(), 1_000, "{budgeted}");
+    assert!(envelope.truncated);
+    assert!(envelope
+        .truncated_fields
+        .iter()
+        .any(|field| field == "message"));
+    assert_eq!(envelope.attempts, 0);
+    assert_eq!(envelope.source.unwrap().url, long_url);
+}
+
+#[test]
+fn executor_total_deadline_includes_preflight_and_never_reaches_provider_after_expiry() {
+    let target = TestServer::start(vec![TestResponse::delayed(
+        200,
+        "text/html",
+        "<html></html>",
+        Duration::from_millis(600),
+        Duration::ZERO,
+    )]);
+    let api = TestServer::start(vec![TestResponse::json(
+        200,
+        serde_json::json!({"title": "unexpected", "content": "unexpected"}).to_string(),
+    )]);
+    let provider = Arc::new(DeepSeekWebProvider::with_timings_for_test(
+        &api.endpoint(),
+        "deepseek-test",
+        CANARY,
+        Duration::from_secs(1),
+        Duration::from_millis(300),
+    ));
+    let executor = WebExecutor::with_dependencies_for_test(
+        provider,
+        HarnessPermissions::default(),
+        Arc::new(ExecutorDns::new([("target.test", target.port())])),
+        Arc::new(ReqwestWebTransport::with_test_mapping(|addr| {
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), addr.port())
+        })),
+        Arc::new(RecordingBackoff::default()),
+    );
+    let url = format!("{}/slow", target.endpoint()).replace("127.0.0.1", "target.test");
+    let started = Instant::now();
+    let envelope = executor.execute(WebProviderRequest::Fetch { url }, Arc::new(|| false));
+    let elapsed = started.elapsed();
+    assert_eq!(
+        envelope.code,
+        Some(WebErrorCode::WebTimeout),
+        "{:?}",
+        envelope
+    );
+    assert_eq!(envelope.attempts, 0);
+    assert_eq!(
+        api.records().len(),
+        0,
+        "整次 deadline 用尽后不得再发 provider 请求"
+    );
+    assert_eq!(target.records().len(), 1);
+    assert!(
+        elapsed < Duration::from_millis(600),
+        "预检必须与 provider 共享整次 deadline，实际 {elapsed:?}"
+    );
 }
 
 #[test]
@@ -943,6 +1225,26 @@ impl WebDnsResolver for ExecutorDns {
     }
 }
 
+struct LongErrorTransport {
+    message: String,
+}
+
+impl WebTransport for LongErrorTransport {
+    fn send(
+        &self,
+        _method: TransportMethod,
+        _url: reqwest::Url,
+        _addrs: &[SocketAddr],
+        _timeout: Duration,
+        _aborted: Arc<dyn Fn() -> bool + Send + Sync>,
+    ) -> Result<TransportResponse, PreflightError> {
+        Err(PreflightError::new(
+            WebErrorCode::WebNetworkFailed,
+            self.message.clone(),
+        ))
+    }
+}
+
 #[derive(Clone)]
 struct TestResponse {
     status: u16,
@@ -1125,8 +1427,6 @@ fn serve(stream: TcpStream, response: TestResponse, records: &Arc<Mutex<Vec<Requ
     let _ = stream.write_all(&response.body);
     let _ = stream.flush();
 }
-
-static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 struct ProxyEnv {
     old: BTreeMap<String, Option<std::ffi::OsString>>,

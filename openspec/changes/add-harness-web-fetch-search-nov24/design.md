@@ -112,6 +112,8 @@ Search 另带 `query` 与 `results: WebSource[]`。Fetch 另带 `source: WebSour
 }
 ```
 
+信封另带 `local_precheck`：Fetch 是否**实际执行过**本地预检（未配置 / 权限拒绝 / 参数非法为
+false；进入 executor 后无论预检成功、失败还是取消为 true）。审计按这个事实记录，不按 operation 猜。
 未配置、配置歧义或解析前参数错误的同一信封则是 `provider:null, provider_id:null, attempts:0`；
 测试必须对这三类分别做精确 JSON 断言。`provider_code` / `provider_message` / `request_id` /
 `http_status` 只在真实存在时出现。`code` 是 Lumir 的稳定分类，权限与测试只读它，不按 provider
@@ -128,7 +130,7 @@ Search 另带 `query` 与 `results: WebSource[]`。Fetch 另带 `source: WebSour
 | Search title / snippet / summary | 每项分别 300 / 500 / 1,200 Unicode 字符 |
 | Search content | 每项 4,000 Unicode 字符；全部 results 的文本合计 24,000 字符 |
 | Fetch Markdown | 24,000 Unicode 字符 |
-| Lumir `message` / `provider_message` | 各 1,000 Unicode 字符 |
+| Lumir `message` / `provider_message` / `request_id` / `provider_code` | 各 1,000 Unicode 字符 |
 | Search / Fetch API 成功或错误响应 | 分别 2 MiB / 4 MiB；超限即 `web_response_too_large`，不解析半截 JSON |
 
 Search 聚合预算先裁 `content`，再裁 `summary`，最后裁 `snippet`；URL、date、authority、provider
@@ -173,7 +175,9 @@ API 字节上限与模型字符预算是两道独立闸：前者防内存与协�
 - API Key 只从上述 provider 条目读取，只进入 `Authorization: Bearer …`。不新增环境变量，不写入
   URL、请求 JSON、工具参数摘要、批准卡、诊断日志、panel、JSONL、wire、错误或测试输出。
 - 对 reqwest / provider / 目标站返回的错误文本统一做 secret redaction，再限长。恶意服务器回显
-  Authorization、请求体或 Key 时，也只能留下 `[REDACTED]`。测试用唯一 canary 覆盖全部留存面。
+  Authorization、请求体或 Key 时，也只能留下 `[REDACTED]`。`message` / `provider_message` /
+  `request_id` / `provider_code` 各 1,000 字符上限，任何裁剪都进 `truncated_fields`；preflight 失败
+  路径与 provider 路径同一口径。测试用唯一 canary 覆盖全部留存面。
 - tools API 不跟随 3xx；目标预检请求不携带 DeepSeek Key、Cookie、 vault 内容或浏览器凭据。
 - Search query 会发给 DeepSeek；Fetch URL 会发给 DeepSeek，并会由 Lumir 预检与 DeepSeek 抓取发往
   目标站。默认 Allow 下不弹批准卡，工具行与成功 / 失败结果仍完整保留 query / URL、provider id、
@@ -311,8 +315,10 @@ DeepSeek API 没返回远端 final URL、连接 IP 或 redirect chain，因此 L
 
 ### 6.1 超时与取消
 
-- DeepSeek 每次 attempt：连接 5 秒；Search attempt 总超时 30 秒，Fetch 45 秒；含退避的整次工具调用
-  分别不超过 100 / 150 秒。响应头与 body 读取都计入 attempt  deadline。
+- DeepSeek 每次 attempt：连接 5 秒；Search attempt 总超时 30 秒，Fetch 45 秒；含退避与本地预检的
+  整次工具调用分别不超过 100 / 150 秒。响应头与 body 读取都计入 attempt deadline。Fetch 的预检与
+  provider 阶段共享同一个总 deadline：预检只用剩余时间，总 deadline 用尽后不再发 provider 请求，
+  返回 `web_timeout` 且 attempts=0（不是「预检 30 秒 + provider 150 秒」）。
 - 取消复用 `ctx.aborted()` 的同一事实源，在发起前、退避前、响应等待与 body 分块读取时检查；
   100ms 级轮询，不持会话锁。取消后关闭响应、不再发新 attempt，返回 `web_cancelled`。
 - 阻塞 DNS / connect 由独立有界工作单元承载；停止时不 join 一个可能仍阻塞的线程。已在 OS /
@@ -337,8 +343,10 @@ DeepSeek API 没返回远端 final URL、连接 IP 或 redirect chain，因此 L
 | Fetch 200 空 Markdown | 否 | `web_empty_content`；官方不计费，但仍不自动重试 |
 | 目标预检任何失败 / origin deny | 否 | 对应 `web_*` code 或 `permission_denied`；DeepSeek attempts=0 |
 
-退避优先尊重有界 `Retry-After`（上限 2 秒）；缺失时使用 250ms、1s 的指数序列。测试注入时钟，
-不做分钟级实睡。429 的账号 / 域名限额不因重试而绕过，超过上限即把错误回送模型。
+退避优先尊重有界 `Retry-After`（上限 2 秒）；缺失时使用 250ms、1s 的指数序列。`Retry-After`
+支持 delta-seconds 与 RFC 2822 / IMF-fixdate 的 HTTP-date（chrono 已是直接依赖，不新增依赖）；
+obsolete RFC 850 / asctime 形态不解析，按「缺失」回落。测试注入时钟，不做分钟级实睡。重试耗尽后
+的 `message` 如实写「已尝试初次 + 重试」；只有单次不可重试的失败才写「未自动重试」。429 的账号 / 域名限额不因重试而绕过，超过上限即把错误回送模型。
 
 Search / Fetch 官方均为每 1000 次成功请求 5 元，只有 HTTP 200 且产生结果才计费；失败、空结果、
 超时不计费（[官方计费与重试说明](https://api-docs.deepseek.com/zh-cn/guides/search)）。

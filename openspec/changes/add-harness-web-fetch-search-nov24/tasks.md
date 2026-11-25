@@ -109,3 +109,14 @@
 - [x] 8.10 运行 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`、`bash scripts/docs-check.sh` 与指定 change 的 archive-check，确认 delta 无静默丢段
 - [x] 8.11 审查 diff 与信息卫生：只含批准的本 change 实现 / 测试 / 文档面，无真实 vault 内容、无真实 API Key、无公网依赖、无 Tavily / Brave 适配器、无兼容别名；唯一入库私钥是 `target.test` 合成 TLS fixture，CA 私钥不留存
 - [x] 8.12 实现完成后逐条核对 tasks 与真实 PASS 证据；归档跟踪与节点 2 材料按流程另办，本提案任务不代表已获归档放行
+
+## 9. 阶段4主评审返修（2026-11-25，本地中间态）
+
+- [x] 9.1 ask 批准后的 done 在已决行之后渲染完整 Web 审计；恢复路径同形；allow_all 回归。DOM 单测 `tests/unit/harness-web-audit-visibility.test.ts`（红档 `stage4-rework/red-frontend-audit-visibility.log`）
+- [x] 9.2 所有 Web `message` / `provider_message` / `request_id` / `provider_code` 按 1,000 字符限长并进 `truncated_fields`；preflight 失败路径同口径。反例 `executor_preflight_failure_message_is_budgeted_and_marked`、`request_id_provider_code_and_provider_message_each_stay_within_budget`
+- [x] 9.3 重试耗尽的 `message` 如实写「初次 + 重试」，单次不可重试才写「未自动重试」。反例 `retry_exhaustion_names_the_initial_request_and_retries_without_claiming_no_retry`
+- [x] 9.4 Fetch 的本地预检与 provider 共享 ≤150 秒总 deadline（Search ≤100 秒）；耗尽后不再发 provider 请求。反例 `executor_total_deadline_includes_preflight_and_never_reaches_provider_after_expiry`
+- [x] 9.5 `local_precheck` 按「实际是否执行预检」记录（预览仍表达「将要」），`provider_fetch` 按 attempts 记录；allow_all / ask / deny / 未配置矩阵。反例 `web_done_audit_local_precheck_and_provider_fetch_follow_actual_facts`、`audit_metadata_records_actual_preflight_and_provider_reach_instead_of_operation`
+- [x] 9.6 无 running 行的乱序 done 保持「工具行 → 审计」顺序。DOM 单测同上
+- [x] 9.7 DeepSeek client 代理测试补正向基线与 no_proxy 红档（`red-no-proxy.log`）；`preflight_tests` / `provider_tests` 的环境变量锁合并为同一把
+- [x] 9.8 `Retry-After` 支持 delta-seconds 与 RFC 2822 / IMF-fixdate HTTP-date（复用既有 chrono，不新增依赖），obsolete RFC 850 / asctime 按缺失回落；有界测试 `retry_after_http_date_is_parsed_and_bounded_while_obsolete_forms_fall_back`

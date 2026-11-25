@@ -4838,12 +4838,95 @@ mod tests {
         assert_eq!(done["web"]["attempts"], 0);
         assert_eq!(done["web"]["cost_per_1000_success_cny"], 5);
         assert_eq!(done["web"]["local_precheck"], false);
-        assert_eq!(done["web"]["provider_fetch"], true);
+        assert_eq!(
+            done["web"]["provider_fetch"], false,
+            "未配置时没有 provider 请求"
+        );
         assert_eq!(done["web"]["trust"], "untrusted");
         assert!(done["web"].get("results").is_none());
         assert!(done["web"].get("content").is_none());
         drop(events);
         let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn web_done_audit_local_precheck_and_provider_fetch_follow_actual_facts() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let cases = [
+            ("web-audit-allow-unconfigured", false, None),
+            ("web-audit-ask-unconfigured", true, None),
+            (
+                "web-audit-deny",
+                false,
+                Some("web_fetch(https://example.com)"),
+            ),
+        ];
+        for (name, ask, deny) in cases {
+            let fixture = fixture(name);
+            let mut config = fixture.config.clone();
+            config.permission_mode = crate::config::PermissionMode::FullAccess;
+            config.web_access.approval = if ask {
+                crate::harness::web::config::WebApproval::Ask
+            } else {
+                crate::harness::web::config::WebApproval::AllowAll
+            };
+            if let Some(rule) = deny {
+                config.permissions.deny = vec![rule.to_string()];
+            }
+            let runtime = Runtime::default();
+            runtime.acquire_turn(&fixture.scope, &config).unwrap();
+            let sink = Collect::default();
+            let events = sink.0.clone();
+            let script = r#"{"responses":[
+              {"tool_calls":[{"id":"web-matrix","name":"web_fetch","arguments":"{\"url\":\"https://example.com/a\"}"}]},
+              {"text":"done"}
+            ]}"#;
+            let mut client = llm::MockClient::from_str(script, "web-audit-matrix").unwrap();
+            if ask {
+                let runtime_worker = runtime.clone();
+                let scope_worker = fixture.scope.clone();
+                let config_worker = config.clone();
+                let worker = std::thread::spawn(move || {
+                    run_turn_for(
+                        &sink,
+                        &runtime_worker,
+                        &scope_worker,
+                        &config_worker,
+                        "question",
+                        None,
+                        &mut client,
+                    );
+                });
+                let pending = wait_for_web_approval(&runtime, &fixture.scope, &config);
+                runtime
+                    .with_session(&fixture.scope, |session| {
+                        session.resolve_approval(&pending.id, true, None, false, false)
+                    })
+                    .unwrap()
+                    .unwrap();
+                worker.join().unwrap();
+            } else {
+                run_turn_for(
+                    &sink,
+                    &runtime,
+                    &fixture.scope,
+                    &config,
+                    "question",
+                    None,
+                    &mut client,
+                );
+            }
+            runtime.release_turn(&fixture.scope);
+            let events = events.lock().unwrap();
+            let done = events
+                .iter()
+                .find(|event| event["type"] == "tool_call" && event["status"] == "done")
+                .unwrap_or_else(|| panic!("{name} 缺少 done 事件"));
+            assert_eq!(done["web"]["local_precheck"], false, "{name}");
+            assert_eq!(done["web"]["provider_fetch"], false, "{name}");
+            assert_eq!(done["web"]["attempts"], 0, "{name}");
+            let _ = std::fs::remove_dir_all(&fixture.root);
+        }
     }
 
     #[test]

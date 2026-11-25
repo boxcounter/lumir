@@ -89,3 +89,55 @@ test("失败恢复保留错误码与输入，坏形状不伪造审计块", () =>
   }
   assert.equal(webAuditFromPanelText("{bad-json"), undefined);
 });
+
+test("恢复投影读信封的 local_precheck / provider_fetch 事实，不按 operation 恒猜 true", () => {
+  const base = {
+    ok: false,
+    operation: "fetch",
+    provider: null,
+    provider_id: null,
+    attempts: 0,
+    trust: "untrusted",
+    truncated: false,
+    truncated_fields: [],
+    source: { url: "https://example.com/blocked", title: "" },
+  };
+  const cases = [
+    // 未配置 / deny：预检没有发生，provider 也没有被访问。
+    { envelope: { ...base, code: "web_provider_unconfigured" }, local: false, providerFetch: false },
+    { envelope: { ...base, code: "permission_denied" }, local: false, providerFetch: false },
+    // 预检执行过但失败：本地预检是事实，provider 未到达。
+    {
+      envelope: { ...base, code: "web_unsupported_content", local_precheck: true },
+      local: true,
+      providerFetch: false,
+    },
+    // 预检后 provider 请求过：两者都是事实。
+    {
+      envelope: { ...base, ok: true, attempts: 2, local_precheck: true },
+      local: true,
+      providerFetch: true,
+    },
+  ];
+  for (const { envelope, local, providerFetch } of cases) {
+    const audit = webAuditFromEnvelope(envelope);
+    assert.equal(audit?.local_precheck, local, JSON.stringify(envelope));
+    assert.equal(audit?.provider_fetch, providerFetch, JSON.stringify(envelope));
+  }
+  // 旧留存没有该键：按 attempts 推断（>0 说明 provider 确实被访问过），不得谎报为 true。
+  const legacy = webAuditFromEnvelope({ ...base, attempts: 1, local_precheck: undefined });
+  assert.equal(legacy?.local_precheck, true);
+  assert.equal(legacy?.provider_fetch, true);
+  const legacyDenied = webAuditFromEnvelope({ ...base, code: "permission_denied", local_precheck: undefined });
+  assert.equal(legacyDenied?.local_precheck, false);
+  const legacySearch = webAuditFromEnvelope({
+    ...base,
+    operation: "search",
+    attempts: 1,
+    local_precheck: undefined,
+    source: undefined,
+    query: "legacy",
+  });
+  assert.equal(legacySearch?.local_precheck, false, "Search 永远不执行本地预检");
+  assert.equal(legacySearch?.provider_fetch, true);
+});

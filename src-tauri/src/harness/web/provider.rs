@@ -2,7 +2,7 @@ use std::io::Read;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, LOCATION, RETRY_AFTER};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, RETRY_AFTER};
 use reqwest::{StatusCode, Url};
 
 use super::budget;
@@ -69,6 +69,8 @@ pub struct DeepSeekWebProvider {
     endpoint: String,
     #[cfg(test)]
     timings: Option<TestTimings>,
+    #[cfg(test)]
+    resolve: Option<(String, std::net::SocketAddr)>,
 }
 
 #[cfg(test)]
@@ -86,6 +88,8 @@ impl DeepSeekWebProvider {
             endpoint: OFFICIAL_ENDPOINT.to_string(),
             #[cfg(test)]
             timings: None,
+            #[cfg(test)]
+            resolve: None,
         }
     }
 
@@ -96,6 +100,7 @@ impl DeepSeekWebProvider {
             api_key: api_key.to_string(),
             endpoint: endpoint.trim_end_matches('/').to_string(),
             timings: None,
+            resolve: None,
         }
     }
 
@@ -112,6 +117,24 @@ impl DeepSeekWebProvider {
             api_key: api_key.to_string(),
             endpoint: endpoint.trim_end_matches('/').to_string(),
             timings: Some(TestTimings { attempt, total }),
+            resolve: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn with_resolved_endpoint_for_test(
+        endpoint: &str,
+        host: &str,
+        addr: std::net::SocketAddr,
+        provider_id: &str,
+        api_key: &str,
+    ) -> Self {
+        Self {
+            provider_id: provider_id.to_string(),
+            api_key: api_key.to_string(),
+            endpoint: endpoint.trim_end_matches('/').to_string(),
+            timings: None,
+            resolve: Some((host.to_string(), addr)),
         }
     }
 
@@ -132,12 +155,37 @@ impl DeepSeekWebProvider {
         aborted: Arc<dyn Fn() -> bool + Send + Sync>,
         backoff: Arc<dyn WebBackoff>,
     ) -> WebEnvelope {
+        let deadline = Instant::now() + self.total_timeout(request.operation());
+        self.execute_until(request, aborted, backoff, deadline)
+    }
+
+    /// 整次 provider 阶段的上限（含退避）。executor 用它把本地预检与 DeepSeek 阶段
+    /// 放进**同一个** deadline；Search 100 秒、Fetch 150 秒。
+    pub fn total_timeout(&self, operation: WebOperation) -> Duration {
+        #[cfg(test)]
+        if let Some(timings) = self.timings {
+            return timings.total;
+        }
+        match operation {
+            WebOperation::Search => SEARCH_TOTAL_TIMEOUT,
+            WebOperation::Fetch => FETCH_TOTAL_TIMEOUT,
+        }
+    }
+
+    /// 以调用方给定的总 deadline 执行（executor 的预检与 provider 共享截止时刻）。
+    pub fn execute_until(
+        self: &Arc<Self>,
+        request: WebProviderRequest,
+        aborted: Arc<dyn Fn() -> bool + Send + Sync>,
+        backoff: Arc<dyn WebBackoff>,
+        total_deadline: Instant,
+    ) -> WebEnvelope {
         let operation = request.operation();
         let (query, submitted_url) = match &request {
             WebProviderRequest::Search { query, .. } => (Some(query.clone()), None),
             WebProviderRequest::Fetch { url } => (None, Some(url.clone())),
         };
-        let mut envelope = self.execute_inner(request, aborted.clone(), backoff);
+        let mut envelope = self.execute_inner(request, aborted.clone(), backoff, total_deadline);
         if aborted() {
             envelope = self.failure(
                 operation,
@@ -165,26 +213,18 @@ impl DeepSeekWebProvider {
         request: WebProviderRequest,
         aborted: Arc<dyn Fn() -> bool + Send + Sync>,
         backoff: Arc<dyn WebBackoff>,
+        total_deadline: Instant,
     ) -> WebEnvelope {
         let operation = request.operation();
-        let (attempt_timeout, total_timeout, response_limit) = match operation {
-            WebOperation::Search => (
-                SEARCH_ATTEMPT_TIMEOUT,
-                SEARCH_TOTAL_TIMEOUT,
-                SEARCH_RESPONSE_LIMIT,
-            ),
-            WebOperation::Fetch => (
-                FETCH_ATTEMPT_TIMEOUT,
-                FETCH_TOTAL_TIMEOUT,
-                FETCH_RESPONSE_LIMIT,
-            ),
+        let (attempt_timeout, response_limit) = match operation {
+            WebOperation::Search => (SEARCH_ATTEMPT_TIMEOUT, SEARCH_RESPONSE_LIMIT),
+            WebOperation::Fetch => (FETCH_ATTEMPT_TIMEOUT, FETCH_RESPONSE_LIMIT),
         };
         #[cfg(test)]
-        let (attempt_timeout, total_timeout) = self
+        let attempt_timeout = self
             .timings
-            .map(|timings| (timings.attempt, timings.total))
-            .unwrap_or((attempt_timeout, total_timeout));
-        let total_deadline = Instant::now() + total_timeout;
+            .map(|timings| timings.attempt)
+            .unwrap_or(attempt_timeout);
         let mut attempts = 0;
         loop {
             if aborted() {
@@ -257,14 +297,25 @@ impl DeepSeekWebProvider {
                 continue;
             }
             if response.status != StatusCode::OK {
-                return self.http_failure(
-                    operation,
-                    WebErrorCode::WebHttpError,
+                let message = if retryable(response.status) && attempts >= MAX_ATTEMPTS {
+                    format!(
+                        "DeepSeek {} 返回 HTTP {}；已尝试 {} 次（初次 + {} 次重试）仍未成功",
+                        operation_name(operation),
+                        response.status,
+                        attempts,
+                        attempts - 1
+                    )
+                } else {
                     format!(
                         "DeepSeek {} 返回 HTTP {}；未自动重试",
                         operation_name(operation),
                         response.status
-                    ),
+                    )
+                };
+                return self.http_failure(
+                    operation,
+                    WebErrorCode::WebHttpError,
+                    message,
                     attempts,
                     response,
                 );
@@ -355,12 +406,19 @@ impl DeepSeekWebProvider {
             }),
             WebProviderRequest::Fetch { url } => serde_json::json!({"url": url}),
         };
-        let client = reqwest::blocking::Client::builder()
+        let builder = reqwest::blocking::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .retry(reqwest::retry::never())
             .connect_timeout(CONNECT_TIMEOUT.min(timeout))
-            .timeout(timeout)
+            .timeout(timeout);
+        #[cfg(test)]
+        let builder = if let Some((host, addr)) = &self.resolve {
+            builder.resolve(host, *addr)
+        } else {
+            builder
+        };
+        let client = builder
             .build()
             .map_err(|error| self.network_error(error.to_string()))?;
         let mut response = client
@@ -388,15 +446,15 @@ impl DeepSeekWebProvider {
             .headers()
             .get(RETRY_AFTER)
             .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.parse::<u64>().ok())
-            .map(Duration::from_secs);
+            .and_then(retry_after_delay);
         let request_id = response
             .headers()
             .get("x-request-id")
             .or_else(|| response.headers().get("request-id"))
             .and_then(|value| value.to_str().ok())
             .map(|value| self.redact(value));
-        let _sensitive_location_is_not_retained = response.headers().get(LOCATION);
+        // Location 不被读取、也不留存（3xx 在重试判定前单独归协议错误）；这里没有脱敏动作，
+        // 因为响应头从未进入任何结构。
         let mut body = Vec::new();
         let mut buffer = [0_u8; 16 * 1024];
         while body.len() <= response_limit {
@@ -505,6 +563,21 @@ fn retryable(status: StatusCode) -> bool {
     status == StatusCode::REQUEST_TIMEOUT
         || status == StatusCode::TOO_MANY_REQUESTS
         || status.is_server_error()
+}
+
+/// `Retry-After` 的两种合法形态：delta-seconds 与本仓已依赖的 chrono 可解析的
+/// RFC 2822 / IMF-fixdate。**精确边界**：只认这一种日期形态；RFC 9110 允许的 obsolete
+/// RFC 850（`Sunday, 06-Nov-94 08:49:37 GMT`）与 asctime（`Sun Nov  6 08:49:37 1994`）
+/// 不解析，按「缺失」回落到 250ms / 1s 默认退避。过去时刻按 0 处理（立即可重试），
+/// 结果仍受 2 秒上限与整次 deadline 双重封顶。
+fn retry_after_delay(value: &str) -> Option<Duration> {
+    let value = value.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+    let at = chrono::DateTime::parse_from_rfc2822(value).ok()?;
+    let delta = at.with_timezone(&chrono::Utc) - chrono::Utc::now();
+    Some(delta.to_std().unwrap_or(Duration::ZERO))
 }
 
 fn json_content_type(value: Option<&str>) -> bool {

@@ -103,6 +103,14 @@ pub fn failure_budget(envelope: &mut WebEnvelope) {
     if let Some(message) = &mut envelope.provider_message {
         truncate_field(message, MESSAGE_LIMIT, "provider_message", &mut fields);
     }
+    // 错误元数据与 message 同口径：provider 可以回显任意长度的 id / code，不能只做脱敏
+    // 而不限长（它们会进事件与 JSONL）。
+    if let Some(request_id) = &mut envelope.request_id {
+        truncate_field(request_id, MESSAGE_LIMIT, "request_id", &mut fields);
+    }
+    if let Some(provider_code) = &mut envelope.provider_code {
+        truncate_field(provider_code, MESSAGE_LIMIT, "provider_code", &mut fields);
+    }
     apply_truncation(envelope, fields);
 }
 

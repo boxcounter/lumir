@@ -54,6 +54,14 @@ export function webAuditFromEnvelope(value: unknown): WebAuditMetadata | undefin
   const operation = raw.operation === "search" ? "search" : raw.operation === "fetch" ? "fetch" : undefined;
   if (operation === undefined) return undefined;
   const source = typeof raw.source === "object" && raw.source !== null ? (raw.source as Record<string, unknown>) : {};
+  const attempts = typeof raw.attempts === "number" ? raw.attempts : 0;
+  // 实际发生的事实：新信封由 executor 写入 local_precheck（预检真的执行过才为 true）；
+  // provider 是否被访问过由 attempts 决定。旧留存缺该键时按 attempts 推断——>0 必然经过
+  // 预检并触达 provider，不得沿用「operation=fetch 就恒 true」的猜测。
+  const localPrecheck =
+    typeof raw.local_precheck === "boolean"
+      ? raw.local_precheck
+      : operation === "fetch" && attempts > 0;
   return parseWebAudit({
     operation,
     query: raw.query ?? null,
@@ -62,8 +70,8 @@ export function webAuditFromEnvelope(value: unknown): WebAuditMetadata | undefin
     provider_id: raw.provider_id ?? null,
     attempts: raw.attempts,
     cost_per_1000_success_cny: 5,
-    local_precheck: operation === "fetch",
-    provider_fetch: true,
+    local_precheck: localPrecheck,
+    provider_fetch: attempts > 0,
     trust: raw.trust,
     truncated: raw.truncated,
     truncated_fields: raw.truncated_fields,

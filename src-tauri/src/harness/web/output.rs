@@ -97,6 +97,9 @@ pub struct WebEnvelope {
     pub provider_id: Option<String>,
     pub operation: WebOperation,
     pub attempts: u32,
+    // 本地预检是否**实际执行**（不是「按 operation 应当执行」）。Fetch 在 executor 内被调用
+    // 即置 true，包括预检失败 / 取消；未配置、参数非法、权限拒绝等未进入 executor 的路径为 false。
+    pub local_precheck: bool,
     pub trust: WebTrust,
     pub truncated: bool,
     pub truncated_fields: Vec<String>,
@@ -171,6 +174,7 @@ impl WebEnvelope {
             provider_id,
             operation,
             attempts,
+            local_precheck: false,
             trust: WebTrust::Untrusted,
             truncated: false,
             truncated_fields: Vec::new(),
@@ -205,16 +209,26 @@ pub fn audit_metadata(
         .or_else(|| input.get("url"))
         .cloned()
         .unwrap_or(serde_json::Value::Null);
+    let attempts = output
+        .get("attempts")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    // 审计只写**实际发生**的事实：预检事实由 executor 写进信封；provider 是否被访问过
+    // 由 attempts 决定（0 次 = 没有任何 DeepSeek tools 请求）。MUST NOT 按 operation 猜。
+    let local_precheck = output
+        .get("local_precheck")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
     serde_json::json!({
         "operation": operation,
         "query": query,
         "url": url,
         "provider": output.get("provider").cloned().unwrap_or(serde_json::Value::Null),
         "provider_id": output.get("provider_id").cloned().unwrap_or(serde_json::Value::Null),
-        "attempts": output.get("attempts").and_then(serde_json::Value::as_u64).unwrap_or(0),
+        "attempts": attempts,
         "cost_per_1000_success_cny": 5,
-        "local_precheck": operation == WebOperation::Fetch,
-        "provider_fetch": true,
+        "local_precheck": local_precheck,
+        "provider_fetch": attempts > 0,
         "trust": "untrusted",
         "truncated": output.get("truncated").and_then(serde_json::Value::as_bool).unwrap_or(false),
         "truncated_fields": output.get("truncated_fields").cloned().unwrap_or_else(|| serde_json::json!([])),
@@ -337,5 +351,38 @@ mod tests {
         assert_eq!(value["provider_code"], serde_json::json!("not_found_error"));
         assert_eq!(value["provider_message"], serde_json::json!("sanitized"));
         assert_eq!(value["request_id"], serde_json::json!("req_synthetic"));
+    }
+
+    #[test]
+    fn audit_metadata_records_actual_preflight_and_provider_reach_instead_of_operation() {
+        let cases = [
+            // (operation, local_precheck, attempts, expected local, expected provider_fetch)
+            (WebOperation::Fetch, false, 0, false, false),
+            (WebOperation::Fetch, true, 0, true, false),
+            (WebOperation::Fetch, true, 2, true, true),
+            (WebOperation::Search, false, 1, false, true),
+        ];
+        for (operation, local_precheck, attempts, expected_local, expected_provider) in cases {
+            let value = serde_json::json!({
+                "operation": operation,
+                "provider": "deepseek",
+                "provider_id": "deepseek-work",
+                "attempts": attempts,
+                "local_precheck": local_precheck,
+                "truncated": false,
+                "truncated_fields": [],
+            });
+            let audit = audit_metadata(operation, &value, &serde_json::json!({}));
+            assert_eq!(
+                audit["local_precheck"],
+                serde_json::json!(expected_local),
+                "{operation:?} local_precheck={local_precheck} attempts={attempts}"
+            );
+            assert_eq!(
+                audit["provider_fetch"],
+                serde_json::json!(expected_provider),
+                "{operation:?} attempts={attempts}"
+            );
+        }
     }
 }

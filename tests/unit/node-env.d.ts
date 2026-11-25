@@ -8,6 +8,7 @@ declare module "node:test" {
     diagnostic(message: string): void;
   }
   export function test(name: string, fn: (t: TestContext) => void | Promise<void>): void;
+  export function after(fn: () => void | Promise<void>): void;
   export function beforeEach(fn: () => void | Promise<void>): void;
   export function afterEach(fn: () => void | Promise<void>): void;
   export const mock: {
