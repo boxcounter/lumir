@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：297
-- 验收项（不同 item 编号）：266
-- 分档：core 32 / full 255 / bundle 5 / evidence 5（full 批 = 全部 297 个，含其余各档）
+- 场景：298
+- 验收项（不同 item 编号）：267
+- 分档：core 32 / full 256 / bundle 5 / evidence 5（full 批 = 全部 298 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -281,6 +281,7 @@
 | 870 | `870-harness-web-ask-preview` | Web Ask 预览：完整 URL / origin / provider / 双路外发 / 费用 / untrusted；拒绝不执行 | full |
 | 871 | `871-harness-web-deny` | Web deny：deny 规则直接拒绝、不预检、不请求 provider，审计不写外发说明 | full |
 | 872 | `872-harness-web-disabled` | web_access.enabled=false：Web 工具不注册，幻觉调用回送 tool_unknown，无批准卡 | full |
-| 873 | `873-harness-web-no-auto-curl` | Web 关闭/失败不自动降级 curl：后续 curl 仍进批准闸，拒绝后零副作用 | full |
+| 873 | `873-harness-web-no-auto-curl` | Web 失败不自动降级 curl：provider 未配置仍不自动 curl，后续 curl 仍进批准闸 | full |
 | 874 | `874-quick-open-external-directory-and-stable-layout` | Quick Open 外部目录一层候选、子目录进入、外部文件只读与输入框 bbox 稳定 | full |
 | 875 | `875-harness-markdown-bold` | Harness Markdown strong：有序列表空行后的缩进续段在流式中间态与终态均不显示字面星号 | full |
+| 876 | `876-harness-web-production-no-injection` | 生产 dev 不激活验收注入：哨兵端点零使用、URL 规则不放宽、provider 仍只有 official | full |

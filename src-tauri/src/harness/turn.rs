@@ -525,6 +525,31 @@ pub fn run_turn_resume_for(
     );
 }
 
+/// 验收构建专用的显式重试入口（`acceptance-web` feature）：与 [`run_turn_resume_for`]
+/// 同一条循环，但把 Web 端口换成合成 HTTP 装配——用于证明真实 LLM 失败后的显式重试不会
+/// 重放 Web 工具或增加 Web HTTP 次数。
+#[cfg(feature = "acceptance-web")]
+pub fn run_turn_resume_for_with_web_port(
+    sink: &dyn EventSink,
+    runtime: &Runtime,
+    scope: &VaultScope,
+    config: &HarnessConfig,
+    user_text: String,
+    client: &mut dyn LlmClient,
+    web_port: std::sync::Arc<dyn super::web::WebToolPort>,
+) {
+    runtime.seed_permissions(&config.permissions);
+    let mut ctx =
+        SessionContext::new(sink, runtime, scope, config).with_web_port_for_acceptance(web_port);
+    let _ = run_turn_core_with_mode(
+        &mut ctx,
+        config,
+        TurnInput::Resume { user_text },
+        TurnOrigin::Retry,
+        client,
+    );
+}
+
 /// 循环本体（上下文与 client 注入，单测直接驱动）。
 ///
 /// 事件信封（vault 标识）由**调用侧包装好的 sink** 承担（`run_turn` 用 [`super::events::ScopedSink`]

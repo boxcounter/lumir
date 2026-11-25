@@ -43,6 +43,8 @@ steps:
     expect:
       - label: 工具行在册
         ax: { has: "web_search" }
+      - label: 审计块展示完整 query（不靠 80 字摘要）
+        ax: { has: "stage5 web audit" }
       - label: 审计显示实际尝试次数 0
         ax: { has: "尝试次数" }
       - label: provider 未解析，不伪造身份
@@ -62,6 +64,7 @@ steps:
               code: web_provider_unconfigured
               attempts: 0
               local_precheck: false
+              query: stage5 web audit
 ---
 
 # 869 —— 默认无卡审计（未配置 provider）

@@ -1,9 +1,10 @@
 ---
-# change add-harness-web-fetch-search-nov24 阶段5：Web 不可用不自动降级 curl；后续 curl 仍按原权限进闸。
+# change add-harness-web-fetch-search-nov24 阶段5：Web 失败不自动降级 curl；后续 curl 仍按原权限进闸。
+# 本场景覆盖 enabled=true（默认）但 DeepSeek provider 未配置的失败分支；总开关关闭由 872 覆盖。
 id: "873-harness-web-no-auto-curl"
 item: 873
 tier: full
-title: Web 关闭/失败不自动降级 curl：后续 curl 仍进批准闸，拒绝后零副作用
+title: Web 失败不自动降级 curl：provider 未配置仍不自动 curl，后续 curl 仍进批准闸
 open: harness-note.md
 marker: "HNL-ALPHA"
 config:
@@ -11,8 +12,6 @@ config:
     provider: mock
     fixture: "$fixtures/harness-mock-web-call-then-curl.json"
     permission_mode: read_only
-    web_access:
-      enabled: false
 steps:
   - name: ⌘⇧A 打开 harness pane
     do: keys
@@ -40,8 +39,8 @@ steps:
         ax: { has: "要运行这条命令吗？" }
       - label: 命令原文可见
         ax: { has: "curl https://example.com/a" }
-      - label: Web 工具未注册（未知工具）
-        ax: { has: "tool_unknown" }
+      - label: Web 已注册并明确失败（provider 未配置），不是 tool_unknown
+        ax: { has: "web_provider_unconfigured" }
       - shot: 01-curl仍进闸
   - name: 拒绝 curl
     do: click
@@ -57,16 +56,16 @@ steps:
     expect:
       - label: curl 被拒绝
         ax: { has: "已拒绝" }
-      - label: Web 未注册在工具行可见
-        ax: { has: "tool_unknown" }
+      - label: Web 失败仍在工具行可见
+        ax: { has: "web_provider_unconfigured" }
   - name: JSONL：Web 失败 + curl 拒绝各一条
     expect:
-      - label: Web 未注册
+      - label: Web 已执行但 provider 未配置（零 attempts，不是未注册）
         file:
           path: "env:harness/sessions/*/*.jsonl"
           jsonlOutput:
             tool: web_search
-            has: { ok: false, code: tool_unknown }
+            has: { ok: false, code: web_provider_unconfigured, attempts: 0 }
       - label: curl 批准拒绝
         file:
           path: "env:harness/sessions/*/*.jsonl"
@@ -77,5 +76,6 @@ steps:
 
 # 873 —— Web 失败不自动降级 curl
 
-Web 工具不可用时，模型可以另行选择 curl，但该调用仍走既有 CLI 权限与批准闸；系统不得自动
-把 Web 请求翻译成 curl。拒绝后命令不执行（文件 / mtime 不变）。
+Web 工具已注册但 provider 未配置时，模型可以另行选择 curl，但该调用仍走既有 CLI 权限与批准闸；
+系统不得自动把 Web 请求翻译成 curl。拒绝后命令不执行（文件 / mtime 不变）。总开关关闭的
+「未注册 + 幻觉调用」分支由 872 单独覆盖。

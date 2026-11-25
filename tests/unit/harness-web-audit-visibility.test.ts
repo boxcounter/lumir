@@ -663,3 +663,45 @@ test("allow_all 的 done 与 ask 批准后同形：工具行→审计", async ()
   });
   assertAuditAfterRow(mount);
 });
+
+test("恢复的 Web 工具行不把 provider_message / request_id / 正文里的 Key 渲染上屏", async () => {
+  const canary = "lumir-stage5-canary-4f8c2d";
+  const envelope = {
+    ok: false,
+    operation: "web_search",
+    query: "canary query",
+    url: null,
+    provider: "deepseek",
+    provider_id: "deepseek-work",
+    attempts: 1,
+    trust: "untrusted",
+    truncated: false,
+    truncated_fields: [],
+    code: "web_http_error",
+    message: "DeepSeek Search 返回 HTTP 400；未自动重试",
+    provider_code: `invalid_${canary}`,
+    provider_message: `rejected key ${canary}`,
+    request_id: `req-${canary}`,
+    source: { url: null, title: "", content: `page echo ${canary}` },
+  };
+  const snapshot = {
+    ...EMPTY_SNAPSHOT,
+    messages: [
+      {
+        role: "tool",
+        name: "web_search",
+        summary: "canary query",
+        status: "error",
+        text: JSON.stringify(envelope),
+        ts: 1_759_000_002,
+      },
+    ],
+  };
+  const { mount } = await mountPanel(() => snapshot);
+  assert.match(mount.textContent, /未自动重试/);
+  assert.equal(
+    mount.textContent.includes(canary),
+    false,
+    "panel DOM 不得出现 Key / provider 原始字段",
+  );
+});

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "生产构建里 Web 只走官方装配。",
+      "tool_calls": [
+        {
+          "id": "call_probe_fetch",
+          "name": "web_fetch",
+          "arguments": "{\"url\":\"http://localhost:9/probe\"}"
+        },
+        {
+          "id": "call_probe_search",
+          "name": "web_search",
+          "arguments": "{\"query\":\"stage5 production probe\"}"
+        }
+      ]
+    },
+    {
+      "text": "PRODUCTION-PROBE-DONE"
+    }
+  ]
+}
