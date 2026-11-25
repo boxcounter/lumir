@@ -9,7 +9,7 @@ use reqwest::{StatusCode, Url};
 
 use crate::config::HarnessPermissions;
 
-use super::output::WebErrorCode;
+use super::output::{WebEnvelope, WebErrorCode, WebOperation};
 use super::url::Origin;
 use crate::harness::permissions::matching_rule;
 
@@ -58,6 +58,10 @@ impl PreflightError {
             code,
             message: message.into(),
         }
+    }
+
+    pub fn into_envelope(self) -> WebEnvelope {
+        WebEnvelope::failure(WebOperation::Fetch, self.code, self.message, None, 0)
     }
 }
 
@@ -108,6 +112,8 @@ pub struct ReqwestWebTransport {
     addr_mapper: Option<Arc<dyn Fn(SocketAddr) -> SocketAddr + Send + Sync>>,
     #[cfg(test)]
     root_certificates: Vec<reqwest::Certificate>,
+    #[cfg(test)]
+    use_system_proxy: bool,
 }
 
 impl ReqwestWebTransport {
@@ -122,6 +128,7 @@ impl ReqwestWebTransport {
         Self {
             addr_mapper: Some(Arc::new(mapper)),
             root_certificates: Vec::new(),
+            use_system_proxy: false,
         }
     }
 
@@ -136,7 +143,14 @@ impl ReqwestWebTransport {
                 .into_iter()
                 .filter_map(|pem| reqwest::Certificate::from_pem(&pem).ok())
                 .collect(),
+            use_system_proxy: false,
         }
+    }
+
+    #[cfg(test)]
+    pub fn with_system_proxy_for_negative_test(mut self) -> Self {
+        self.use_system_proxy = true;
+        self
     }
 
     fn mapped_addrs(&self, addrs: &[SocketAddr]) -> Vec<SocketAddr> {
@@ -159,8 +173,16 @@ impl WebTransport for ReqwestWebTransport {
     ) -> Result<TransportResponse, PreflightError> {
         let host = resolution_host(&url)?;
         let addrs = self.mapped_addrs(addrs);
-        let builder = Client::builder()
-            .no_proxy()
+        let builder = Client::builder();
+        #[cfg(test)]
+        let builder = if self.use_system_proxy {
+            builder
+        } else {
+            builder.no_proxy()
+        };
+        #[cfg(not(test))]
+        let builder = builder.no_proxy();
+        let builder = builder
             .redirect(reqwest::redirect::Policy::none())
             .retry(reqwest::retry::never())
             .connect_timeout(timeout)
@@ -241,12 +263,7 @@ pub fn run_preflight(
     aborted: Arc<dyn Fn() -> bool + Send + Sync>,
     limits: PreflightLimits,
 ) -> Result<PreflightSuccess, PreflightError> {
-    if raw_url.is_empty() || raw_url.chars().count() > 8192 {
-        return Err(PreflightError::new(
-            WebErrorCode::WebArgsInvalid,
-            "Web Fetch url 长度必须为 1–8192 字符",
-        ));
-    }
+    validate_url_length(raw_url)?;
     Origin::from_url(raw_url)
         .map_err(|error| PreflightError::new(WebErrorCode::WebUrlBlocked, error))?;
     let mut current = Url::parse(raw_url)
@@ -313,7 +330,7 @@ pub fn run_preflight(
             )
         {
             return Err(PreflightError::new(
-                WebErrorCode::WebNetworkFailed,
+                WebErrorCode::WebHttpError,
                 format!("目标 HEAD 返回 HTTP {}", hop.status),
             ));
         }
@@ -339,7 +356,7 @@ pub fn run_preflight(
             }
             if !matches!(get.status, StatusCode::OK | StatusCode::PARTIAL_CONTENT) {
                 return Err(PreflightError::new(
-                    WebErrorCode::WebNetworkFailed,
+                    WebErrorCode::WebHttpError,
                     format!("目标 Range GET 返回 HTTP {}", get.status),
                 ));
             }
@@ -438,6 +455,16 @@ fn cancelled() -> PreflightError {
     PreflightError::new(WebErrorCode::WebCancelled, "网页预检已取消")
 }
 
+fn validate_url_length(raw_url: &str) -> Result<(), PreflightError> {
+    if raw_url.is_empty() || raw_url.chars().count() > 8192 {
+        return Err(PreflightError::new(
+            WebErrorCode::WebArgsInvalid,
+            "Web Fetch url 长度必须为 1–8192 字符",
+        ));
+    }
+    Ok(())
+}
+
 fn resolution_host(url: &Url) -> Result<String, PreflightError> {
     let host = url
         .host_str()
@@ -501,7 +528,10 @@ fn ipv6_globally_routable(ip: std::net::Ipv6Addr) -> bool {
         || (segments[0] & 0xff00) == 0xff00
         || (segments[0] & 0xfe00) == 0xfc00
         || (segments[0] & 0xffc0) == 0xfe80
+        || (segments[0] == 0x2001 && segments[1] == 0x0000)
         || (segments[0] == 0x2001 && segments[1] == 0x0002)
+        || (segments[0] == 0x2002)
+        || ((segments[0] & 0xfff0) == 0x3ff0)
         || (segments[0] == 0x2001 && (segments[1] & 0xfff0) == 0x0010)
         || (segments[0] == 0x2001 && (segments[1] & 0xfff0) == 0x0020)
         || (segments[0] == 0x2001 && segments[1] == 0x0db8)
@@ -564,12 +594,10 @@ fn redirect_target(
             "重定向超过 5 次",
         ));
     }
-    let location = response.location.as_deref().ok_or_else(|| {
-        PreflightError::new(
-            WebErrorCode::WebProviderProtocolError,
-            "重定向缺少 Location",
-        )
-    })?;
+    let location = response
+        .location
+        .as_deref()
+        .ok_or_else(|| PreflightError::new(WebErrorCode::WebUrlBlocked, "重定向缺少 Location"))?;
     if location.is_empty() || location.contains('\\') || location.chars().any(char::is_control) {
         return Err(PreflightError::new(
             WebErrorCode::WebUrlBlocked,
@@ -579,6 +607,7 @@ fn redirect_target(
     let next = current
         .join(location)
         .map_err(|error| PreflightError::new(WebErrorCode::WebUrlBlocked, error.to_string()))?;
+    validate_url_length(next.as_str())?;
     if current.scheme() == "https" && next.scheme() == "http" {
         return Err(PreflightError::new(
             WebErrorCode::WebUrlBlocked,
@@ -614,6 +643,13 @@ mod unit_tests {
             "::",
             "ff02::1",
             "2001:db8::1",
+            "3fff::1",
+            "3fff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+            "2002:7f00:1::",
+            "2002:c0a8:101::",
+            "2002:5db8:d822::",
+            "2001::1",
+            "2001:0:5db8:d822::1",
             "2001:2::1",
             "2001:10::1",
             "2001:20::1",

@@ -318,6 +318,9 @@ DeepSeek API 没返回远端 final URL、连接 IP 或 redirect chain，因此 L
 - 阻塞 DNS / connect 由独立有界工作单元承载；停止时不 join 一个可能仍阻塞的线程。已在 OS /
   provider 处理的请求无法撤销，取消只保证 Lumir 不再等待、不再重试，不承诺撤销潜在费用。
 - 取消优先于成功 / 错误收尾；已接收的部分 JSON 不解析、不当作成功结果。目标预检同样可取消。
+- 阶段4 executor 直接以 `PreflightError::into_envelope()` 映射目标预检失败：固定 `operation=fetch`、
+  `provider:null`、`provider_id:null`、`attempts:0`。本地预检请求不计 DeepSeek attempts，即使 provider
+  已解析成功也不得把其身份填入该失败信封。
 
 ### 6.2 自动重试真值表
 

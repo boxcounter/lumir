@@ -29,6 +29,10 @@ impl Origin {
             .host_str()
             .ok_or_else(|| "URL 缺少 host".to_string())?
             .to_ascii_lowercase();
+        let host = host.strip_suffix('.').unwrap_or(&host).to_string();
+        if host.is_empty() {
+            return Err("URL 缺少 host".to_string());
+        }
         Ok(Self {
             scheme: url.scheme().to_ascii_lowercase(),
             host,
@@ -81,6 +85,9 @@ mod tests {
 
         let origin = Origin::from_url("http://Example.Org:8080/a").unwrap();
         assert_eq!(origin.as_str(), "http://example.org:8080");
+
+        let origin = Origin::from_url("HTTPS://EXAMPLE.COM.:443/a").unwrap();
+        assert_eq!(origin.as_str(), "https://example.com");
     }
 
     #[test]

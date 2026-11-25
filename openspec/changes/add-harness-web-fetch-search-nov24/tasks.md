@@ -52,7 +52,7 @@
 - [x] 4.2 对 DNS 全部 A / AAAA 执行全局单播判据；任一私网 / loopback / link-local / CGNAT / multicast / reserved / documentation / mapped 非全局地址即整条拒绝，DNS 失败 fail closed
 - [ ] 4.3 目标预检与 DeepSeek client 都显式 `no_proxy`；每个 hop 不得重新继承系统 / 手动代理，保持 `no_proxy + 已验证地址集 + 原 Host / SNI + 手动 redirect` 同一构造不变量。**阶段3已完成目标预检部分；DeepSeek client 归阶段4，故本项不勾。**
 - [x] 4.4 把校验地址集与连接地址绑定，保留原 Host / TLS SNI；用公网 → 私网 rebinding 反例证明连接前没有第二次不受控解析
-- [ ] 4.5 用本地代理与目标双服务，在 HTTP(S)_PROXY / ALL_PROXY 下证明预检只到已验证目标、代理零请求；恢复系统代理的错误实现必须判红。**阶段3真实双服务反例已通过；与 4.3 / 4.6 的 DeepSeek client 独立证明一并留待阶段4复核，故本项暂不勾。**
+- [x] 4.5 用本地代理与目标双服务，在 HTTP(S)_PROXY / ALL_PROXY 下证明预检只到已验证目标、代理零请求；恢复系统代理的错误实现必须判红。**阶段3已覆盖 HTTP / HTTPS 目标；test-only 负向开关恢复系统代理后真实触达代理并判红。4.6 的 DeepSeek client 独立证明仍归阶段4。**
 - [ ] 4.6 DeepSeek client 单独证明 `no_proxy + 301 / 302 / 307 / 308 零跳转 + Bearer 不泄漏`，不与预检结果互相推定
 - [x] 4.7 实现每 hop 10 秒、整链 30 秒、最多 5 跳的有界 HEAD / Range GET 预检；Range 被忽略时仍只读 4 KiB，预检正文不进入模型
 - [x] 4.8 每跳重新校验相对 / 绝对 Location、scheme / 凭据 / host / origin deny；跨源未封禁不另开批准即可继续，封禁目标零连接、零 DeepSeek
@@ -107,5 +107,5 @@
 - [x] 8.8 运行 `bash scripts/gate.sh quick`；照抄最终 `GATE RESULT` 原文与退出码，视觉门禁另列，不把 SKIP 并入 PASS
 - [ ] 8.9 同步 `docs/specs/config-reference.md` 的 `harness.web_access.enabled` / `.approval` 字段面、缺失默认与显式非法 fail-closed 语义，以及 settings / deny revision 生效时机；保持行为真源在本 change 的 harness / settings delta，不复制 provider 或 origin 状态
 - [x] 8.10 运行 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`、`bash scripts/docs-check.sh` 与指定 change 的 archive-check，确认 delta 无静默丢段
-- [x] 8.11 审查 diff 与信息卫生：只含批准的本 change 实现 / 测试 / 文档面，无真实 vault 内容、无 Key、无公网依赖、无 Tavily / Brave 适配器、无兼容别名
+- [x] 8.11 审查 diff 与信息卫生：只含批准的本 change 实现 / 测试 / 文档面，无真实 vault 内容、无真实 API Key、无公网依赖、无 Tavily / Brave 适配器、无兼容别名；唯一入库私钥是 `target.test` 合成 TLS fixture，CA 私钥不留存
 - [ ] 8.12 实现完成后逐条核对 tasks 与真实 PASS 证据；归档跟踪与节点 2 材料按流程另办，本提案任务不代表已获归档放行

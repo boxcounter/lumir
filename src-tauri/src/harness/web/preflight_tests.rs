@@ -110,6 +110,61 @@ fn dns_mixed_public_private_is_rejected_before_any_connection() {
 }
 
 #[test]
+fn dns_failure_and_mixed_a_aaaa_answers_are_checked_directly() {
+    let server = TestServer::start("/html", html(), false);
+    let error = check(
+        &format!("http://target.test:{}/html", server.port()),
+        &permissions(&[]),
+        ScriptedDns::with(
+            "target.test",
+            vec![Err("synthetic DNS failure".to_string())],
+        ),
+        transport(),
+        &|| false,
+        PreflightLimits::default(),
+    )
+    .expect_err("DNS 失败必须 fail closed");
+    assert_eq!(error.code, WebErrorCode::WebDnsFailed);
+    assert_eq!(server.request_count(), 0);
+
+    let resolver = ScriptedDns::with(
+        "target.test",
+        vec![Ok(vec![
+            SocketAddr::new(PUBLIC, server.port()),
+            SocketAddr::new("2606:4700:4700::1111".parse().unwrap(), server.port()),
+        ])],
+    );
+    check(
+        &format!("http://target.test:{}/html", server.port()),
+        &permissions(&[]),
+        resolver,
+        transport(),
+        &|| false,
+        PreflightLimits::default(),
+    )
+    .expect("全公网 A / AAAA 混合答案应通过");
+
+    let resolver = ScriptedDns::with(
+        "target.test",
+        vec![Ok(vec![
+            SocketAddr::new(PUBLIC, server.port()),
+            SocketAddr::new("3fff::1".parse().unwrap(), server.port()),
+        ])],
+    );
+    let error = check(
+        &format!("http://target.test:{}/html", server.port()),
+        &permissions(&[]),
+        resolver,
+        transport(),
+        &|| false,
+        PreflightLimits::default(),
+    )
+    .expect_err("任一非全局 AAAA 都应拒绝整组答案");
+    assert_eq!(error.code, WebErrorCode::WebDnsBlocked);
+    assert_eq!(server.request_count(), 1);
+}
+
+#[test]
 fn rebinding_second_hop_is_rejected_without_connecting_new_origin() {
     let a = TestServer::start(
         "/a",
@@ -250,10 +305,34 @@ fn https_preserves_original_host_and_sni_with_isolated_test_ca() {
         format!("target.test:{}", server.port())
     );
     assert_eq!(server.last_request().path, "/tls");
+    assert_eq!(server.last_request().sni.as_deref(), Some("target.test"));
 }
 
 #[test]
+fn preflight_failure_maps_to_fetch_envelope_without_provider_attempts() {
+    let envelope = PreflightError {
+        code: WebErrorCode::WebDnsBlocked,
+        message: "synthetic preflight failure".to_string(),
+    }
+    .into_envelope();
+    let value = serde_json::to_value(envelope).unwrap();
+    assert_eq!(value["ok"], serde_json::json!(false));
+    assert_eq!(value["operation"], serde_json::json!("fetch"));
+    assert_eq!(value["code"], serde_json::json!("web_dns_blocked"));
+    assert_eq!(
+        value["message"],
+        serde_json::json!("synthetic preflight failure")
+    );
+    assert_eq!(value["provider"], serde_json::Value::Null);
+    assert_eq!(value["provider_id"], serde_json::Value::Null);
+    assert_eq!(value["attempts"], serde_json::json!(0));
+}
+
+static PROXY_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+#[test]
 fn system_and_manual_proxies_are_bypassed() {
+    let _guard = PROXY_ENV_LOCK.lock().unwrap();
     let target = TestServer::start("/html", html(), false);
     let proxy = TestServer::start("/proxy", TestResponse::status(502), false);
     let _env = ProxyEnv::set(&proxy);
@@ -279,6 +358,42 @@ fn system_and_manual_proxies_are_bypassed() {
         "反例：系统代理配置下普通 client 应触达代理"
     );
     assert!(proxy.request_count() >= 1, "反例必须证明环境代理确实生效");
+}
+
+#[test]
+fn https_target_bypasses_proxy_and_negative_switch_proves_the_counterexample() {
+    let _guard = PROXY_ENV_LOCK.lock().unwrap();
+    let target = TestServer::start("/tls", html(), true);
+    let proxy = TestServer::start("/proxy", TestResponse::status(502), false);
+    let _env = ProxyEnv::set(&proxy);
+    let url = format!("https://target.test:{}/tls", target.port());
+    let output = check(
+        &url,
+        &permissions(&[]),
+        ScriptedDns::public("target.test", target.port()),
+        tls_transport(),
+        &|| false,
+        PreflightLimits::default(),
+    )
+    .expect("HTTPS no_proxy 必须直达已验证目标");
+    assert_eq!(output.hops.len(), 1);
+    assert_eq!(target.request_count(), 1);
+    assert_eq!(proxy.request_count(), 0);
+    assert_eq!(target.last_request().sni.as_deref(), Some("target.test"));
+
+    let error = check(
+        &url,
+        &permissions(&[]),
+        ScriptedDns::public("target.test", target.port()),
+        tls_transport().with_system_proxy_for_negative_test(),
+        &|| false,
+        PreflightLimits::default(),
+    )
+    .expect_err("错误实现恢复系统代理后必须被 HTTPS 反例判红");
+    assert_eq!(error.code, WebErrorCode::WebNetworkFailed);
+    assert_eq!(target.request_count(), 1, "代理路径不得触达 HTTPS 目标");
+    assert!(proxy.request_count() >= 1, "负向开关必须真实触达代理");
+    assert_eq!(proxy.last_request().method, "CONNECT");
 }
 
 #[test]
@@ -452,6 +567,93 @@ fn backslash_location_is_rejected_before_url_normalization_or_connection() {
     )
     .expect_err("反斜杠 Location 不得先规范化再放行");
     assert_eq!(error.code, WebErrorCode::WebUrlBlocked);
+    assert_eq!(b.request_count(), 0);
+}
+
+#[test]
+fn redirect_rechecks_length_and_target_errors_do_not_use_provider_classifications() {
+    let overlength = TestServer::start(
+        "/a",
+        TestResponse::redirect(302, &format!("/{}", "a".repeat(8192))),
+        false,
+    );
+    let resolver = ScriptedDns::public("target.test", overlength.port());
+    let error = check(
+        &format!("http://target.test:{}/a", overlength.port()),
+        &permissions(&[]),
+        resolver.clone(),
+        transport(),
+        &|| false,
+        PreflightLimits::default(),
+    )
+    .expect_err("redirect 后 URL 仍不得超过 8192 字符");
+    assert_eq!(error.code, WebErrorCode::WebArgsInvalid);
+    assert_eq!(overlength.request_count(), 1);
+    assert_eq!(resolver.calls.lock().unwrap().as_slice(), ["target.test"]);
+
+    let missing_location = TestServer::start("/a", TestResponse::status(302), false);
+    let resolver = ScriptedDns::public("target.test", missing_location.port());
+    let error = check(
+        &format!("http://target.test:{}/a", missing_location.port()),
+        &permissions(&[]),
+        resolver,
+        transport(),
+        &|| false,
+        PreflightLimits::default(),
+    )
+    .expect_err("目标 3xx 缺 Location 必须拒绝");
+    assert_eq!(error.code, WebErrorCode::WebUrlBlocked);
+
+    let head_status = TestServer::start("/missing", TestResponse::status(404), false);
+    let resolver = ScriptedDns::public("target.test", head_status.port());
+    let error = check(
+        &format!("http://target.test:{}/missing", head_status.port()),
+        &permissions(&[]),
+        resolver,
+        transport(),
+        &|| false,
+        PreflightLimits::default(),
+    )
+    .expect_err("目标 HEAD HTTP 状态必须失败");
+    assert_eq!(error.code, WebErrorCode::WebHttpError);
+}
+
+#[test]
+fn trailing_dot_origins_cannot_bypass_initial_or_redirect_deny() {
+    let resolver = ScriptedDns::default();
+    let error = check(
+        "http://example.com./a",
+        &permissions(&["web_fetch(http://example.com)"]),
+        resolver.clone(),
+        transport(),
+        &|| false,
+        PreflightLimits::default(),
+    )
+    .expect_err("初始 URL 的 DNS 尾点不得绕过规范 deny");
+    assert_eq!(error.code, WebErrorCode::PermissionDenied);
+    assert!(resolver.calls.lock().unwrap().is_empty());
+
+    let b = TestServer::start("/b", html(), false);
+    let a = TestServer::start(
+        "/a",
+        TestResponse::redirect(302, "http://other.test./b"),
+        false,
+    );
+    let resolver = ChainedDns::new(ScriptedDns::public("target.test", a.port())).then(
+        "other.test.",
+        Ok(vec![SocketAddr::new(OTHER_PUBLIC, b.port())]),
+    );
+    let error = check(
+        &format!("http://target.test:{}/a", a.port()),
+        &permissions(&["web_fetch(http://other.test)"]),
+        resolver,
+        transport(),
+        &|| false,
+        PreflightLimits::default(),
+    )
+    .expect_err("redirect 的 DNS 尾点不得绕过规范 deny");
+    assert_eq!(error.code, WebErrorCode::PermissionDenied);
+    assert_eq!(a.request_count(), 1);
     assert_eq!(b.request_count(), 0);
 }
 
@@ -807,6 +1009,7 @@ struct RequestRecord {
     method: String,
     path: String,
     host: String,
+    sni: Option<String>,
     range: Option<String>,
     has_authorization: bool,
     has_cookie: bool,
@@ -964,7 +1167,8 @@ fn serve_tls(
         .unwrap();
     let connection = rustls::ServerConnection::new(Arc::new(config)).unwrap();
     let mut stream = rustls::StreamOwned::new(connection, stream);
-    let request = read_request(&mut stream);
+    let mut request = read_request(&mut stream);
+    request.sni = stream.conn.server_name().map(str::to_string);
     let response = if !records.lock().unwrap().is_empty() && followup_response.is_some() {
         followup_response.unwrap_or(response)
     } else if request.method == "GET" {
@@ -1007,6 +1211,7 @@ fn read_request(reader: &mut impl BufRead) -> RequestRecord {
         method,
         path,
         host,
+        sni: None,
         range,
         has_authorization,
         has_cookie,
