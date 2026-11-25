@@ -28,7 +28,7 @@
 ## 4. 真机制品（不启动真机）
 
 - [x] 4.1 `geom` bbox record/unchangedSince，缺基线或 bbox fail-closed，并补套件自测与 README
-- [x] 4.2 新增 `874-quick-open-external-directory-and-stable-layout`，第二合成 vault、只读与零写入判据
+- [ ] 4.2 新增 `874-quick-open-external-directory-and-stable-layout`，第二合成 vault、只读与零写入判据；`$vault2` 步骤级解析与套件端到端自测已通过，真机执行留主会话串行，PASS 前不得勾完成
 - [x] 4.3 回扫并更新 230d/231 既有期望，重生成 COVERAGE，`node scripts/acceptance/run.mjs --check` 绿
 
 ## 5. 验证与交付

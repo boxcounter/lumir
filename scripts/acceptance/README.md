@@ -894,8 +894,10 @@ AX 照样暴露浮层项、报的还是**未裁的完整包围盒**（证据 `.l
 也会读到字形而假过——那时判据要换成浮层壳底色的同/异色对（`pixel.differ`）。
 
 **占位符**（M236 起）：expect 字符串里可写 `$appName` / `$appVersion`（加载时从本 checkout 的
-`src-tauri/tauri.conf.json` 读真值代入）与 `$vault`（M244：合成验收 vault 的绝对路径，随
-`LUMIR_ACCEPTANCE_VAULT` 走——剪贴板类断言要比对绝对路径时用它，场景 MUST NOT 硬编码 `/tmp`）（worktree 跑就取 worktree 的 conf，与被测构建同源）——
+`src-tauri/tauri.conf.json` 读真值代入）、`$vault`（M244：合成验收 vault 的绝对路径，随
+`LUMIR_ACCEPTANCE_VAULT` 走——剪贴板类断言要比对绝对路径时用它，场景 MUST NOT 硬编码 `/tmp`）与
+`$vault2`（第二合成 vault，随 `LUMIR_ACCEPTANCE_VAULT2` 走）。两个 vault token 都对整个 front-matter
+递归解析，步骤的 `text` / `target` / `ax` / `record` / `file` 与 seed 共用同一真源（worktree 跑就取 worktree 的 conf，与被测构建同源）——
 场景 MUST NOT 硬编码版本号副本（真源唯一，REVIEW.md 「同一语义两处真源」条），版本 bump 后场景跟着真源走。
 占位符对整个 front-matter 生效（不止 expect）：`config:` 块里同样可写。M304 新增 `$fixtures`
 （套件 fixtures 目录的绝对路径）——**只读引用** fixture 原文（如 harness mock 脚本）用它，

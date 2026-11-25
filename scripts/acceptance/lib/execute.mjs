@@ -1223,6 +1223,9 @@ async function appMetaTokens() {
     // 合成验收 vault 的绝对路径（M244）：剪贴板类断言要比对**绝对路径**，而它随
     // LUMIR_ACCEPTANCE_VAULT 覆写而变——场景 MUST NOT 硬编码 /tmp 那一份。
     $vault: vaultDir(),
+    // 第二合成 vault 与主 vault 同属步骤级 token：loadScenario 对整棵 front-matter 只解析一次，
+    // typeInNode.text/target、ax、record/file 等消费者因此拿到同一个绝对路径，不再只有 seed 能解析。
+    $vault2: secondVaultDir(),
     // 套件 fixtures 目录的绝对路径（M304）：只读引用 fixture 原文（如 harness mock 脚本）
     // 走这个 token——不拷进 vault，避免在 vault 根留下非 .md 残留（resetVault 的 M296 缺口
     // 不清这类文件，场景 28/65 的「vault 里无 json/tmp 产物」断言会被串红）。
@@ -1241,13 +1244,10 @@ async function appMetaTokens() {
 
 /** 深度遍历 YAML 产物，字符串里的占位符全部替换。
  *
- *  **词边界替换**（M252 finding）：`$vault`（本表）与种子里的第二 vault 惯用记号 `$vault2`
- *  共享前缀——用 `replaceAll` 会把 `$vault2` 吃成 `<vault 路径>2`（一个不存在的目录），
- *  凡在 `seed` 里写 `$vault2` 的场景（17 / 19 / 32）第二 vault 都会变成「路径不可用」行。
- *  因此 token 后面**紧跟标识符字符（字母 / 数字 / 下划线）时不替换**：
- *   - `$vault2` 原样留给 `app.mjs` 的 `resolveSeedPath`（它按 `secondVaultDir()` 解析）；
- *   - `$vault-b` 照常替换（`-` 不是标识符字符）——它与 `secondVaultDir()` 的兜底口径
- *     `${vaultDir()}-b` 逐字一致，两种写法都落到同一个目录。
+ *  **词边界替换**（M252 finding）：`$vault` 与 `$vault2` 共享前缀；两个 token 都在本表时，
+ *  仍须防止 `$vault2x` 这类近名标识符被截成「第二 vault 路径 + x」。因此 token 后面紧跟
+ *  标识符字符（字母 / 数字 / 下划线）时不替换；`$vault-b` 照常替换（`-` 不是标识符字符），
+ *  它与 `secondVaultDir()` 的兜底口径 `${vaultDir()}-b` 逐字一致。
  *  `$appName` / `$appVersion` 同样受这条边界保护（`$appNameX` 之类不会被误吃）。 */
 function substituteTokens(value, tokens) {
   if (typeof value === "string") {

@@ -37,12 +37,15 @@ DOM 与视觉顺序一致为 `结果区（list/empty 同 grid area）→ hint �
   max-width: calc(100vw - 28px);
   max-height: min(80vh, calc(100vh - 67px));
 }
+.lumir-qo {
+  min-height: min(calc(6 * 26px + 2 * var(--sp-2) + 5.68em), 80vh, calc(100vh - 67px));
+}
 .lumir-qo-list,
-.lumir-qo-empty { grid-area: 1 / 1; min-height: calc(6 * 26px + 2 * var(--sp-2)); }
+.lumir-qo-empty { grid-area: 1 / 1; min-height: 0; }
 .lumir-qo-list { overflow: auto; }
 ```
 
-空查询也保留同一结果区高度。短窗口通过 grid 的 `minmax(0,1fr)` 压缩结果区，输入与提示不压缩；可用高度小于固定内容时以 O2 视口包含为准，不把输入推出视口。列表是唯一滚动容器并登记细条档；空态不是额外高度块。eink 聚焦线宽通过相同的 border-box 尺寸不移动 input。
+空查询也保留同一结果区高度。短窗口通过 grid 的 `minmax(0,1fr)` 压缩结果区，输入与提示不压缩；整框最小高与最大高同受 80vh 和 modeline 上方可用高度约束，不再按 479px 媒体查询整体豁免六行。可用高度小于固定内容时以 O2 视口包含为准，不把输入推出视口。列表是唯一滚动容器并登记细条档；空态不是额外高度块。无候选目录的状态句只出现在结果区，提示行保留通用帮助；有候选时提示行才显示直接子项数量。eink 聚焦线宽通过相同的 border-box 尺寸不移动 input。
 
 不变量：在 `viewport × theme × font-size × {empty query,0/1/many/100+,pending,direct,directory,long hint}` 矩阵中，同一视口/主题/字号的 input `x/y/width/height` 逐值相等；resize 后只按新视口/字号重算。浮层与 input 均不越视口，宽度不随内容变。长路径仍目录先收缩、文件/目录名后收缩，title 保全路径。
 

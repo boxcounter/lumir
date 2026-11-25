@@ -2672,6 +2672,9 @@ body {
   width: clamp(26em, 50vw, 56em);
   max-width: calc(100vw - 28px);
   max-height: min(80vh, calc(100vh - 67px));
+  /* 六行结果区 + 一行提示/输入的整框最小高；5.68em 随字号覆盖固定行。
+     短窗时 min-height 与 max-height 同受两条实际上限约束，grid 只压缩第一行。 */
+  min-height: min(calc(6 * 26px + 2 * var(--sp-2) + 5.68em), 80vh, calc(100vh - 67px));
 }
 /* 优先级 0-2-0 > `.lumir-toc` 的 0-1-0：加了 display: flex 之后这里的隐藏仍然生效
    （空态与关闭态的防线是 tests/visual 的 toc-outline 场景）。 */
@@ -2697,19 +2700,13 @@ body {
 .lumir-qo-list,
 .lumir-qo-empty {
   grid-area: 1 / 1;
-  min-height: calc(6 * 26px + 2 * var(--sp-2));
+  min-height: 0;
 }
 .lumir-qo-hint {
   grid-row: 2;
 }
 .lumir-qo-input {
   grid-row: 3;
-}
-@media (max-height: 479px) {
-  .lumir-qo-list,
-  .lumir-qo-empty {
-    min-height: 0;
-  }
 }
 /* 输入筛选行（change list-filter）：列向 flex 的固定行，MUST NOT 被压缩——浮层总高上限
    （80vh）因此不含它的伸缩。下划线形态（底线 --border、focus 转 --accent），与搜索面板的

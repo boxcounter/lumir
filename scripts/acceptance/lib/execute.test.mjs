@@ -23,7 +23,7 @@ import test from "node:test";
 import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, geomBaselineProblem, isStaleIndexError, KEY_CHANNELS, keyChannel, keysTarget, loadScenario, matcher, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, resolveKeysTarget, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, scopedAxOrder, screenshotSize, settleEditorless } from "./execute.mjs";
 import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
 import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, SETTLE_SAMPLE_MS, settle, StepError } from "./drive.mjs";
-import { InfraError, repoRoot } from "./util.mjs";
+import { InfraError, repoRoot, secondVaultDir } from "./util.mjs";
 
 /** 临时根（每个用例一份，跑完不清也无妨——全在 `os.tmpdir()` 下）。 */
 function tmpRoot(name) {
@@ -128,6 +128,87 @@ test("步骤表写在 front-matter 内：零问题（正文里的 YAML 示例不
   assert.equal(scenario.steps.length, 1, "front-matter 内的步骤表应被解析");
   assert.deepEqual(scenario.bodyStepKeys, ["steps"], "正文里的那一行仍被记录（供定位用）");
   assert.deepEqual(checkScenario(scenario), [], "步骤表非空时不该报任何问题");
+});
+
+test("$vault2 步骤级解析：874 的 text/target/ax/record/file 不残留字面 token", async () => {
+  const file = path.join(repoRoot(), "scripts/acceptance/scenarios/874-quick-open-external-directory-and-stable-layout.md");
+  const scenario = await loadScenario(file);
+  const serialized = JSON.stringify(scenario.steps);
+  assert.ok(!serialized.includes("$vault2"), `步骤里仍有未解析的 $vault2：${serialized}`);
+  const external = `${secondVaultDir()}/`;
+  const type = scenario.steps.find((step) => step.do === "typeInNode");
+  assert.equal(type.text, external);
+  assert.ok(type.target.name.includes(secondVaultDir()));
+  assert.ok(JSON.stringify(type.expect).includes(`${external}sub/`));
+  const record = scenario.steps.find((step) => step.do === "record");
+  assert.equal(record.file, `${external}sub/child.md`);
+});
+
+test("$vault2 从 loadScenario 到执行器同源：typeInNode/ax/record/file 全链路通过，近名 token 不误吃", async () => {
+  const root = tmpRoot("vault2-step-tokens");
+  useTmpEnv(root);
+  const second = secondVaultDir();
+  let inputValue = "";
+  const axText = () => [
+    "# Lumir App State",
+    "",
+    "- app: Lumir",
+    "- pid: 123",
+    "- window_bounds: x=8 y=40 w=1200 h=800 (screen points)",
+    "- screenshot: none — no image attached",
+    "- coords: bbox `@x,y w×h` are WINDOW-LOCAL POINTS (origin = window top-left, 1:1 points — NOT screenshot pixels)",
+    "",
+    "```text",
+    '- [0] AXApplication "Lumir"',
+    '  - [1] AXWindow "Lumir" @0,0 1200×800',
+    "    - [2] AXWebArea (Lumir)",
+    `      - [9] AXTextArea (Quick Open ${second}) = "${inputValue}" (focused)`,
+    `      - [10] AXStaticText = "${second}/sub/"`,
+    "```",
+  ].join("\n");
+  const injected = [];
+  const cu = {
+    state: async () => ({ text: axText(), image: null }),
+    typeText: async (_pid, text) => {
+      injected.push(text);
+      inputValue += text;
+      return { json: { ok: true } };
+    },
+  };
+  const file = path.join(root, "vault2-step-tokens.md");
+  fs.writeFileSync(file, [
+    '---\nid: "vault2-step-tokens"\nitem: 0\ntitle: 第二 vault 步骤 token\nsteps:',
+    "  - name: 造第二 vault 文件",
+    "    do: vaultWrite",
+    "    vault: second",
+    "    file: sub/child.md",
+    '    content: "QO-VAULT2-E2E\\n"',
+    "  - name: 经同一 token 定位并输入",
+    "    do: typeInNode",
+    '    target: { role: AXTextArea, name: "^Quick Open $vault2$" }',
+    '    text: "$vault2/"',
+    "    expect:",
+    "      - label: AX 使用同一路径",
+    '        ax: { has: "$vault2/sub/" }',
+    "  - name: 记录同一路径",
+    "    do: record",
+    "    as: child-before",
+    '    file: "$vault2/sub/child.md"',
+    "  - name: 文件断言使用同一路径",
+    "    expect:",
+    "      - label: 字节未变",
+    '        file: { path: "$vault2/sub/child.md", unchangedSince: child-before }',
+    "      - label: 近名 token 仍按词边界保留",
+    '        ax: { not: "$vault2x" }',
+    "---",
+    "",
+  ].join("\n"));
+  const scenario = await loadScenario(file);
+  assert.equal(scenario.steps[1].text, `${second}/`);
+  assert.equal(scenario.steps[2].file, `${second}/sub/child.md`);
+  const { status, records } = await drive(root, scenario, { cu });
+  assert.deepEqual(injected, [`${second}/`]);
+  assert.equal(status, "PASS", JSON.stringify(records));
 });
 
 test("多键 file 断言逐键判：exists + has + not 各落一条记录", async () => {

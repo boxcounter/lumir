@@ -897,11 +897,13 @@ test("不存在的目录尾斜杠：目录缺失分态，不与普通搜索空�
   await expect(page.locator(".lumir-qo-item")).toHaveCount(0);
   await expect(page.locator(".lumir-qo-empty")).toBeVisible();
   await expect(page.locator(".lumir-qo-empty")).toHaveText("目录不存在或不是目录：ghost");
-  await expect(page.locator(".lumir-qo-hint")).toHaveText("目录不存在或不是目录：ghost");
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("输入路径或文件名；可加 :12 这样的行号后缀");
+  await expect(page.getByText("目录不存在或不是目录：ghost", { exact: true })).toHaveCount(1);
 
   await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-qo")).toBeVisible();
-  await expect(page.locator(".lumir-qo-hint")).toHaveText("目录不存在或不是目录：ghost");
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("输入路径或文件名；可加 :12 这样的行号后缀");
+  await expect(page.getByText("目录不存在或不是目录：ghost", { exact: true })).toHaveCount(1);
   await expect(page.locator(".tab-open")).toHaveCount(0);
 });
 

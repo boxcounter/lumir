@@ -431,8 +431,9 @@ export const quickOpenMissingText = (query: string): string => t("D573", { query
 /** 解析到目录（不做目录浏览）。 */
 export const quickOpenDirText = (path: string): string => t("D574", { path });
 /**
- * 目录语境的提示行：说明列表已收窄为该目录的直接子项并给出数量；空目录与超过渲染上限
- * 各有专条（MUST NOT 把「0 条」或截断说明塞进同一个模板再特判）。
+ * 目录语境的状态文案：说明列表已收窄为该目录的直接子项并给出数量；空目录与超过渲染上限
+ * 各有专条（MUST NOT 把「0 条」或截断说明塞进同一个模板再特判）。有候选时落在提示行，
+ * 无候选时只落在结果区，提示行保留通用帮助。
  */
 export const quickOpenDirectoryHint = (path: string, count: number): string =>
   count === 0
@@ -847,7 +848,7 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
     empty.textContent = res.directory === undefined ? NO_MATCH_TEXT() : quickOpenDirectoryStatusText(res.directory);
     empty.hidden = rows.length !== 0 || (res.directory === undefined && probing);
     if (res.directory !== undefined) {
-      setHint(quickOpenDirectoryStatusText(res.directory));
+      setHint(rows.length === 0 ? QUICK_OPEN_USAGE() : quickOpenDirectoryStatusText(res.directory));
     } else if (hits.length === 0) {
       setHint(QUICK_OPEN_USAGE());
     } else {
@@ -1152,7 +1153,7 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
         }
         if (res.directory !== undefined) {
           render();
-          setHint(quickOpenDirectoryStatusText(res.directory));
+          setHint(QUICK_OPEN_USAGE());
           return;
         }
         render();
