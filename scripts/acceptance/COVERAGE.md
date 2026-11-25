@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：291
-- 验收项（不同 item 编号）：260
-- 分档：core 32 / full 249 / bundle 5 / evidence 5（full 批 = 全部 291 个，含其余各档）
+- 场景：292
+- 验收项（不同 item 编号）：261
+- 分档：core 32 / full 250 / bundle 5 / evidence 5（full 批 = 全部 292 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -278,3 +278,4 @@
 | 867 | `867-wikilink-suggestion-native-refresh-nov25` | 行内 [[ 候选：原生逐字输入立即打开、query 逐拍同步、逐字删除关闭 | full |
 | 868 | `868-harness-skill-menu-ux-nov25` | Skill 候选：Ctrl+N/P 同方向键、长列表高亮揭示与响应式加宽（change fix-skill-menu-ux-nov25） | full |
 | 874 | `874-quick-open-external-directory-and-stable-layout` | Quick Open 外部目录一层候选、子目录进入、外部文件只读与输入框 bbox 稳定 | full |
+| 875 | `875-harness-markdown-bold` | Harness Markdown strong：有序列表空行后的缩进续段在流式中间态与终态均不显示字面星号 | full |

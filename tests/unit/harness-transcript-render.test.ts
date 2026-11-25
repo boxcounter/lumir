@@ -24,7 +24,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatDate, t } from "../../src/copy.ts";
-import { renderMarkdownInto, whenTextOf } from "../../src/harness-panel.ts";
+import {
+  finalizedBoundaryFromTop,
+  finalizedUpTo,
+  renderMarkdownInto,
+  whenTextOf,
+} from "../../src/harness-panel.ts";
 import type { HarnessBlockOpeners, PathLinkRenderContext } from "../../src/harness-panel.ts";
 import type { CodeBlockRender } from "../../src/preview/code-block-content.ts";
 
@@ -732,4 +737,196 @@ test("块内既有交互不受入口影响：表格 cell 里的路径链接仍�
   assert.equal(links.length, 1, "路径链接的数量与之前逐值相同（slot 只包一层，不改行内渲染）");
   fire(links[0], "click");
   assert.deepEqual(opened, [["projects/plans", undefined]]);
+});
+
+// ---------------------------------------------------------------------------
+// change fix-harness-markdown-bold-nov25：strong 的宿主矩阵与流式列表上下文
+// ---------------------------------------------------------------------------
+
+test("属性：段落、有序/无序与嵌套列表中的 0/1/多个 strong 一致生成 <strong>", () => {
+  const wrappers: Array<[string, (body: string) => string]> = [
+    ["普通段落", (body) => body],
+    ["有序列表", (body) => `1. ${body}`],
+    ["无序列表", (body) => `- ${body}`],
+    ["嵌套有序列表", (body) => `1. 外层\n   1. ${body}`],
+    ["有序内嵌无序", (body) => `1. 外层\n   - ${body}`],
+  ];
+  const cases: Array<[string, string, string[]]> = [
+    ["零 strong", "普通后续", []],
+    ["CJK + 同行后续", "**粗体**后续", ["粗体"]],
+    ["CJK + 标点", "**粗体**，后续", ["粗体"]],
+    ["英文 + 同行后续", "**Bold**after", ["Bold"]],
+    ["多个 strong", "前**甲**中**乙**后", ["甲", "乙"]],
+  ];
+  for (const [hostName, wrap] of wrappers) {
+    for (const [caseName, body, expected] of cases) {
+      const source = wrap(body);
+      const strong = render(source).findTag("strong");
+      assert.deepEqual(
+        strong.map((el) => el.textContent),
+        expected,
+        `${hostName} / ${caseName}：${JSON.stringify(source)}`,
+      );
+      for (const el of strong) assert.equal(el.textContent.includes("**"), false);
+    }
+  }
+});
+
+test("跨行 strong 在列表项内保持同一范围，后续文本留在 strong 外", () => {
+  for (const source of [
+    "**第一行\n第二行**后续",
+    "1. **第一行\n   第二行**后续",
+    "- **第一行\n  第二行**后续",
+    "1. 外层\n   - **第一行\n     第二行**后续",
+  ]) {
+    const host = render(source);
+    const strong = host.findTag("strong");
+    assert.equal(strong.length, 1, JSON.stringify(source));
+    assert.equal(strong[0].textContent.replace(/\s+/g, ""), "第一行第二行");
+    assert.equal(host.textContent.endsWith("后续"), true, JSON.stringify(source));
+  }
+});
+
+test("链接与 strong 可互相嵌套；代码和转义星号绝不变成 strong", () => {
+  const strongLink = render("1. **含 [链接](https://example.com) 文本**后续");
+  assert.deepEqual(strongLink.findTag("strong").map((el) => el.textContent), ["含 链接 文本"]);
+  assert.equal(strongLink.find("lumir-hp-link").length, 1);
+
+  const linkStrong = render("- [**链接**](https://example.com)后续");
+  assert.equal(linkStrong.findTag("strong").length, 1);
+  assert.equal(linkStrong.find("lumir-hp-link")[0].textContent, "链接");
+
+  for (const source of [
+    "普通 `**代码**`后续",
+    "1. `**代码**`后续",
+    "- \\*\\*转义\\*\\*后续",
+    "```\n**围栏代码**\n```",
+    "    **缩进代码**",
+  ]) {
+    const host = render(source);
+    assert.equal(host.findTag("strong").length, 0, JSON.stringify(source));
+    assert.equal(host.textContent.includes("**"), true, JSON.stringify(source));
+  }
+});
+
+test("缺陷复现：流式空行定稿不得把合法列表缩进续段切成顶层代码块", () => {
+  const sources = [
+    "1. 第一项\n2. 第二项\n\n    **续段粗体**后续\n3. 第三项",
+    "- 第一项\n- 第二项\n\n    **续段粗体**后续\n- 第三项",
+    "1. 外层\n   - 子项\n\n     **续段粗体**后续",
+    "1. 第一项\n\n    **第一行\n    第二行**后续",
+  ];
+  for (const source of sources) {
+    assert.equal(render(source).findTag("strong").length, 1, `完整源先证明 GFM 合同成立：${source}`);
+    const boundary = finalizedUpTo(source);
+    const tail = render(source.slice(boundary));
+    const expected = source.includes("第一行") ? ["第一行第二行"] : ["续段粗体"];
+    assert.deepEqual(
+      tail.findTag("strong").map((el) => el.textContent.replace(/\s+/g, "")),
+      expected,
+      `旧实现把续段切成 CodeBlock：boundary=${boundary}，tail=${JSON.stringify(source.slice(boundary))}`,
+    );
+    assert.equal(tail.textContent.includes("**"), false, JSON.stringify(source));
+  }
+});
+
+test("属性：真实两阶段分片在开放列表与后续顶层块到达后均保持 strong", () => {
+  for (const marker of ["1.", "-"]) {
+    const contentIndent = marker === "1." ? 3 : 2;
+    for (const extraIndent of [0, 1, 2]) {
+      for (const suffix of ["后续", "，后续", " after"]) {
+        const indent = " ".repeat(contentIndent + extraIndent);
+        const firstChunk = `${marker} 第一项\n\n${indent}**粗体**${suffix}`;
+        const completeSource = `${firstChunk}\n\n后续顶层段`;
+        assert.deepEqual(
+          render(completeSource).findTag("strong").map((el) => el.textContent),
+          ["粗体"],
+          "完整源是流式分片的语义参照",
+        );
+        for (const [stage, source] of [
+          ["开放列表", firstChunk],
+          ["列表已关闭", completeSource],
+        ] as const) {
+          const boundary = finalizedUpTo(source);
+          const prefix = render(source.slice(0, boundary));
+          const tail = render(source.slice(boundary));
+          const streamedStrong = [...prefix.findTag("strong"), ...tail.findTag("strong")];
+          assert.deepEqual(
+            streamedStrong.map((el) => el.textContent),
+            ["粗体"],
+            `${JSON.stringify({ stage, marker, extraIndent, suffix, boundary })}`,
+          );
+        }
+      }
+    }
+  }
+});
+
+test("普通段落与已被后续顶层块关闭的列表仍可增量定稿", () => {
+  for (const source of ["普通 **粗体**\n\n后续顶层段", "1. **粗体**\n\n后续顶层段"]) {
+    const boundary = finalizedUpTo(source);
+    assert.ok(boundary > 0, `已结束块必须仍可定稿：${JSON.stringify(source)}`);
+    const prefix = render(source.slice(0, boundary));
+    const tail = render(source.slice(boundary));
+    assert.deepEqual(
+      [...prefix.findTag("strong"), ...tail.findTag("strong")].map((el) => el.textContent),
+      ["粗体"],
+    );
+    const expectedText = source.startsWith("普通") ? "普通 粗体后续顶层段" : "粗体后续顶层段";
+    assert.equal(prefix.textContent + tail.textContent, expectedText);
+  }
+});
+
+test("闭合代码围栏仍可定稿，未闭合围栏中的空行不构成边界", () => {
+  const closed = "```js\na\n```\n\n后续";
+  const boundary = finalizedUpTo(closed);
+  assert.equal(boundary, 13);
+  assert.equal(closed.slice(0, boundary), "```js\na\n```\n\n");
+  assert.equal(closed.slice(boundary), "后续");
+  assert.equal(finalizedUpTo("```js\na\n\n后续"), 0);
+});
+
+test("算法：边界筛选的顶层节点访问随输入线性增长", () => {
+  const measure = (count: number): number => {
+    let visits = 0;
+    const nodes = Array.from({ length: count + 1 }, (_, index) => ({
+      name: index === count ? "BulletList" : "Paragraph",
+      from: index * 10,
+      to: index * 10 + 5,
+    }));
+    nodes[count].to = count * 10 + 100;
+    nodes.forEach((node, index) => {
+      Object.defineProperties(node, {
+        prevSibling: {
+          get() {
+            visits += 1;
+            return nodes[index - 1] ?? null;
+          },
+        },
+        nextSibling: {
+          get() {
+            visits += 1;
+            return nodes[index + 1] ?? null;
+          },
+        },
+      });
+    });
+    const top = {
+      get lastChild() {
+        visits += 1;
+        return nodes[nodes.length - 1];
+      },
+    };
+    const list = nodes[count];
+    const boundaries = [list.from, ...Array.from({ length: count }, () => list.from + 1)];
+    finalizedBoundaryFromTop(
+      boundaries,
+      top as unknown as Parameters<typeof finalizedBoundaryFromTop>[1],
+    );
+    assert.ok(visits > 0, "计数器必须真的读到节点，不能在空调用上判绿");
+    return visits;
+  };
+  const counts = [20, 40, 80].map(measure);
+  assert.ok(counts[1] <= counts[0] * 2 + 4, `20 → 40 的访问次数不是线性：${counts}`);
+  assert.ok(counts[2] <= counts[1] * 2 + 4, `40 → 80 的访问次数不是线性：${counts}`);
 });
