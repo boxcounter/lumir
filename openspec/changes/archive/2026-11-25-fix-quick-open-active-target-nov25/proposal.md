@@ -19,7 +19,28 @@
 > 行为用例钉住，不另作取舍。
 > 追加批准的范围到此为止：另外三个选择器、视觉基线 / 样式、「高亮行 = Enter 目标」的不变量与真机
 > 手感均不在内；真机验收与归档放行归主会话。
-> 节点 2（归档放行）：**未进行**——本 change 不归档；归档与真机验收由主会话串行安排。
+> 节点 2（归档放行，2026-11-25）：**tower 指示按五要件执行**（原话「Quick Open 最终门禁已全绿，
+> 可以完成节点2与归档，但不要 merge/push」）；归档在本分支由 worker 执行，不 push / merge。
+> 1. **方案已批准**：节点 1「选择器按推荐」+ 同日追加批准「采纳建议」（四项代价与 `settled` 复用
+>    边界）；实现期唯一新增面是 230d 真机首跑暴露的候选行可访问名缺陷（同批真机发现，已在「真机验收
+>    补充」段登记并随本 change 修掉，非静默扩 scope）。
+> 2. **独立评审层（有缺口，如实记录）**：机械核验报告（tip `27f0486a`，
+>    `.local/reviews/quick-open-active-target-nov25/mechanical.md`）结论「未发现产品 FAIL」、F1–F7
+>    全部 CLOSED、剩 4 项 P3；最终 tip `6127c5c8` 的 `8a1f53a1`（复位语义 / 翻转用例）与文档收口即
+>    P3 收口，`d521a8fc` 为可访问名修复。**该报告未覆盖 `27f0486a..6127c5c8`，最终 tip 未再取一次
+>    独立 judgment-layer verdict**——按 tower 指示放行，作为归档后遗留事项登记。
+> 3. **tasks 完成**：全部勾选（5.2 本次勾选，证据见该条）。
+> 4. **门禁与真机证据**：完整 `gate visual` 原文 `GATE RESULT: 15/15 PASS（SKIP 0）`、exit 0，
+>    `visual-regression` 971s（`.local/missions/quick-open-active-target/gate-visual-final.log`）；
+>    真机 230a / 230b / 230c / 231 / 874 PASS（49 / 34 / 20 / 5 / 33 断言，
+>    `.local/acceptance/2026-11-25-quick-open-active-target-final/`），230d 修复后复跑 PASS
+>    （`.local/acceptance/2026-11-25-quick-open-active-target-final-r2/230d-quick-open-select-all-dir-children/`）。
+>    像素基线零改动（本批新增 / 更新基线 0 张）。
+> 5. **规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS（扫过 12 份
+>    delta，17 条 MODIFIED，对比 380 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目）；
+>    `openspec validate --all --strict` 39 passed / 0 failed；归档跟踪队列本 change 唯一条目在场，
+>    归档后按「核销即删除」移除（backlog 保持体量红线内）。
+> 归档执行与事后审计读数见下方「归档记录」段。
 
 ## Why
 

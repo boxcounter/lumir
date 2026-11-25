@@ -90,7 +90,17 @@
       （命令回显 + `EXIT=0`）、`docs-check-r9.log`（PASS）、`openspec-validate-r6.log`（39/39）；
       红证据 `visual-red-reset-slot.log` / `visual-red-reset-cache.log`（见 8.2）。上一版 tip
       `8a1f53a1` 上的同类干净复跑同样全绿（`-r7/r6/r7/r5/r6/r10/r4/r8/r5` 一组），留档不删
-- [ ] 5.2 完整 `gate quick` / `gate visual` 与真机复验由主会话串行执行（本 worker 不启动真机）
+- [x] 5.2 完整门禁与真机复验（主会话串行执行；本 worker 未重跑真机、未更新基线）：
+      完整 `gate visual` 原文 `GATE RESULT: 15/15 PASS（SKIP 0）`、exit 0，其中 `visual-regression`
+      971s，`cargo-fmt` / `cargo-clippy` / `cargo-test` / `bindings-drift` / `schemas-drift` /
+      `tsc-root` / `tsc-visual` / `tsc-unit` / `unit-tests` / `perf-fixture-tests` /
+      `acceptance-suite` / `docs-check` / `openspec-validate` / `isolation-runs` 全 PASS
+      （`.local/missions/quick-open-active-target/gate-visual-final.log`）。
+      真机 230a PASS（49 断言）/ 230b PASS（34）/ 230c PASS（20）/ 231 PASS（5）/ 874 PASS（33）
+      （`.local/acceptance/2026-11-25-quick-open-active-target-final/`）；230d 修复后复跑 PASS
+      （`.local/acceptance/2026-11-25-quick-open-active-target-final-r2/230d-quick-open-select-all-dir-children/`，
+      `status.txt` = `PASS`；修复前首跑 FAIL 留档在 final 目录）。像素基线零改动（本批新增 / 更新
+      基线 0 张；`git diff --stat 82b50f54..HEAD -- tests/visual/baselines` 为空）。
 - [x] 5.3 证据落 `.local/missions/quick-open-active-target/`；提交本分支，不 push / merge / archive
 - [x] 5.4 230d 真机复跑（隔离端口 1431，runner 自带 XDG / 合成 vault / 锁）：**1/1 PASS**，
       证据 `.local/acceptance/2026-11-25-quick-open-active-target-final-r2/230d-quick-open-select-all-dir-children/`
