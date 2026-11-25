@@ -67,3 +67,9 @@
 - [x] T1 补两条浏览器用例（首次 placement 窗口可滚且滚动不被写回 / 同状态重排窗口采用最新位置），`--repeat-each=10` 在 tsc + docs + acceptance 并行负载下 70/70
 - [x] T2 证据卫生：`green5-wikilink-reveal-timing.log` 实为 4 failed（早于 dist 重建），改名 `…SUPERSEDED-4failed.log`；重建后重跑 4 条 → `green7-wikilink-reveal-timing.log` 4 passed，README 只引用最终绿
 - [x] N5 `if-clipped` 正分支：两侧判据改为「上一次放置确立的几何」（上次放置后完整可见 + 此后用户未滚动），MUST NOT 用几何变化后的 clip；Skill / wikilink 各补一条「原本贴底完整可见、被收缩挤出带 ⇒ 揭示」用例（wikilink 在旧实现上实测红：高亮行被留在带外）
+
+## 机械复核 N6 收口（2026-11-25）
+
+- [x] N6 合同补显式例外：C3 基础句与跨拍条款写明「写拍窗口内用户已主动滚动 ⇒ 本次揭示让位、写拍采用用户真实位置」，并明示这是用户动作更晚 / 稳定阅读优先，不是游标可见性保证失效；窗口后的下一次游标变化仍按 C3 揭示
+- [x] `docs/specs/skill-menu.md` S2 登记例外适用范围：Skill 同拍放置，没有可插入用户滚动的写拍窗口，游标揭示不让位
+- [x] `harness` / `wikilink-suggestion` 两个 delta 各补一条 Scenario；只改合同与文档，不改代码与测试

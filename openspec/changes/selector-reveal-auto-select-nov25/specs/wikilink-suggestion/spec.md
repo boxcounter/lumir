@@ -8,9 +8,9 @@
 
 浮层壳 SHALL 使用 `--preview-bg`、1px `--border`、`--r10`、`--shadow-raise` 与 `--fs-ui-s`；light / dark / eink 三主题计算后的背景 alpha MUST 等于 1，正文 MUST NOT 透过候选壳。行几何、文字、目录、活动与 hover 状态 SHALL 复用 Quick Open 对应的现有 spacing、`--r6`、`--text`、`--text-3`、`--sel`、`--hover` 和 currentColor，MUST NOT 新增颜色、字号、圆角或阴影 token。滚动列表 SHALL 登记到既有原生 overlay 豁免档，MUST NOT 新增自绘滚动条或 `scrollbar-gutter`，右缘 12px 内不得新增常驻按钮。
 
-列表揭示 SHALL 遵守 `docs/specs/selector-contract.md` C3：先恢复正确的 `max-height` 再揭示，MUST NOT 在写入定位样式之前清掉定高——清掉会把列表从「可滚」变成「内容高」、把 `scrollTop` 归零，揭示随之丢失。活动行 SHALL 完整落在 `listRect ∩ viewport`（扣掉列表自身 padding）内；已可见时 `scrollTop` MUST NOT 改变；越界时只滚动列表并保留一行上下文；MUST NOT 滚动编辑器、页面或任何祖先。
+列表揭示 SHALL 遵守 `docs/specs/selector-contract.md` C3：先恢复正确的 `max-height` 再揭示，MUST NOT 在写入定位样式之前清掉定高——清掉会把列表从「可滚」变成「内容高」、把 `scrollTop` 归零，揭示随之丢失。活动行 SHALL 完整落在 `listRect ∩ viewport`（扣掉列表自身 padding）内（跨拍写拍窗口内用户已主动滚动时按 C3 例外让位，见「跨拍放置窗口内的用户滚动让本次揭示让位」Scenario）；已可见时 `scrollTop` MUST NOT 改变；越界时只滚动列表并保留一行上下文；MUST NOT 滚动编辑器、页面或任何祖先。
 
-揭示的**时机** SHALL 同一合同：只有游标改变、或重排前已完整可见的活动行被新几何挤出可见带时才揭示。同状态刷新、窗口缩放与滚动等没有游标变化的重排 MUST NOT 把用户手动滚开的列表拉回活动行（稳定阅读优先，resize 也不得借机回弹首项）；重排为测量清空 `max-height` 造成的瞬时钳制 MUST NOT 回灌成新的滚动位置。重排 MUST NOT 重建候选行、MUST NOT 改动游标或 `aria-activedescendant`。判定「重排前已完整可见」SHALL 依据上一次放置确立的几何（上一次放置后活动行完整在带内，且此后用户没有滚动过列表），MUST NOT 依据几何变化后的 clip；放置跨拍期间列表 SHALL 保持可滚、写拍 SHALL 采用此刻的真实 `scrollTop`，首次放置完成前 SHALL 先给列表一个可滚盒。
+揭示的**时机** SHALL 同一合同：只有游标改变、或重排前已完整可见的活动行被新几何挤出可见带时才揭示。同状态刷新、窗口缩放与滚动等没有游标变化的重排 MUST NOT 把用户手动滚开的列表拉回活动行（稳定阅读优先，resize 也不得借机回弹首项）；重排为测量清空 `max-height` 造成的瞬时钳制 MUST NOT 回灌成新的滚动位置。重排 MUST NOT 重建候选行、MUST NOT 改动游标或 `aria-activedescendant`。判定「重排前已完整可见」SHALL 依据上一次放置确立的几何（上一次放置后活动行完整在带内，且此后用户没有滚动过列表），MUST NOT 依据几何变化后的 clip；放置跨拍期间列表 SHALL 保持可滚、写拍 SHALL 采用此刻的真实 `scrollTop`，首次放置完成前 SHALL 先给列表一个可滚盒。窗口内用户已主动滚动时，本次揭示（含游标刚改变的那一次）SHALL 让位，写拍 MUST 采用用户此刻的真实 `scrollTop`；这是用户动作更晚 / 稳定阅读优先，MUST NOT 被读作游标可见性保证失效——窗口结束后的下一次游标变化仍按 C3 完整揭示。
 
 #### Scenario: 三主题与长路径均不透明且不越界
 
@@ -26,6 +26,14 @@
 
 - **WHEN** 用户在长列表中手动滚开（活动行已离开可见带），随后发生同状态刷新、窗口缩放或滚动等没有游标变化的重排
 - **THEN** 列表 `scrollTop` 保持不变，活动行不被拉回可见带；候选行节点不被重建，游标与 `aria-activedescendant` 不被改写；只有游标刚改变时才按 C3 揭示新活动行
+
+#### Scenario: 跨拍放置窗口内的用户滚动让本次揭示让位
+
+- **WHEN** 长列表跨拍放置时（首次打开，或游标刚改变后的一次重排），用户在 read / write 两拍之间滚动
+  列表，把活动行滚出可见带
+- **THEN** 写拍采用用户此刻的真实 `scrollTop`，活动行不被补揭示搬回、允许停在带外；游标与
+  `aria-activedescendant` 不变；用户再按一次 `↓` / `↑` 时新活动行仍按 C3 完整落回
+  `listRect ∩ viewport` 内并保留一行上下文——让位只属于已经过去的那一拍，不是游标可见性保证失效
 
 #### Scenario: 长列表逐项导航不丢滚动位置
 

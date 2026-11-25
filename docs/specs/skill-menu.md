@@ -57,6 +57,15 @@ MUST NOT 让盒底越过 caret（不得把 caret 与 composer 当前行压住）
 高度会先清空 inline `max-height`——这一步造成的滚动钳制 MUST NOT 泄漏到揭示判据：候选自身 `scrollTop`
 SHALL 在定高后恢复，已完整可见目标的 `scrollTop` MUST NOT 因此改变。
 
+**场景——C3 跨拍让位例外的适用范围**：Skill 候选的放置与揭示在同一拍内完成（`placeSkillMenu` 读几何后
+立即写样式并揭示），不存在「游标改变之后、写拍之前」可被用户滚动插入的窗口，因此
+[selector-contract.md](selector-contract.md) C3 的跨拍让位例外在本表面不成立：
+
+- 用户在游标改变之前滚开（或刚发生一次同状态重排）⇒ 随后的游标改变仍 SHALL 按 C3 揭示新 option；
+  让位 MUST NOT 因为「用户刚滚过」而延长到下一拍。
+- 让位只作用于没有游标变化的重排（同状态回包 / resize，见上段），MUST NOT 被扩展成「游标改变可以不
+  揭示」——那是可见性保证失效，不是稳定阅读优先。
+
 任意游标改变后，当前 option 的上下缘 SHALL 落在真实可见带内（允许 1px 几何取整容差）。若它已完整可见，
 候选 `scrollTop` MUST 不变；越界时只滚动候选到带边缘并保留一行上下文。首尾、长列表与指针/键盘交替满足
 同一条，禁止借整页、transcript 或 composer 滚动完成揭示。指针选意只认真实指针移动，揭示滚动不得改动
