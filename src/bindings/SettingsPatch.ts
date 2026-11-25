@@ -10,7 +10,8 @@ import type { WebAccessPatch } from "./WebAccessPatch";
  */
 export type SettingsPatch = { 
 /**
- * 设置面 revision（覆盖 provider 条目、active、四个开关、两个命名目标的 provider/model；
+ * 设置面 revision（覆盖 provider 条目、active、四个开关、两个命名目标的 provider/model、
+ * `web_access.enabled` / `.approval` 与 `permissions.allow` / `.deny`；
  * **不含** `providers.<id>.model`）。
  */
 base_revision: string, active_provider?: FieldEdit<string>, providers: Array<ProviderEdit>, automation: AutomationPatch, naming?: NamingPatch, web_access?: WebAccessPatch, };

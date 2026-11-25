@@ -2,5 +2,6 @@
 import type { WebErrorCode } from "./WebErrorCode";
 import type { WebOperation } from "./WebOperation";
 import type { WebSource } from "./WebSource";
+import type { WebTrust } from "./WebTrust";
 
-export type WebEnvelope = { ok: boolean, provider: string | null, provider_id: string | null, operation: WebOperation, attempts: number, trust: string, truncated: boolean, truncated_fields: Array<string>, code: WebErrorCode | null, message: string | null, http_status: number | null, provider_code: string | null, provider_message: string | null, request_id: string | null, query: string | null, results: Array<WebSource> | null, source: WebSource | null, };
+export type WebEnvelope = { ok: boolean, provider: string | null, provider_id: string | null, operation: WebOperation, attempts: number, trust: WebTrust, truncated: boolean, truncated_fields: Array<string>, code: WebErrorCode | null, message: string | null, http_status: number | null, provider_code: string | null, provider_message: string | null, request_id: string | null, query: string | null, results: Array<WebSource> | null, source: WebSource | null, };

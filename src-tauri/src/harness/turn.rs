@@ -1520,9 +1520,7 @@ fn handle_call<C: RunContext>(
     // approved / rejected；allow / deny / 重定向路径没有批准动作，字段缺席。
     let mut gate_decision: Option<&'static str> = None;
     let output = if invalid_web {
-        super::web::execute(&call.name, &args, tctx.web_access, tctx.web, &|| {
-            ctx.aborted()
-        })
+        tools::execute(&call.name, &args, tctx, &|| ctx.aborted())
     } else if !known {
         ToolOutput::err("tool_unknown", format!("未知工具：{}", call.name))
     } else if !ctx.tool_allowed(&call.name) {
@@ -1554,12 +1552,7 @@ fn handle_call<C: RunContext>(
             // deny 的留痕是 wire 口径：带 `permission_denied` 错误码的结果随历史进
             // 下一条 llm_request.messages（tool_denied 事件类已废弃），面板 tool 行
             // 的细分状态照常由 status 承担。
-            Decision::Allow if is_web => {
-                super::web::execute(&call.name, &args, tctx.web_access, tctx.web, &|| {
-                    ctx.aborted()
-                })
-            }
-            Decision::Allow => tools::execute(&call.name, &args, tctx),
+            Decision::Allow => tools::execute(&call.name, &args, tctx, &|| ctx.aborted()),
             Decision::Ask => {
                 // 判定依据（M459）随批准请求进批准闸——事件与快照两条通道同取这一个值。
                 let (out, decision) = gated_execute(
@@ -1790,7 +1783,13 @@ fn gated_execute<C: RunContext>(
         // 写工具带预览基准 revision 执行：批准窗内文件被改 ⇒ fs_patch_file CAS
         // 拒掉（document_conflict 回送模型），落盘不与已批准 diff 分叉。
         (
-            tools::execute_with_revision(&call.name, args, tctx, preview.revision.as_deref()),
+            tools::execute_with_revision(
+                &call.name,
+                args,
+                tctx,
+                preview.revision.as_deref(),
+                &|| ctx.aborted(),
+            ),
             Some("approved"),
         )
     } else {

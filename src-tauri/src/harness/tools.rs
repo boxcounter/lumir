@@ -500,8 +500,13 @@ fn join_days(items: &[serde_json::Value]) -> String {
 }
 
 /// 注册表入口：工具名 + JSON 参数 → JSON 结果。
-pub fn execute(name: &str, args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
-    execute_with_revision(name, args, ctx, None)
+pub fn execute(
+    name: &str,
+    args: &serde_json::Value,
+    ctx: &ToolContext,
+    aborted: &dyn Fn() -> bool,
+) -> ToolOutput {
+    execute_with_revision(name, args, ctx, None, aborted)
 }
 
 /// 批准执行入口：写工具带预览基准 revision 走（ask 档采纳后的 CAS 基准；None = 直执行，
@@ -511,6 +516,7 @@ pub fn execute_with_revision(
     args: &serde_json::Value,
     ctx: &ToolContext,
     revision: Option<&str>,
+    aborted: &dyn Fn() -> bool,
 ) -> ToolOutput {
     match name {
         "vault_read" => vault_read(args, ctx),
@@ -528,7 +534,7 @@ pub fn execute_with_revision(
         "cron_task_list" => cron_task_list(ctx),
         "cron_task_remove" => cron_task_remove(args, ctx),
         "web_search" | "web_fetch" => {
-            super::web::execute(name, args, ctx.web_access, ctx.web, &|| false)
+            super::web::execute(name, args, ctx.web_access, ctx.web, aborted)
         }
         _ => ToolOutput::err("tool_unknown", format!("未知工具：{name}")),
     }
@@ -1630,6 +1636,59 @@ mod tests {
         (root, policy)
     }
 
+    #[derive(Default)]
+    struct AbortProbe {
+        observations: std::sync::Mutex<Vec<bool>>,
+    }
+
+    impl super::super::web::WebToolPort for AbortProbe {
+        fn execute(
+            &self,
+            operation: super::super::web::output::WebOperation,
+            _args: &serde_json::Value,
+            aborted: &dyn Fn() -> bool,
+        ) -> super::super::web::output::WebEnvelope {
+            use super::super::web::output::{WebEnvelope, WebErrorCode};
+
+            let aborted = aborted();
+            self.observations.lock().unwrap().push(aborted);
+            if aborted {
+                WebEnvelope::failure(operation, WebErrorCode::WebCancelled, "cancelled", None, 0)
+            } else {
+                WebEnvelope::search_success(None, 0, "synthetic".to_string(), Vec::new())
+            }
+        }
+    }
+
+    #[test]
+    fn approved_web_execution_forwards_the_real_abort_signal() {
+        let (root, policy) = fixture_vault("web-approved-abort");
+        let skills = Vec::<SkillEntry>::new();
+        let port = AbortProbe::default();
+        let ctx = ToolContext {
+            root: &root,
+            policy: &policy,
+            skills: &skills,
+            cron: None,
+            web: Some(&port),
+            web_access: Default::default(),
+        };
+        let args = serde_json::json!({"query": "synthetic"});
+        let cancelled = execute_with_revision(
+            "web_search",
+            &args,
+            &ctx,
+            Some("approved-preview-revision"),
+            &|| true,
+        );
+        assert_eq!(cancelled.value["code"], "web_cancelled");
+        assert_eq!(cancelled.value["attempts"], 0);
+        let executed = execute("web_search", &args, &ctx, &|| false);
+        assert!(executed.succeeded(), "{executed:?}");
+        assert_eq!(*port.observations.lock().unwrap(), vec![true, false]);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn glob_star_and_question() {
         assert!(glob_match("*.md", "notes/a.md"));
@@ -1746,7 +1805,7 @@ mod tests {
         assert_eq!(out.value["truncated"], false);
         assert!(out.value.get("next_cursor").is_none(), "{out:?}");
         // 注册表入口同一条实现（名字 → 函数的接线不是「只在单测里存在」的第二条路径）。
-        let via_registry = execute("vault_list", &serde_json::json!({}), &ctx);
+        let via_registry = execute("vault_list", &serde_json::json!({}), &ctx, &|| false);
         assert!(via_registry.succeeded(), "{via_registry:?}");
         assert_eq!(
             via_registry.value["entries"].as_array().unwrap().len(),
@@ -2261,6 +2320,7 @@ mod tests {
             "vault_move",
             &serde_json::json!({"path": "a.md", "new_path": "sub/a.md"}),
             &ctx,
+            &|| false,
         );
         assert!(out.succeeded(), "{out:?}");
         assert_eq!(out.value["path"], "sub/a.md");
@@ -2271,6 +2331,7 @@ mod tests {
             "vault_delete",
             &serde_json::json!({"path": "sub/a.md"}),
             &ctx,
+            &|| false,
         );
         assert!(out.succeeded(), "{out:?}");
         assert_eq!(out.value["path"], "sub/a.md");
@@ -2280,6 +2341,7 @@ mod tests {
             "vault_move",
             &serde_json::json!({"path": "sub", "new_path": "../escaped"}),
             &ctx,
+            &|| false,
         );
         assert!(!out.succeeded());
         assert_eq!(out.value["code"], "fs_path_escape");
@@ -2343,7 +2405,7 @@ mod tests {
 
         // 批准窗内文件被外部修改 ⇒ 以预览基准执行必须被 CAS 拒掉（零覆盖）。
         std::fs::write(root.join("a.md"), "old\n用户手改\n").unwrap();
-        let out = execute_with_revision("vault_patch", &args, &ctx, Some(&revision));
+        let out = execute_with_revision("vault_patch", &args, &ctx, Some(&revision), &|| false);
         assert!(!out.succeeded(), "{out:?}");
         assert_eq!(out.value["code"], "document_conflict");
         assert_eq!(
@@ -2353,7 +2415,7 @@ mod tests {
 
         // 同一参数走「执行时刻当前值」（None）则照常成功——证明上一条的失败来自基准对账，
         // 不是参数或命中语义错。`old_string` 在新内容里唯一命中 ⇒ 替换后为 patched + 用户那行。
-        let out = execute_with_revision("vault_patch", &args, &ctx, None);
+        let out = execute_with_revision("vault_patch", &args, &ctx, None, &|| false);
         assert!(out.succeeded(), "{out:?}");
         assert_eq!(
             std::fs::read_to_string(root.join("a.md")).unwrap(),
@@ -2592,6 +2654,7 @@ mod tests {
             "cron_task_create",
             &serde_json::json!({"id": "a", "at": "21:00", "prompt": "p"}),
             &empty_ctx,
+            &|| false,
         );
         assert!(!out.succeeded());
         assert_eq!(out.value["code"], "tool_unknown");
@@ -2614,6 +2677,7 @@ mod tests {
             "cron_task_create",
             &serde_json::json!({"id": "daily-log", "at": "21:00", "prompt": "写今日 log"}),
             &cron_ctx(&root, &policy, &skills, &port),
+            &|| false,
         );
         assert!(out.succeeded(), "{:?}", out.value);
         assert_eq!(out.value["effect"], "active");
@@ -2654,6 +2718,7 @@ mod tests {
             "cron_task_create",
             &serde_json::json!({"id": "daily-log", "at": "21:00", "prompt": "写今日 log"}),
             &cron_ctx(&root, &policy, &skills, &port),
+            &|| false,
         );
         assert!(out.succeeded(), "{:?}", out.value);
         assert_eq!(out.value["notice"], notice);
@@ -2668,6 +2733,7 @@ mod tests {
             "cron_task_create",
             &serde_json::json!({"id": "daily-log", "at": "21:00", "prompt": "写今日 log"}),
             &cron_ctx(&root, &policy, &skills, &port),
+            &|| false,
         );
         assert!(out.succeeded(), "{:?}", out.value);
         assert!(
@@ -2697,6 +2763,7 @@ mod tests {
             "cron_task_list",
             &serde_json::json!({}),
             &cron_ctx(&root, &policy, &skills, &port),
+            &|| false,
         );
         assert!(out.succeeded(), "{:?}", out.value);
         assert!(out.value["tasks"][0]["last_fired"].is_null());
@@ -2707,6 +2774,7 @@ mod tests {
             "cron_task_list",
             &serde_json::json!({}),
             &cron_ctx(&root, &policy, &skills, &port),
+            &|| false,
         );
         assert_eq!(out.value["tasks"][0]["last_fired"], "2026-10-19");
         std::fs::remove_dir_all(&root).ok();
@@ -2728,6 +2796,7 @@ mod tests {
             "cron_task_remove",
             &serde_json::json!({"id": "x"}),
             &cron_ctx(&root, &policy, &skills, &port),
+            &|| false,
         );
         assert!(!out.succeeded());
         assert_eq!(out.value["code"], "cron_task_not_found");
@@ -2737,6 +2806,7 @@ mod tests {
             "cron_task_remove",
             &serde_json::json!({"id": "  "}),
             &cron_ctx(&root, &policy, &skills, &port),
+            &|| false,
         );
         assert_eq!(out.value["code"], "cron_task_invalid");
         assert_eq!(out.value["message"], "id：缺失或不是字符串");

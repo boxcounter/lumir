@@ -1,6 +1,20 @@
 use serde::Serialize;
 use ts_rs::TS;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub enum WebContentFormat {
+    Markdown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub enum WebTrust {
+    Untrusted,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct WebSource {
@@ -9,7 +23,7 @@ pub struct WebSource {
     pub snippet: Option<String>,
     pub summary: Option<String>,
     pub content: Option<String>,
-    pub content_format: Option<String>,
+    pub content_format: Option<WebContentFormat>,
     pub site: Option<String>,
     pub date: Option<String>,
     pub authority: Option<i32>,
@@ -60,7 +74,7 @@ pub struct WebEnvelope {
     pub provider_id: Option<String>,
     pub operation: WebOperation,
     pub attempts: u32,
-    pub trust: String,
+    pub trust: WebTrust,
     pub truncated: bool,
     pub truncated_fields: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -134,7 +148,7 @@ impl WebEnvelope {
             provider_id,
             operation,
             attempts,
-            trust: "untrusted".to_string(),
+            trust: WebTrust::Untrusted,
             truncated: false,
             truncated_fields: Vec::new(),
             code: None,
@@ -168,7 +182,7 @@ mod tests {
             snippet: None,
             summary: None,
             content: Some("# Markdown".to_string()),
-            content_format: Some("markdown".to_string()),
+            content_format: Some(WebContentFormat::Markdown),
             site: Some("example.com".to_string()),
             date: None,
             authority: None,

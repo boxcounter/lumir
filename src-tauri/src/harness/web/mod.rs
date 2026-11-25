@@ -137,7 +137,52 @@ pub fn execute(
     let Some(port) = port else {
         return ToolOutput::err("tool_unknown", format!("未知工具：{name}"));
     };
+    if !valid_args(operation, args) {
+        return envelope_output(WebEnvelope::failure(
+            operation,
+            WebErrorCode::WebArgsInvalid,
+            "Web 工具参数不合法",
+            None,
+            0,
+        ));
+    }
     envelope_output(port.execute(operation, args, aborted))
+}
+
+fn valid_args(operation: WebOperation, args: &Value) -> bool {
+    args.as_object().is_some_and(|object| {
+        let allowed_keys: &[&str] = match operation {
+            WebOperation::Search => &["query", "count", "need_content"],
+            WebOperation::Fetch => &["url"],
+        };
+        if object
+            .keys()
+            .any(|key| !allowed_keys.contains(&key.as_str()))
+        {
+            return false;
+        }
+        match operation {
+            WebOperation::Search => {
+                let query_valid = object
+                    .get("query")
+                    .and_then(Value::as_str)
+                    .is_some_and(|query| (1..=128).contains(&query.trim().chars().count()));
+                let count_valid = object.get("count").is_none_or(|count| {
+                    count
+                        .as_u64()
+                        .is_some_and(|count| (1..=10).contains(&count))
+                });
+                let need_content_valid = object
+                    .get("need_content")
+                    .is_none_or(|need_content| need_content.is_boolean());
+                query_valid && count_valid && need_content_valid
+            }
+            WebOperation::Fetch => object
+                .get("url")
+                .and_then(Value::as_str)
+                .is_some_and(|url| (1..=8192).contains(&url.chars().count())),
+        }
+    })
 }
 
 fn envelope_output(envelope: WebEnvelope) -> ToolOutput {
@@ -193,6 +238,41 @@ mod tests {
         );
         assert_eq!(invalid.value["provider"], Value::Null);
         assert_eq!(invalid.value["attempts"], serde_json::json!(0));
+        assert_eq!(port.0.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn web_invalid_args_fail_before_the_port_with_null_provider_and_zero_attempts() {
+        let port = CountingPort(AtomicUsize::new(0));
+        for args in [
+            serde_json::json!({"query": " \n\t"}),
+            serde_json::json!({"query": "synthetic", "count": 0}),
+            serde_json::json!({"query": "synthetic", "need_content": "yes"}),
+            serde_json::json!({"query": "synthetic", "unexpected": true}),
+        ] {
+            let output = execute(
+                "web_search",
+                &args,
+                WebAccessConfig::default(),
+                Some(&port),
+                &|| false,
+            );
+            assert_eq!(output.value["code"], serde_json::json!("web_args_invalid"));
+            assert_eq!(output.value["provider"], Value::Null);
+            assert_eq!(output.value["provider_id"], Value::Null);
+            assert_eq!(output.value["attempts"], serde_json::json!(0));
+        }
+        let output = execute(
+            "web_fetch",
+            &serde_json::json!({"url": 17}),
+            WebAccessConfig::default(),
+            Some(&port),
+            &|| false,
+        );
+        assert_eq!(output.value["code"], serde_json::json!("web_args_invalid"));
+        assert_eq!(output.value["provider"], Value::Null);
+        assert_eq!(output.value["provider_id"], Value::Null);
+        assert_eq!(output.value["attempts"], serde_json::json!(0));
         assert_eq!(port.0.load(Ordering::SeqCst), 0);
     }
 

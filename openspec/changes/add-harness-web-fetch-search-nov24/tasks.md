@@ -1,12 +1,16 @@
 # Tasks: add-harness-web-fetch-search-nov24
 
-> 提案阶段全部未执行。D1 / D2 已由 Alex 批准；实现前仍须完成 r2 技术复审，不得提前改产品代码或测试。
+> 历史：2026-11-24 的初始提交只含提案制品；D1 / D2 已由 Alex 批准。原提案期「不得提前实现」约束不描述后续实现提交。
+>
+> 当前：阶段1已落地输出合同、provider 解析、注册闭集合与 settings 后端写通道；本提交继续收口取消传递、执行层参数错误、字面量绑定与直接 revision 测试。真实 executor、权限管线、Ask 预览和设置 UI 均归阶段2。当前分支是**本地中间态，不能 merge 或 dogfood**。
+>
+> 勾选口径：只勾已完整完成项；部分完成在项内写明阶段归属，不用勾项掩盖未完成面。
 
 ## 1. 网页访问设置、注册与 provider 解析
 
 - [x] 1.1 按 design §2 固化 `web_search` / `web_fetch` 输入 schema、`WebSource`、统一成功 / 失败信封、`trust`、`attempts`、`truncated` 与 `truncated_fields`；先写字段形状与反例测试
 - [ ] 1.2 新增 `harness.web_access.enabled`（缺省 true）与 `.approval`（缺省 `allow_all`，可选 `ask`）及「设置 → 自动化 → 网页访问」区；默认注册并直接执行，显式 false 才不注册、幻觉调用 `tool_unknown`、零网络请求
-- [ ] 1.3 设置快照 / patch / revision 覆盖两键，经既有 `settings_apply` 原子写通道在下一回合生效；恢复默认 / 页级还原 = 删键，关闭不删除 provider、origin deny 或历史，页级还原不顺带清空 deny
+- [ ] 1.3 设置快照 / patch / revision 覆盖两键，经既有 `settings_apply` 原子写通道在下一回合生效；恢复默认 / 页级还原 = 删键，关闭不删除 provider、origin deny 或历史，页级还原不顺带清空 deny。**阶段1已完成后端 snapshot / patch / revision 与原子写；设置 UI 和页级还原交互归阶段2，故本项不勾。**
 - [ ] 1.4 设置区复用 provider 单一解析口，显示实际 id / 未配置 / 歧义 / 自定义 base URL，并跳回模型接入对应条目；不显示 / 复制 Key，不建第二 provider 选择器
 - [x] 1.5 新增交互主会话的 `WEB_TOOL_NAMES`，把定义与执行接入同一注册 / 已知工具判据；保持 vault `TOOL_NAMES`、cron 白名单、内建 `general` 与子运行闭集合不变
 - [ ] 1.6 更新工具描述与系统固定段：默认 search → fetch、网页为 untrusted data、默认 Allow 来自用户配置而非网页授权、curl 仅用于特殊站点 / 非 HTML，不引入搜索别名
@@ -28,7 +32,7 @@
 - [ ] 2.8 移除 / 清空只恢复当前 approval：默认 `allow_all` 下恢复允许，`ask` 下恢复 Ask；不得暗改 approval 或重写会话历史
 - [ ] 2.9 跨 origin redirect 不另开批准：每跳先校验 scheme / 凭据 / host / origin deny，未封禁才继续 DNS / 连接 / 内容类型校验；封禁目标零连接、零 DeepSeek
 - [ ] 2.10 **全量回扫既有验收场景里的权限 / 批准闸期望并逐条改准**，包括 allow_all、ask、deny、三档模式与 curl；不得只新增 Web 场景
-- [x] 2.11 整块更新 settings「设置写通道」：snapshot 带 Web 状态与 origin deny，revision 覆盖 Web 两键与 allow / deny；同一写锁完成 revision → patch（含 deny）→ 重载校验 → 原子写，clear 只清规范 Fetch origin
+- [x] 2.11 整块更新 settings「设置写通道」：snapshot 带 Web 状态与 origin deny，revision 覆盖 Web 两键与 allow / deny；同一写锁完成 revision → patch（含 deny）→ 重载校验 → 原子写，clear 只清规范 Fetch origin。**阶段1后端写通道与测试已完成；此勾项不表示 1.3 / 1.4 的设置 UI 已完成。**
 - [ ] 2.12 增加独立 `DecisionReason::WebAccessPolicy{approval:"ask"}`，事件 / 快照同源，不显示 ModeDefault 或权限档释义；覆盖 full_access + ask、allow_all 无卡、deny 无卡
 
 ## 3. 统一输出、可空 provider、预算与错误映射

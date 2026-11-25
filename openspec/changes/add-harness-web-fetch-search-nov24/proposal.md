@@ -108,7 +108,7 @@ D1 / D2 已批准，不再列默认批准策略裁决点。以下 fail-closed �
 
 ## Non-goals
 
-- 本提交只创建 proposal / design / tasks / spec delta，**不实现产品、测试或验收场景**。
+- **历史范围（仅指最初提案提交）**：当时只创建 proposal / design / tasks / spec delta，不实现产品、测试或验收场景；该范围限制不描述后续已批准实现提交。当前阶段1已实现合同、provider 解析、注册与 settings 后端，其余 executor、权限管线、Ask 预览和设置 UI 归阶段2。
 - 不实现 Tavily / Brave 适配器；Tavily Extract 仅保留为真实使用后的备选依据
   （[Tavily Extract](https://docs.tavily.com/documentation/api-reference/endpoint/extract)）。
 - 不新增 `search` / `fetch` / `web` 等别名，不做兼容层、双写或第二套工具合同。
@@ -120,7 +120,7 @@ D1 / D2 已批准，不再列默认批准策略裁决点。以下 fail-closed �
 - 不实现浏览器渲染、JavaScript 执行、图片 / PDF / 下载器、网页存档、登录态或 Cookie 复用。
 - 不做账单对账、成本补偿或自动换 provider；不保证 DeepSeek 远端抓取的内部 DNS / redirect 行为。
 - 不为真机验收在生产构建保留自定义 endpoint、loopback 白名单、代理或跳过 DNS / URL 校验的开关。
-- 不改 living specs、产品代码、测试、backlog；不进入归档。
+- **历史范围（仅指最初提案提交）**：当时不改 living specs、产品代码、测试、backlog；实现期按已批准 delta 与 tasks 修改对应制品。本 change 尚未归档，当前阶段分支不能 merge 或 dogfood。
 
 ## Impact
 

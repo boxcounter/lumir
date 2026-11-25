@@ -478,7 +478,8 @@ pub struct WebAccessPatch {
 #[serde(deny_unknown_fields)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct SettingsPatch {
-    /// 设置面 revision（覆盖 provider 条目、active、四个开关、两个命名目标的 provider/model；
+    /// 设置面 revision（覆盖 provider 条目、active、四个开关、两个命名目标的 provider/model、
+    /// `web_access.enabled` / `.approval` 与 `permissions.allow` / `.deny`；
     /// **不含** `providers.<id>.model`）。
     pub base_revision: String,
     #[ts(optional)]
@@ -1076,7 +1077,9 @@ fn build_web_access(
     let effective = harness
         .map(|config| config.web_access)
         .unwrap_or_else(|| crate::harness::web::config::validate_web_access(raw_web).0);
-    let provider = match harness.filter(|_| effective.is_valid_and_enabled()) {
+    let provider = match harness
+        .filter(|_| effective.status == crate::harness::web::config::WebAccessConfigStatus::Valid)
+    {
         Some(config) => match resolve_web_provider(config) {
             Ok(resolved) => WebProviderSettings {
                 provider: Some("deepseek".to_string()),
@@ -1356,8 +1359,8 @@ const PROVIDER_REVISION_KEYS: [&str; 6] = [
 ];
 
 /// 设置面 revision（design §6.2）：sha256 over 规范化后的设置面键集合。覆盖 provider 条目、
-/// active、四个开关、两个命名目标的 provider **与** model（面板可编辑、删除也会清它们）；
-/// `Missing` 按空对象算、`Invalid` 不给 revision（调用方不计算）。
+/// active、四个开关、两个命名目标的 provider **与** model（面板可编辑、删除也会清它们）、
+/// Web 两键与 permissions.allow / deny；`Missing` 按空对象算、`Invalid` 不给 revision（调用方不计算）。
 fn revision_of(value: &Value) -> String {
     let harness = raw_harness(value);
     let mut canonical = Map::new();
@@ -4821,7 +4824,12 @@ mod tests {
         assert!(!outcome.snapshot.web_access.effective.enabled);
         assert_eq!(
             outcome.snapshot.web_access.provider.status,
-            crate::harness::web::config::WebProviderStatus::NotEvaluated
+            crate::harness::web::config::WebProviderStatus::Ready
+        );
+        assert_eq!(
+            outcome.snapshot.web_access.provider.provider_id.as_deref(),
+            Some("deepseek-work"),
+            "disabled 只关闭执行；设置读面仍显示实际 provider"
         );
         let outcome = apply(
             &dir,
@@ -4923,6 +4931,32 @@ mod tests {
                 serde_json::json!({
                     "base_revision": base_revision,
                     "web_access": {"approval": {"kind": "set", "value": "allow_all"}}
+                }),
+            );
+            assert_eq!(outcome.status, SettingsApplyStatus::Conflict, "{key}");
+            assert_eq!(dir.read(), before, "{key}");
+        }
+    }
+
+    #[test]
+    fn web_revision_covers_direct_enabled_and_approval_changes() {
+        for (key, value) in [
+            ("enabled", Value::Bool(false)),
+            ("approval", Value::String("allow_all".to_string())),
+        ] {
+            let dir = TempDir::new("web-revision-two-keys");
+            dir.write(WEB_BASE);
+            let base_revision = revision(&dir);
+            let mut changed = file_json(&dir);
+            changed["harness"]["web_access"][key] = value;
+            dir.write(&serde_json::to_string(&changed).unwrap());
+            assert_ne!(revision(&dir), base_revision, "{key}");
+            let before = dir.read();
+            let outcome = apply(
+                &dir,
+                serde_json::json!({
+                    "base_revision": base_revision,
+                    "web_access": {"add_origin": "https://example.net"}
                 }),
             );
             assert_eq!(outcome.status, SettingsApplyStatus::Conflict, "{key}");
