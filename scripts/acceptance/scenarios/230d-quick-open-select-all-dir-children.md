@@ -11,6 +11,11 @@
 # 本组不覆盖：候选的像素宽度与滚动手感（视觉层 / Alex 手感裁决）、候选高亮行（AX 无稳定读数形态，
 # 判在 chromium 的 quick-open-active-target 场景）、深层后代被排除的解析矩阵
 # （tests/unit/quick-open.test.ts）。
+#
+# 候选行的可访问名是**整条显示路径**（视觉上的目录前缀 / 文件名 / 尾 `/` 分段只留布局用途）：
+# 「直接子目录以尾斜杠出现在候选里」判的就是这个连续名；「深层后代 MUST NOT 混入」的负向断言
+# 也依赖同一形态——可访问名若退回按内容合成，WKWebView 会在段边界插空格
+# （实测 `qo-dir/ 深层 /`），正向连续串恒不命中、负向断言则在深后代被列出来时仍会绿。
 id: "230d-quick-open-select-all-dir-children"
 item: 655
 tier: full

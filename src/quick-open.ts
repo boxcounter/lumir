@@ -946,6 +946,10 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
       element.className = "lumir-qo-item";
       element.dataset.entryKind = row.entryKind;
       const displayPath = row.entryKind === "dir" ? `${row.path}/` : row.path;
+      // 可访问名必须是**整条显示路径**：目录 / 文件名 / 尾 `/` 的视觉分段只是布局手段，
+      // 内容合成的可访问名会在 flex 段边界插空格（真机 230d：`qo-dir/ 深层 /`），读屏读到
+      // 的就不再是完整路径，按连续串写的正负断言也随之失真。
+      element.setAttribute("aria-label", displayPath);
       fillPathText(element, displayPath, displayPath);
       // 点击路径与键盘路径落同一个动作上；mousedown 不夺焦（照 TOC：否则先 blur 关闭、
       // 再重开，点击落空）。
