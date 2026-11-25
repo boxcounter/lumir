@@ -53,3 +53,10 @@
    - `docs/backlog.md` 的归档跟踪队列有且仅有本 change 一条记录。
 
 0.16.0 visual CI 的 Escape 失败是否由本 change 修复，尚未经合并后的 CI 证实；本地 Escape 用例与完整门禁通过不能证明该因果。合并推送后须观察对应 visual workflow，不在本次归档记录中写成已证明。
+
+### 归档后记录
+
+- 归档提交：`3fa3e3304bb4634925982b46d696f606e44cfdf6`。
+- 包装器：`wikilink-suggestion: update`，1 条 MODIFIED 并入；`Specs updated successfully.`，归档目录 `openspec/changes/archive/2026-11-25-fix-wikilink-suggestion-refresh-nov25/`。
+- 修链与链接门禁：`openspec-archive: 归档后修链 0 处（扫过 3 篇 Markdown / 0 条相对链接）`；`openspec-links: PASS（校验 699 条相对链接，全部可达）`；`openspec-archive: PASS（归档完成，仓内相对链接门禁绿）`。日志 `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/wikilink-suggestion-ux-nov25/archive.log`。
+- 事后审计：`node scripts/openspec-archive-check.mjs --archived fix-wikilink-suggestion-refresh-nov25` 于 2026-11-25T13:41:17+0800 取得 `openspec-archive-check: PASS（openspec/changes/archive/2026-11-25-fix-wikilink-suggestion-refresh-nov25：1 条 MODIFIED，对比 8 段；人工恢复 0 段，声明认领 0 段）`，exit 0；日志 `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/wikilink-suggestion-ux-nov25/archive-archived-check.log`。
