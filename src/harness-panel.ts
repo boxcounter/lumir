@@ -4461,12 +4461,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const SKILL_MENU_PANEL_MARGIN = 8;
   const SKILL_MENU_CARET_GAP = 4;
 
-  /** CSS `max-height` 解析成 px；`none` / 非法值视为无上限。 */
-  function skillMenuCssMaxHeight(): number {
-    const value = Number.parseFloat(getComputedStyle(skillMenuEl).maxHeight);
-    return Number.isFinite(value) ? value : Number.POSITIVE_INFINITY;
-  }
-
   /** 实测行高（随 --lumir-hp-scale 变）：用于判断一侧空间是否还放得下一整行。 */
   function skillMenuRowHeight(): number {
     const first = skillMenuEl.firstElementChild;
@@ -4493,8 +4487,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     });
     skillMenuEl.dataset.armed = state.armed ? "true" : "false";
     composerView.contentDOM.setAttribute("aria-activedescendant", `lumir-hp-skill-option-${highlighted}`);
+    relayoutSkillMenu();
+  }
+
+  /** 只重排几何，不重建 items：resize / 分隔条拖动 / 同状态回包都只需要新的位置与揭示。
+   *  与 `renderSkillMenu`（重建 DOM）分开，状态去重才不会连带跳过几何（C2：盒必须等于真实 clip）。 */
+  function relayoutSkillMenu(): void {
+    const state = skillMenuState;
+    if (state === null || skillMenuEl.hidden) return;
     const clip = placeSkillMenu();
-    const option = skillMenuEl.children[highlighted] as HTMLElement | undefined;
+    const option = skillMenuEl.children[state.highlighted] as HTMLElement | undefined;
     if (clip !== null && option !== undefined) revealElementWithin(skillMenuEl, option, clip);
   }
 
@@ -4576,9 +4578,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     skillMenuEl.style.left = `${width.left - host.left}px`;
 
     // 盒先归位再谈揭示：菜单只能往上覆盖 transcript，不能被 composer 区或面板裁掉。
-    // max-height 上限的唯一真源是 CSS；JS 只按可用空间收缩（改 CSS 不需要同步常量）。
+    // max-height 上限的唯一真源是 CSS；这里不解析 getComputedStyle 的字符串（百分比等非 px
+    // 计算值会被 parseFloat 静默误读），改为清空 inline 上限后**实测**受 CSS 约束的高度——
+    // 单位由浏览器负责，JS 只按可用空间再收缩（收缩值必小于实测高度，不会越过 CSS 上限）。
+    // 清空上限会让菜单瞬时展开、浏览器把 scrollTop 钳到新 maxScroll：先记下来，定高后恢复，
+    // 否则 reveal 会按被钳小的位置判「已可见」而不回滚（C3 带内不动）。
+    const preservedScrollTop = skillMenuEl.scrollTop;
     skillMenuEl.style.maxHeight = "";
-    const cssCap = skillMenuCssMaxHeight();
     const rowHeight = skillMenuRowHeight();
     const naturalHeight = skillMenuEl.getBoundingClientRect().height;
     const limitTop = Math.max(panelRect.top, 0) + SKILL_MENU_PANEL_MARGIN;
@@ -4612,11 +4618,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       below = true;
       available = belowSpace;
     }
-    if (available < naturalHeight) skillMenuEl.style.maxHeight = `${Math.min(available, cssCap)}px`;
+    if (available < naturalHeight) skillMenuEl.style.maxHeight = `${available}px`;
     const height = skillMenuEl.getBoundingClientRect().height;
     const top = below ? belowTop : aboveBottom - height;
     const clamped = Math.min(Math.max(top, limitTop), Math.max(limitTop, limitBottom - height));
     skillMenuEl.style.top = `${clamped - host.top}px`;
+    // 定高之后再恢复：展开读数期间被钳掉的滚动位置只允许存在于这一拍内部，揭示仍按真实带判定。
+    skillMenuEl.scrollTop = preservedScrollTop;
     return skillMenuClip(skillMenuEl.getBoundingClientRect(), panelRect);
   }
 
@@ -4649,8 +4657,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       composerView.state.selection.main.head,
       skillCatalog ?? [],
     );
-    // IME settle、catalog 回包与文档回调可能对同一份最终文档各算一次：状态没变就不重建 DOM。
-    if (sameSkillMenuState(skillMenuState, next)) return;
+    // IME settle、catalog 回包与文档回调可能对同一份最终文档各算一次：状态没变就不重建 DOM，
+    // 但几何仍要重排——面板尺寸 / 位置可能已变（resize 后回包），盒必须仍等于真实 clip。
+    if (sameSkillMenuState(skillMenuState, next)) {
+      relayoutSkillMenu();
+      return;
+    }
     skillMenuState = next;
     renderSkillMenu();
   }
@@ -6347,6 +6359,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (!selPop.hidden) placeSelPop();
     if (!effHint.hidden) placeEffHint();
     if (!sessPop.hidden) placeSessPop();
+    // Skill 候选的 clip 宿主是面板本身：窗口 / 面板尺寸变化后必须重排（不重建 items）。
+    relayoutSkillMenu();
   }
   const overlayResize = new ResizeObserver(() => reclampOpenOverlays());
   overlayResize.observe(panel);

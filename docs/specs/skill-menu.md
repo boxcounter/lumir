@@ -44,8 +44,14 @@ Meta / Alt 组合与 IME composition MUST NOT 被这条候选导航吞掉；Ente
 垂直放置：下方放得下 ⇒ 放在 caret 下方；否则上翻（允许覆盖 transcript）。下方放置 SHALL 以控制行
 `.lumir-hp-ctl` 的顶缘为界，MUST NOT 压住控制行；上翻 SHALL 先按上方可用空间收缩 `max-height`，
 MUST NOT 让盒底越过 caret（不得把 caret 与 composer 当前行压住）；上方连一行都放不下才回落到下方。
-`max-height` 的上限唯一真源是 CSS（`.lumir-hp-skill-menu`），JS 只按可用空间再收缩，MUST NOT
-另留硬编码上限。
+`max-height` 的上限唯一真源是 CSS（`.lumir-hp-skill-menu`），上限 MUST 取「清空 inline 后实测的受约束
+高度」，MUST NOT 把 `getComputedStyle` 的字符串按 px 解析（百分比等非 px 计算值会被静默误读）；JS 只按
+可用空间再收缩，MUST NOT 另留硬编码上限。
+
+候选在窗口缩放、面板尺寸变化（含分隔条拖动）与同状态回包（token / 游标 / items 不变）后 SHALL 按新的
+真实 clip 重新夹取并揭示；这种重排 MUST NOT 重建 items、MUST NOT 改动游标。重排为读取自然高度会先清空
+inline `max-height`——这一步造成的滚动钳制 MUST NOT 泄漏到揭示判据：候选自身 `scrollTop` SHALL 在定高后
+恢复，已完整可见目标的 `scrollTop` MUST NOT 因此改变。
 
 任意游标改变后，当前 option 的上下缘 SHALL 落在真实可见带内（允许 1px 几何取整容差）。若它已完整可见，
 候选 `scrollTop` MUST 不变；越界时只滚动候选到带边缘并保留一行上下文。首尾、长列表与指针/键盘交替满足

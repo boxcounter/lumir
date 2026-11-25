@@ -70,7 +70,11 @@ padding），MUST NOT 取候选的 `clientHeight`——菜单盒被祖先裁掉�
 SHALL 完整落在面板与视口内：面板高度不足时收缩 `max-height`，允许向上覆盖 transcript，垂直夹取宿主
 MUST NOT 是 composer 区；行高与高度 MUST 取实测值，MUST NOT 另留一份硬编码行高。下方放置 SHALL 以
 控制行顶缘为界，MUST NOT 压住控制行；上翻空间不足时 SHALL 先按上方可用空间收缩 `max-height`，
-MUST NOT 让盒底越过 caret；`max-height` 上限的唯一真源 SHALL 是 CSS。
+MUST NOT 让盒底越过 caret；`max-height` 上限的唯一真源 SHALL 是 CSS，上限 MUST 取「清空 inline 后实测的
+受约束高度」，MUST NOT 把 `getComputedStyle` 的字符串按 px 解析（百分比等非 px 计算值会被静默误读）。
+候选在窗口 / 面板尺寸变化与同状态回包（token / 游标 / items 不变）后 SHALL 按新 clip 重新夹取并揭示，
+重排 MUST NOT 重建 items 或改动游标；重排内部为读数清空 `max-height` 时 MUST 保留候选自身滚动位置
+（先记后恢复），已完整可见目标的 `scrollTop` MUST NOT 因此改变。
 
 游标经键盘或指针改变后，当前 option SHALL 完整落在真实可见带内；已完整可见时候选滚动位置 MUST NOT 改变，
 越界时 SHALL 只滚动候选到带边缘并保留一行上下文，首尾自然 clamp。首尾、长列表与指针 / 键盘混合输入均
@@ -216,6 +220,19 @@ Skill 内容引发的 `cli_run`；invocation policy MUST NOT 替代或放宽权�
 - **WHEN** 长列表打开时游标停在最后一个完整可见行，用户再按一次 `↓`
 - **THEN** 下一项完整进入真实可见带，且它与带底之间保留一行上下文；候选 `scrollTop` 增大，祖先与页面的
   滚动位置不变
+
+#### Scenario: 短视口收缩态连续导航
+
+- **WHEN** 视口高度不足、候选已按可用空间收缩且列表真实溢出，用户连续按 `↓` 到末项再连续按 `↑` 回到首项
+- **THEN** 每一拍高亮项仍完整落在真实可见带内；按键前已完整可见的目标，其 `scrollTop` 不变——重排为读数
+  清空 `max-height` 造成的钳制 MUST NOT 泄漏到揭示判据
+
+#### Scenario: 窗口缩放与同状态回包后的重排
+
+- **WHEN** 候选打开时把窗口缩放到面板高度大幅缩短，或候选打开期间发生一次不改变 token / 游标 / items 的
+  文档回包（同状态同步）
+- **THEN** 候选盒按新的 `menuRect ∩ panelRect ∩ viewport` 重新夹取、必要时收缩 `max-height`，高亮项仍完整
+  可见；候选 items 不重建（option 节点不变），游标不变，重排只允许为保持高亮可见而改动候选 `scrollTop`
 
 #### Scenario: 三类宿主宽度与三主题下的响应式尺寸
 

@@ -46,6 +46,9 @@ SHALL 收缩菜单自己的 `max-height`，MUST NOT 让盒底伸到裁切区外�
 
 Skill 候选允许向上覆盖 transcript；垂直夹取宿主 SHALL 是**面板**（`.lumir-harness`，`overflow: hidden`
 的持有者），MUST NOT 是 composer 区。行高与高度估算 MUST 取实测值，MUST NOT 另留一份硬编码行高。
+`max-height` 上限的唯一真源是 CSS；该上限 MUST 取实测的受约束高度，MUST NOT 把 `getComputedStyle`
+的字符串按 px 解析（百分比等非 px 计算值会被静默误读）。真实 clip 变化（窗口缩放、祖先尺寸变化、同状态
+回包）后 SHALL 按新 clip 重新夹取；这种重排 MUST NOT 重建 items 或改动游标。
 
 ### C3 — 最小揭示：带内不动，越界留一行上下文
 
@@ -57,6 +60,8 @@ Skill 候选允许向上覆盖 transcript；垂直夹取宿主 SHALL 是**面板
   余量取 0，目标比带还高时对齐上缘。
 - 首尾 ⇒ 自然 clamp 到 `[0, scrollHeight − clientHeight]`，MUST NOT 补人造空白。
 - 揭示 MUST NOT 滚动整页、transcript、编辑器或 composer；MUST NOT 移动 composer caret。
+- 重排内部为测量清空 `max-height` 等动作造成的瞬时钳制 MUST NOT 泄漏到揭示判据：滚动口的 `scrollTop`
+  SHALL 在定高后恢复，已完整可见目标 MUST NOT 因此改变位置。
 
 推导这条规则的两个反例：每次居中会让列表每按一键都动、并让静止指针下的行被换掉；只在滚动口边缘
 贴边（零余量）则选中项永远贴边、下一项直接消失。

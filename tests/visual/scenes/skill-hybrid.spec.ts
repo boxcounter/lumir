@@ -1277,3 +1277,242 @@ test("技能全名恰好是 tmp 时 /tmp 直接武装并接受", async ({ page }
   await expect(composer.locator(".lumir-hp-skill-ref")).toHaveCount(1);
   expect(await sent(page)).toEqual([]);
 });
+
+// ── 机械复核 R1：短视口收缩态连续导航，已完整可见的步不得改变 scrollTop ──────────
+// `placeSkillMenu` 每拍都先清 inline max-height 读自然高度；清空的一瞬菜单展开，浏览器会把
+// scrollTop 钳到新的 maxScroll。恢复收缩高度后若高亮行仍在新带内，reveal 判「已可见」不回滚，
+// 净效果是列表内容下移（C3「带内不动」被破坏）。旧实现实测 320px / 12 项、↑ 10→9 时 234→190。
+async function skillMenuNavState(page: Page) {
+  return page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>(".lumir-hp-skill-menu");
+    if (root === null) throw new Error("候选不在场");
+    const panelRect = root.closest(".lumir-harness")!.getBoundingClientRect();
+    const menuRect = root.getBoundingClientRect();
+    const clipTop = Math.max(menuRect.top, panelRect.top, 0);
+    const clipBottom = Math.min(menuRect.bottom, panelRect.bottom, window.innerHeight);
+    const options = Array.from(root.querySelectorAll<HTMLElement>("[role=option]"));
+    return {
+      selected: options.findIndex((option) => option.getAttribute("aria-selected") === "true"),
+      scrollTop: root.scrollTop,
+      menuHeight: menuRect.height,
+      overflows: root.scrollHeight > root.clientHeight,
+      clipTop,
+      clipBottom,
+      rows: options.map((option) => {
+        const rect = option.getBoundingClientRect();
+        return { top: rect.top, bottom: rect.bottom };
+      }),
+    };
+  });
+}
+
+test("短视口收缩态连续 ↓/↑ 各 11 拍：已完整可见的步 scrollTop 不得改变", async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 320 });
+  await setup(page, null, false, undefined, syntheticSkills(12));
+  await page.mouse.move(10, 10);
+  await page.keyboard.type("/skill");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  await expect(menu.locator("[role=option]")).toHaveCount(12);
+  let state = await skillMenuNavState(page);
+  const opened = JSON.stringify(state);
+  // 用例前提：视口真的逼出了收缩 + 溢出，否则「清上限再恢复」这条路径没被走到。
+  expect(state.menuHeight, `短视口必须触发收缩：${opened}`).toBeLessThan(200);
+  expect(state.overflows, `长列表必须真实溢出，scrollTop 断言才不是空测量：${opened}`).toBe(true);
+  const steps: string[] = [];
+  for (const [key, delta] of [["ArrowDown", 1], ["ArrowUp", -1]] as const) {
+    for (let step = 1; step <= 11; step += 1) {
+      const target = state.selected + delta;
+      expect(target, `${key} 第 ${step} 拍越界：导航必须到端停住`).toBeGreaterThanOrEqual(0);
+      expect(target, `${key} 第 ${step} 拍越界：导航必须到端停住`).toBeLessThanOrEqual(11);
+      const before = state;
+      const wasVisible = before.rows[target].top >= before.clipTop - 0.5
+        && before.rows[target].bottom <= before.clipBottom + 0.5;
+      await page.keyboard.press(key);
+      state = await skillMenuNavState(page);
+      const label = `${key} #${step} target=${target} scrollTop ${before.scrollTop}→${state.scrollTop}`
+        + ` clip ${state.clipTop}..${state.clipBottom}`;
+      steps.push(label);
+      expect(state.selected, `${key} 第 ${step} 拍必须移到目标项（${label}）`).toBe(target);
+      expect(state.rows[target].top, `目标上缘越出可见带（${label}）`).toBeGreaterThanOrEqual(state.clipTop - 0.5);
+      expect(state.rows[target].bottom, `目标下缘越出可见带（${label}）`).toBeLessThanOrEqual(state.clipBottom + 0.5);
+      if (wasVisible) {
+        // C3：按键前目标已完整可见 ⇒ 揭示不得改动 scrollTop（清空 max-height 的钳制也不许漏出来）。
+        expect(
+          Math.abs(state.scrollTop - before.scrollTop),
+          `已完整可见的步不得改变 scrollTop（${label}；steps=${steps.join(" | ")}）`,
+        ).toBeLessThanOrEqual(0.5);
+      }
+    }
+  }
+  expect(state.selected, "↑ 11 拍必须回到首项").toBe(0);
+});
+
+// ── 机械复核 R2：max-height 百分比等非 px 计算值不得被 parseFloat 当作 px ─────────
+// 90% 的包含块是 composer 区（约 141px）⇒ CSS 上限约 127px，上方可用约 100px。
+// 旧实现读 parseFloat("90%") = 90，把本可用的 100px 压成 90px；C3 之外的尺寸真源也被误读。
+test("候选 max-height 为百分比时按实测高度收缩，不得把百分数当 px", async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 264 });
+  await setup(page, null, false, undefined, syntheticSkills(12));
+  await page.addStyleTag({ content: ".lumir-hp-skill-menu { max-height: 90%; }" });
+  // 打开前（尚无 inline 收缩值）computed 必须是非 px 的百分比：这条用例判的就是它的解析。
+  expect(await page.evaluate(() => getComputedStyle(document.querySelector(".lumir-hp-skill-menu")!).maxHeight),
+    "前提失败：CSS 声明的 max-height 必须是非 px 的百分比").toMatch(/^\d+(\.\d+)?%$/);
+  await page.mouse.move(10, 10);
+  await page.keyboard.type("/skill");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  await expect(menu.locator("[role=option]")).toHaveCount(12);
+  const geometry = await page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>(".lumir-hp-skill-menu")!;
+    const parent = root.offsetParent as HTMLElement;
+    const panel = root.closest(".lumir-harness")!.getBoundingClientRect();
+    const ctl = root.closest(".lumir-hp-composer-area")!.querySelector(".lumir-hp-ctl")!.getBoundingClientRect();
+    const view = (document.querySelector(".lumir-hp-composer .cm-content") as any).cmTile.root.view;
+    const caret = view.coordsAtPos(view.state.selection.main.head)!;
+    const rect = root.getBoundingClientRect();
+    return {
+      computedMaxHeight: getComputedStyle(root).maxHeight,
+      inlineMaxHeight: root.style.maxHeight,
+      menuHeight: rect.height,
+      menuTop: rect.top,
+      menuBottom: rect.bottom,
+      caretTop: caret.top,
+      caretBottom: caret.bottom,
+      panelTop: panel.top,
+      panelBottom: panel.bottom,
+      ctlTop: ctl.top,
+      percentCap: parent.getBoundingClientRect().height * 0.9,
+      aboveSpace: caret.top - 4 - (Math.max(panel.top, 0) + 8),
+      belowSpace: Math.min(Math.min(panel.bottom, window.innerHeight) - 8, ctl.top - 4) - (caret.bottom + 4),
+      overflow: root.scrollHeight > root.clientHeight,
+    };
+  });
+  const detail = JSON.stringify(geometry);
+  // 打开后 inline 收缩值覆盖 computed——这里判的是「收缩到多少」，不是 computed 的字符串形态。
+  expect(geometry.inlineMaxHeight, `收缩分支必须写入 inline 上限：${detail}`).toMatch(/^\d+(\.\d+)?px$/);
+  expect(geometry.overflow, `长列表必须真实溢出：${detail}`).toBe(true);
+  expect(geometry.percentCap, `百分比上限必须高于百分数的数字部分：${detail}`).toBeGreaterThan(95);
+  expect(geometry.aboveSpace, `收缩分支前提：上方可用空间须大于误读值 90：${detail}`).toBeGreaterThan(95);
+  expect(geometry.aboveSpace, `收缩分支前提：可用空间须小于 CSS 百分比上限：${detail}`)
+    .toBeLessThan(geometry.percentCap - 1);
+  expect(geometry.menuHeight, `候选被误读的 90px 压扁：${detail}`).toBeGreaterThan(95);
+  expect(geometry.menuHeight, `候选高度不得超过可用空间与 CSS 上限：${detail}`)
+    .toBeLessThanOrEqual(Math.min(geometry.aboveSpace, geometry.percentCap) + 0.5);
+  expect(geometry.menuHeight, `候选必须用尽可用空间而不是提前收缩：${detail}`)
+    .toBeGreaterThanOrEqual(Math.min(geometry.aboveSpace, geometry.percentCap) - 1.5);
+  expect(geometry.menuBottom, `盒底盖住 caret：${detail}`).toBeLessThanOrEqual(geometry.caretTop + 0.5);
+});
+
+// ── 机械复核 R3：状态去重与几何重排分开——resize / 同状态回包仍须重排，但不重建 items ──
+async function skillMenuPlacement(page: Page) {
+  return page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>(".lumir-hp-skill-menu");
+    if (root === null) throw new Error("候选不在场");
+    const panelRect = root.closest(".lumir-harness")!.getBoundingClientRect();
+    const ctl = root.closest(".lumir-hp-composer-area")!.querySelector(".lumir-hp-ctl")!.getBoundingClientRect();
+    const menuRect = root.getBoundingClientRect();
+    const option = root.querySelector<HTMLElement>("[role=option][aria-selected=true]");
+    if (option === null) throw new Error("没有高亮 option");
+    const optionRect = option.getBoundingClientRect();
+    const clipTop = Math.max(menuRect.top, panelRect.top, 0);
+    const clipBottom = Math.min(menuRect.bottom, panelRect.bottom, window.innerHeight);
+    return {
+      menuTop: menuRect.top,
+      menuBottom: menuRect.bottom,
+      menuHeight: menuRect.height,
+      panelTop: panelRect.top,
+      panelBottom: panelRect.bottom,
+      ctlTop: ctl.top,
+      clipTop,
+      clipBottom,
+      optionTop: optionRect.top,
+      optionBottom: optionRect.bottom,
+      scrollTop: root.scrollTop,
+      inlineMaxHeight: root.style.maxHeight,
+    };
+  });
+}
+
+async function installSkillMenuDomProbe(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>(".lumir-hp-skill-menu")!;
+    const w = window as unknown as Record<string, any>;
+    w.__skillNodes = Array.from(root.children);
+    w.__skillMutations = 0;
+    w.__skillObserver = new MutationObserver((records) => {
+      w.__skillMutations += records.filter((record) => record.type === "childList").length;
+    });
+    w.__skillObserver.observe(root, { childList: true });
+  });
+}
+
+async function readSkillMenuDomProbe(page: Page) {
+  return page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>(".lumir-hp-skill-menu")!;
+    const w = window as unknown as Record<string, any>;
+    const result = {
+      mutations: w.__skillMutations as number,
+      sameNodes: Array.from(root.children).every((node, index) => node === w.__skillNodes[index]),
+    };
+    w.__skillObserver.disconnect();
+    return result;
+  });
+}
+
+test("窗口缩放后候选重排到新 clip：不重建 items，高亮仍在带内", async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 800 });
+  await setup(page, null, false, undefined, syntheticSkills(12));
+  await page.mouse.move(10, 10);
+  await page.keyboard.type("/skill");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  await expect(menu.locator("[role=option]")).toHaveCount(12);
+  const before = await skillMenuPlacement(page);
+  expect(before.menuHeight, `前提：800px 下候选不被收缩：${JSON.stringify(before)}`).toBeGreaterThan(190);
+  await installSkillMenuDomProbe(page);
+  await page.setViewportSize({ width: 1000, height: 320 });
+  // 旧实现没有 resize 重放：菜单停在旧位置，盒顶越出面板（实测 menuTop 7 < panelTop 42）。
+  await expect.poll(async () => {
+    const geometry = await skillMenuPlacement(page);
+    return geometry.menuTop >= geometry.panelTop - 0.5 && geometry.menuBottom <= geometry.panelBottom + 0.5;
+  }, { timeout: 3000, message: "resize 后候选必须重排到新 clip 内" }).toBe(true);
+  const after = await skillMenuPlacement(page);
+  const detail = JSON.stringify(after);
+  expect(after.menuBottom, `盒底越过控制行：${detail}`).toBeLessThanOrEqual(after.ctlTop + 0.5);
+  expect(after.menuHeight, `短视口必须收缩 max-height：${detail}`).toBeLessThan(200);
+  expect(after.optionTop, `高亮上缘越出可见带：${detail}`).toBeGreaterThanOrEqual(after.clipTop - 0.5);
+  expect(after.optionBottom, `高亮下缘越出可见带：${detail}`).toBeLessThanOrEqual(after.clipBottom + 0.5);
+  expect(await readSkillMenuDomProbe(page), "resize 重排不得重建 items").toEqual({ mutations: 0, sameNodes: true });
+});
+
+test("同状态回包不重建 items，但仍须重排几何", async ({ page }) => {
+  await setup(page, null, false, undefined, syntheticSkills(12));
+  await page.mouse.move(10, 10);
+  await page.keyboard.type("/skill");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  await expect(menu.locator("[role=option]")).toHaveCount(12);
+  await installSkillMenuDomProbe(page);
+  const dispatched = await page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>(".lumir-hp-skill-menu")!;
+    root.style.top = "3000px";
+    const staleTop = root.getBoundingClientRect().top;
+    const view = (document.querySelector(".lumir-hp-composer .cm-content") as any).cmTile.root.view;
+    const head = view.state.selection.main.head;
+    view.dispatch({ changes: { from: view.state.doc.length, insert: "x" }, selection: { anchor: head } });
+    return { doc: view.state.doc.toString(), staleTop, top: root.getBoundingClientRect().top };
+  });
+  // 前提：插入点落在 token 之后，token / 游标 / items 不变 —— 走的正是同状态去重路径。
+  expect(dispatched.doc, "同状态前提：token 不得被这次回包改写").toBe("/skillx");
+  expect(dispatched.staleTop, "同状态前提：陈旧 top 必须真的写进去了").toBeGreaterThan(1000);
+  await expect.poll(async () => (await skillMenuPlacement(page)).menuTop, {
+    timeout: 3000,
+    message: "同状态同步必须仍重排几何（陈旧 top 不得保留）",
+  }).toBeLessThan(1000);
+  const after = await skillMenuPlacement(page);
+  const detail = JSON.stringify(after);
+  expect(after.menuTop, `盒顶越出面板：${detail}`).toBeGreaterThanOrEqual(after.panelTop - 0.5);
+  expect(after.menuBottom, `盒底越出面板：${detail}`).toBeLessThanOrEqual(after.panelBottom + 0.5);
+  expect(after.menuBottom, `盒底越过控制行：${detail}`).toBeLessThanOrEqual(after.ctlTop + 0.5);
+  expect(after.optionTop, `高亮上缘越出可见带：${detail}`).toBeGreaterThanOrEqual(after.clipTop - 0.5);
+  expect(after.optionBottom, `高亮下缘越出可见带：${detail}`).toBeLessThanOrEqual(after.clipBottom + 0.5);
+  expect(after.scrollTop, "几何与游标都没变，揭示不得改动 scrollTop").toBe(0);
+  expect(await readSkillMenuDomProbe(page), "同状态同步不得重建 items").toEqual({ mutations: 0, sameNodes: true });
+});
