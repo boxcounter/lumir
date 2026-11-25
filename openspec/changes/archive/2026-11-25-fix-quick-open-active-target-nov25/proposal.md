@@ -156,3 +156,18 @@ Quick Open 的结果区与 Enter 消费同一份解析判决（change `quick-ope
 - 关联约束：渲染/交互缺陷合同先行（先有不变量条款与属性矩阵）、REVIEW.md「同一语义两处真源」条
   （起点只在 `quickOpenStartIndex` 一处判）、「断言等价于子串」条（矩阵同时读高亮行、ARIA 与打开的
   文档正文）。
+
+## 归档记录（2026-11-25）
+
+- 归档提交：`d07878cd`（`chore(openspec): archive quick open active-target fix`）。
+- 包装器 `node scripts/openspec-archive.mjs fix-quick-open-active-target-nov25` 输出：`+ 0, ~ 1, - 0`；
+  `Change 'fix-quick-open-active-target-nov25' archived as '2026-11-25-fix-quick-open-active-target-nov25'.`
+  归档目录 `openspec/changes/archive/2026-11-25-fix-quick-open-active-target-nov25/`。
+- 归档后修链：**0 处**（扫过 4 篇 Markdown / 0 条相对链接）；`openspec-links: PASS`（校验 700 条相对
+  链接，全部可达）。
+- 归档跟踪队列：本 change 的唯一条目按「核销即删除」在归档提交内移除，`docs/backlog.md` 保持 80 行。
+- 事后审计：`node scripts/openspec-archive-check.mjs --archived fix-quick-open-active-target-nov25`
+  → `PASS（openspec/changes/archive/2026-11-25-fix-quick-open-active-target-nov25：1 条 MODIFIED，
+  对比 21 段；人工恢复 0 段，声明认领 0 段）`（2026-11-25T22:01:20+0800）。
+- 遗留：最终 tip 的独立 judgment-layer verdict 缺口（见节点 2 第 2 条）在归档后仍需补一次独立评审
+  复核 `27f0486a..6127c5c8` 的 4 个提交；本 change 不 merge / push。
