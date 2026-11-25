@@ -2426,18 +2426,27 @@ export function finalizedUpTo(source: string): number {
     }
     offset += line.length + 1;
   }
-  const top = mdParser.parse(source).topNode;
+  return finalizedBoundaryFromTop(boundaries, mdParser.parse(source).topNode);
+}
+
+export function finalizedBoundaryFromTop(boundaries: readonly number[], top: MdSyntaxNode): number {
+  let node = top.lastChild;
   for (let index = boundaries.length - 1; index >= 0; index--) {
     const boundary = boundaries[index];
-    let insideOpenList = false;
-    for (let node = top.firstChild; node !== null; node = node.nextSibling) {
-      if (node.name !== "BulletList" && node.name !== "OrderedList") continue;
-      if (node.from < boundary && (node.nextSibling === null || boundary <= node.to)) {
-        insideOpenList = true;
-        break;
-      }
+    while (
+      node !== null &&
+      ((node.name !== "BulletList" && node.name !== "OrderedList") || node.from >= boundary)
+    ) {
+      node = node.prevSibling;
     }
-    if (!insideOpenList) return boundary;
+    if (
+      node !== null &&
+      node.from < boundary &&
+      (node.nextSibling === null || boundary <= node.to)
+    ) {
+      continue;
+    }
+    return boundary;
   }
   return 0;
 }

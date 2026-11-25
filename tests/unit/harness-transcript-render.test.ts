@@ -24,7 +24,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatDate, t } from "../../src/copy.ts";
-import { finalizedUpTo, renderMarkdownInto, whenTextOf } from "../../src/harness-panel.ts";
+import {
+  finalizedBoundaryFromTop,
+  finalizedUpTo,
+  renderMarkdownInto,
+  whenTextOf,
+} from "../../src/harness-panel.ts";
 import type { HarnessBlockOpeners, PathLinkRenderContext } from "../../src/harness-panel.ts";
 import type { CodeBlockRender } from "../../src/preview/code-block-content.ts";
 
@@ -825,22 +830,33 @@ test("缺陷复现：流式空行定稿不得把合法列表缩进续段切成�
   }
 });
 
-test("属性：合法列表缩进分布下，中间态 strong 与完整源一致", () => {
+test("属性：真实两阶段分片在开放列表与后续顶层块到达后均保持 strong", () => {
   for (const marker of ["1.", "-"]) {
     const contentIndent = marker === "1." ? 3 : 2;
     for (const extraIndent of [0, 1, 2]) {
       for (const suffix of ["后续", "，后续", " after"]) {
         const indent = " ".repeat(contentIndent + extraIndent);
-        const source = `${marker} 第一项\n\n${indent}**粗体**${suffix}\n\n后续顶层段`;
-        const boundary = finalizedUpTo(source);
-        const prefix = render(source.slice(0, boundary));
-        const tail = render(source.slice(boundary));
-        const streamedStrong = [...prefix.findTag("strong"), ...tail.findTag("strong")];
+        const firstChunk = `${marker} 第一项\n\n${indent}**粗体**${suffix}`;
+        const completeSource = `${firstChunk}\n\n后续顶层段`;
         assert.deepEqual(
-          streamedStrong.map((el) => el.textContent),
+          render(completeSource).findTag("strong").map((el) => el.textContent),
           ["粗体"],
-          `${JSON.stringify({ marker, extraIndent, suffix, boundary })}`,
+          "完整源是流式分片的语义参照",
         );
+        for (const [stage, source] of [
+          ["开放列表", firstChunk],
+          ["列表已关闭", completeSource],
+        ] as const) {
+          const boundary = finalizedUpTo(source);
+          const prefix = render(source.slice(0, boundary));
+          const tail = render(source.slice(boundary));
+          const streamedStrong = [...prefix.findTag("strong"), ...tail.findTag("strong")];
+          assert.deepEqual(
+            streamedStrong.map((el) => el.textContent),
+            ["粗体"],
+            `${JSON.stringify({ stage, marker, extraIndent, suffix, boundary })}`,
+          );
+        }
       }
     }
   }
@@ -859,4 +875,58 @@ test("普通段落与已被后续顶层块关闭的列表仍可增量定稿", ()
     const expectedText = source.startsWith("普通") ? "普通 粗体后续顶层段" : "粗体后续顶层段";
     assert.equal(prefix.textContent + tail.textContent, expectedText);
   }
+});
+
+test("闭合代码围栏仍可定稿，未闭合围栏中的空行不构成边界", () => {
+  const closed = "```js\na\n```\n\n后续";
+  const boundary = finalizedUpTo(closed);
+  assert.equal(boundary, 13);
+  assert.equal(closed.slice(0, boundary), "```js\na\n```\n\n");
+  assert.equal(closed.slice(boundary), "后续");
+  assert.equal(finalizedUpTo("```js\na\n\n后续"), 0);
+});
+
+test("算法：边界筛选的顶层节点访问随输入线性增长", () => {
+  const measure = (count: number): number => {
+    let visits = 0;
+    const nodes = Array.from({ length: count + 1 }, (_, index) => ({
+      name: index === count ? "BulletList" : "Paragraph",
+      from: index * 10,
+      to: index * 10 + 5,
+    }));
+    nodes[count].to = count * 10 + 100;
+    nodes.forEach((node, index) => {
+      Object.defineProperties(node, {
+        prevSibling: {
+          get() {
+            visits += 1;
+            return nodes[index - 1] ?? null;
+          },
+        },
+        nextSibling: {
+          get() {
+            visits += 1;
+            return nodes[index + 1] ?? null;
+          },
+        },
+      });
+    });
+    const top = {
+      get lastChild() {
+        visits += 1;
+        return nodes[nodes.length - 1];
+      },
+    };
+    const list = nodes[count];
+    const boundaries = [list.from, ...Array.from({ length: count }, () => list.from + 1)];
+    finalizedBoundaryFromTop(
+      boundaries,
+      top as unknown as Parameters<typeof finalizedBoundaryFromTop>[1],
+    );
+    assert.ok(visits > 0, "计数器必须真的读到节点，不能在空调用上判绿");
+    return visits;
+  };
+  const counts = [20, 40, 80].map(measure);
+  assert.ok(counts[1] <= counts[0] * 2 + 4, `20 → 40 的访问次数不是线性：${counts}`);
+  assert.ok(counts[2] <= counts[1] * 2 + 4, `40 → 80 的访问次数不是线性：${counts}`);
 });
