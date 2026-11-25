@@ -8,7 +8,28 @@
 > 节点 1（提案评审）：缺陷修复，行为依据是已有裁决（`docs/specs/selector-contract.md` C2 / C3 与
 > `docs/specs/skill-menu.md` S2，来源为 Alex 2026-11-25「选择器按推荐」），本 change 不引入新的
 > 行为裁决，只补判据。实现批与提案同批提交。
-> 节点 2（归档评审）：实现完成后填写。
+> 节点 2（归档评审）：**机器 + 独立评审放行**（`docs/process/openspec-workflow.md`「节点 2 五要件」）。
+>
+> 1. **节点 1**：缺陷修复，行为依据为既有裁决（`docs/specs/selector-contract.md` C2 / C3、
+>    `docs/specs/skill-menu.md` S2 / S4；来源 Alex 2026-11-25「选择器按推荐」），本 change 不引入新的行为裁决。
+> 2. **独立评审**：K3 **clean / merge**，绑定最终 tip `b2836ffe`；产品 `src/**` 零改动 —— 本 change 只动验收
+>    场景、视觉判据与规格文本。两轮 P2 已在 `b2836ffe` 收口：① DPR 口径改为「`webkit-realua` 只覆写
+>    `browserName` / `userAgent`，实际 DPR 1」；② 868 的 AX 判据降级为「必要不充分」（曝光窗口比像素可见区
+>    多一行：r4 的 `04` 快照暴露 `acc-skill-05`–`09`，像素只显示 `06`–`09`），完整几何归浏览器矩阵。
+> 3. **tasks**：3.1 / 3.2 / 3.3 全部完成（3.3 真机 PASS 见下一条）。
+> 4. **门禁与真机证据**：完整 `GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0，visual-regression 1270s —— **该次
+>    门禁绑定 `a79a5f0f`**（产品行为与视觉判据的提交；其后 `5cce6f57` / `b2836ffe` 只改场景文本与措辞，未重跑
+>    视觉）。真机 868 最终 **1/1 PASS、97.9s**（场景段 79.6s），日志
+>    `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/skill-visible-selection-nov25/native-868.log`，
+>    证据 `.local/worktrees/nov25/skill-visible-selection/.local/acceptance/2026-11-25/868-harness-skill-menu-ux-nov25/`
+>    （另存 `.local/missions/skill-visible-selection-nov25/acceptance-868/`）；末段三条 AX 暴露断言全 PASS
+>    （`acc-skill-11` / `acc-skill-10` 在场、`acc-skill-00` 不在场）。
+> 5. **规格对账**：`openspec validate --all --strict` 39/39 PASS；`scripts/openspec-archive-check.mjs` 门禁模式
+>    PASS：`openspec-archive-check: PASS（扫过 13 份 delta，12 条 MODIFIED，对比 166 段，无静默丢段；归档队列
+>    1 项已完成 change 均有唯一条目）`；delta = `harness` 1 条 ADDED。
+>    归档队列条目按「核销即删除、不留索引」处理（backlog 80/80 行硬上限，未新增常驻行）。
+>
+> 归档后：归档提交与包装器输出、修链读数、`--archived` PASS 读数见下方「归档记录」段。
 
 ## Why
 

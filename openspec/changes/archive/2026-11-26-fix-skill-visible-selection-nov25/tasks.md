@@ -41,6 +41,10 @@
       `acc-skill-00` 不在场；回退段 `acc-skill-10` 在场 + `acc-skill-00` 不在场。
       静态校验：`node scripts/acceptance/run.mjs --check` 298 场景通过、`scripts/acceptance/check-suite.sh`
       254/254、`bash scripts/docs-check.sh` PASS
-- [ ] 3.3 真机复跑 868（含本修复的构建；主会话串行执行，本批不占真机窗口）：末项 / 末段两步的
-      AX 暴露断言必须 PASS（不出现即判红；在场只证明进入曝光窗口，完整几何仍看浏览器矩阵）——
-      修前构建上它们会红（r4 的 `04` 快照里 AX 只暴露 `acc-skill-05`–`09`，游标行 `10` 不在 AX 里）
+- [x] 3.3 真机复跑 868（含本修复的构建；主会话串行执行）：**PASS，1/1、97.9s**（场景段 79.6s），
+      日志 `.local/missions/skill-visible-selection-nov25/native-868.log`，证据
+      `.local/worktrees/nov25/skill-visible-selection/.local/acceptance/2026-11-25/868-harness-skill-menu-ux-nov25/`
+      （另存副本 `.local/missions/skill-visible-selection-nov25/acceptance-868/`）。末段三条 AX 暴露断言全
+      PASS：`acc-skill-11` / `acc-skill-10` 在场、`acc-skill-00` 不在场；首段反向对照
+      （`acc-skill-11` 不在场）同 PASS。在场只证明进入曝光窗口，完整几何仍看浏览器矩阵；修前构建上这些
+      断言会红（r4 的 `04` 快照里 AX 只暴露 `acc-skill-05`–`09`，游标行 `10` 不在 AX 里）
