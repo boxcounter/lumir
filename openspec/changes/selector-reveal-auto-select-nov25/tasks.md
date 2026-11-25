@@ -27,8 +27,8 @@
 - [x] 新增：可见最底项再移一项 / 短视口 × 三主题 × 缩放 / 全名接受 / 普通路径不武装 / 异步不武装 / IME 重算
 - [x] `wikilink-suggestion.spec.ts` 新增 30 项长列表逐项导航（活动行在带内、scrollTop 不被归零、编辑器与页面不滚）
 - [x] 更新验收场景 867 / 868 的导航预期与截图步
-- [ ] 主会话串行执行：`scripts/gate.sh quick` + `scripts/gate.sh visual` + 真机 867 / 868
-- [ ] 归档时执行：delta 合并进 living spec，`--archived` 审计 PASS
+- [x] 主会话串行执行：完整 `gate.sh visual`（含 quick 层）`GATE RESULT: 15/15 PASS（SKIP 0）` exit 0（`/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/selector-scroll-auto-select-nov25/gate-visual-final.log`）；真机 867 PASS 40 断言、868 PASS 55 断言（`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-selector-scroll-auto-select-r2/`）
+- [x] 归档执行（本批收口）：`node scripts/openspec-archive.mjs selector-reveal-auto-select-nov25` 把 delta 并入 living spec，归档提交与 `--archived` PASS 读数记入 proposal 节点 2 与 backlog 归档跟踪条目
 
 ## 机械核验收口（2026-11-25）
 

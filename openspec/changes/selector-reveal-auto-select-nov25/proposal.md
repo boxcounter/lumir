@@ -11,6 +11,25 @@
 > 异步 catalog 只改前者，Enter / Tab 只在武装态接受，全名自动接受是已批准行为；④ 游标 / ARIA 一致、
 > hover 不抹掉 active、保留两种已登记呈现；⑤ 新建 `docs/specs/selector-contract.md` 作统一合同居所。
 
+> 节点 2（归档放行，2026-11-25）：**机器 + 独立评审放行**（`docs/process/openspec-workflow.md` 五要件）。
+> 1. **方案已批准**：节点 1 Alex 2026-11-25 原话「选择器按推荐」；实现期新增项（F1–F9 / R1–R3 /
+>    N1–N6 / T1–T2）全部落在已批准合同内，无静默扩 scope。
+> 2. **独立 reviewer clean / merge**：tower 主模型 verdict **clean，ready for OpenSpec 节点 2 与归档**，
+>    绑定 tip `b80b0d948a9f919cfe0ecbdf21a88684467cee61`，P1 / P2 / P3 无；
+>    `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/selector-scroll-auto-select-nov25/tower-verdict.md`；
+>    机械复核同目录 `mechanical.md`。
+> 3. **tasks 完成**：`tasks.md` 全部勾选（含 F1–F9 / R1–R3 / N1–N6 / T1–T2 收口，以及最终门禁 /
+>    真机 / 归档三项由本批收口），无放弃项。
+> 4. **门禁与真机证据**：完整 `GATE RESULT: 15/15 PASS（SKIP 0）`、exit 0
+>    （`/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/selector-scroll-auto-select-nov25/gate-visual-final.log`）；
+>    真机 867 / 868 **PASS 2 / FAIL 0**、40 / 55 断言
+>    （`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-selector-scroll-auto-select-r2/`）。
+>    辅助读数：unit 2009 / 0、Skill 68、wikilink 40、docs-check PASS、acceptance 254 / 0；视觉基线未更新。
+> 5. **规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs` 门禁模式
+>    `PASS（扫过 13 份 delta，18 条 MODIFIED，对比 435 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目）`；
+>    `validate --all --strict` 39 passed / 0 failed；`bash scripts/docs-check.sh` PASS。本 change 的 delta =
+>    `harness` 1 条 MODIFIED + `wikilink-suggestion` 1 条 MODIFIED。
+
 ## Why
 
 同一根因在两条链路上各报了一次：
