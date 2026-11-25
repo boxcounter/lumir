@@ -81,13 +81,15 @@
       既有 42 条与相邻 42 条未复跑：本轮只动 change 文档与本场景文件，产品代码零改动。
       全量前端第一次跑撞上 `link-suggest` 的同步预算抖动（万文件过滤 23.01ms > 16ms，同进程其余
       1997 条全绿），空载重跑 1998/1998——是负载下的计时抖动，与本 change 无关（该文件不在改动面）
-- [x] 5.1b 最终复核轮的全量复跑：`visual-green-target-r6.log`（**14/14**）、
-      `visual-structural-target-r5.log`（14/14，CI 结构层同款）、`visual-green-existing-r6.log`
-      （42/42）、`visual-green-adjacent-r4.log`（42/42 = escape 11 + focus 14 + gutter-copy 11 +
-      m702 6）、`target-unit-r5.log`（48/48）、`unit-all-r7.log`（1998/1998）、
-      `tsc-root-r3.log` / `tsc-visual-r3.log` / `tsc-unit-r3.log`（命令回显 + `EXIT=0`）、
-      `docs-check-r6.log`（PASS）、`openspec-validate-r3.log`（39/39）；红证据
-      `visual-red-reset-slot.log` / `visual-red-reset-cache.log`（见 8.2）
+- [x] 5.1b 最终复核轮的全量复跑，跑在 tip 的**干净检出**上（`git worktree add --detach <tip>`，
+      避开同 worktree 里并行任务的未提交改动）：`visual-green-target-r8.log`（**14/14**）、
+      `visual-structural-target-r7.log`（14/14，CI 结构层同款）、`visual-green-existing-r8.log`
+      （42/42）、`visual-green-adjacent-r6.log`（42/42 = escape 11 + focus 14 + gutter-copy 11 +
+      m702 6）、`target-unit-r7.log`（48/48）、`unit-all-r13.log` / `unit-all-r14.log`
+      （1998/1998，连跑两次）、`tsc-root-r5.log` / `tsc-visual-r5.log` / `tsc-unit-r5.log`
+      （命令回显 + `EXIT=0`）、`docs-check-r9.log`（PASS）、`openspec-validate-r6.log`（39/39）；
+      红证据 `visual-red-reset-slot.log` / `visual-red-reset-cache.log`（见 8.2）。上一版 tip
+      `8a1f53a1` 上的同类干净复跑同样全绿（`-r7/r6/r7/r5/r6/r10/r4/r8/r5` 一组），留档不删
 - [ ] 5.2 完整 `gate quick` / `gate visual` 与真机复验由主会话串行执行（本 worker 不启动真机）
 - [x] 5.3 证据落 `.local/missions/quick-open-active-target/`；提交本分支，不 push / merge / archive
 - [x] 5.4 230d 真机复跑（隔离端口 1431，runner 自带 XDG / 合成 vault / 锁）：**1/1 PASS**，
@@ -170,9 +172,9 @@
       发起都只计 1 次，不冒充测量 120ms 边界；proposal 判据 3、design §5、本文件 3.2 / 7.3 同步
 - [x] 8.4 复位场景进 spec delta：「复位后重新探测并识别新文件」⇒ living 9 → delta 14（改写 1 +
       新增 5）；proposal 判据 3 / 4、本文件 3.4 同步
-- [x] 8.5 tsc 证据形式：三份日志带命令回显 + `EXIT=$?`（`tsc-root-r3.log` / `tsc-visual-r3.log` /
-      `tsc-unit-r3.log`）；r2 的三份 0 字节日志作废，不再被任何指针引用
+- [x] 8.5 tsc 证据形式：三份日志带命令回显 + `EXIT=$?`（`tsc-root-r5.log` / `tsc-visual-r5.log` /
+      `tsc-unit-r5.log`）；r2 的三份 0 字节日志作废，不再被任何指针引用
 - [x] 8.6 全量复跑（5.1b）：目标 14/14、结构 14/14、既有 42/42、相邻 42/42、目标单测 48/48、
       全量前端 1998/1998、三份 tsc `EXIT=0`、docs-check PASS、validate 39/39
-      （全量前端首跑在视觉套件并行负载下 `link-suggest` 预算 45.6ms > 16ms 红 1 条，空载复跑
-      1998/1998——与本 change 无关，该文件不在改动面）
+      （全量前端在并行负载下会命中 `link-suggest` 的 16ms 同步预算：早期 r9 实测 56.2ms、r12 同样
+      红；本 tip 上 r13 / r14 连跑两次均 1998/1998 绿。该文件不在本 change 的改动面，属负载抖动）
