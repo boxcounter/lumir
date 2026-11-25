@@ -27,6 +27,10 @@
 >    Alex 2026-11-25 已认可其视觉；**未写入正式视觉基线，本批新增像素基线 0**。
 > 5. **规格对账**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS（13 份 delta / 20 条 MODIFIED /
 >    428 段，无静默丢段）；`openspec validate --all --strict` 39 passed / 0 failed；归档跟踪队列唯一条目。
+> 归档已完成（2026-11-25）：归档提交 `314a2fcc`；包装器输出 `+1 added / ~4 modified`，归档副本修链 1 处；
+> living 合并时该跨层相对链接因目录深度不同无法两全，改为行内路径
+> `docs/design-parity-contract/overlay-close-reading-position.md`（living 与归档副本逐字一致），
+> `openspec-links` 698/698 PASS；`--archived` PASS（4 条 MODIFIED / 77 段 / 0 丢段 / 0 声明）。
 
 ## Why
 
