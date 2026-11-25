@@ -149,7 +149,7 @@ pub fn approval_request_with_purpose(
     reason: Option<&super::permissions::DecisionReason>,
 ) -> serde_json::Value {
     approval_request_full(
-        id, tool, diff, argv, purpose, reason, None, None, None, None,
+        id, tool, diff, argv, purpose, reason, None, None, None, None, None,
     )
 }
 
@@ -171,6 +171,7 @@ pub fn approval_request_full(
     cron_task: Option<&serde_json::Value>,
     remember: Option<&str>,
     persist_rule: Option<&str>,
+    web: Option<&super::web::output::WebApprovalPayload>,
 ) -> serde_json::Value {
     let mut value = serde_json::json!({"type": "approval_request", "id": id, "tool": tool});
     if let Some(diff) = diff {
@@ -200,6 +201,9 @@ pub fn approval_request_full(
     }
     if let Some(persist_rule) = persist_rule {
         value["persist_rule"] = serde_json::json!(persist_rule);
+    }
+    if let Some(web) = web {
+        value["web"] = serde_json::to_value(web).unwrap_or_default();
     }
     value
 }
@@ -664,6 +668,7 @@ mod tests {
             Some(&cron_task),
             None,
             None,
+            None,
         );
         assert_eq!(with_cron["cron_task"], cron_task);
         assert!(with_cron.get("diff").is_none());
@@ -683,6 +688,7 @@ mod tests {
             None,
             Some("tvly search"),
             Some("cli(tvly search *)"),
+            None,
         );
         assert_eq!(with_actions["remember"], "tvly search");
         assert_eq!(with_actions["persist_rule"], "cli(tvly search *)");

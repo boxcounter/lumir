@@ -131,6 +131,8 @@ import {
 } from "./ipc";
 import type { HarnessEvent } from "./ipc";
 import type { DecisionReason } from "./bindings/DecisionReason";
+import type { WebApprovalPayload } from "./bindings/WebApprovalPayload";
+import type { WebProviderStatus } from "./bindings/WebProviderStatus";
 import type { ThinkingEffort } from "./bindings/ThinkingEffort";
 import {
   assembleHarnessContext,
@@ -862,11 +864,12 @@ export function permissionDescription(mode: PermissionMode): string {
 }
 
 /** 判定依据的宽容解析（M459，事件与快照两条入口同一份判据）：只认三个**可上卡**的 kind
- *  （Rust `DecisionReason` 的 `deny_rule` 不产批准卡、不会到前端，故不认）；形状不合一律
+ *  （Rust `DecisionReason` 的 `deny_rule` 不产批准卡、不会到前端，故不认）；Web 策略另认
+ * `web_access_policy`。形状不合一律
  *  `undefined`——调用方据此不出该行，MUST NOT 伪造依据（旧载荷 / 未来新增 kind 的降级面）。 */
 export function parseDecisionReason(value: unknown): DecisionReason | undefined {
   if (typeof value !== "object" || value === null) return undefined;
-  const raw = value as { kind?: unknown; command?: unknown; mode?: unknown };
+  const raw = value as { kind?: unknown; command?: unknown; mode?: unknown; approval?: unknown };
   switch (raw.kind) {
     case "dangerous_wrapper":
       return typeof raw.command === "string" && raw.command !== ""
@@ -878,6 +881,8 @@ export function parseDecisionReason(value: unknown): DecisionReason | undefined 
       return PERMISSION_MODES.find((mode) => mode === raw.mode) !== undefined
         ? { kind: "mode_default", mode: raw.mode as PermissionMode }
         : undefined;
+    case "web_access_policy":
+      return raw.approval === "ask" ? { kind: "web_access_policy", approval: "ask" } : undefined;
     default:
       return undefined;
   }
@@ -899,9 +904,88 @@ export function approvalReasonText(reason: DecisionReason | undefined): string |
         mode: permissionFullName(reason.mode),
         desc: permissionDescription(reason.mode),
       });
+    case "web_access_policy":
+      return t("D1013");
     default:
       return null;
   }
+}
+
+const WEB_PROVIDER_STATUSES: readonly WebProviderStatus[] = [
+  "ready",
+  "not_evaluated",
+  "missing",
+  "missing_key",
+  "ambiguous",
+  "custom_base_url",
+];
+
+export function parseWebApprovalPreview(value: unknown): WebApprovalPayload | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const raw = value as Record<string, unknown>;
+  const operation = raw.operation === "search" ? "search" : raw.operation === "fetch" ? "fetch" : undefined;
+  if (operation === undefined) return undefined;
+  if (operation === "search" && typeof raw.query !== "string") return undefined;
+  if (operation === "fetch" && (typeof raw.url !== "string" || typeof raw.origin !== "string")) return undefined;
+  if (raw.provider !== null && typeof raw.provider !== "string") return undefined;
+  if (raw.provider_id !== null && typeof raw.provider_id !== "string") return undefined;
+  if (!WEB_PROVIDER_STATUSES.includes(raw.provider_status as WebProviderStatus)) return undefined;
+  if (raw.trust !== "untrusted") return undefined;
+  if (typeof raw.local_precheck !== "boolean" || typeof raw.provider_fetch !== "boolean") return undefined;
+  if (raw.cost_per_1000_success_cny !== 5) return undefined;
+  return {
+    operation,
+    query: operation === "search" ? (raw.query as string) : null,
+    url: operation === "fetch" ? (raw.url as string) : null,
+    origin: operation === "fetch" ? (raw.origin as string) : null,
+    provider: raw.provider === null ? null : (raw.provider as string),
+    provider_id: raw.provider_id === null ? null : (raw.provider_id as string),
+    provider_status: raw.provider_status as WebProviderStatus,
+    trust: "untrusted",
+    local_precheck: raw.local_precheck,
+    provider_fetch: raw.provider_fetch,
+    cost_per_1000_success_cny: 5,
+  };
+}
+
+function renderWebApprovalBlock(el: HTMLElement, preview: WebApprovalPayload): void {
+  el.replaceChildren();
+  const kv = document.createElement("dl");
+  kv.className = "lumir-hp-cron-kv";
+  const addRow = (label: CopyKey, value: string | null): void => {
+    if (value === null || value === "") return;
+    const dt = document.createElement("dt");
+    dt.textContent = t(label);
+    const dd = document.createElement("dd");
+    dd.textContent = value;
+    kv.append(dt, dd);
+  };
+  if (preview.operation === "search") {
+    addRow("D1016", preview.query ?? null);
+  } else {
+    addRow("D1018", preview.origin ?? null);
+  }
+  addRow("D1019", preview.provider_id ?? t("D1020"));
+  el.append(kv);
+  if (preview.operation === "search" && preview.query !== undefined) {
+    const pre = document.createElement("pre");
+    pre.className = "lumir-hp-argv";
+    pre.textContent = preview.query;
+    el.append(pre);
+  } else if (preview.operation === "fetch" && preview.url !== undefined) {
+    const pre = document.createElement("pre");
+    pre.className = "lumir-hp-argv";
+    pre.setAttribute("aria-label", t("D1017"));
+    pre.textContent = preview.url;
+    el.append(pre);
+  }
+  const egress = document.createElement("p");
+  egress.className = "lumir-hp-approval-note";
+  egress.textContent = t(preview.operation === "search" ? "D1021" : "D1022");
+  const trust = document.createElement("p");
+  trust.className = "lumir-hp-approval-note";
+  trust.textContent = t("D1023");
+  el.append(egress, trust);
 }
 
 /** 定时任务批准预览（change add-cron-conversational-registration design §6.3 契约）：形状由
@@ -1825,7 +1909,10 @@ export function approvalArgsText(request: {
   diff?: string | undefined;
   argv?: readonly string[] | undefined;
   cronTask?: CronTaskPreview | undefined;
+  web?: WebApprovalPayload | undefined;
 }): string {
+  if (request.web?.operation === "search") return request.web.query ?? "";
+  if (request.web?.operation === "fetch") return request.web.url ?? "";
   if (request.argv !== undefined) return formatArgv(request.argv);
   if (request.diff !== undefined) return diffPathOf(request.diff) ?? "";
   if (request.cronTask !== undefined) {
@@ -2480,6 +2567,7 @@ interface PendingApproval {
   /** 定时任务预览（change add-cron-conversational-registration §6.3，可缺席）：任务要素块的
    *  数据源，随语言重绘时按它重跑 `renderCronTaskBlock`。 */
   cronTask?: CronTaskPreview | undefined;
+  web?: WebApprovalPayload | undefined;
   /** 会话记忆粒度 / 持久规则原文（change harness-permission-rules-oct23）：随语言重上按钮
    *  文案时的插值素材；缺键 = 该按钮不存在。 */
   remember?: string | undefined;
@@ -2560,6 +2648,7 @@ export interface TaskApprovalRequest {
   reason?: DecisionReason | undefined;
   /** 定时任务预览（change add-cron-conversational-registration §6.3；子运行不可达这类工具）。 */
   cronTask?: CronTaskPreview | undefined;
+  web?: WebApprovalPayload | undefined;
   /** 会话记忆粒度（change harness-permission-rules-oct23 design §5；缺键 = 不渲染该按钮）。 */
   remember?: string | undefined;
   /** 持久规则原文（同上；缺键 = 不渲染该按钮）。 */
@@ -7656,7 +7745,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const ask =
       tool === "cli_run"
         ? t("D340")
-        : tool === "vault_create"
+        : tool === "web_search"
+          ? t("D1014")
+          : tool === "web_fetch"
+            ? t("D1015")
+            : tool === "vault_create"
           ? t("D412")
           : tool === "vault_patch"
             ? t("D339")
@@ -7688,6 +7781,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (cronEl !== null && pending.cronTask !== undefined) {
       renderCronTaskBlock(cronEl, pending.cronTask);
     }
+    const webEl = pending.element.querySelector<HTMLElement>(".lumir-hp-approval-web");
+    if (webEl !== null && pending.web !== undefined) {
+      renderWebApprovalBlock(webEl, pending.web);
+    }
     // 待决行的「等待批准」尾注同口径重取（行是交互中的 UI，不是历史记录）；argsText 是
     // 数据（命令 / 文件名），不译文。路径目标随行重建（结构化参数 → 可点段）。
     pending.row.replaceChildren(
@@ -7696,7 +7793,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     );
     // vault_delete 的后果说明（D435）是 chrome 文案，随语言重取。
     const note = pending.element.querySelector(".lumir-hp-approval-note");
-    if (note !== null) note.textContent = t("D435");
+    if (note !== null && pending.tool === "vault_delete") note.textContent = t("D435");
     const reason = pending.element.querySelector<HTMLTextAreaElement>(".lumir-hp-reason");
     if (reason !== null) {
       reason.placeholder = t("D338");
@@ -7938,6 +8035,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     reason?: DecisionReason | undefined;
     /** 定时任务预览（change add-cron-conversational-registration §6.3；其它工具缺键）。 */
     cronTask?: CronTaskPreview | undefined;
+    web?: WebApprovalPayload | undefined;
     /** 会话记忆粒度（change harness-permission-rules-oct23；缺键 = 不渲染该按钮）。 */
     remember?: string | undefined;
     /** 持久规则原文（同上；缺键 = 不渲染该按钮）。 */
@@ -8004,6 +8102,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       const basis = document.createElement("div");
       basis.className = "lumir-hp-approval-basis";
       el.append(basis);
+    }
+    if (request.web !== undefined) {
+      const webEl = document.createElement("div");
+      webEl.className = "lumir-hp-approval-web";
+      renderWebApprovalBlock(webEl, request.web);
+      el.append(webEl);
     }
     // 定时任务要素块（change add-cron-conversational-registration design §6.3）：紧跟判定依据
     // 行之后、diff / argv 与按钮之前——与它们同一层级。内容全来自批准载荷（含线程算好的
@@ -8100,6 +8204,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       purpose: request.purpose,
       reason: request.reason,
       cronTask: request.cronTask,
+      web: request.web,
       remember: request.remember,
       persistRule: request.persistRule,
       argsText,
@@ -9281,6 +9386,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
             reason: parseDecisionReason(event.reason),
             // 定时任务预览（§6.3 契约）：形状不合 / 缺键 = undefined ⇒ 不建要素块。
             cronTask: parseCronTaskPreview(event.cron_task),
+            web: parseWebApprovalPreview(event.web),
             // 两枚次级动作（change harness-permission-rules-oct23）：与事件 / 快照入口同一份
             // 宽容解析（缺键 / 非字符串 = 不渲染该按钮——D3 翻转后的缺键语义）。
             ...approvalActionsFromPayload(event),
@@ -9915,6 +10021,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         reason: parseDecisionReason(pending.reason),
         // 定时任务预览（§6.3）：与事件入口同一份解析（快照缺键 = 旧载荷，不建块）。
         cronTask: parseCronTaskPreview(pending.cron_task),
+        web: parseWebApprovalPreview(pending.web),
         // 两枚次级动作（change harness-permission-rules-oct23）：与事件入口同一份宽容解析
         // （快照缺键 = 不渲染按钮——D3 翻转后的缺键语义，危险卡因此不会被复活死按钮）。
         ...approvalActionsFromPayload(pending),

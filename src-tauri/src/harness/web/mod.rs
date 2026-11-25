@@ -7,7 +7,9 @@ use serde_json::Value;
 use crate::config::HarnessConfig;
 
 use self::config::{resolve_web_provider, WebAccessConfig, WebAccessConfigStatus};
-use self::output::{WebEnvelope, WebErrorCode, WebOperation, WebProviderIdentity};
+use self::output::{
+    WebApprovalPayload, WebEnvelope, WebErrorCode, WebOperation, WebProviderIdentity, WebTrust,
+};
 use super::tools::ToolOutput;
 
 pub const WEB_TOOL_NAMES: [&str; 2] = ["web_search", "web_fetch"];
@@ -52,6 +54,12 @@ pub trait WebToolPort: Send + Sync {
         args: &Value,
         aborted: &dyn Fn() -> bool,
     ) -> WebEnvelope;
+
+    fn approval_preview(
+        &self,
+        operation: WebOperation,
+        args: &Value,
+    ) -> Result<WebApprovalPayload, ToolOutput>;
 }
 
 pub struct ConfiguredWebToolPort {
@@ -67,6 +75,50 @@ impl ConfiguredWebToolPort {
 }
 
 impl WebToolPort for ConfiguredWebToolPort {
+    fn approval_preview(
+        &self,
+        operation: WebOperation,
+        args: &Value,
+    ) -> Result<WebApprovalPayload, ToolOutput> {
+        let basic = basic_args(operation, args)?;
+        let (provider, provider_id, provider_status) = match resolve_web_provider(&self.config) {
+            Ok(resolved) => (
+                Some("deepseek".to_string()),
+                Some(resolved.provider_id),
+                config::WebProviderStatus::Ready,
+            ),
+            Err(error) => (None, None, error.status()),
+        };
+        Ok(match basic {
+            BasicWebArgs::Search { query } => WebApprovalPayload {
+                operation,
+                query: Some(query),
+                url: None,
+                origin: None,
+                provider,
+                provider_id,
+                provider_status,
+                trust: WebTrust::Untrusted,
+                local_precheck: false,
+                provider_fetch: true,
+                cost_per_1000_success_cny: 5,
+            },
+            BasicWebArgs::Fetch { url, origin } => WebApprovalPayload {
+                operation,
+                query: None,
+                url: Some(url),
+                origin: Some(origin.as_str()),
+                provider,
+                provider_id,
+                provider_status,
+                trust: WebTrust::Untrusted,
+                local_precheck: true,
+                provider_fetch: true,
+                cost_per_1000_success_cny: 5,
+            },
+        })
+    }
+
     fn execute(
         &self,
         operation: WebOperation,
@@ -137,52 +189,123 @@ pub fn execute(
     let Some(port) = port else {
         return ToolOutput::err("tool_unknown", format!("未知工具：{name}"));
     };
-    if !valid_args(operation, args) {
-        return envelope_output(WebEnvelope::failure(
-            operation,
-            WebErrorCode::WebArgsInvalid,
-            "Web 工具参数不合法",
-            None,
-            0,
-        ));
+    if let Err(output) = precheck(name, args) {
+        return output;
     }
     envelope_output(port.execute(operation, args, aborted))
 }
 
-fn valid_args(operation: WebOperation, args: &Value) -> bool {
-    args.as_object().is_some_and(|object| {
-        let allowed_keys: &[&str] = match operation {
-            WebOperation::Search => &["query", "count", "need_content"],
-            WebOperation::Fetch => &["url"],
-        };
-        if object
-            .keys()
-            .any(|key| !allowed_keys.contains(&key.as_str()))
-        {
-            return false;
-        }
-        match operation {
-            WebOperation::Search => {
-                let query_valid = object
+pub fn precheck(name: &str, args: &Value) -> Result<(), ToolOutput> {
+    let Some(operation) = operation(name) else {
+        return Ok(());
+    };
+    basic_args(operation, args).map(|_| ())
+}
+
+pub fn approval_preview(
+    name: &str,
+    args: &Value,
+    port: Option<&dyn WebToolPort>,
+) -> Result<WebApprovalPayload, ToolOutput> {
+    let Some(operation) = operation(name) else {
+        return Err(ToolOutput::err("tool_unknown", format!("未知工具：{name}")));
+    };
+    precheck(name, args)?;
+    let Some(port) = port else {
+        return Err(ToolOutput::err("tool_unknown", format!("未知工具：{name}")));
+    };
+    port.approval_preview(operation, args)
+}
+
+enum BasicWebArgs {
+    Search { query: String },
+    Fetch { url: String, origin: url::Origin },
+}
+
+fn basic_args(operation: WebOperation, args: &Value) -> Result<BasicWebArgs, ToolOutput> {
+    let Some(object) = args.as_object() else {
+        return Err(args_error(
+            operation,
+            WebErrorCode::WebArgsInvalid,
+            "Web 工具参数必须是对象",
+        ));
+    };
+    let allowed_keys: &[&str] = match operation {
+        WebOperation::Search => &["query", "count", "need_content"],
+        WebOperation::Fetch => &["url"],
+    };
+    if object
+        .keys()
+        .any(|key| !allowed_keys.contains(&key.as_str()))
+    {
+        return Err(args_error(
+            operation,
+            WebErrorCode::WebArgsInvalid,
+            "Web 工具含未定义参数",
+        ));
+    }
+    match operation {
+        WebOperation::Search => {
+            let query_valid = object
+                .get("query")
+                .and_then(Value::as_str)
+                .is_some_and(|query| (1..=128).contains(&query.trim().chars().count()));
+            let count_valid = object.get("count").is_none_or(|count| {
+                count
+                    .as_u64()
+                    .is_some_and(|count| (1..=10).contains(&count))
+            });
+            let need_content_valid = object
+                .get("need_content")
+                .is_none_or(|need_content| need_content.is_boolean());
+            if !query_valid || !count_valid || !need_content_valid {
+                return Err(args_error(
+                    operation,
+                    WebErrorCode::WebArgsInvalid,
+                    "Web Search 参数不合法",
+                ));
+            }
+            Ok(BasicWebArgs::Search {
+                query: object
                     .get("query")
                     .and_then(Value::as_str)
-                    .is_some_and(|query| (1..=128).contains(&query.trim().chars().count()));
-                let count_valid = object.get("count").is_none_or(|count| {
-                    count
-                        .as_u64()
-                        .is_some_and(|count| (1..=10).contains(&count))
-                });
-                let need_content_valid = object
-                    .get("need_content")
-                    .is_none_or(|need_content| need_content.is_boolean());
-                query_valid && count_valid && need_content_valid
-            }
-            WebOperation::Fetch => object
+                    .expect("上面已校验 query 为字符串")
+                    .to_string(),
+            })
+        }
+        WebOperation::Fetch => {
+            let Some(url) = object
                 .get("url")
                 .and_then(Value::as_str)
-                .is_some_and(|url| (1..=8192).contains(&url.chars().count())),
+                .filter(|url| (1..=8192).contains(&url.chars().count()))
+            else {
+                return Err(args_error(
+                    operation,
+                    WebErrorCode::WebArgsInvalid,
+                    "Web Fetch url 必须是 1–8192 字符的字符串",
+                ));
+            };
+            let origin = url::Origin::from_url(url).map_err(|reason| {
+                args_error(
+                    operation,
+                    WebErrorCode::WebUrlBlocked,
+                    format!("Web Fetch URL 不合法：{reason}"),
+                )
+            })?;
+            Ok(BasicWebArgs::Fetch {
+                url: url.to_string(),
+                origin,
+            })
         }
-    })
+    }
+}
+
+fn args_error(
+    operation: WebOperation,
+    code: WebErrorCode,
+    message: impl Into<String>,
+) -> ToolOutput {
+    envelope_output(WebEnvelope::failure(operation, code, message, None, 0))
 }
 
 fn envelope_output(envelope: WebEnvelope) -> ToolOutput {
@@ -199,6 +322,14 @@ mod tests {
     struct CountingPort(AtomicUsize);
 
     impl WebToolPort for CountingPort {
+        fn approval_preview(
+            &self,
+            _operation: WebOperation,
+            _args: &Value,
+        ) -> Result<WebApprovalPayload, ToolOutput> {
+            Err(ToolOutput::err("web_args_invalid", "测试 port 不提供预览"))
+        }
+
         fn execute(
             &self,
             _operation: WebOperation,

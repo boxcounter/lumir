@@ -555,6 +555,14 @@ impl RunContext for SessionContext<'_> {
     }
 
     fn decide(&self, tool: &str, subject: &str, args: &serde_json::Value) -> permissions::Verdict {
+        if super::web::operation(tool).is_some() {
+            return permissions::decide_web(
+                &self.runtime.live_permissions(&self.config.permissions),
+                tool,
+                subject,
+                self.config.web_access.approval,
+            );
+        }
         let cached = self
             .cache_namespace()
             .is_some_and(|namespace| permission_cache::is_remembered(&namespace, tool, subject));
@@ -591,6 +599,7 @@ impl RunContext for SessionContext<'_> {
         let purpose = request.purpose.clone();
         let reason = request.reason.clone();
         let cron_task = request.cron_task.clone();
+        let web = request.web.clone();
         let remember = request.remember.clone();
         let persist_rule = request.persist_rule.clone();
         let id = match self.runtime.park_approval(self.scope, request) {
@@ -608,6 +617,7 @@ impl RunContext for SessionContext<'_> {
             cron_task.as_ref(),
             remember.as_deref(),
             persist_rule.as_deref(),
+            web.as_ref(),
         ));
         // 未决批准项不自动超时通过：通道失效（会话重置 / vault 切换）⇒ 判过期，不执行。
         match rx.recv() {

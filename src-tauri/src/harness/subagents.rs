@@ -2857,6 +2857,7 @@ impl RunContext for ChildContext {
         let argv = request.argv.clone();
         let purpose = request.purpose.clone();
         let reason = request.reason.clone();
+        let web = request.web.clone();
         let remember = request.remember.clone();
         let persist_rule = request.persist_rule.clone();
         let request = request.with_id(id.clone()).with_source(source.clone());
@@ -2887,6 +2888,7 @@ impl RunContext for ChildContext {
                 None,
                 remember.as_deref(),
                 persist_rule.as_deref(),
+                web.as_ref(),
             ));
         }
         let wait_start = Instant::now();

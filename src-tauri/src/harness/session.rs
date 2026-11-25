@@ -591,6 +591,8 @@ pub struct PendingApprovalSnapshot {
     /// `approval_request.cron_task` 同源同形（都取自 `ApprovalRequest.cron_task`）。无则缺省。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cron_task: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub web: Option<super::web::output::WebApprovalPayload>,
     /// 该卡支持「采纳且本会话不再问（记住 `<粒度>`）」次级动作：`Some(粒度)` = 面板显示该
     /// 按钮，`None` = 不显示（危险黑名单层恒 `None`）。与 `approval_request.remember`
     /// 同源同形（都取自 `ApprovalRequest.remember`）。
@@ -615,6 +617,7 @@ impl PendingApprovalSnapshot {
             purpose: r.purpose.clone(),
             reason: r.reason.clone(),
             cron_task: r.cron_task.clone(),
+            web: r.web.clone(),
             remember: r.remember.clone(),
             persist_rule: r.persist_rule.clone(),
             source: r.source.clone(),

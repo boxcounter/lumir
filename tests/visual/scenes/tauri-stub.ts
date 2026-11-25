@@ -671,6 +671,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
                 max_subruns_per_turn: 8,
                 max_concurrent: 4,
               },
+              web_access: { enabled: true, approval: "allow_all", status: "valid" },
             },
             cron: { tasks: [] },
           },

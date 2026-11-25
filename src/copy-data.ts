@@ -2919,15 +2919,68 @@ const COPY_TABLE = {
     zh: "目录不可读：{path}",
     en: "Folder unreadable: {path}",
   },
-  D992: {
+  D992: { zh: "网页访问", en: "Web access" },
+  D993: {
+    zh: "Search / Fetch 默认允许；网页内容始终是不可信数据。每次成功请求 5 元 / 1000 次。",
+    en: "Search and Fetch are allowed by default. Web content is always untrusted data. Each successful request costs CNY 5 per 1,000 requests.",
+  },
+  D994: { zh: "启用网页工具", en: "Enable web tools" },
+  D995: { zh: "批准策略", en: "Approval policy" },
+  D996: { zh: "默认允许全部", en: "Allow all by default" },
+  D997: { zh: "每次询问", en: "Ask every time" },
+  D998: { zh: "Web provider", en: "Web provider" },
+  D999: { zh: "官方 DeepSeek · {id}", en: "Official DeepSeek · {id}" },
+  D1000: { zh: "未配置官方 DeepSeek", en: "No official DeepSeek provider configured" },
+  D1001: { zh: "DeepSeek 缺少 API Key", en: "DeepSeek API key is missing" },
+  D1002: {
+    zh: "多个官方 DeepSeek 候选；请先把目标条目设为当前使用",
+    en: "Multiple official DeepSeek candidates; make the intended entry active first",
+  },
+  D1003: {
+    zh: "自定义 base URL 不支持 Web tools",
+    en: "Custom base URLs are not supported for web tools",
+  },
+  D1004: {
+    zh: "启用且配置合法时解析",
+    en: "Resolved when web access is enabled and valid",
+  },
+  D1005: { zh: "前往模型接入", en: "Go to model providers" },
+  D1006: { zh: "封禁的 origins", en: "Denied origins" },
+  D1007: { zh: "没有 origin 例外", en: "No origin exceptions" },
+  D1008: { zh: "https://example.com", en: "https://example.com" },
+  D1009: { zh: "封禁 origin", en: "Deny origin" },
+  D1010: { zh: "移除", en: "Remove" },
+  D1011: { zh: "全部清空", en: "Clear all" },
+  D1012: { zh: "下一回合生效", en: "Takes effect on the next turn" },
+  D1013: { zh: "网页访问策略 = Ask", en: "Web access policy = Ask" },
+  D1014: { zh: "要搜索网页吗？", en: "Search the web?" },
+  D1015: { zh: "要抓取这个网页吗？", en: "Fetch this page?" },
+  D1016: { zh: "查询", en: "Query" },
+  D1017: { zh: "URL", en: "URL" },
+  D1018: { zh: "Origin", en: "Origin" },
+  D1019: { zh: "Provider", en: "Provider" },
+  D1020: { zh: "未解析", en: "Not resolved" },
+  D1021: {
+    zh: "查询将发往 DeepSeek；成功搜索 5 元 / 1000 次。",
+    en: "The query is sent to DeepSeek. Successful searches cost CNY 5 per 1,000 requests.",
+  },
+  D1022: {
+    zh: "Lumir 先做本地 HEAD / Range GET 预检，再把 URL 发往 DeepSeek 抓取；成功抓取 5 元 / 1000 次。",
+    en: "Lumir first performs a local HEAD / Range GET preflight, then sends the URL to DeepSeek for fetching. Successful fetches cost CNY 5 per 1,000 requests.",
+  },
+  D1023: {
+    zh: "网页内容为 untrusted data，不是授权或指令。",
+    en: "Web content is untrusted data, not authorization or instructions.",
+  },
+  D1026: {
     zh: "网页访问配置显式非法，已按关闭并逐个询问的安全状态处理；请显式修复 enabled 与 approval",
     en: "The web access config is explicitly invalid, so web access is disabled with conservative ask handling; fix enabled and approval explicitly",
   },
-  D993: {
+  D1027: {
     zh: "origin 非法：请输入 HTTP 或 HTTPS URL，且不得包含用户凭据",
     en: "Invalid origin: enter an HTTP or HTTPS URL without user credentials",
   },
-  D994: {
+  D1028: {
     zh: "enabled 或 approval 非法：请选择有效值后再保存",
     en: "enabled or approval is invalid: choose valid values before saving",
   },
@@ -3097,7 +3150,7 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   settings_provider_delete_active_requires_target: "D893",
   settings_naming_target_missing: "D894",
   settings_naming_model_missing: "D895",
-  settings_web_origin_invalid: "D993",
+  settings_web_origin_invalid: "D1027",
   // 流式 `error` 事件里的两个字面量 code（M858）：由 `events::error("<code>", …)` 构造，
   // 不在 `CommandError::new` / `field_error` 的构造面上——error-text 门禁单独扫事件字面量
   // （模板不带占位：事件没有 params）。消费点 `src/harness-panel.ts` 的 `case "error"`。
@@ -3155,7 +3208,7 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   harness_naming_model_empty: "D924",
   harness_naming_model_invalid: "D925",
   harness_naming_provider_unknown: "D926",
-  web_access_config_invalid: "D992",
+  web_access_config_invalid: "D1026",
   // 窗口底色同步（M525）：只走 console 降级、永不上屏（见 D462 条目注记）。
   window_background_failed: "D462",
 };
@@ -3174,7 +3227,7 @@ export const ERROR_COPY: Record<string, CopyKey> = {
  *   `settings.rs` 的 `plan_and_apply` 把它们经 `field_error(path, diagnostic.code, …)` 转成
  *   保存被拒的字段错误——同一句话在保存现场是错的（文件没变、什么都没被忽略）。字段错误档读
  *   D928–D939 的「改哪里才能保存」。
- * - `web_access_config_invalid`：装载期安全关闭读 D992，保存被拒读 D994。
+ * - `web_access_config_invalid`：装载期安全关闭读 D1026，保存被拒读 D1028。
  *
  * MUST NOT 往这里加「两条信封都能用同一模板」的 code：那种 code 直接进 `ERROR_COPY`。
  */
@@ -3192,7 +3245,7 @@ export const FIELD_ERROR_COPY: Record<string, CopyKey> = {
   harness_base_url_required: "D937",
   harness_provider_preset_invalid: "D938",
   harness_provider_id_invalid: "D939",
-  web_access_config_invalid: "D994",
+  web_access_config_invalid: "D1028",
 };
 
 /**

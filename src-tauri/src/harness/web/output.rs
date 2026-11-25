@@ -66,6 +66,25 @@ pub struct WebProviderIdentity {
     pub provider_id: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct WebApprovalPayload {
+    pub operation: WebOperation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    pub provider: Option<String>,
+    pub provider_id: Option<String>,
+    pub provider_status: super::config::WebProviderStatus,
+    pub trust: WebTrust,
+    pub local_precheck: bool,
+    pub provider_fetch: bool,
+    pub cost_per_1000_success_cny: u16,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct WebEnvelope {

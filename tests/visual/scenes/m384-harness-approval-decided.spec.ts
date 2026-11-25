@@ -716,3 +716,76 @@ test("同 turn 内 call_id 复用（B 也需批准）：新一代配对覆盖旧
   await expect(page.locator(".lumir-hp-tool-row.is-running")).toHaveCount(0);
   await expect(page.locator(".lumir-hp-termwrap .lumir-hp-tool-row")).toHaveCount(2);
 });
+
+test("Web Ask：完整 query / URL、origin、provider、双路外发、费用与 untrusted 同源呈现", async ({ page }) => {
+  await stubPendingApproval(page, {
+    id: "ap-web-fetch",
+    tool: "web_fetch",
+    reason: { kind: "web_access_policy", approval: "ask" },
+    web: {
+      operation: "fetch",
+      url: "https://example.com/a?q=1",
+      origin: "https://example.com",
+      provider: "deepseek",
+      provider_id: "deepseek-work",
+      provider_status: "ready",
+      trust: "untrusted",
+      local_precheck: true,
+      provider_fetch: true,
+      cost_per_1000_success_cny: 5,
+    },
+  });
+  const { card, basis } = await openApprovalPanel(page);
+  await expect(basis).toHaveText("网页访问策略 = Ask");
+  const web = card.locator(".lumir-hp-approval-web");
+  await expect(web).toBeVisible();
+  await expect(web).toContainText("https://example.com/a?q=1");
+  await expect(web).toContainText("https://example.com");
+  await expect(web).toContainText("deepseek-work");
+  await expect(web).toContainText("HEAD / Range GET");
+  await expect(web).toContainText("DeepSeek");
+  await expect(web).toContainText("5 元 / 1000 次");
+  await expect(web).toContainText("untrusted");
+  await expect(card.locator(".lumir-hp-argv")).toContainText("https://example.com/a?q=1");
+  await expect(card.locator('[data-act="approve-remember"]')).toHaveCount(0);
+  await expect(card.locator('[data-act="approve-persist"]')).toHaveCount(0);
+
+  if (process.env.LUMIR_WEB_CANDIDATE_DIR !== undefined) {
+    const { mkdirSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    mkdirSync(process.env.LUMIR_WEB_CANDIDATE_DIR, { recursive: true });
+    await card.screenshot({ path: join(process.env.LUMIR_WEB_CANDIDATE_DIR, "web-ask-fetch.png") });
+  }
+
+  await page.locator('button[data-act="approve"]').click();
+  const row = page.locator(".lumir-hp-termwrap .lumir-hp-tool-row");
+  await expect(row.locator(".lumir-hp-tool-args")).toHaveText("https://example.com/a?q=1");
+  await row.click();
+  await expect(page.locator(".lumir-hp-term-body .lumir-hp-argv")).toContainText("https://example.com/a?q=1");
+});
+
+test("Web Search Ask：完整 query 与可空 provider 不伪造配置身份", async ({ page }) => {
+  await stubPendingApproval(page, {
+    id: "ap-web-search",
+    tool: "web_search",
+    reason: { kind: "web_access_policy", approval: "ask" },
+    web: {
+      operation: "search",
+      query: "  synthetic full query  ",
+      provider: null,
+      provider_id: null,
+      provider_status: "missing",
+      trust: "untrusted",
+      local_precheck: false,
+      provider_fetch: true,
+      cost_per_1000_success_cny: 5,
+    },
+  });
+  const { card } = await openApprovalPanel(page);
+  const web = card.locator(".lumir-hp-approval-web");
+  await expect(web).toContainText("synthetic full query");
+  await expect(web).not.toContainText("deepseek-work");
+  await expect(card.locator(".lumir-hp-argv")).toContainText("synthetic full query");
+  await expect(card.locator('[data-act="approve-remember"]')).toHaveCount(0);
+  await expect(card.locator('[data-act="approve-persist"]')).toHaveCount(0);
+});

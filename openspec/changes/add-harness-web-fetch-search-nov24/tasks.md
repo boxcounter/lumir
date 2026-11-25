@@ -2,16 +2,16 @@
 
 > 历史：2026-11-24 的初始提交只含提案制品；D1 / D2 已由 Alex 批准。原提案期「不得提前实现」约束不描述后续实现提交。
 >
-> 当前：阶段1已落地输出合同、provider 解析、注册闭集合与 settings 后端写通道，并收口取消传递、执行层参数错误、字面量绑定、直接 revision 测试及 origin 同 patch 冲突语义。真实 executor、权限管线、Ask 预览和设置 UI 均归阶段2。当前分支是**本地中间态，不能 merge 或 dogfood**。
+> 当前：阶段1已落地输出合同、provider 解析、注册闭集合与 settings 后端写通道；阶段2已落地 Web 权限管线、Ask 结构化预览与设置 UI。真实 executor、redirect / DNS、默认无卡完整审计及全量场景回扫仍归后续阶段。当前分支是**本地中间态，不能 merge 或 dogfood**。
 >
 > 勾选口径：只勾已完整完成项；部分完成在项内写明阶段归属，不用勾项掩盖未完成面。
 
 ## 1. 网页访问设置、注册与 provider 解析
 
 - [x] 1.1 按 design §2 固化 `web_search` / `web_fetch` 输入 schema、`WebSource`、统一成功 / 失败信封、`trust`、`attempts`、`truncated` 与 `truncated_fields`；先写字段形状与反例测试
-- [ ] 1.2 新增 `harness.web_access.enabled`（缺省 true）与 `.approval`（缺省 `allow_all`，可选 `ask`）及「设置 → 自动化 → 网页访问」区；默认注册并直接执行，显式 false 才不注册、幻觉调用 `tool_unknown`、零网络请求
-- [ ] 1.3 设置快照 / patch / revision 覆盖两键，经既有 `settings_apply` 原子写通道在下一回合生效；恢复默认 / 页级还原 = 删键，关闭不删除 provider、origin deny 或历史，页级还原不顺带清空 deny。**阶段1已完成后端 snapshot / patch / revision 与原子写；设置 UI 和页级还原交互归阶段2，故本项不勾。**
-- [ ] 1.4 设置区复用 provider 单一解析口，显示实际 id / 未配置 / 歧义 / 自定义 base URL，并跳回模型接入对应条目；不显示 / 复制 Key，不建第二 provider 选择器
+- [x] 1.2 新增 `harness.web_access.enabled`（缺省 true）与 `.approval`（缺省 `allow_all`，可选 `ask`）及「设置 → 自动化 → 网页访问」区；默认注册并直接执行，显式 false 才不注册、幻觉调用 `tool_unknown`、零网络请求
+- [x] 1.3 设置快照 / patch / revision 覆盖两键，经既有 `settings_apply` 原子写通道在下一回合生效；恢复默认 / 页级还原 = 删键，关闭不删除 provider、origin deny 或历史，页级还原不顺带清空 deny。
+- [x] 1.4 设置区复用 provider 单一解析口，显示实际 id / 未配置 / 歧义 / 自定义 base URL，并跳回模型接入对应条目；不显示 / 复制 Key，不建第二 provider 选择器
 - [x] 1.5 新增交互主会话的 `WEB_TOOL_NAMES`，把定义与执行接入同一注册 / 已知工具判据；保持 vault `TOOL_NAMES`、cron 白名单、内建 `general` 与子运行闭集合不变
 - [ ] 1.6 更新工具描述与系统固定段：默认 search → fetch、网页为 untrusted data、默认 Allow 来自用户配置而非网页授权、curl 仅用于特殊站点 / 非 HTML，不引入搜索别名
 - [x] 1.7 实现 design §3.1 的 provider 单一解析口：active DeepSeek 优先且不暗换；active 非 DeepSeek 时只接受唯一官方候选；Key / base URL 同出一条目，不消费模型清单
@@ -22,18 +22,18 @@
 
 ## 2. `web_read` 默认 Allow、可选 Ask 与 origin deny
 
-- [ ] 2.1 两件 Web 工具不并入通用只读集合；`approval=allow_all` 在三种权限模式下默认直接执行，`ask` 才进批准闸，`enabled=false` 不注册，其它工具权限矩阵不变
-- [ ] 2.2 Web 判定保持 deny > 既有硬层 > `web_access.approval`；Web 不使用 allow 规则或会话缓存派生授权，不生成 Web 专用持久 allow / 免问动作，deny 永远优先
-- [ ] 2.3 Search 以完整 query 供审计与既有工具级 deny；Fetch 以规范化 origin 供 `web_fetch(origin)` deny 在初始调用与每跳 redirect 重判
-- [ ] 2.4 默认无批准卡时，工具行与结果仍完整保留 query / URL、provider id、Lumir 预检 + DeepSeek 双路外发、费用与 `trust:"untrusted"`；不得只靠 80 字摘要
-- [ ] 2.5 仅在 `approval=ask` 时扩展 `ApprovalPreview` 与事件 / 快照的 Web 载荷：完整 query / URL、origin、provider id、双路外发与计费说明；不添加默认免问 / 持久 allow 动作
-- [ ] 2.6 基础参数形状与 URL scheme / userinfo 校验先于可选批准预览，非法调用不生成携带凭据或无效目标的批准卡；任何 approval 值都不跳过执行期安全校验
-- [ ] 2.7 网页访问区只读既有 `harness.permissions.deny` 中的 `web_fetch(origin)`，默认空；统一经 `settings_apply` patch 的 `add_origin` / `remove_origin` / `clear_origins` 操作 deny，与 Web 两键共用 snapshot / revision / 写锁，不另建 origin 表，不改 allow / 其它 deny / 非规范规则，权限表错形状不重置为空
-- [ ] 2.8 移除 / 清空只恢复当前 approval：默认 `allow_all` 下恢复允许，`ask` 下恢复 Ask；不得暗改 approval 或重写会话历史
+- [x] 2.1 两件 Web 工具不并入通用只读集合；`approval=allow_all` 在三种权限模式下默认直接执行，`ask` 才进批准闸，`enabled=false` 不注册，其它工具权限矩阵不变
+- [x] 2.2 Web 判定保持 deny > 既有硬层 > `web_access.approval`；Web 不使用 allow 规则或会话缓存派生授权，不生成 Web 专用持久 allow / 免问动作，deny 永远优先
+- [ ] 2.3 Search 以完整 query 供审计与既有工具级 deny；Fetch 以规范化 origin 供 `web_fetch(origin)` deny 在初始调用与每跳 redirect 重判。**阶段2只完成初始调用 subject 与 deny；redirect 逐跳重判归后续，故本项不勾。**
+- [ ] 2.4 默认无批准卡时，工具行与结果仍完整保留 query / URL、provider id、Lumir 预检 + DeepSeek 双路外发、费用与 `trust:"untrusted"`；不得只靠 80 字摘要。**默认无卡完整 live 审计归阶段4，故本项不勾。**
+- [x] 2.5 仅在 `approval=ask` 时扩展 `ApprovalPreview` 与事件 / 快照的 Web 载荷：完整 query / URL、origin、provider id、双路外发与计费说明；不添加默认免问 / 持久 allow 动作
+- [x] 2.6 基础参数形状与 URL scheme / userinfo 校验先于可选批准预览，非法调用不生成携带凭据或无效目标的批准卡；任何 approval 值都不跳过执行期安全校验
+- [x] 2.7 网页访问区只读既有 `harness.permissions.deny` 中的 `web_fetch(origin)`，默认空；统一经 `settings_apply` patch 的 `add_origin` / `remove_origin` / `clear_origins` 操作 deny，与 Web 两键共用 snapshot / revision / 写锁，不另建 origin 表，不改 allow / 其它 deny / 非规范规则，权限表错形状不重置为空
+- [x] 2.8 移除 / 清空只恢复当前 approval：默认 `allow_all` 下恢复允许，`ask` 下恢复 Ask；不得暗改 approval 或重写会话历史
 - [ ] 2.9 跨 origin redirect 不另开批准：每跳先校验 scheme / 凭据 / host / origin deny，未封禁才继续 DNS / 连接 / 内容类型校验；封禁目标零连接、零 DeepSeek
-- [ ] 2.10 **全量回扫既有验收场景里的权限 / 批准闸期望并逐条改准**，包括 allow_all、ask、deny、三档模式与 curl；不得只新增 Web 场景
-- [x] 2.11 整块更新 settings「设置写通道」：snapshot 带 Web 状态与 origin deny，revision 覆盖 Web 两键与 allow / deny；同一写锁完成 revision → patch（含 deny）→ 重载校验 → 原子写，clear 只清规范 Fetch origin；clear 与 add / remove 互斥，同一规范 origin 不得同时 add / remove，不同 origin 可同 patch。**阶段1后端写通道与测试已完成；此勾项不表示 1.3 / 1.4 的设置 UI 已完成。**
-- [ ] 2.12 增加独立 `DecisionReason::WebAccessPolicy{approval:"ask"}`，事件 / 快照同源，不显示 ModeDefault 或权限档释义；覆盖 full_access + ask、allow_all 无卡、deny 无卡
+- [ ] 2.10 **全量回扫既有验收场景里的权限 / 批准闸期望并逐条改准**，包括 allow_all、ask、deny、三档模式与 curl；不得只新增 Web 场景。**全量场景回扫归阶段5，故本项不勾。**
+- [x] 2.11 整块更新 settings「设置写通道」：snapshot 带 Web 状态与 origin deny，revision 覆盖 Web 两键与 allow / deny；同一写锁完成 revision → patch（含 deny）→ 重载校验 → 原子写，clear 只清规范 Fetch origin；clear 与 add / remove 互斥，同一规范 origin 不得同时 add / remove，不同 origin 可同 patch。**阶段1完成后端写通道与测试，阶段2已完成设置 UI 与页级还原。**
+- [x] 2.12 增加独立 `DecisionReason::WebAccessPolicy{approval:"ask"}`，事件 / 快照同源，不显示 ModeDefault 或权限档释义；覆盖 full_access + ask、allow_all 无卡、deny 无卡
 
 ## 3. 统一输出、可空 provider、预算与错误映射
 
@@ -82,8 +82,8 @@
 ## 7. 自动化测试（先反例、后实现）
 
 - [ ] 7.1 mock HTTP 断言真实 DeepSeek path / Bearer / JSON 字段与响应映射，不打真实计费 API；每个正向用例附一个能判红的错误形状
-- [ ] 7.2 覆盖默认 enabled=true / allow_all、全局关闭、切换 Ask、provider 显示跳转、origin deny 新增 / 单项移除 / 全部清空与 revision；不写第二份 provider / origin 状态
-- [ ] 7.3 覆盖三档权限模式下默认直接执行、Ask 可选、deny 恒优先、Web allow / 缓存不参与、跨源不另开批准但硬校验不变、curl 旧语义
+- [x] 7.2 覆盖默认 enabled=true / allow_all、全局关闭、切换 Ask、provider 显示跳转、origin deny 新增 / 单项移除 / 全部清空与 revision；不写第二份 provider / origin 状态
+- [ ] 7.3 覆盖三档权限模式下默认直接执行、Ask 可选、deny 恒优先、Web allow / 缓存不参与、跨源不另开批准但硬校验不变、curl 旧语义。**阶段2已覆盖三档 allow_all、full_access+ask、deny、allow / 缓存不参与；跨源与完整硬校验归后续，故本项不勾。**
 - [ ] 7.4 覆盖 design §10.3 全部 SSRF / redirect / DNS / 系统代理反例，含公私混合答案、rebinding、Host / SNI、跨源 deny 零连接、代理零请求与 API 3xx 不泄漏 Bearer
 - [ ] 7.5 以唯一 canary 扫描日志、工具行、panel、JSONL、wire、错误事件和测试输出，确认无 Key；默认无批准卡时 query / URL、provider、费用与 untrusted 说明仍完整可见
 - [ ] 7.6 覆盖可空 provider 三类精确 JSON、Fetch 空标题、301 / 302 / 307 / 308 唯一错误码、逐字段 / 聚合 / 错误截断、2 / 4 MiB、Content-Type、空正文、非 JSON / 坏 JSON / 缺字段
@@ -93,7 +93,7 @@
 - [ ] 7.10 对安全与预算关键断言做反向验证：构造必须 FAIL 的输入并确认测试会红，再恢复正确实现；不得用「读不到 = 空」通过
 - [x] 7.11 覆盖 `web_access` 表 / enabled / approval 的缺失与非法矩阵：`web_access_config_invalid`、enabled=false / ask、零请求、provider / origin deny 不变；合法修复成功、非法 patch 文件不变
 - [x] 7.12 两个同 revision 请求分别改 approval 与 origin deny：只有一笔成功，另一笔 `settings_revision_conflict`，revision 变化且文件不变；单项删除 / 全部清空保留 allow、其它 deny 与非规范规则，错形状权限表不被重置；clear+add / remove、同字面及 canonicalization 后相同的 add / remove 均返回 `settings_patch_invalid` 且文件 / revision 不变，不同 origin 的非规范输入可合法组合
-- [ ] 7.13 覆盖 `full_access + approval=ask` 的独立 `WebAccessPolicy` 依据，断言不是 ModeDefault；allow_all 与 deny 不产卡
+- [x] 7.13 覆盖 `full_access + approval=ask` 的独立 `WebAccessPolicy` 依据，断言不是 ModeDefault；allow_all 与 deny 不产卡
 
 ## 8. 隔离真机验收与文档
 
@@ -103,7 +103,7 @@
 - [ ] 8.4 本地合成 DeepSeek / 目标服务记录真实 HTTP method / path / body / 状态序列 / 请求次数 / 读取字节数，完成 search → fetch、allow_all / ask / deny、redirect / DNS、代理、截断、超时取消与恢复；LLM mock 只驱动调用，不替代 Web HTTP 证据
 - [ ] 8.5 反向断言普通 config、真实 vault、生产 `pnpm tauri dev` 与发布构建不能激活注入，生产仍 official endpoint only 且 URL / DNS 拒绝规则不变
 - [ ] 8.6 新增 / 更新 `scripts/acceptance` 场景与 `COVERAGE.md`，证据落主仓 `.local/acceptance/`；报告逐场景 PASS 计数，不写未验为已验
-- [ ] 8.7 为网页访问设置区、默认无卡审计与可选 Ask 预览的完整 query / URL、origin、provider、费用 / 外发说明、deny 单项 / 清空补结构断言；动视觉面后跑本地 `gate.sh visual`，基线 `--update` 前先由 Alex 过目
+- [ ] 8.7 为网页访问设置区、默认无卡审计与可选 Ask 预览的完整 query / URL、origin、provider、费用 / 外发说明、deny 单项 / 清空补结构断言；动视觉面后跑本地 `gate.sh visual`，基线 `--update` 前先由 Alex 过目。**阶段2设置与 Ask 结构目标已完成；默认无卡审计、完整 visual 和基线过目归后续，故本项不勾。**
 - [x] 8.8 运行 `bash scripts/gate.sh quick`；照抄最终 `GATE RESULT` 原文与退出码，视觉门禁另列，不把 SKIP 并入 PASS
 - [ ] 8.9 同步 `docs/specs/config-reference.md` 的 `harness.web_access.enabled` / `.approval` 字段面、缺失默认与显式非法 fail-closed 语义，以及 settings / deny revision 生效时机；保持行为真源在本 change 的 harness / settings delta，不复制 provider 或 origin 状态
 - [x] 8.10 运行 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`、`bash scripts/docs-check.sh` 与指定 change 的 archive-check，确认 delta 无静默丢段

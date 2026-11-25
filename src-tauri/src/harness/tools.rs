@@ -76,6 +76,7 @@ pub struct ApprovalPreview {
     /// add-cron-conversational-registration design §6.3）：五要素的待批准快照。
     /// 事件载荷键 `cron_task`；`prompt` 全文只出现在这里（不进诊断日志）。
     pub cron_task: Option<serde_json::Value>,
+    pub web: Option<super::web::output::WebApprovalPayload>,
 }
 
 impl ApprovalPreview {
@@ -86,6 +87,7 @@ impl ApprovalPreview {
             revision: None,
             purpose: None,
             cron_task: None,
+            web: None,
         }
     }
 }
@@ -472,6 +474,17 @@ pub fn permission_subject(name: &str, args: &serde_json::Value) -> String {
             .or_else(|| args.get("path").and_then(|v| v.as_str()))
             .unwrap_or("")
             .to_string(),
+        "web_search" => args
+            .get("query")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        "web_fetch" => args
+            .get("url")
+            .and_then(|v| v.as_str())
+            .and_then(|url| super::web::url::Origin::from_url(url).ok())
+            .map(|origin| origin.as_str())
+            .unwrap_or_default(),
         "cron_task_create" | "cron_task_remove" => {
             let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
             let at = args.get("at").and_then(|v| v.as_str()).unwrap_or("");
@@ -582,6 +595,7 @@ pub fn approval_preview(
                 revision: Some(revision),
                 purpose: None,
                 cron_task: None,
+                web: None,
             })
         }
         "vault_create" => {
@@ -592,6 +606,7 @@ pub fn approval_preview(
                 revision: None,
                 purpose: None,
                 cron_task: None,
+                web: None,
             })
         }
         // vault_move：源 → 目标路径对（design §5.1 的批准预览）。
@@ -603,6 +618,7 @@ pub fn approval_preview(
                 revision: None,
                 purpose: None,
                 cron_task: None,
+                web: None,
             })
         }
         // vault_delete：路径（面板侧附「将移入系统废纸篓，可恢复」的说明文案）。
@@ -614,6 +630,7 @@ pub fn approval_preview(
                 revision: None,
                 purpose: None,
                 cron_task: None,
+                web: None,
             })
         }
         "cli_run" => {
@@ -627,8 +644,17 @@ pub fn approval_preview(
                 revision: None,
                 purpose: (!purpose.is_empty()).then(|| purpose.to_string()),
                 cron_task: None,
+                web: None,
             })
         }
+        "web_search" | "web_fetch" => Ok(ApprovalPreview {
+            diff: None,
+            argv: None,
+            revision: None,
+            purpose: None,
+            cron_task: None,
+            web: Some(super::web::approval_preview(name, args, ctx.web)?),
+        }),
         // 定时任务注册（design §6.3）：五要素 + prompt 全文 + 「今天还触不触发」。
         // 预览不校验（校验在执行侧，失败走结构化错误回送模型），只按草稿给出待批准快照。
         "cron_task_create" => Ok(ApprovalPreview {
@@ -640,6 +666,7 @@ pub fn approval_preview(
                 &cron::CronTaskDraft::from_args(args, &ctx.root.display().to_string()),
                 &cron::LocalNow::now(),
             )),
+            web: None,
         }),
         // 删除：id + at（卡片要让人看见删的是哪一条）。
         "cron_task_remove" => {
@@ -658,6 +685,7 @@ pub fn approval_preview(
                     "id": id,
                     "at": at,
                 })),
+                web: None,
             })
         }
         _ => Ok(ApprovalPreview::empty()),
@@ -1642,6 +1670,14 @@ mod tests {
     }
 
     impl super::super::web::WebToolPort for AbortProbe {
+        fn approval_preview(
+            &self,
+            _operation: super::super::web::output::WebOperation,
+            _args: &serde_json::Value,
+        ) -> Result<super::super::web::output::WebApprovalPayload, ToolOutput> {
+            Err(ToolOutput::err("web_args_invalid", "测试 port 不提供预览"))
+        }
+
         fn execute(
             &self,
             operation: super::super::web::output::WebOperation,
