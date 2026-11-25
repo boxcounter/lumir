@@ -8,7 +8,8 @@
 #   2. 目录语境的提示行与候选收窄是 AX 可见文本 + 真索引的联合读数；chromium 场景已覆盖 DOM
 #      逐条文本，这里补「真 webview 下同样成立」。
 #
-# 本组不覆盖：候选的像素宽度与滚动手感（视觉层 / Alex 手感裁决）、深层后代被排除的解析矩阵
+# 本组不覆盖：候选的像素宽度与滚动手感（视觉层 / Alex 手感裁决）、候选高亮行（AX 无稳定读数形态，
+# 判在 chromium 的 quick-open-active-target 场景）、深层后代被排除的解析矩阵
 # （tests/unit/quick-open.test.ts）。
 id: "230d-quick-open-select-all-dir-children"
 item: 655
@@ -106,3 +107,9 @@ steps:
     key: escape
 
 ---
+
+本场景判目录语境的两段式（第一次 Enter 只揭示、第二次打开游标行）与 ⌘A 全选；目录语境的候选
+高亮仍是「首行起步、移动后 Enter 消费游标行」的既有合同，本场景按 Enter 的实际结果验证它（不读
+高亮样式——AX dump 没有稳定读数形态，理由见 230a 的「覆盖边界」）。「高亮行 = Enter 目标」与
+「无对应候选时不高亮」的不变量由 chromium 的 `tests/visual/scenes/quick-open-active-target.spec.ts`
+钉住。

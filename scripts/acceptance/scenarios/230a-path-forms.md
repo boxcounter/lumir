@@ -13,8 +13,9 @@
 #      里这条链路真的通」只有真机按键 → 浮层 → 装载的端到端断言能答。
 #
 # 本组不覆盖（如实登记在正文「覆盖边界」）：行号落点的像素位置（AX 读不到选区）、候选列表的滚动
-# 手感与浮层弹出节奏（归 Alex 手感裁决）、Rust 侧读取拒绝矩阵（cargo test）、解析次序矩阵与
-# ⌘S/只读的结构性判据（tests/unit/quick-open.test.ts 与 tests/visual/scenes/quick-open.spec.ts）。
+# 手感与浮层弹出节奏（归 Alex 手感裁决）、候选高亮行（AX 无稳定读数形态，见「覆盖边界」）、Rust 侧
+# 读取拒绝矩阵（cargo test）、解析次序矩阵与 ⌘S/只读的结构性判据（tests/unit/quick-open.test.ts 与
+# tests/visual/scenes/quick-open.spec.ts）。
 id: "230a-path-forms"
 item: 655
 tier: full
@@ -89,6 +90,53 @@ steps:
       - label: 原标签仍在（新标签意图，不是替换当前标签）
         ax: { has: "/AXRadioButton \\(goto-line-long.md\\)/" }
       - shot: 03-深层路径打开
+
+  - name: 造一条根层 `plan.md`（多候选精确路径的现场：精确路径不是唯一候选）
+    do: vaultWrite
+    file: plan.md
+    content: "# 根 plan\n\nROOT-PLAN-655-MARKER\n"
+  - name: 打开输入面（多候选精确路径）
+    do: keys
+    keys: ["cmd+p"]
+  - name: 输入 `plan.md`（同时命中根层 plan.md 与 notes/deep/plan.md）
+    do: keys
+    keys: ["p", "l", "a", "n", ".", "m", "d"]
+    expect:
+      - label: 查询串落进输入框（逐键注入的正观测；AX 的 Value 是回读面）
+        ax: { has: "/AXComboBox \\(按路径快速打开文件\\) Value: plan\\.md/" }
+  - name: 等两条真实候选落定（watcher 收编根层文件后）
+    do: waitFor
+    waitFor:
+      has: ['/help="plan\.md"/', '/help="notes\/deep\/plan\.md"/']
+    timeoutMs: 15000
+  - name: 多候选精确路径的 Enter 前现场
+    do: settle
+    expect:
+      - label: 根层精确路径是真实候选之一（整行节点）
+        node: { role: AXStaticText, name: "^plan\\.md$", present: true }
+      - label: 深层同名单仍是真实候选（列表只有真实候选）
+        ax: { has: '/help="notes\/deep\/plan\.md"/' }
+      - label: 提示行按真实候选计数（2 条）
+        ax: { has: "命中 2 条" }
+      - label: direct action 伪候选仍不存在
+        ax: { not: "按 Enter 打开" }
+      - shot: 03a-多候选精确路径
+  - name: Enter（未主动移动游标）
+    do: key
+    key: enter
+  - name: 等根层 plan.md 装载
+    do: waitFor
+    waitFor:
+      has: ["ROOT-PLAN-655-MARKER"]
+    timeoutMs: 15000
+  - name: 多候选精确路径的 Enter 落点
+    do: settle
+    expect:
+      - label: Enter 打开的是精确路径（根层 plan.md），不是同名候选里的另一条
+        editor: { has: "ROOT-PLAN-655-MARKER" }
+      - label: 深层同名文件的内容没有进正文（两条 candidate 的 marker 互斥）
+        ax: { not: "DEEP-655-MARKER" }
+      - shot: 03c-多候选精确路径打开
 
   - name: 真负例：vault 内不存在的路径（⌘P）
     do: keys
@@ -274,6 +322,11 @@ Enter 后结果断言不放宽；每组自带启动状态与 fixture，独立诊
   `tests/unit/quick-open.test.ts`。
 - **候选列表的滚动手感、浮层弹出节奏、`↑↓` 游标手感**：归 Alex 手感裁决，不进机器判据
   （候选集合、上限与游标落点在 `tests/visual/scenes/quick-open.spec.ts` 用真实 DOM 钉住）。
+- **候选高亮行不在真机断言**：KimiCU 的 AX dump 没有稳定读数形态能区分「哪一行是高亮行」（同
+  `aria-current` 的先例，见场景 69 的「当前行标记」条）。「高亮行 = Enter 目标、无对应候选时不
+  高亮」这条不变量由 `tests/visual/scenes/quick-open-active-target.spec.ts` 读 `.is-active` /
+  `aria-selected` / `aria-activedescendant` 钉住；本组判的是 Enter 的**实际目标**（多候选精确路径
+  打开根层 `plan.md` 而不是同名候选）与「无伪候选 / 无抢跑空态」，两者互为对照。
 - **Rust 侧的读取拒绝矩阵**（非绝对路径 / `..` / 目录 / 超限 / 非法编码）在 `cargo test` 的
   `read_external_text_ok_and_rejections`，不在真机造现场。
 - **输入法组合期**：本组用逐键 `keys` 注入 ASCII 路径，中文查询串的组合期行为由
@@ -285,5 +338,6 @@ Enter 后结果断言不放宽；每组自带启动状态与 fixture，独立诊
 ## 环境与副作用
 
 - 合成 vault `/tmp/lumir-m102-acceptance` + 隔离 `XDG_CONFIG_HOME`；端口 1430。
-- 本组只在合成 vault 里新建 `notes/deep/plan.md` 与 `notes/v1:2.md`；用户真实 vault 全程只读。
+- 本组只在合成 vault 里新建 `notes/deep/plan.md`、`notes/v1:2.md` 与根层 `plan.md`；用户真实 vault
+  全程只读。
 - 本组不打开 vault 外文件、不重启、不抢前台（`clickEditor` 只点本窗口正文）。

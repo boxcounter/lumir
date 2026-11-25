@@ -13,7 +13,10 @@
 # 区分度阈值（旧 26em 形态 ≈287 < 450 必红；新形态 ≈551 过线）。
 #
 # 不覆盖（如实登记）：目录前缀的省略号是绘制层形态，AX 读不到；「文件名完整」由 chromium 的
-# 结构断言（.lumir-qo-dirs 出省略号 + .lumir-qo-name 不溢出）与 title 全路径承担。
+# 结构断言（.lumir-qo-dirs 出省略号 + .lumir-qo-name 不溢出）与 title 全路径承担。候选高亮行
+# 同样不在本场景：AX dump 没有稳定读数形态（理由见 230a 的「覆盖边界」），高亮不变量由
+# tests/visual/scenes/quick-open-active-target.spec.ts 钉住；本场景的查询 `kickoff` 只有一条候选，
+# Enter 目标与高亮行在真机上恰好同一条。
 id: "231-quick-open-long-path-width"
 item: 702
 tier: full

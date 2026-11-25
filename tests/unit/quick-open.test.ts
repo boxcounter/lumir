@@ -15,7 +15,9 @@ import {
   lookupVaultPath,
   normalizeQuickOpenInput,
   quickOpenAttempts,
+  quickOpenCandidates,
   quickOpenDirectoryHint,
+  quickOpenStartIndex,
   resolveQuickOpen,
   resolveQuickOpenSync,
   splitLineSuffix,
@@ -627,4 +629,109 @@ test("普通搜索与 path:line 在目录能力加入后逐值不变", async () 
   assert.equal(resolution.directory, undefined);
   assert.deepEqual(scans, []);
   assert.deepEqual(probes, ["notes/plan.md:12"]);
+});
+
+// ---------------------------------------------------------------------------
+// 结果区游标的起点：高亮项必须等于 Enter 目标（change quick-open-active-target）
+//
+// 缺陷形态：`apply()` 恒把游标放到首条候选，而 `confirm()` 在用户未主动移动时绕过游标直接打
+// 开精确路径。输入 `a.md` 命中 `A.md` / `a.md` 两条时，屏幕高亮 `A.md`、Enter 打开 `a.md`
+// ——视觉承诺与动作分叉。判据是「起点下标」这一条纯函数：
+//   - `open` 判决 ⇒ 判决行（判决路径不是渲染出的候选则 -1，不高亮任何行）；
+//   - 目录 / 折叠多命中 / 找不到 / 普通过滤 ⇒ 首行（这些判决的 Enter 目标是当前游标行）；
+//   - 探测在途 ⇒ -1：目标未定，不先用首行冒充。
+// ---------------------------------------------------------------------------
+
+test("游标起点：精确路径的唯一候选 ⇒ 高亮该行", () => {
+  const files = ["notes/plan.md"];
+  const res = resolveQuickOpenSync("notes/plan.md", ROOT, env({ files }));
+  assert.deepEqual(res.verdict, { kind: "open", path: "notes/plan.md", external: false });
+  const rows = quickOpenCandidates(res, files);
+  assert.deepEqual(rows.map((row) => row.path), ["notes/plan.md"]);
+  assert.equal(quickOpenStartIndex(res, rows, { probing: false }), 0);
+});
+
+test("游标起点：精确路径有多条候选且判决行不在首位 ⇒ 高亮判决行，不是首行", () => {
+  const files = ["notes/plan.md", "apps/plan.md", "plan.md"];
+  const res = resolveQuickOpenSync("plan.md", ROOT, env({ files }));
+  assert.deepEqual(res.verdict, { kind: "open", path: "plan.md", external: false });
+  const rows = quickOpenCandidates(res, files);
+  assert.deepEqual(rows.map((row) => row.path), ["notes/plan.md", "apps/plan.md", "plan.md"]);
+  assert.equal(quickOpenStartIndex(res, rows, { probing: false }), 2);
+
+  // 同形第二现场：折叠不敏感筛选下，精确命中同样可能落在第二位
+  const folded = ["A.md", "a.md"];
+  const lower = resolveQuickOpenSync("a.md", ROOT, env({ files: folded }));
+  assert.deepEqual(lower.verdict, { kind: "open", path: "a.md", external: false });
+  assert.equal(
+    quickOpenStartIndex(lower, quickOpenCandidates(lower, folded), { probing: false }),
+    1,
+  );
+});
+
+test("游标起点：direct-only（判决路径不在候选里）⇒ 不高亮任何行", async () => {
+  // 索引外文件经探测命中：判决可打开，但渲染出的候选只有同子串的其它文件
+  const e = env({ files: ["a/notes.md"], present: ["notes.md"] });
+  const res = await resolveQuickOpen("notes.md", ROOT, e);
+  assert.deepEqual(res.verdict, { kind: "open", path: "notes.md", external: false });
+  const rows = quickOpenCandidates(res, e.files());
+  assert.deepEqual(rows.map((row) => row.path), ["a/notes.md"]);
+  assert.equal(quickOpenStartIndex(res, rows, { probing: false }), -1);
+
+  // 零候选同理（lazy 精确路径）
+  const lazy = env({ files: [], present: [".local/notes.md"] });
+  const lazyRes = await resolveQuickOpen(".local/notes.md", ROOT, lazy);
+  assert.deepEqual(lazyRes.verdict, { kind: "open", path: ".local/notes.md", external: false });
+  assert.equal(
+    quickOpenStartIndex(lazyRes, quickOpenCandidates(lazyRes, lazy.files()), { probing: false }),
+    -1,
+  );
+});
+
+test("游标起点：普通过滤查询 ⇒ 首行；探测在途 ⇒ -1（目标未定，不亮）", () => {
+  const e = env({ files: ["notes/plan.md", "apps/plan.json"] });
+  const sync = resolveQuickOpenSync("plan", ROOT, e);
+  assert.equal(sync.verdict.kind, "undecided");
+  const rows = quickOpenCandidates(sync, e.files());
+  assert.deepEqual(rows.map((row) => row.path), ["notes/plan.md", "apps/plan.json"]);
+  assert.equal(quickOpenStartIndex(sync, rows, { probing: false }), 0);
+  assert.equal(quickOpenStartIndex(sync, rows, { probing: true }), -1);
+
+  // path:line 的同一次渲染：探测在途（目标可能是阶梯任意一级）⇒ 不亮；落地后由 open 判决接管
+  const files = ["notes/plan.md", "apps/plan.md", "plan.md"];
+  const line = resolveQuickOpenSync("plan.md:12", ROOT, env({ files }));
+  assert.equal(line.verdict.kind, "undecided");
+  const lineRows = quickOpenCandidates(line, files);
+  assert.equal(quickOpenStartIndex(line, lineRows, { probing: true }), -1);
+});
+
+test("游标起点：目录语境 / 折叠多命中 / 找不到 ⇒ 首行；无候选 ⇒ -1", async () => {
+  const dirEnv = env({
+    files: [],
+    scanEntries: {
+      notes: [
+        { path: "notes/plan.md", kind: "file" },
+        { path: "notes/sub", kind: "dir" },
+      ],
+    },
+  });
+  const dirRes = await resolveQuickOpen("notes/", ROOT, dirEnv);
+  const dirRows = quickOpenCandidates(dirRes, dirEnv.files());
+  assert.deepEqual(dirRows.map((row) => row.path), ["notes/plan.md", "notes/sub"]);
+  assert.equal(quickOpenStartIndex(dirRes, dirRows, { probing: false }), 0);
+
+  const amb = resolveQuickOpenSync("A.MD", ROOT, env({ files: ["A.md", "a.md"] }));
+  assert.equal(amb.verdict.kind, "ambiguous");
+  assert.equal(
+    quickOpenStartIndex(amb, quickOpenCandidates(amb, ["A.md", "a.md"]), { probing: false }),
+    0,
+  );
+
+  const miss = await resolveQuickOpen("plan", ROOT, env({ files: ["notes/plan.md"] }));
+  assert.equal(miss.verdict.kind, "missing");
+  assert.equal(
+    quickOpenStartIndex(miss, quickOpenCandidates(miss, ["notes/plan.md"]), { probing: false }),
+    0,
+  );
+  assert.equal(quickOpenStartIndex(miss, [], { probing: false }), -1);
 });

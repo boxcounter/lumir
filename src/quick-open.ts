@@ -417,6 +417,70 @@ export async function resolveQuickOpen(
 }
 
 // ---------------------------------------------------------------------------
+// 纯函数：结果区游标的起点（高亮项必须等于 Enter 目标）
+// ---------------------------------------------------------------------------
+
+/** 结果区的一行：只承载真实文件或目录候选；精确路径的 Enter 直接打开不占列表空间。 */
+export interface QuickOpenRow {
+  path: string;
+  entryKind: QuickOpenEntryKind;
+  external: boolean;
+}
+
+/** 普通候选保持内存索引顺序；目录候选只取当前一层扫描结果。 */
+export function quickOpenCandidates(
+  res: QuickOpenResolution,
+  files: readonly string[],
+): QuickOpenRow[] {
+  const external = res.directory?.external ?? false;
+  if (res.directory !== undefined) {
+    return (res.directory.entries ?? []).map((entry) => ({
+      path: entry.path,
+      entryKind: entry.kind,
+      external,
+    }));
+  }
+  return res.plan.kind === "ok"
+    ? filterIndices(files, res.plan.query).map((source) => ({
+        path: files[source] as string,
+        entryKind: "file" as const,
+        external,
+      }))
+    : [];
+}
+
+/**
+ * 结果区游标的起点（渲染出的 `rows` 下标；-1 = 不高亮任何行）。
+ *
+ * 不变量：**高亮行必须等于 Enter 的目标**；Enter 打开候选之外的精确路径时，结果区不得高亮
+ * 任何一行。起点因此由判决形态决定，不是恒首条：
+ *   - `open`：判决路径就在渲染出的候选里 ⇒ 高亮那一条（`path:line` 也落在它上面——行号是
+ *     打开参数，不是另一行）；不在（索引外 lazy、vault 外、超出渲染上限）⇒ -1，不拿别的
+ *     行冒充目标；
+ *   - 目录语境 / 折叠多命中 / 找不到 / 非法：Enter 消费的是当前游标行（两段式的第二次），
+ *     起点仍是首行；
+ *   - `undecided`：探测在途时目标未定 ⇒ -1（不先用首行冒充）；普通过滤查询没有在途探测，
+ *     Enter 的兜底就是首行 ⇒ 首行。
+ */
+export function quickOpenStartIndex(
+  res: QuickOpenResolution,
+  rows: readonly QuickOpenRow[],
+  opts: { probing: boolean },
+): number {
+  if (rows.length === 0) return -1;
+  if (res.directory !== undefined) return 0;
+  const verdict = res.verdict;
+  switch (verdict.kind) {
+    case "open":
+      return rows.findIndex((row) => row.entryKind === "file" && row.path === verdict.path);
+    case "undecided":
+      return opts.probing ? -1 : 0;
+    default:
+      return 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 文案（deck 取号见 src/copy-data.ts；函数形态的理由同 list-filter：打开时取值）
 // ---------------------------------------------------------------------------
 
@@ -524,13 +588,6 @@ const ITEM_ID_PREFIX = "lumir-qo-opt-";
  * 「输入带合法行号后缀」时发起（见 `shouldProbe`），所以普通打字不会把每个字符变成一次 IPC。
  */
 const PROBE_DEBOUNCE_MS = 120;
-
-/** 结果区的一行：只承载真实文件或目录候选；精确路径的 Enter 直接打开不占列表空间。 */
-interface QuickOpenRow {
-  path: string;
-  entryKind: QuickOpenEntryKind;
-  external: boolean;
-}
 
 /** 行身份（异步补帧后按它把游标留在同一行上）。 */
 function rowKey(row: QuickOpenRow | undefined): string | undefined {
@@ -773,34 +830,20 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
         ? settled.resolution
         : resolveQuickOpenSync(raw, options.root(), lookupEnv());
     const files = options.files();
-    const hits = candidateEntries(res, files);
+    const candidates = quickOpenCandidates(res, files);
     const unsettled = settled === null || settled.raw !== raw;
-    const probe = unsettled && shouldProbe(res, hits);
+    const probe = unsettled && shouldProbe(res, candidates);
     const scan = unsettled && res.directory?.status === "pending";
     probing = probe || scan;
-    apply(res, hits, { preserveCursor: false });
+    apply(res, candidates, { preserveCursor: false });
     if (probing) scheduleProbe(raw, seq);
   }
 
-  /** 普通候选保持内存索引顺序；目录候选只取当前一层扫描结果。 */
-  function candidateEntries(
-    res: QuickOpenResolution,
-    files: readonly string[],
-  ): QuickOpenDirectoryEntry[] {
-    if (res.directory !== undefined) return [...(res.directory.entries ?? [])];
-    return res.plan.kind === "ok"
-      ? filterIndices(files, res.plan.query).map((source) => ({
-          path: files[source] as string,
-          kind: "file",
-        }))
-      : [];
-  }
-
   /** 是否要为这一版结果补一次存在探测（见 `PROBE_DEBOUNCE_MS` 的理由）。 */
-  function shouldProbe(res: QuickOpenResolution, hits: readonly QuickOpenDirectoryEntry[]): boolean {
+  function shouldProbe(res: QuickOpenResolution, candidates: readonly QuickOpenRow[]): boolean {
     if (res.verdict.kind !== "undecided") return false;
     // 候选为空：空态的判据只能等探测落地（I4：异步不抢先落终态）。
-    if (hits.length === 0) return true;
+    if (candidates.length === 0) return true;
     // 带合法行号后缀：`path:行` 是完整的粘贴形态，需要探测出 Enter 的精确落点。普通路径
     // 前缀不探，否则每敲一个字符就是一次 IPC。
     return res.plan.kind === "ok" && res.plan.attempts.length > 1;
@@ -809,16 +852,13 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
   /** 把一份判决画成结果区（真实候选按索引序、至多 `CANDIDATE_LIMIT` 条）。 */
   function apply(
     res: QuickOpenResolution,
-    hits: readonly QuickOpenDirectoryEntry[],
+    candidates: readonly QuickOpenRow[],
     opts: { preserveCursor: boolean },
   ): void {
-    // 异步补帧：用户**主动移动过**游标时按真实候选身份保留位置；没动过时游标回首条候选。
+    // 异步补帧：用户**主动移动过**游标时按真实候选身份保留位置；没动过时游标回策略起点
+    //（判决行 / 首行 / 无高亮，见 `quickOpenStartIndex`）。
     const activeKey = opts.preserveCursor && userMoved ? rowKey(rows[activeIndex]) : undefined;
-    rows = hits.slice(0, CANDIDATE_LIMIT).map((entry) => ({
-      path: entry.path,
-      entryKind: entry.kind,
-      external: res.directory?.external ?? false,
-    }));
+    rows = candidates.slice(0, CANDIDATE_LIMIT);
     fillRows();
     list.hidden = rows.length === 0;
     empty.textContent = res.directory === undefined ? NO_MATCH_TEXT() : quickOpenDirectoryStatusText(res.directory);
@@ -827,13 +867,13 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
       (res.directory === undefined && (probing || res.verdict.kind === "open"));
     if (res.directory !== undefined) {
       setHint(rows.length === 0 ? QUICK_OPEN_USAGE() : quickOpenDirectoryStatusText(res.directory));
-    } else if (hits.length === 0) {
+    } else if (rows.length === 0) {
       setHint(QUICK_OPEN_USAGE());
     } else {
       setHint(
-        hits.length > CANDIDATE_LIMIT
-          ? quickOpenTruncatedText(hits.length)
-          : quickOpenCountText(hits.length),
+        candidates.length > CANDIDATE_LIMIT
+          ? quickOpenTruncatedText(candidates.length)
+          : quickOpenCountText(candidates.length),
       );
     }
     if (rows.length === 0) {
@@ -841,12 +881,12 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
       return;
     }
     if (activeKey !== undefined) {
-      // 异步补帧：把游标留在原来那条真实候选上。
+      // 异步补帧：把游标留在原来那条真实候选上；行没了才回策略起点。
       const at = rows.findIndex((row) => rowKey(row) === activeKey);
-      setActive(at >= 0 ? at : 0);
+      setActive(at >= 0 ? at : quickOpenStartIndex(res, rows, { probing }));
       return;
     }
-    setActive(0);
+    setActive(quickOpenStartIndex(res, rows, { probing }));
     userMoved = false;
   }
 
@@ -896,8 +936,8 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
         probing = false;
         settled = { raw, resolution: res };
         const files = options.files();
-        const hits = candidateEntries(res, files);
-        apply(res, hits, { preserveCursor: true });
+        const candidates = quickOpenCandidates(res, files);
+        apply(res, candidates, { preserveCursor: true });
       })();
     }, PROBE_DEBOUNCE_MS);
   }
@@ -1078,11 +1118,22 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
         return;
       case "open":
         // 用户**主动**移到真实候选 ⇒ 打开该候选；否则 Enter 直接打开精确路径。
-        // 默认停在首条候选不算「移过去」，因此精确路径能力不依赖任何动作行。
+        // 默认停在判决行不算「移过去」，因此精确路径能力不依赖任何动作行。
         if (activeRow !== undefined && userMoved) {
+          // 游标行就是判决路径本身（例如在途探测时按 ↓ 落在唯一候选上）：仍走精确打开，
+          // 保住 `:行` 落点——行与目标同一文件，「只打开游标行」不被违反；若改走 openRow，
+          // 一次光标微动就会静默丢掉粘贴时给的行号。
+          if (activeRow.entryKind === "file" && activeRow.path === verdict.path) {
+            await openDirect(verdict);
+            return;
+          }
           await openRow(activeIndex);
           return;
         }
+        // 结果区与动作同源：判决可能是这次按 Enter 才由探测定下的（在途时按合同不加高亮），
+        // 动作之前先把游标同步到判决行——不允许「打开精确路径、屏幕还亮着别的候选行」。
+        const verdictRow = quickOpenStartIndex(res, rows, { probing: false });
+        if (verdictRow !== activeIndex) setActive(verdictRow);
         await openDirect(verdict);
         return;
       case "ambiguous":

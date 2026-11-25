@@ -235,6 +235,10 @@ Enter 后结果断言不放宽；本组自带启动状态与 fixture，独立诊
   vault 内绝对两形的探测矩阵在 `tests/unit/quick-open.test.ts`，chromium 层另有 `fs_paths_exist`
   桩的同款断言。
   文件名不用 `node_modules/` 是因为 KimiCU 的键名 DSL 没有 `_`（逐键注入的通道限制）。
+- **候选高亮行不在真机断言**：AX dump 没有稳定读数形态能区分高亮行（理由与落点见 230a 的
+  「覆盖边界」同条）。lazy 与 vault 外精确路径在结果区**没有对应候选行**，此时「不高亮任何行、
+  `aria-activedescendant` 缺省」由 `tests/visual/scenes/quick-open-active-target.spec.ts` 钉住；
+  本组判的是 Enter 仍直接打开（lazy 走 vault 内可编辑、外部走只读），能力不随高亮策略缩水。
 - **`/etc/hosts` 的 mtime 判据只读不写**：基线在打开之前记，判的是「这次运行没有写盘调用落到
   它身上」；系统自身对 `/etc/hosts` 的写（用户改配置）会让这条如实判红——跑批期间不要动它。
 
