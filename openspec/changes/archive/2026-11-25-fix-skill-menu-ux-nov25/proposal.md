@@ -48,3 +48,11 @@ Skill 候选当前把 Ctrl+N/P 路由到「关闭候选但不消费」，方向�
    - `pnpm exec openspec validate --all --strict` → `39 passed, 0 failed (39 items)`。
    - `bash scripts/docs-check.sh` → `PASS`（含归档对账、队列齐备、backlog 出口与 80 行上限）。
    - `docs/backlog.md` 的归档跟踪队列有且仅有一条本 change 条目；因文件已在 80 行硬上限，按既有先例移除已归档的 `add-harness-skill-slash-invocation-nov23` 旧条目，记录保留在其归档 proposal 与 git 历史。
+
+### 归档后
+
+- **归档提交**：`7366e06f`（归档目录 `openspec/changes/archive/2026-11-25-fix-skill-menu-ux-nov25/` + 并入后的 living spec 一起提交）。
+- **包装器实际输出**：`Change 'fix-skill-menu-ux-nov25' archived as '2026-11-25-fix-skill-menu-ux-nov25'.`；`harness: update`（`+ 1 added` / `- 1 removed`），`Totals: + 1, ~ 0, - 1, → 0`。
+- **修链读数**：`归档后修链 2 处（扫过 3 篇 Markdown / 2 条相对链接）`——`proposal.md:10` 的 `../../../docs/specs/skill-menu.md → ../../../../docs/specs/skill-menu.md`；`specs/harness/spec.md:7` 的 `../../../../../docs/specs/skill-menu.md → ../../../../../../docs/specs/skill-menu.md`。`openspec-links: PASS（校验 701 条相对链接，全部可达）`。
+- **归档后审计**：`node scripts/openspec-archive-check.mjs --archived fix-skill-menu-ux-nov25` → `PASS（openspec/changes/archive/2026-11-25-fix-skill-menu-ux-nov25：0 条 MODIFIED，对比 0 段；人工恢复 0 段，声明认领 0 段）`（2026-11-25T15:19+0800）。
+- **并行 change 注记**：归档后 `bash scripts/docs-check.sh` 在 `openspec/changes/add-harness-web-fetch-search-nov24/specs/harness/spec.md` 报 `MODIFIED 指向的 requirement 不在 living spec 里：Skill 的混合调用与入口策略`。该 change 仍活跃（proposal-only，0/80 tasks），其 delta 需按本 archive 后的 living 基线 rebase；不影响本 change 的 `--archived` PASS，但合并前必须由该 change 的属主收口。
