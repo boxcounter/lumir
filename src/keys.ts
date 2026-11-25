@@ -909,6 +909,16 @@ export interface KeymapContext {
    * 缺省（不传）时恒真——既有绑定的行为逐条不变。
    */
   commandGate?(command: CommandId, event: KeyboardEvent): boolean;
+  /**
+   * 工作区命令总闸门（change add-first-run-onboarding-nov25）：返回 `true` 时，**已解析到
+   * binding** 的按键在 dispatch 前被统一拦下（preventDefault + 清 chord 状态，不执行命令）。
+   * 非绑定键（Tab / IME / 未绑定字符）照常透传，首启屏的唯一按钮因此仍可键盘到达。
+   *
+   * 必须在 `Keymap.handle` 的 binding 解析之后、`runtime[...]` 之前判：默认表与
+   * `applyKeyConfig` 重装后的表共用同一个 Keymap 类与同一个 context，两条路径天然同门。
+   * 缺省（不传）时恒不阻断——既有绑定的行为逐条不变。
+   */
+  workspaceCommandsBlocked?(): boolean;
 }
 
 /**
@@ -1175,6 +1185,13 @@ export class Keymap {
       if (binding.when !== undefined && !binding.when(event)) return;
       // 命令级命中条件（M240）：与 when 同语义，只是条件归命令实现方（理由见 KeymapContext）。
       if (ctx.commandGate?.(binding.command, event) === false) return;
+      // 首启模式的工作区命令总闸门：已命中的绑定不执行、不产生 DOM / IPC / 布局副作用；
+      // 非绑定键在上面的 `next` 分支已透传，不会走到这里。
+      if (ctx.workspaceCommandsBlocked?.() === true) {
+        event.preventDefault();
+        this.reset();
+        return;
+      }
       event.preventDefault();
       runtime[binding.command](event);
       return;

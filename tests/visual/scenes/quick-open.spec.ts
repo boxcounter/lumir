@@ -419,7 +419,7 @@ test("vault 外路径不存在：不显示 direct action，Enter 后按找不到
 });
 
 test("未装载 vault：⌘P 只给一句人话提示，不打开空浮层", async ({ page }) => {
-  await stubTauri(page, null);
+  await stubTauri(page, null, { lastVault: "/mock/missing-vault" });
   await page.goto("/");
   // 就绪门：空态主界面的「打开 vault」入口在场（不拿 .editor-notice 当就绪信号——它在
   // 本步之前是隐藏的，等它可见等于把被测行为写进前置条件）

@@ -164,3 +164,27 @@ editorPane、`openHarnessPane(false)` 无 JSONL / preflight、877 未被占用�
 
 结果记录在本文件同目录的提交说明与最终 handoff；本提案不跑实现门禁（`gate.sh` / 验收套件），
 因为未改产品代码、测试或基线。
+
+## 8. 实现期验证（2026-11-25）
+
+产品代码与测试已落地；本次只在本 worktree 跑目标层，完整 `gate.sh quick/visual` 留给主会话：
+
+- `npx tsc --noEmit`：通过（含 `src/vite-env.d.ts` 的 `vite/client` 类型）。
+- `pnpm --dir tests/visual exec tsc --noEmit`：通过（视觉桩 / 场景类型）。
+- `pnpm test`：`tests 2042 / pass 2042 / fail 0`。
+- 目标视觉（`LUMIR_VISUAL_PORT=4174`，不碰 Cargo）：
+  - `first-run-empty-state.spec.ts` 3/3 PASS（首启模式居中、命令闸门含原生菜单、tips +
+    默认 harness、只读、打开文档撤下 tips、老用户 D107 + New note）；
+  - `app-main` + `startup-restore` + `m645-startup-surface` 14/14 PASS；
+  - `toc-outline` + `quick-open` + `m149-tabs` + `m293-eink-literal-tokens` +
+    `m831-harness-composer-codemirror` 69/69 PASS。
+- `bash scripts/acceptance/check-suite.sh`：PASS（877 静态契约 + COVERAGE 生成一致）。
+- `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`：`38 passed / 0 failed`。
+- `bash scripts/docs-check.sh`：PASS。
+- `pnpm build` 后 `dist/assets/*.js` grep `__lumirAcceptanceVaultOpen` /
+  `__LUMIR_ACCEPTANCE_VAULT_OPEN__` / `__lumir-acceptance-vault-open` 为 0（production 无桥）。
+- 基线候选（未 `--update`）：`.local/reviews/first-run-onboarding-nov25/baseline-candidates/`
+  下 `first-run-{light,dark,eink}.png` 与 `tips-{light,dark,eink}.png` + README 清单。
+
+剩余（主会话执行）：`877` / `263` 真机验收、完整 `gate.sh quick/visual`、正式视觉基线
+`--update`（Alex 过目候选后）。

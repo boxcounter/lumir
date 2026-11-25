@@ -15,7 +15,7 @@ import { fireVaultRestoreFinished, setBackendVault, stubTauri, type VaultFixture
 // `applyVault` 里的 `startup?.notifyTreeReady()` 删掉，第 3 / 4 条会红在「`#startup` 仍在」。
 
 /** 恢复中：`vault_current` 按后端契约回 vault=null + restore_pending=true（尚未提交）。 */
-const RESTORING: VaultFixture = { entries: [], restorePending: true };
+const RESTORING: VaultFixture = { entries: [], restorePending: true, lastVault: "/mock/restoring-vault" };
 
 /** 恢复完成的终态：已打开一个 vault。 */
 const RESTORED: VaultFixture = {
@@ -53,8 +53,10 @@ test("恢复中 = 启动态 + 阶段行（D95），打开入口在场且不另�
   await expect(page.locator("#app #startup")).toHaveCount(0);
 });
 
-test("未打开终态没有阶段行——启动态撤下后露出既有空态", async ({ page }) => {
-  await stubTauri(page, null);
+test("非首启的未打开终态没有阶段行——启动态撤下后露出既有空态", async ({ page }) => {
+  // 首启模式的 no_vault 不撤下（见 first-run-empty-state.spec.ts）；这里显式给失效的
+  // 非 null last_vault，验证非首启终态仍走既有空态。
+  await stubTauri(page, null, { lastVault: "/mock/missing-vault" });
   await page.goto("/");
   // 终态到达即撤下启动态（reason=no_vault），露出既有空态与打开入口
   await expect(page.locator("#startup")).toHaveCount(0);

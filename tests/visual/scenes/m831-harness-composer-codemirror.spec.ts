@@ -107,7 +107,7 @@ test("新会话成功：composer 新建 EditorState，旧文本与 history 不�
 });
 
 test("无 vault 双挂起新会话：迟到回包不得清掉更新后的输入", async ({ page }) => {
-  await stubTauri(page, null);
+  await stubTauri(page, null, { lastVault: "/mock/missing-vault" });
   await page.addInitScript((providers) => {
     const w = window as unknown as Record<string, any>;
     w.__newSessionResolvers = [];

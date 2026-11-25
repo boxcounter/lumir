@@ -4,14 +4,14 @@ import { test as baseTest } from "@playwright/test";
 import { documentWrites, fireFsEvent, fsMutations, guardPageChannel, stubTauri } from "./tauri-stub";
 import type { VaultFixture } from "./tauri-stub";
 
-// M851（0.13.0 初装验证，M849 报告 §B/E）：
-//   1. 无 vault 首屏不再展示 SAMPLE 演示文档——初始会话是空白未命名文档，左栏 D5/D6 是
-//      唯一且可见的出口；「标题一 / i18n-exempt / Attachment not found / Image read failed」
-//      这些伪文档与错误占位串 MUST NOT 出现在首屏。
-//   2. 空 vault 的正文空态（D107）给一个**可见**的新建入口（D882「New note」），与右键根
-//      菜单的「新建文件…」走同一条 tree 命令；不依赖隐藏右键。
-//   3. 新建时无扩展名输入默认落 `.md`（用户显式写扩展名时原样保留）——判据取后端收到的
-//      实际创建路径，不是输入框里的文本；撞名预检同样按最终落盘名判。
+// 首启与空 vault 两态（change add-first-run-onboarding-nov25；M851 的旧口径保留在非首启）：
+//   1. **真正首次启动**（启动快照 last_vault === null）：启动态进入首启模式——只有唯一
+//      「添加 vault」主操作，整窗居中，无骨架 / 产品标记 / 阶段行 / 树空态；#app inert，
+//      命令闸门阻断设置 / harness / 键位面板（含原生菜单来源）。
+//   2. **首启空工作区**（首个 vault 无标签）：content pane 出 tips + 默认 harness；无
+//      D107 / D882 / D369；打开首个文档后 tips 消失，编辑器恢复可编辑。
+//   3. **非首启空 vault**（老用户）：仍走 M851 的 D107 + 可见「New note」入口；新建默认 .md、
+//      显式扩展名保留。判据取后端收到的实际创建路径，不是输入框里的文本。
 //
 // 判据落点一律是「用户可见文本 / 后端调用参数」：前者在 DOM 上直接读，后者读桩的
 // `__fsMutations` / `__documentWrites` 记录。没有新增像素基线（「保持视觉合同」= 既有整页
@@ -35,31 +35,136 @@ const EMPTY_VAULT: VaultFixture = {
   config: { language: "en" },
 };
 
-pageTest("无 vault 首屏：空白正文 + 可见 Open vault，不再展示 SAMPLE / 内部串 / 错误占位", async (page) => {
+pageTest("真首启：启动态首启模式唯一 Add vault，整窗居中，无树空态/正文", async (page) => {
   await stubTauri(page, null);
+  // 原生菜单事件的测试通道：stubTauri 已把 __TAURI_INTERNALS__ 装好，这里包一层记录
+  // app:menu_command 的 listener，再按 Tauri 的真实回调形状触发一次。
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, any>;
+    w.__menuListeners = [];
+    const invoke = w.__TAURI_INTERNALS__.invoke;
+    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
+      const result = await invoke(cmd, args);
+      if (cmd === "plugin:event|listen" && args?.event === "app:menu_command") {
+        (w.__menuListeners as number[]).push(args.handler as number);
+      }
+      return result;
+    };
+    w.__fireMenuCommand = (payload: string) => {
+      for (const id of w.__menuListeners as number[]) {
+        w.__TAURI_INTERNALS__.runCallback(id, { event: "app:menu_command", id, payload });
+      }
+    };
+  });
   await page.goto("/");
 
-  // 左栏空态是首屏唯一的指引面（D5 文案 + D6 按钮），且按钮在可点元素上（不是纯文本）。
-  const empty = page.locator(".ft-empty");
-  await expect(empty).toBeVisible();
-  await expect(empty).toContainText("打开一个目录作为 vault，开始浏览全部文件。");
-  await expect(page.getByRole("button", { name: "打开 vault" })).toBeVisible();
-
-  // 正文是可读的空白未命名文档（CM 仍在场、不是被覆盖层藏起来的空转读写面）。
-  const content = page.locator(".cm-content");
-  await expect(content).toBeVisible();
-  expect((await content.textContent())?.trim() ?? "").toBe("");
-
-  // SAMPLE 的判据串一条都不许在（正观测：上面已确认正文可读、左栏空态在场，负向断言
-  // 不是对着「读不到」空转——REVIEW.md『读不到当成空』条）。
-  for (const junk of ["标题一", "i18n-exempt", "Attachment not found", "Image read failed"]) {
-    await expect(content, `首屏正文不得含 ${junk}`).not.toContainText(junk);
-  }
-  await expect(page.locator(".editor-notice")).toBeHidden();
+  const startup = page.locator("#startup.startup-first-run");
+  await expect(startup).toBeVisible();
+  await expect(page.locator(".startup-sidebar")).toHaveCount(0);
+  await expect(page.locator(".startup-mark")).toHaveCount(0);
+  await expect(page.locator(".startup-phase")).toHaveCount(0);
+  const open = page.getByRole("button", { name: "添加 vault" });
+  await expect(open).toBeVisible();
+  // 首启屏不是 content pane：既有树空态 / 树行 / 标签栏都不出现
+  await expect(page.locator(".ft-empty")).toHaveCount(0);
+  await expect(page.locator(".ft-row")).toHaveCount(0);
   await expect(page.locator(".tabstrip")).toBeHidden();
+  await expect(page.locator(".startup-titlebar")).toHaveAttribute("data-tauri-drag-region", "deep");
+
+  const geometry = await page.evaluate(() => {
+    const app = document.querySelector<HTMLElement>("#app");
+    const button = document.querySelector<HTMLElement>(".startup-open");
+    if (app === null || button === null) throw new Error("首启面 / #app 缺元素");
+    const r = button.getBoundingClientRect();
+    return {
+      appInert: app.inert,
+      appAriaHidden: app.getAttribute("aria-hidden"),
+      centerX: r.x + r.width / 2,
+      centerY: r.y + r.height / 2,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    };
+  });
+  expect(geometry.appInert).toBe(true);
+  expect(geometry.appAriaHidden).toBe("true");
+  expect(Math.abs(geometry.centerX - geometry.viewportWidth / 2)).toBeLessThanOrEqual(1.5);
+  expect(Math.abs(geometry.centerY - geometry.viewportHeight / 2)).toBeLessThanOrEqual(1.5);
+
+  // 命令闸门：三条全局键都不产生工作区 DOM / 布局副作用；首启面仍只有唯一按钮
+  await page.keyboard.press("Meta+,");
+  await page.keyboard.press("Meta+Shift+A");
+  await page.keyboard.press("Meta+/");
+  await expect(page.locator(".lumir-set-overlay")).toBeHidden();
+  await expect(page.locator(".lumir-bindings-overlay")).toBeHidden();
+  await expect(page.locator(".pane-divider")).toHaveCount(0);
+  await expect(page.locator("#startup.startup-first-run")).toBeVisible();
+  await expect(page.getByRole("button", { name: "添加 vault" })).toBeVisible();
+
+  // 原生菜单来源（settings / describe-bindings）同样被闸门挡住。
+  await page.evaluate(() => (window as unknown as { __fireMenuCommand: (payload: string) => void }).__fireMenuCommand("settings"));
+  await page.evaluate(() => (window as unknown as { __fireMenuCommand: (payload: string) => void }).__fireMenuCommand("describe-bindings"));
+  await expect(page.locator(".lumir-set-overlay")).toBeHidden();
+  await expect(page.locator(".lumir-bindings-overlay")).toBeHidden();
+  await expect(page.locator("#startup.startup-first-run")).toBeVisible();
 });
 
-pageTest("空 vault 首屏：D107 可执行引导 + 可见 New note；新建默认 .md、显式扩展名保留", async (page) => {
+/** 首启 workspace：有文件但没有会话历史——按首启规则出 tips + 默认 harness。 */
+const FIRST_RUN_VAULT: VaultFixture = {
+  root: "/Users/alex/first-run-vault",
+  vault_id: "first-run-vault",
+  entries: [{ path: "note.md", kind: "file", size: 20, mtime_ms: 1 }],
+  files: { "note.md": "# Note\n" },
+  lastVault: null,
+  config: { language: "en" },
+};
+
+pageTest("首启空工作区：tips + 默认 harness，无 D107 / New note / D369；打开文档 tips 消失", async (page) => {
+  await stubTauri(page, FIRST_RUN_VAULT);
+  await page.goto("/");
+
+  const tips = page.locator(".first-run-tips");
+  await expect(tips).toBeVisible();
+  await expect(tips).toContainText("Get started");
+  await expect(tips).toContainText("Quick open a file");
+  await expect(tips).toContainText("press ⌘/ for all shortcuts");
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await expect(page.locator(".pane-divider")).toHaveCount(1);
+  await expect(page.locator(".editor-notice")).toBeHidden();
+  expect(await page.evaluate(() => document.querySelector<HTMLElement>("#app")?.inert)).toBe(false);
+  await expect(page.locator(".pane-empty-guide")).toBeHidden();
+  await expect(tips).not.toContainText("No files opened in this vault yet");
+  await expect(tips).not.toContainText("Nothing open in this pane yet");
+
+  // tips 只覆盖 root doc pane；harness 是另一个 pane，不被 tips 盖住。
+  const structure = await page.evaluate(() => {
+    const tipsEl = document.querySelector<HTMLElement>(".first-run-tips");
+    const harness = document.querySelector<HTMLElement>(".lumir-harness");
+    const tipsPane = tipsEl?.closest<HTMLElement>(".editor-pane");
+    const harnessPane = harness?.closest<HTMLElement>(".editor-pane");
+    if (tipsEl === null || harness === null || tipsPane === null || harnessPane === null) {
+      throw new Error("tips / harness / pane 缺元素");
+    }
+    const t = tipsEl.getBoundingClientRect();
+    const h = harness.getBoundingClientRect();
+    return {
+      samePane: tipsPane === harnessPane,
+      tipsRight: t.right,
+      harnessLeft: h.left,
+      editable: document.querySelector<HTMLElement>(".cm-content")?.getAttribute("contenteditable"),
+    };
+  });
+  expect(structure.samePane).toBe(false);
+  expect(structure.tipsRight).toBeLessThanOrEqual(structure.harnessLeft + 1);
+  expect(structure.editable).toBe("false");
+
+  await page.locator('.ft-row[title="note.md"]').click();
+  await expect(tips).toHaveCount(0);
+  const editorContent = page.locator(".editor-pane .cm-content").first();
+  await expect(editorContent).toContainText("Note");
+  expect(await editorContent.getAttribute("contenteditable")).not.toBe("false");
+});
+
+pageTest("老用户空 vault：D107 可执行引导 + 可见 New note；新建默认 .md、显式扩展名保留", async (page) => {
   await stubTauri(page, EMPTY_VAULT);
   await page.goto("/");
 

@@ -2986,6 +2986,24 @@ const COPY_TABLE = {
     zh: "enabled 或 approval 非法：请选择有效值后再保存",
     en: "enabled or approval is invalid: choose valid values before saving",
   },
+
+  // D1029–D1042：首启引导（change add-first-run-onboarding-nov25）。首启模式按钮只在
+  // `last_vault === null` 的启动面上出现；tips 的键位字形从 KEY_BINDINGS 派生，这里只存
+  // 可见标签 / 标题 / 脚注 / 区域读屏名，不存 `⌘P` 一类键位字符串。
+  D1029: { zh: "添加 vault", en: "Add vault" },
+  D1030: { zh: "开始使用", en: "Get started" },
+  D1031: { zh: "快速打开文件", en: "Quick open a file" },
+  D1032: { zh: "文件内查找", en: "Find in the current file" },
+  D1033: { zh: "大纲", en: "Outline" },
+  D1034: { zh: "切换或新增 vault", en: "Switch or add a vault" },
+  D1035: { zh: "打开或收起对话", en: "Open or hide the chat pane" },
+  D1036: { zh: "设置", en: "Settings" },
+  D1037: { zh: "插入双链", en: "Insert a wikilink" },
+  D1038: { zh: "摘录到对话", en: "Quote to chat" },
+  D1039: { zh: "默认键位 · ⌘/ 查看全部", en: "Defaults · press ⌘/ for all shortcuts" },
+  D1040: { zh: "首次使用提示", en: "Getting started tips" },
+  D1041: { zh: "选中文本", en: "Select text" },
+  D1042: { zh: "右键左栏 vault 名", en: "Right-click the vault name" },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

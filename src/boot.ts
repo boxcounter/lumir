@@ -60,7 +60,10 @@ async function boot(): Promise<void> {
   const theme = themeOf(snapshot);
   if (theme !== null) document.documentElement.dataset.theme = theme;
 
-  const surface = mountStartupSurface({ productName });
+  // 首启判定只取这一份启动快照：此后 `last_vault` 被写回也不复算（change
+  // add-first-run-onboarding-nov25）。配置读取失败（snapshot === null）按非首启保守处理。
+  const firstRun = snapshot !== null && snapshot.config.last_vault === null;
+  const surface = mountStartupSurface({ productName, firstRun });
   await nextPaint();
   surface.markFirstFrame();
 

@@ -111,3 +111,37 @@
   background: var(--frame);
   border-top: 1px solid var(--border);
 }
+
+/* ── 首启模式（change add-first-run-onboarding-nov25）────────────────────────
+   真正首次启动：只有唯一「添加 vault」主操作，整窗水平 / 垂直居中。不建骨架 /
+   产品标记 / 阶段行；顶部保留透明拖拽带（z-index 高于内容层），窗口仍可拖动。
+   颜色全部取既有 token，三主题同构；零 animation / transition。 */
+.startup-first-run .startup-body {
+  display: block;
+}
+
+.startup-first-run .startup-content {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+}
+
+.startup-first-run .startup-titlebar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  height: var(--layout-titlebar-h);
+  background: transparent;
+  border-bottom: 0;
+}
+
+.startup-first-run .startup-modeline {
+  display: none;
+}

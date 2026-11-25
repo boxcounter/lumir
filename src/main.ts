@@ -9,6 +9,8 @@ import type { EditorView } from "@codemirror/view";
 import { applyKeyOverrides, BLOCK_SCROLL_CLASS, COMPOSER_TEXT_COMMAND_IDS, EDITOR_COMMAND_IDS, KEY_BINDINGS, Keymap, TAB_GOTO_IDS } from "./keys";
 import type { CommandId, CommandRunner, CommandRuntime, EditorCommandId, KeyBinding, KeyOverrides } from "./keys";
 import { DEFAULT_SPLIT_RATIO, clampSplitRatio, createDividerDrag, createPaneLayout, emptyPaneGuideVisible, paneBlocksInput } from "./pane-layout";
+import { createFirstRunTips } from "./first-run-tips";
+import { createFirstRunClaim } from "./first-run-claim";
 import type { DividerDrag, PaneId, PaneKind } from "./pane-layout";
 import { DEFAULT_AUTO_INDENT } from "./enter-indent";
 import { DEFAULT_FONT_SIZE } from "./typography";
@@ -173,6 +175,14 @@ import "./search-panel.css";
 import "./harness-panel.css";
 // 设置面板的样式单列一个文件（change add-model-automation-settings-oct24 tasks §5.10）。
 import "./settings-panel.css";
+
+declare global {
+  interface Window {
+    /** 仅验收实例：由 vite.config.ts 的 vault-open 驱动调用，内部走 switchToVault 完整链路。
+     *  普通 dev / production 不安装（DEV + 验收注入双约束）。 */
+    __lumirAcceptanceVaultOpen?: (path: string) => Promise<void>;
+  }
+}
 
 const app = document.querySelector<HTMLElement>("#app");
 if (!app) {
@@ -643,6 +653,19 @@ function reconcilePaneLedger(): void {
   paneLayout.activate(activeId); // openTab / activateTab 会翻活跃指针，对账后还原
 }
 
+// 首启模式（change add-first-run-onboarding-nov25）的模块级状态。声明放在
+// `renderAllTabStrips` 之前：该函数在模块求值早期就会被调用，读取 `firstRunTipsVisible`
+// 时不能处在 TDZ。
+//
+// `firstRunPending` 是启动快照的一次性判定；`firstRunClaim` 在首个 `applyVault` 入口
+// 领取（记录 vaultId，后续 applyVault 不覆盖）；`consume` 表示本次启动的 tips 已经出现
+// （打开文档后不再回来），`clear` 在首个 applyVault 的恢复收尾清掉 claim。
+let firstRunPending = false;
+let firstRunCommandsBlocked = false;
+let firstRunTipsVisible = false;
+let firstRunTipsEl: HTMLElement | null = null;
+const firstRunClaim = createFirstRunClaim();
+
 /** 全部 pane 的标签槽各重画一遍（dirty 跃迁 / 同步点）：dirty 点是逐标签的，
  *  后台 pane 的标签条也要跟着变。harness pane 显式跳过——它没有标签条 / 引导 / 编辑器
  *  可编辑性，「空 pane 只读」条款只适用文档 pane（它的 composer 是合法输入落点，
@@ -673,14 +696,17 @@ function renderAllTabStrips(): void {
     // 路径 `view.dispatch` 合法；实测「分栏后在草稿里 ⌘Z 回基线」：闸门如期施加、零报错。
     editor.setSessionEditable(
       foreground,
-      !paneBlocksInput(split, hasTabs, foreground.dirty) && isEditablePath(foreground.path),
+      !paneBlocksInput(split, hasTabs, foreground.dirty) &&
+        isEditablePath(foreground.path) &&
+        !firstRunTipsVisible,
     );
-    assembly.guideEl!.hidden = !emptyPaneGuideVisible(
-      split,
-      hasTabs,
-      foreground.dirty,
-      vaultLoaded, // 未装 vault 不显示（Alex 2026-10-04 裁决：左栏无文件可点时指引不成立）
-    );
+    assembly.guideEl!.hidden =
+      !emptyPaneGuideVisible(
+        split,
+        hasTabs,
+        foreground.dirty,
+        vaultLoaded, // 未装 vault 不显示（Alex 2026-10-04 裁决：左栏无文件可点时指引不成立）
+      ) || firstRunTipsVisible;
   }
 }
 
@@ -1726,7 +1752,38 @@ function showEmptyVaultState(): void {
   renderNotice(t("D107"), { label: t("D882"), run: () => tree.beginCreate("", "file") });
 }
 
+/** 首启 tips 的 DOM 重绘（语言切换走 relabelNotice；不重开 harness、不改 flag）。 */
+function renderFirstRunTips(): void {
+  if (!firstRunTipsVisible) return;
+  const next = createFirstRunTips();
+  if (firstRunTipsEl === null) shell.editorPane.append(next);
+  else firstRunTipsEl.replaceWith(next);
+  firstRunTipsEl = next;
+}
+
+/** 首启空态：tips 挂 root doc pane（不是 editorRow 的 .editor-notice，后者会盖住 harness）。
+ *  flag 先置真，`openHarnessPane(false)` 内部的 syncActiveDocument → renderAllTabStrips
+ *  因此已经看到 D369 门，不会先点亮引导再撤下。 */
+function showFirstRunTips(): void {
+  firstRunTipsVisible = true;
+  renderFirstRunTips();
+  widthDrag.setVisible(false);
+  relabelNotice = renderFirstRunTips;
+  renderAllTabStrips();
+}
+
+/** 撤下 tips：清 flag、移除 DOM、恢复 widthDrag 与可编辑性；由 showEditor 统一调用。 */
+function hideFirstRunTips(): void {
+  if (!firstRunTipsVisible) return;
+  firstRunTipsVisible = false;
+  firstRunTipsEl?.remove();
+  firstRunTipsEl = null;
+  widthDrag.setVisible(true);
+  renderAllTabStrips();
+}
+
 function showEditor() {
+  if (firstRunTipsVisible) hideFirstRunTips();
   relabelNotice = undefined;
   notice.hidden = true;
   editor.view.dom.style.display = "";
@@ -2319,7 +2376,7 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
     const session = editor.sessionForPath(path);
     if (session !== undefined) activateSessionInOwnerPane(session);
   },
-  onEmptyVault: () =>
+  onEmptyVault: () => {
     // 一个标签都没恢复出来时的落点。两种到达方式（M283 起）：
     //   1. 会话里没有任何可用条目（或本来就没有历史）⇒ **空 vault 首入态**：标签栏本来就空
     //      （没有会话就一个壳都不建），正文给 D107 的引导与可见的「新建笔记」入口；
@@ -2327,9 +2384,22 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
     //      大文件）⇒ 标签栏里确实有标签，**不说「还没有打开的文件」这句假话**，只撤下覆盖层
     //      让标签栏自己说话（每个标签的真实状态在它被点开时由打开链路的既有提示呈现——
     //      那时 `quiet=false`，失败会上屏）。
-    editor.sessions().some((session) => session.path !== undefined)
-      ? showEditor()
-      : showEmptyVaultState(),
+    if (editor.sessions().some((session) => session.path !== undefined)) {
+      showEditor();
+      return;
+    }
+    // 首启资格在 applyVault 入口领取；这里只消费「当前 vault 是首个领取者且未消费」的一次。
+    // 首个 vault 恢复出标签时不会走到这里，资格在 applyVault 的恢复收尾被清掉，后续空
+    // vault 不继承。
+    if (loadedVaultId !== null && firstRunClaim.matches(loadedVaultId)) {
+      firstRunClaim.consume();
+      showFirstRunTips();
+      openHarnessPane(false);
+      renderAllTabStrips();
+      return;
+    }
+    showEmptyVaultState();
+  },
   warn: (text) => toast(text),
 });
 
@@ -3935,6 +4005,10 @@ const keymapContext = {
   // `[keys]` 覆盖产出的绑定没有 `when` 字段——条件因此落在命令实现方。不满足时返回 false，
   // 分发器**不消费事件**、不 preventDefault，同名按键照旧走原生路径（spec 的
   // 「命中条件不满足时不消费事件」scenario）。
+  // 首启模式的工作区命令总闸门（change add-first-run-onboarding-nov25）：启动面在场且
+  // firstRunPending 时，所有已命中的绑定在 dispatch 前被拦下；默认表与 applyKeyConfig
+  // 重装后的表共用这个 context，因此重绑路径同门。首启屏的「添加 vault」不走命令层。
+  workspaceCommandsBlocked: () => firstRunCommandsBlocked,
   // 遮罩已开时恒为真：「再执行一次同一命令关闭」这条关闭路径必须可达——无论 caret 当时在哪。
   // M277 的两条命令同款：`code-block.toggle-fullscreen` 在遮罩已开时恒真（toggle 关闭可达），
   // 否则要求命中一块代码块（caret 在块内或块的横滚容器持焦——容器持焦那条是 DOM 事实，
@@ -4086,6 +4160,9 @@ const MENU_COMMANDS: Record<string, CommandRunner | undefined> = {
   settings: () => settingsPanel.toggle(),
 };
 onMenuCommand((payload) => {
+  // 与键盘分发同一个总闸门：原生菜单（设置 / 键位速查 / 关闭 / 撤销 / 全选）在首启模式
+  // 同样不得执行命令。菜单事件没有 DOM 事件可 preventDefault，早退即不执行。
+  if (firstRunCommandsBlocked) return;
   MENU_COMMANDS[payload]?.();
 }).catch(() => {}); // 无 Tauri 后端（纯浏览器预览）时静默忽略
 
@@ -4282,6 +4359,18 @@ async function switchToVault(path: string): Promise<void> {
   });
 }
 
+// 仅验收实例的首个 vault 打开桥（change add-first-run-onboarding-nov25）：vite.config.ts 的
+// `apply:"serve"` 插件只在 LUMIR_ACCEPTANCE_PORT + LUMIR_ACCEPTANCE_VAULT_OPEN=1 时注入
+// inline flag 与驱动脚本；main 只有同时满足 `import.meta.env.DEV` 与 flag 时才装桥。桥内部
+// 就是 switchToVault（loadUserVault → vaultOpenPath → applyVault），不重启 / 不 reload，
+// 因此保留本次启动的 firstRunPending；普通 dev 与 production 都不安装。
+const acceptanceVaultOpenEnabled =
+  import.meta.env.DEV &&
+  (globalThis as { __LUMIR_ACCEPTANCE_VAULT_OPEN__?: boolean }).__LUMIR_ACCEPTANCE_VAULT_OPEN__ === true;
+if (acceptanceVaultOpenEnabled) {
+  window.__lumirAcceptanceVaultOpen = (path: string) => switchToVault(path);
+}
+
 /** 新增 vault（浮层底部的唯一新增入口）：先过 dirty 前置门，再走既有目录选择器链路。
  *  取消选择器不改变任何上下文；命中 remap 门时沿用既有两出口浮条，不因列表而绕过。 */
 function requestAddVault(): void {
@@ -4411,6 +4500,11 @@ async function applyVault(
   vaultId: string,
   restored: boolean,
 ): Promise<void> {
+  // 首启资格在**入口**领取，早于任何 await：后续 applyVault（快速切到第二个 vault）只能
+  // 看到 `firstRunClaim.claimed === true`，不会覆盖首个 claim；第一个 applyVault 的恢复
+  // 收尾无论有无标签都清 claim。这样第二个空 vault 即使先完成空态恢复也拿不到 tips /
+  // 默认 harness。
+  if (firstRunPending) firstRunClaim.claim(vaultId);
   // 切换前 flush 当前 vault 的会话（MUST NOT 只依赖防抖：切走之后再没有「当前 vault」这个
   // 上下文，写不成了）。启动路径上还没有当前 vault，flushSession 直接返回。阅读位置同一批
   // flush（M194）：键还是旧 vault 的 id，来得及写走。
@@ -4484,6 +4578,8 @@ async function applyVault(
   void switcher.onVaultLoaded(vaultId, entries).finally(() => {
     phaseMs(restoreAt, "vault_load_restore", true);
     vaultLoading.end();
+    // 首个 applyVault 的恢复收尾：无论是否恢复出标签都消费资格，后续 vault 不得继承。
+    firstRunClaim.clear(vaultId);
   });
 }
 
@@ -4543,6 +4639,15 @@ onFsEntryChanged((changes) => {
 // 负责把它接到既有收口上——「打开 vault」入口、两个撤下信号、安全阀撤下后的既有恢复中态。
 // 句柄经 src/startup-surface.ts 的单例交接：主模块是动态装载的，拿不到启动层的局部变量。
 const startup = startupSurface();
+firstRunPending = startup?.firstRun === true;
+
+// 首启模式在场期间工作区尚未进入：inert 根取 #app（与设置面板同一个 inertRoot），
+// 并打开命令总闸门（inert 挡不住 window 键位与原生菜单）。撤下时在 onDismiss 里统一清。
+if (firstRunPending && startup?.visible === true) {
+  firstRunCommandsBlocked = true;
+  app.inert = true;
+  app.setAttribute("aria-hidden", "true");
+}
 
 // 恢复中提示（文案-Copy.md D95）：启动态的阶段行（恢复进行中）与安全阀撤下后的既有恢复中态
 // 共用这一句——同一等待只有一个文案真源，不新增文案条目。
@@ -4564,7 +4669,10 @@ startup?.setOpenHandler(() => requestAddVault());
 // 安全阀撤下（design §6 的「安全阀超时」行）：撤下启动态并露出既有恢复中态（D95 + 打开入口），
 // 用户可继续等或另选 vault。降级撤下不补这一层——那时既有启动路径由启动层 / 浏览器照常接管。
 startup?.onDismiss((reason) => {
-  if (reason !== "timeout") return;
+  firstRunCommandsBlocked = false;
+  app.inert = false;
+  app.removeAttribute("aria-hidden");
+  if (reason !== "timeout" || firstRunPending) return;
   if (lastVaultStatus === null || lastVaultStatus.restore_pending) tree.showEmpty(RESTORING_NOTICE());
 });
 
@@ -4581,17 +4689,19 @@ function refreshVaultStatus(): Promise<void> {
           // MODIFIED），阶段行复用 D95——不再建未打开空态（同一等待不两处呈现）。
           startup?.setPhase(RESTORING_NOTICE());
         } else {
-          // 未打开终态：启动态的第二个撤下信号，随后露出既有空态与提示。
+          // 未打开终态：非首启的第二个撤下信号，随后露出既有空态与提示。首启模式不撤下，
+          // 也不铺树空态——启动面就是首启屏，直到用户添加首个 vault。
           startup?.notifyNoVault();
-          tree.showEmpty(status.notice);
+          if (!firstRunPending) tree.showEmpty(status.notice);
         }
       }
     })
     .catch((e) => {
       if (!vaultLoaded) {
-        // 「读不到」不是「未打开终态」（REVIEW.md『读不到当成空』条）：这里只铺既有错误空态，
-        // 不因一次读取失败给启动态发 no_vault 信号——终态判据只认后端给出的真终态，读失败
-        // 由安全阀兜底（最坏情形是启动面多留到 10s，而不是把未知当成结论）。
+        // 「读不到」不是「未打开终态」（REVIEW.md『读不到当成空』条）：首启模式先降级让路，
+        // 再铺既有错误空态——错误必须可见，不能被启动面盖住。非首启同样只铺错误空态，
+        // 不给启动态发 no_vault 信号（读失败由安全阀兜底）。
+        if (firstRunPending) startup?.degrade();
         tree.showEmpty(errorMessage(e));
       }
     });

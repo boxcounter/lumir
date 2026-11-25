@@ -1348,3 +1348,52 @@ test("text 面命令可经 [keys] 重绑 / 解绑，作用域仍派生为 text",
     undefined,
   );
 });
+
+test("Keymap：workspaceCommandsBlocked 阻断已绑定命令（首启模式），非绑定键仍透传", () => {
+  const host = fakeWindow();
+  const { runtime, runs } = recordingRuntime();
+  const bindings: KeyBinding[] = [
+    { key: "Cmd-,", command: "app.settings-open", scope: "global", docKey: "D865" },
+    { key: "Cmd-Shift-A", command: "harness.toggle", scope: "global", docKey: "D345" },
+    { key: "Cmd-/", command: "app.describe-bindings", scope: "global", docKey: "D303" },
+  ];
+  let blocked = true;
+  const context = {
+    isEditorEvent: () => false,
+    workspaceCommandsBlocked: () => blocked,
+  };
+  const detach = new Keymap(bindings).attach(host.target, runtime, context);
+
+  for (const event of [
+    keyEvent({ key: ",", metaKey: true }),
+    keyEvent({ key: "A", metaKey: true, shiftKey: true }),
+    keyEvent({ key: "/", metaKey: true }),
+  ]) {
+    host.fire(event);
+    assert.equal(event.defaultPrevented, true, "已绑定命令在首启闸门下应被消费");
+  }
+  assert.deepEqual(runs, [], "首启闸门下不得执行任何工作区命令");
+
+  // 非绑定键（Tab 只命中 editor 作用域、非编辑器事件）不被闸门误拦。
+  const tab = keyEvent({ key: "Tab" });
+  host.fire(tab);
+  assert.equal(tab.defaultPrevented, false);
+  assert.deepEqual(runs, []);
+
+  // [keys] 重绑后重装的表共用同一个 context：同样被闸门挡住。
+  detach();
+  const rebound = applyKeyOverrides({ "Cmd-,": "toc.toggle" }).bindings;
+  const detachRebound = new Keymap(rebound).attach(host.target, runtime, context);
+  const reboundEvent = keyEvent({ key: ",", metaKey: true });
+  host.fire(reboundEvent);
+  assert.equal(reboundEvent.defaultPrevented, true);
+  assert.deepEqual(runs, [], "重绑后的分发器也必须受闸门约束");
+  detachRebound();
+
+  // 非首启：同一组键恢复原行为（闸门只在启动面首启模式在场时为真）。
+  blocked = false;
+  const normal = new Keymap(bindings).attach(host.target, runtime, context);
+  host.fire(keyEvent({ key: ",", metaKey: true }));
+  assert.deepEqual(runs, ["app.settings-open"]);
+  normal();
+});

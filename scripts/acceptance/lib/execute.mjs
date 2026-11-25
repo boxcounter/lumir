@@ -55,6 +55,7 @@ import {
 import { envHome, envRelPath, InfraError, mkdirp, readText, repoRoot, secondVaultDir, sleep, vaultDir } from "./util.mjs";
 import { applyEnvChmod, restoreEnvChmods, validateEnvChmod } from "./env-chmod.mjs";
 import { waitReady, sendCommand, waitReport, writeImeReport } from "./ime-driver.mjs";
+import { sendVaultOpenCommand, waitVaultOpenReady, waitVaultOpenReport } from "./vault-open-driver.mjs";
 import { IME_CASES, IME_CASE_NAMES } from "../driver/ime-cases.mjs";
 
 /** 真实用户 HOME（不依赖隔离的 `envHome()`）。 */
@@ -165,6 +166,9 @@ export const ACTIONS = new Set([
   // WKWebView 合成 IME 序列（change fix-ime-list-composition-nov20 收尾）：只在验收实例的
   // Vite 注入驱动里跑；报告写隔离 env，由场景用 file.jsonl 断言。
   "imeDrive",
+  // 首启验收的首个 vault 打开（change add-first-run-onboarding-nov25）：只在验收实例的
+  // Vite 注入桥里跑，内部走 switchToVault 完整链路；不重启、不 reload。
+  "vaultOpenPath",
 ]);
 export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel", "geom", "bytes", "node", "metaLine"]);
 
@@ -701,6 +705,19 @@ export function checkScenario(scenario) {
         if (spec.timeoutMs !== undefined && (!Number.isFinite(spec.timeoutMs) || spec.timeoutMs <= 0)) {
           push(`${at} do=imeDrive 的 ime.timeoutMs 需要正数`);
         }
+      }
+    }
+    if (step.do === "vaultOpenPath") {
+      for (const key of Object.keys(step)) {
+        if (!["do", "name", "expect", "channel", "vault", "timeoutMs"].includes(key)) {
+          push(`${at} do=vaultOpenPath 的 ${key} 未知键（允许：vault / timeoutMs）`);
+        }
+      }
+      if (step.vault !== undefined && !["main", "second"].includes(step.vault)) {
+        push(`${at} do=vaultOpenPath 的 vault 只能是 main / second，实际 ${JSON.stringify(step.vault)}`);
+      }
+      if (step.timeoutMs !== undefined && (!Number.isFinite(step.timeoutMs) || step.timeoutMs <= 0)) {
+        push(`${at} do=vaultOpenPath 的 timeoutMs 需要正数`);
       }
     }
     if (step.do === "keys" && !Array.isArray(step.keys)) push(`${at} do=keys 需要 keys 数组`);
@@ -4600,6 +4617,29 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     }
     case "open":
       return openFile(cu, p, step.file, { marker: step.marker });
+    case "vaultOpenPath": {
+      if (bundleBinary()) {
+        throw new InfraError(
+          "do=vaultOpenPath 只在 dev flavour 可用：桥由验收实例的 Vite dev server 注入，" +
+            "bundle 实例没有该端点。请去掉 LUMIR_ACCEPTANCE_BUNDLE 后复跑。",
+        );
+      }
+      const target = step.vault === "second" ? secondVaultDir() : vaultDir();
+      const timeoutMs = step.timeoutMs ?? 20_000;
+      const tag = vars.$runTag ?? runTag();
+      const id = `${tag}-vault-open-${Date.now().toString(36)}`;
+      await waitVaultOpenReady(10_000);
+      await sendVaultOpenCommand({ id, path: target });
+      const report = await waitVaultOpenReport(id, timeoutMs + 4_000);
+      if (report.ok !== true) {
+        throw new StepError(`vaultOpenPath 失败：${report.error ?? "驱动未给出原因"}`);
+      }
+      evidence.record({
+        kind: "note",
+        text: `vaultOpenPath：${target}（switchToVault 完整链路，不重启 / 不 reload）`,
+      });
+      return target;
+    }
     case "configWrite": {
       const { readConfig, writeConfig } = await import("./app.mjs");
       const cur = await readConfig().catch(() => ({}));

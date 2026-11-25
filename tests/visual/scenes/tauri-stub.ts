@@ -134,6 +134,10 @@ export interface VaultFixture {
   syntheticPng?: string;
   notice?: string | null;
   root?: string;
+  /** `config.last_vault` 的 fixture 级覆盖（change add-first-run-onboarding-nov25）。
+   *  缺省：有 fixture 时按 `root ?? "/Users/alex/demo-vault"` 派生（老用户）；
+   *  显式 `null` = 真首启；不写 = 走上面的派生。 */
+  lastVault?: string | null;
   vault_id?: string;
   /**
    * 通用失败注入：`invoke` 层按命令名统一拦截，命中即抛这份信封**原样**（该命令的 handler
@@ -261,7 +265,23 @@ export interface VaultFixture {
   restorePending?: boolean;
 }
 
-export async function stubTauri(page: Page, vault: VaultFixture | null): Promise<void> {
+/** 无 fixture 的调用点也要能表达「有失效 `last_vault`、当前未打开 vault」的非首启空态：
+ *  `stubTauri(page, null, { lastVault: "/mock/missing-vault" })`。第三参优先于 fixture
+ *  缺省派生，但不会让 `current` 变成一个已打开的 vault。 */
+export interface StubOptions {
+  lastVault?: string | null;
+  /** 无 fixture 的启动面主题（启动态首启模式 / 首启基线候选截图用）；有 fixture 时
+   *  fixture 的 `config.theme` 优先。 */
+  theme?: "light" | "dark" | "eink";
+  /** 无 fixture 的界面语言；缺省沿用既有 zh。 */
+  language?: "zh" | "en";
+}
+
+export async function stubTauri(
+  page: Page,
+  vault: VaultFixture | null,
+  options: StubOptions = {},
+): Promise<void> {
   // 出厂 provider 条目在 **Node 侧**算好再注入：`page.addInitScript` 只序列化函数体，
   // 闭包里引用的模块导入（`providerEntry`）在页面里是未定义标识符——直接调用会在
   // config_get 时抛 ReferenceError（实测：boot 的 applyLanguage 不落地、`.modeline-language`
@@ -274,6 +294,9 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
   await page.addInitScript((providers) => {
     (window as unknown as Record<string, unknown>).__stubProviders = providers;
   }, defaultProviders);
+  await page.addInitScript((opts: StubOptions) => {
+    (window as unknown as Record<string, unknown>).__stubOptions = opts;
+  }, options);
   await page.addInitScript((v: VaultFixture | null) => {
     const w = window as unknown as Record<string, unknown>;
     const callbacks = new Map<number, (data: unknown) => void>();
@@ -283,6 +306,18 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     // 当前生效 vault：vault_open 切换后整体替换，后续 invoke 读新 vault 的数据
     //（与真后端 open_vault 的替换语义对齐）。
     let current = v;
+    // `config.last_vault` 与 `vault_current` 共用同一份 root 派生 / fallback；第三参优先，
+    // 且先于 `v === null` 判断（否则无 fixture 的非首启空态会被短路成首启）。`current`
+    // 保持 v（无 fixture 时仍是 null），不因 last_vault 非空伪造一个已打开 vault。
+    const stubOptions = (window as unknown as { __stubOptions?: StubOptions }).__stubOptions;
+    const initialLastVault =
+      stubOptions?.lastVault !== undefined
+        ? stubOptions.lastVault
+        : v === null
+          ? null
+          : v.lastVault !== undefined
+            ? v.lastVault
+            : v.root ?? "/Users/alex/demo-vault";
 
     type Args = { path?: string; from?: string; rel?: string; new_name?: string; parent_rel?: string; name?: string; link?: string; target?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string>; url?: string; tabs?: string[]; active?: string | null; panes?: Array<{ tabs: string[]; active: string | null }>; pane_split_ratio?: number; entries?: Record<string, { pos: number; y: number; x: number; at: number }>; key?: string; value?: unknown; r?: number; g?: number; b?: number; data_base64?: string; source_mime?: string; entry?: { id: string; path: string; last_opened_at: number | null; missing_since: number | null; archived_at: number | null } };
     const checkVault = (args: Args) => {
@@ -586,7 +621,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         const snapshot: ConfigSnapshot = {
           config: {
             version: 1,
-            last_vault: null,
+            last_vault: initialLastVault,
             editor: {
               mode: current?.config?.mode ?? "md",
               // M180 的折行口径（桩缺省与出厂默认同值）：场景要「折行关闭 + 横向平移」时
@@ -613,7 +648,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
             // 会让启动装配层在 `snapshot.config.ui.theme` 上抛，那一块的失败面已被刻意收窄
             // 到「主题没施加」（见 src/main.ts 的注释），但不该由场景来踩。
             ui: {
-              theme: current?.config?.theme ?? "light",
+              theme: current?.config?.theme ?? stubOptions?.theme ?? "light",
               // 阅读栏宽（M228）：缺省 760 = Rust `UiConfig::default()` 同值（2026-09-26 修订）。
               content_width: current?.config?.content_width ?? 760,
               // 左栏宽度（M631，change add-sidebar-resize-hide-and-root-create）：缺省 236 =
@@ -633,7 +668,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
               //（`en` 面由 tests/visual/scenes/m282-ui-language.spec.ts 单独覆盖）。
               // 桩必须带上这个键：缺键会让 `applyLanguage` 读到 undefined，`<html lang>` 落回
               // 默认档 `en`，于是每一条基线都因为「桩没跟上契约」而变红。
-              language: current?.config?.language ?? "zh",
+              language: current?.config?.language ?? stubOptions?.language ?? "zh",
             },
             keys: current?.config?.keys ?? {},
             // `[log]` / `[vault]` / `[harness]` / `[cron]` 四张表当前都没有被视觉场景的断言

@@ -27,6 +27,10 @@ export interface StartupSurfaceOptions {
   /** 产品名真源（`getName()` 的返回值，来自 `tauri.conf.json` 的 productName）；
    *  null = 读不到，标记整块不建（MUST NOT 显示占位名或硬编码副本）。 */
   productName: string | null;
+  /** 真正首次启动（启动快照 `last_vault === null`）：启动面进入首启模式——只有唯一
+   *  「添加 vault」主操作、整窗居中，不建骨架 / 产品标记 / 阶段行，也不因 `no_vault` /
+   *  安全阀超时撤下（change add-first-run-onboarding-nov25）。 */
+  firstRun: boolean;
 }
 
 /** 启动面的对外出口（装配层只经它施加状态与撤下信号）。 */
@@ -46,6 +50,10 @@ export interface StartupSurface {
   markFirstFrame(): void;
   /** 撤下后的回调（装配层据此在安全阀路径补既有恢复中态）；已撤下时立即回调。 */
   onDismiss(run: (reason: StartupDismissReason) => void): void;
+  /** 启动快照判定的首启模式（只读；撤下后仍保留，供装配层区分首启与恢复）。 */
+  readonly firstRun: boolean;
+  /** 启动面是否仍在场（撤下后为 false；装配层用它判断 #app inert / 命令闸门）。 */
+  readonly visible: boolean;
 }
 
 /** 当前启动面（单例：一个页面一次启动）。主模块是动态装载的、拿不到启动层的局部变量，
@@ -58,13 +66,14 @@ export function startupSurface(): StartupSurface | null {
 }
 
 /** 建立启动面并挂到 `document.body`（`#app` 之外）。返回撤下 / 状态入口。 */
-export function mountStartupSurface({ productName }: StartupSurfaceOptions): StartupSurface {
+export function mountStartupSurface({ productName, firstRun }: StartupSurfaceOptions): StartupSurface {
   const mountedAt = performance.now();
+  const firstRunMode = firstRun === true;
   const state = { treeReady: false, noVaultTerminal: false, degraded: false };
 
   const root = document.createElement("div");
   root.id = "startup";
-  root.className = "startup";
+  root.className = firstRunMode ? "startup startup-first-run" : "startup";
 
   // 标题栏占位带：与真实壳同口径的拖拽区（启动态期间窗口仍可拖动）。容器与整条占位带都
   // MUST NOT 挂 `mousedown` + `preventDefault`——那会静默打断窗口拖拽（REVIEW.md『标题栏
@@ -76,20 +85,22 @@ export function mountStartupSurface({ productName }: StartupSurfaceOptions): Sta
   const body = document.createElement("div");
   body.className = "startup-body";
 
-  const sidebar = document.createElement("div");
-  sidebar.className = "startup-sidebar";
-  for (let i = 0; i < SKELETON_ROWS; i += 1) {
-    const row = document.createElement("div");
-    row.className = "startup-row";
-    const bar = document.createElement("div");
-    bar.className = "startup-row-bar";
-    row.append(bar);
-    sidebar.append(row);
+  const sidebar = firstRunMode ? null : document.createElement("div");
+  if (sidebar !== null) {
+    sidebar.className = "startup-sidebar";
+    for (let i = 0; i < SKELETON_ROWS; i += 1) {
+      const row = document.createElement("div");
+      row.className = "startup-row";
+      const bar = document.createElement("div");
+      bar.className = "startup-row-bar";
+      row.append(bar);
+      sidebar.append(row);
+    }
   }
 
   const content = document.createElement("div");
   content.className = "startup-content";
-  if (productName !== null && productName !== "") {
+  if (!firstRunMode && productName !== null && productName !== "") {
     const mark = document.createElement("div");
     mark.className = "startup-mark";
     mark.textContent = productName;
@@ -99,17 +110,19 @@ export function mountStartupSurface({ productName }: StartupSurfaceOptions): Sta
   // 「打开 vault」入口：与树空态按钮同一形态（`.ft-open-btn` 的既有样式），回调由装配层
   // 接到既有 `requestAddVault`（同一条 dirty 前置门 + 目录选择器链路）。主模块装载之前的
   // 短暂窗口里点击是空操作——入口本身不可用才是缺陷，这里保持「可见即可达」。
+  const openCopyKey = firstRunMode ? "D1029" : "D6";
   const open = document.createElement("button");
   open.type = "button";
   open.className = "ft-open-btn startup-open";
-  open.textContent = t("D6");
+  open.textContent = t(openCopyKey);
   open.addEventListener("click", () => openHandler?.());
   content.append(open);
 
   const modeline = document.createElement("div");
   modeline.className = "startup-modeline";
 
-  body.append(sidebar, content);
+  if (sidebar !== null) body.append(sidebar);
+  body.append(content);
   root.append(titlebar, body, modeline);
   document.body.append(root);
 
@@ -134,7 +147,7 @@ export function mountStartupSurface({ productName }: StartupSurfaceOptions): Sta
   function dismiss(reason: StartupDismissReason): void {
     if (dismissed !== null) return;
     dismissed = reason;
-    window.clearTimeout(timer);
+    if (timer !== null) window.clearTimeout(timer);
     logReading("dismissed", reason);
     root.remove();
     dismissHandler?.(reason);
@@ -142,24 +155,32 @@ export function mountStartupSurface({ productName }: StartupSurfaceOptions): Sta
 
   /** 按当前信号判一次（信号到达与安全阀到期共用这一处判据）。 */
   function evaluate(): void {
+    // 首启模式没有恢复线程：`no_vault` 与安全阀都不撤下，只有树就绪 / 降级放行。
+    if (firstRunMode && !state.treeReady && !state.degraded) return;
     const reason = startupDismissReason({ ...state, elapsedMs: performance.now() - mountedAt });
     if (reason !== null) dismiss(reason);
   }
 
   // 安全阀：恢复线程理论上一定会收尾，但网络卷这类路径可能长时间不返回——到点让路
-  // （design §6 的「安全阀超时」行）。
-  const timer = window.setTimeout(evaluate, STARTUP_TIMEOUT_MS);
+  // （design §6 的「安全阀超时」行）。首启模式不设安全阀：唯一入口始终可用，超时撤下
+  // 只会把用户丢回「左上角 + 中央空白」。
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  if (!firstRunMode) timer = window.setTimeout(evaluate, STARTUP_TIMEOUT_MS);
 
   // 语言切换后重写入口与阶段行的文案（design §5.2 的不变量）：启动面可能在配置施加之前
   // 就上屏（启动层不写 `<html lang>`——那是 applyLanguage 的唯一职责），因此必须有一条能在
   // 运行期重跑的写入路径。阶段行由装配层在自己的重绘块里重写（它知道那句文案的来源）。
   onRelabel(() => {
-    open.textContent = t("D6");
+    open.textContent = t(openCopyKey);
   });
 
   const handle: StartupSurface = {
+    firstRun: firstRunMode,
+    get visible() {
+      return dismissed === null;
+    },
     setPhase(text) {
-      if (dismissed !== null) return;
+      if (dismissed !== null || firstRunMode) return;
       if (text === null) {
         phase?.remove();
         phase = null;
@@ -181,6 +202,7 @@ export function mountStartupSurface({ productName }: StartupSurfaceOptions): Sta
     },
     notifyNoVault() {
       state.noVaultTerminal = true;
+      if (firstRunMode) return;
       evaluate();
     },
     degrade() {

@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：298
-- 验收项（不同 item 编号）：267
-- 分档：core 32 / full 256 / bundle 5 / evidence 5（full 批 = 全部 298 个，含其余各档）
+- 场景：299
+- 验收项（不同 item 编号）：268
+- 分档：core 32 / full 257 / bundle 5 / evidence 5（full 批 = 全部 299 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -285,3 +285,4 @@
 | 874 | `874-quick-open-external-directory-and-stable-layout` | Quick Open 外部目录一层候选、子目录进入、外部文件只读与输入框 bbox 稳定 | full |
 | 875 | `875-harness-markdown-bold` | Harness Markdown strong：有序列表空行后的缩进续段在流式中间态与终态均不显示字面星号 | full |
 | 876 | `876-harness-web-production-no-injection` | 生产 dev 不激活验收注入：哨兵端点零使用、URL 规则不放宽、provider 仍只有 official | full |
+| 877 | `877-first-run-onboarding` | 首启模式只添加 vault、命令闸门、tips + 默认 harness、首文档撤下 tips 与老用户回归 | full |

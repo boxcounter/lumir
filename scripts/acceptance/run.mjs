@@ -670,6 +670,13 @@ async function main() {
       const needsIme = [...(scenario.steps ?? []), ...(scenario.teardown ?? [])].some((step) => step.do === "imeDrive");
       if (needsIme) process.env.LUMIR_ACCEPTANCE_IME = "1";
       else delete process.env.LUMIR_ACCEPTANCE_IME;
+      // 首启验收的 vault-open 桥（change add-first-run-onboarding-nov25）：只有含
+      // `vaultOpenPath` 的场景才让 Vite 注入桥 / 端点；其它场景完全无感。
+      const needsVaultOpen = [...(scenario.steps ?? []), ...(scenario.teardown ?? [])].some(
+        (step) => step.do === "vaultOpenPath",
+      );
+      if (needsVaultOpen) process.env.LUMIR_ACCEPTANCE_VAULT_OPEN = "1";
+      else delete process.env.LUMIR_ACCEPTANCE_VAULT_OPEN;
       // 场景声明的实例 flavour（M605）：`requires: bundle` 的通知点击类场景在 dev flavour 下
       // 物理上验不到（点击响应按 `com.apple.Terminal` 路由，本进程收不到）——直接判 INVALID，
       // 不让它跑成一串「cron_click 零条」的产品 FAIL。复跑条件写进证据与提示。
