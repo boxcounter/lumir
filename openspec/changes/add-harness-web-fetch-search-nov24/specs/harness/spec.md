@@ -763,6 +763,12 @@ MUST NOT 暴露 API Key、provider、base URL、超时、重试、响应上限�
 后无论预检成功、失败还是取消均为 `true`。审计 MUST NOT 仅按 `operation=fetch` 推断该值。`provider` / `provider_id` SHALL 为 `string | null`：只有 provider
 解析成功才填 `"deepseek"` 与实际配置映射键；未配置、配置歧义、自定义 base URL 及解析前的参数 /
 权限 / URL 拒绝均填 null 且 `attempts=0`，MUST NOT 伪造 `"deepseek"` 为配置 id 或在多候选时暗选。
+基础参数形状与 URL 静态安全校验（scheme / userinfo / 控制字符 / 反斜杠 / 缺失 host，以及
+`localhost`、`.local`、非全局单播 IP 字面量）SHALL 在 provider 解析与可选批准预览之前完成：
+任一 provider 配置状态（未配置、配置歧义、自定义 base URL）都 MUST NOT 掩盖 URL 安全拒绝，
+被拒调用 MUST NOT 变成 `web_provider_unconfigured`，也 MUST NOT 产生批准卡；这些路径的
+`local_precheck` 为 `false`（预检未执行），`attempts` 为 `0`，可解析出 origin 的拒绝仍带
+`source.url`，带凭据的输入 MUST NOT 被抄进 `source`。
 成功 Search SHALL 另带完整 query 与 `results: WebSource[]`，成功 Fetch SHALL 另带
 `source: WebSource`。`WebSource` SHALL 固定包含 `url` / `title` / `snippet` / `summary` /
 `content` / `content_format` / `site` / `date` / `authority`。title SHALL 始终为 string，
@@ -800,6 +806,14 @@ URL / date / authority / provider MUST NOT 被裁剪。任何字段或数组被�
 - **WHEN** 分别发生无配置、配置歧义、解析前参数错误，以及 Fetch 无标题
 - **THEN** 前三者的 `provider` / `provider_id` 均为 null 且 `attempts=0`，不暗选或伪造 id；
   最后一者的 `source.title` 为 `""` 而非 null
+
+#### Scenario: URL 安全拒绝先于 provider 解析
+
+- **WHEN** `web_fetch` 收到 `localhost`、`.local`、非全局单播 IP 字面量、非 HTTP(S) scheme 或带凭据的
+  URL，且 provider 处于未配置 / 配置歧义 / 自定义 base URL 任一状态（`approval` 为任意值）
+- **THEN** 结果恒为 `web_url_blocked`（参数形状非法则为 `web_args_invalid`），MUST NOT 被配置状态
+  改写成 `web_provider_unconfigured`；`provider` / `provider_id` 为 null、`attempts=0`、
+  `local_precheck=false`，不产生批准卡，可解析出 origin 的路径仍带 `source.url`
 
 #### Scenario: 截断显式且 JSON 完整
 
@@ -913,7 +927,9 @@ HTTP / HTTPS、含 host、无 userinfo；其它 scheme、控制字符、反斜�
 MUST NOT 修复成另一个 URL。IP 字面量与 DNS 的全部 A / AAAA 结果 SHALL 都是全局可路由单播；
 任一结果为 loopback、private、link-local、unspecified、multicast、reserved、documentation、CGNAT、
 IPv4-mapped / 兼容映射的非全局地址时整条拒绝，MUST NOT 只挑一个公网地址放行。`localhost`、
-`.local` 与 DNS 解析失败 SHALL fail closed。
+`.local` 与 DNS 解析失败 SHALL fail closed。初始 URL 的 scheme / 凭据与主机类判定（`localhost`、
+`.local`、IP 字面量是否全局可路由）只依赖 URL 字面量，SHALL 在 provider 解析之前完成；重定向的
+每一跳仍 SHALL 重新执行同一套主机类判定，两处共用同一判定实现（同一语义 MUST NOT 两处真源）。
 
 连接 SHALL 只使用已验证地址集，并保留原 host 的 Host 与 TLS SNI；连接前 MUST NOT 再次由系统 resolver
 自由选择地址。目标预检与 DeepSeek client SHALL 都显式 `no_proxy`，每个 hop MUST NOT 重新继承

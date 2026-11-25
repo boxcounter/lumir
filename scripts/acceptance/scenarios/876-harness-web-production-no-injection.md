@@ -80,5 +80,6 @@ LUMIR_ACCEPTANCE_WEB_ENDPOINTS='{"deepseek":"http://127.0.0.1:9","targets":{"pro
 
 哨兵端点故意不可达。验收注入若被普通 dev 构建编译进来，`web_search` 会走哨兵并得到
 `web_network_failed` / `attempts=1`（或成功），本场景的 `web_provider_unconfigured` 断言会红。
-`web_fetch` 的 localhost 目标是 URL / DNS 拒绝规则不放宽的旁证：即使注入了 transport，
-`run_preflight` 也在解析前拒绝 loopback。
+`web_fetch` 的 localhost 目标是 URL 拒绝规则不放宽的旁证：`localhost` / `.local` / 非全局单播 IP
+字面量在 provider 解析之前就被静态拒绝（`local_precheck=false`、零网络），与 provider 配置状态无关；
+`run_preflight` 对每一跳仍重新执行同一套主机类判定。

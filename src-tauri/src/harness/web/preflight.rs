@@ -1,5 +1,5 @@
 use std::io::Read;
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -10,7 +10,7 @@ use reqwest::{StatusCode, Url};
 use crate::config::HarnessPermissions;
 
 use super::output::{WebEnvelope, WebErrorCode, WebOperation};
-use super::url::Origin;
+use super::url::{blocked_host, globally_routable, Origin};
 use crate::harness::permissions::matching_rule;
 
 const RANGE_BODY_LIMIT: usize = 4096;
@@ -474,74 +474,13 @@ fn resolution_host(url: &Url) -> Result<String, PreflightError> {
     let host = url
         .host_str()
         .ok_or_else(|| PreflightError::new(WebErrorCode::WebUrlBlocked, "URL 缺少 host"))?;
-    let host = host.trim_start_matches('[').trim_end_matches(']');
-    let special_host = host.strip_suffix('.').unwrap_or(host);
-    if special_host.eq_ignore_ascii_case("localhost") || special_host.ends_with(".local") {
-        return Err(PreflightError::new(
-            WebErrorCode::WebUrlBlocked,
-            "localhost / .local 目标被禁止",
-        ));
+    if let Some(message) = blocked_host(host) {
+        return Err(PreflightError::new(WebErrorCode::WebUrlBlocked, message));
     }
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        if !globally_routable(ip) {
-            return Err(PreflightError::new(
-                WebErrorCode::WebUrlBlocked,
-                "IP 目标不是全局单播地址",
-            ));
-        }
-    }
-    Ok(host.to_string())
-}
-
-fn globally_routable(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(ip) => ipv4_globally_routable(ip),
-        IpAddr::V6(ip) => {
-            if let Some(mapped) = ip.to_ipv4_mapped() {
-                ipv4_globally_routable(mapped)
-            } else if let Some(compatible) = ip.to_ipv4() {
-                ipv4_globally_routable(compatible)
-            } else {
-                ipv6_globally_routable(ip)
-            }
-        }
-    }
-}
-
-fn ipv4_globally_routable(ip: std::net::Ipv4Addr) -> bool {
-    let octets = ip.octets();
-    let value = u32::from(ip);
-    !(octets[0] == 0
-        || octets[0] == 10
-        || octets[0] == 127
-        || (octets[0] == 172 && (16..=31).contains(&octets[1]))
-        || (octets[0] == 192 && octets[1] == 168)
-        || (octets[0] == 169 && octets[1] == 254)
-        || (octets[0] == 100 && (64..=127).contains(&octets[1]))
-        || (octets[0] == 192 && octets[1] == 0 && octets[2] == 2)
-        || (octets[0] == 198 && (octets[1] == 18 || octets[1] == 19))
-        || (octets[0] == 198 && octets[1] == 51 && octets[2] == 100)
-        || (octets[0] == 203 && octets[1] == 0 && octets[2] == 113)
-        || (octets[0] >= 224)
-        || (octets[0] == 192 && octets[1] == 0 && octets[2] == 0)
-        || (octets[0] == 192 && octets[1] == 88 && octets[2] == 99)
-        || value == u32::MAX)
-}
-
-fn ipv6_globally_routable(ip: std::net::Ipv6Addr) -> bool {
-    let segments = ip.segments();
-    !(segments[0] == 0
-        || (segments[0] & 0xff00) == 0xff00
-        || (segments[0] & 0xfe00) == 0xfc00
-        || (segments[0] & 0xffc0) == 0xfe80
-        || (segments[0] == 0x2001 && segments[1] == 0x0000)
-        || (segments[0] == 0x2001 && segments[1] == 0x0002)
-        || (segments[0] == 0x2002)
-        || ((segments[0] & 0xfff0) == 0x3ff0)
-        || (segments[0] == 0x2001 && (segments[1] & 0xfff0) == 0x0010)
-        || (segments[0] == 0x2001 && (segments[1] & 0xfff0) == 0x0020)
-        || (segments[0] == 0x2001 && segments[1] == 0x0db8)
-        || (segments[0] & 0xe000) != 0x2000)
+    Ok(host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_string())
 }
 
 fn single_content_type(response: &reqwest::blocking::Response) -> Option<String> {
@@ -623,57 +562,4 @@ fn redirect_target(
     Origin::from_url(next.as_str())
         .map_err(|error| PreflightError::new(WebErrorCode::WebUrlBlocked, error))?;
     Ok(next)
-}
-
-#[cfg(test)]
-mod unit_tests {
-    use super::*;
-
-    #[test]
-    fn global_ip_rules_cover_reserved_and_mapped_addresses() {
-        for ip in [
-            "127.0.0.1",
-            "10.0.0.1",
-            "172.16.0.1",
-            "192.168.1.1",
-            "169.254.1.1",
-            "100.64.0.1",
-            "224.0.0.1",
-            "240.0.0.1",
-            "192.0.2.1",
-            "198.51.100.1",
-            "203.0.113.1",
-            "0.0.0.0",
-            "255.255.255.255",
-            "::1",
-            "::",
-            "ff02::1",
-            "2001:db8::1",
-            "3fff::1",
-            "3fff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
-            "2002:7f00:1::",
-            "2002:c0a8:101::",
-            "2002:5db8:d822::",
-            "2001::1",
-            "2001:0:5db8:d822::1",
-            "2001:2::1",
-            "2001:10::1",
-            "2001:20::1",
-            "fd00::1",
-            "fe80::1",
-            "::ffff:127.0.0.1",
-        ] {
-            let ip: IpAddr = ip.parse().unwrap();
-            assert!(!globally_routable(ip), "{ip}");
-        }
-        for ip in [
-            "93.184.216.34",
-            "203.0.114.1",
-            "2001:4860:4860::8888",
-            "::ffff:93.184.216.34",
-        ] {
-            let ip: IpAddr = ip.parse().unwrap();
-            assert!(globally_routable(ip), "{ip}");
-        }
-    }
 }

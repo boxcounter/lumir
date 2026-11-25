@@ -378,6 +378,13 @@ fn basic_args(operation: WebOperation, args: &Value) -> Result<BasicWebArgs, Too
                     format!("Web Fetch URL 不合法：{reason}"),
                 )
             })?;
+            // 主机类拒绝（localhost / .local / 非全局单播 IP 字面量）只靠 URL 里写死的字面量就能
+            // 判定，与 provider 配置、DNS、网络都无关，因此必须在这一层拦下：`basic_args` 先于
+            // `precheck`、批准预览与 provider 解析，任何 provider 配置状态都不得把它掩盖成
+            // `web_provider_unconfigured`，也不得为它生成批准卡。preflight 的逐跳复查仍保留。
+            if let Some(reason) = url::blocked_host(&origin.host) {
+                return Err(blocked_fetch_output(operation, url, reason));
+            }
             Ok(BasicWebArgs::Fetch {
                 url: url.to_string(),
                 origin,
@@ -392,6 +399,25 @@ fn args_error(
     message: impl Into<String>,
 ) -> ToolOutput {
     envelope_output(WebEnvelope::failure(operation, code, message, None, 0))
+}
+
+/// URL 在解析前的静态拒绝：与 `args_error` 同为不进 executor 的路径，区别是 URL 本身已可解析，
+/// 于是把 `source.url` 一并带上——面板与审计仍看得到被拒的是哪个 URL，语义等同原先 preflight
+/// 失败时的信封。
+fn blocked_fetch_output(
+    operation: WebOperation,
+    url: &str,
+    reason: impl Into<String>,
+) -> ToolOutput {
+    let mut envelope = WebEnvelope::failure(
+        operation,
+        WebErrorCode::WebUrlBlocked,
+        format!("Web Fetch URL 不合法：{}", reason.into()),
+        None,
+        0,
+    );
+    envelope.source = Some(provider::fetch_source(url, String::new(), None));
+    envelope_output(envelope)
 }
 
 fn envelope_output(mut envelope: WebEnvelope) -> ToolOutput {
@@ -536,6 +562,195 @@ mod tests {
         assert_eq!(output.value["provider_id"], Value::Null);
         assert_eq!(output.value["attempts"], serde_json::json!(0));
         assert_eq!(port.0.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn web_fetch_url_safety_rejection_precedes_provider_resolution() {
+        // 两个 port 的差别只有一个：是否声明「provider 未配置」。876 的真机现场就是前者——
+        // 未配置时 localhost 曾被报成 web_provider_unconfigured，把 URL 安全拒绝盖掉了。
+        let unconfigured = CountingPort(AtomicUsize::new(0), true);
+        let configured = CountingPort(AtomicUsize::new(0), false);
+        for (name, port) in [("unconfigured", &unconfigured), ("configured", &configured)] {
+            for url in [
+                "http://localhost:9/probe",
+                "http://localhost./probe",
+                "http://127.0.0.1:9/probe",
+                "http://[::1]:9/probe",
+                "http://printer.local/probe",
+            ] {
+                let output = execute(
+                    "web_fetch",
+                    &serde_json::json!({"url": url}),
+                    WebAccessConfig::default(),
+                    Some(port),
+                    Arc::new(|| false),
+                );
+                assert_eq!(
+                    output.value["code"],
+                    serde_json::json!("web_url_blocked"),
+                    "{name} {url}"
+                );
+                assert_eq!(output.value["provider"], Value::Null, "{name} {url}");
+                assert_eq!(output.value["provider_id"], Value::Null, "{name} {url}");
+                assert_eq!(
+                    output.value["attempts"],
+                    serde_json::json!(0),
+                    "{name} {url}"
+                );
+                assert_eq!(
+                    output.value["local_precheck"],
+                    serde_json::json!(false),
+                    "{name} {url}"
+                );
+                assert_eq!(
+                    output.value["source"]["url"],
+                    serde_json::json!(url),
+                    "{name} {url} 被拒 URL 仍须可见"
+                );
+            }
+            // scheme / userinfo 无法解析出 origin，因此回执里不重复那个 URL——带凭据的输入
+            // MUST NOT 被抄进 source / 批准卡。
+            for url in [
+                "https://user:pass@example.com/a",
+                "ftp://example.com/a",
+                "file:///tmp/a",
+            ] {
+                let output = execute(
+                    "web_fetch",
+                    &serde_json::json!({"url": url}),
+                    WebAccessConfig::default(),
+                    Some(port),
+                    Arc::new(|| false),
+                );
+                assert_eq!(
+                    output.value["code"],
+                    serde_json::json!("web_url_blocked"),
+                    "{name} {url}"
+                );
+                assert!(output.value.get("source").is_none(), "{name} {url}");
+                assert_eq!(
+                    output.value["attempts"],
+                    serde_json::json!(0),
+                    "{name} {url}"
+                );
+                assert_eq!(
+                    output.value["local_precheck"],
+                    serde_json::json!(false),
+                    "{name} {url}"
+                );
+            }
+            assert_eq!(port.0.load(Ordering::SeqCst), 0, "{name} 不得进入执行 port");
+        }
+
+        // 对照：合法 URL 仍按 provider 配置状态分叉——未配置得 provider 错误，配置正常才执行。
+        let blocked = execute(
+            "web_fetch",
+            &serde_json::json!({"url": "https://example.com/a"}),
+            WebAccessConfig::default(),
+            Some(&unconfigured),
+            Arc::new(|| false),
+        );
+        assert_eq!(
+            blocked.value["code"],
+            serde_json::json!("web_provider_unconfigured")
+        );
+        assert_eq!(blocked.value["attempts"], serde_json::json!(0));
+        let allowed = execute(
+            "web_fetch",
+            &serde_json::json!({"url": "https://example.com/a"}),
+            WebAccessConfig::default(),
+            Some(&configured),
+            Arc::new(|| false),
+        );
+        assert_eq!(allowed.value["ok"], serde_json::json!(true));
+        assert_eq!(configured.0.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn web_precheck_rejects_blocked_fetch_urls_before_approval_preview() {
+        let port = CountingPort(AtomicUsize::new(0), true);
+        for url in [
+            "http://localhost:9/probe",
+            "http://127.0.0.1:9/probe",
+            "http://[::1]:9/probe",
+            "https://user:pass@example.com/a",
+            "gemini://example.com/a",
+        ] {
+            let args = serde_json::json!({"url": url});
+            let early = precheck("web_fetch", &args).expect_err(url);
+            assert_eq!(
+                early.value["code"],
+                serde_json::json!("web_url_blocked"),
+                "{url}"
+            );
+            assert_eq!(early.value["provider"], Value::Null, "{url}");
+            assert_eq!(early.value["attempts"], serde_json::json!(0), "{url}");
+            assert_eq!(
+                early.value["local_precheck"],
+                serde_json::json!(false),
+                "{url}"
+            );
+            // 批准预览是同一层的第二道门：非法目标不得产生携带 URL 的批准卡。
+            let preview = approval_preview("web_fetch", &args, Some(&port)).expect_err(url);
+            assert_eq!(
+                preview.value["code"],
+                serde_json::json!("web_url_blocked"),
+                "{url}"
+            );
+        }
+        let shape = serde_json::json!({"url": "https://example.com", "unexpected": true});
+        let early = precheck("web_fetch", &shape).expect_err("未定义参数不得进入预览");
+        assert_eq!(early.value["code"], serde_json::json!("web_args_invalid"));
+        assert_eq!(port.0.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn web_fetch_blocked_url_never_reaches_a_resolved_provider() {
+        use crate::config::{test_provider, ProviderPreset};
+
+        let harness = HarnessConfig {
+            providers: [(
+                "deepseek-work".to_string(),
+                test_provider(ProviderPreset::Deepseek, "synthetic-secret", &[]),
+            )]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+        assert!(
+            resolve_web_provider(&harness).is_ok(),
+            "本对照要求 provider 解析成功，否则测不到「URL 拒绝先于 provider」"
+        );
+        let port = ConfiguredWebToolPort {
+            config: harness,
+            executor: None,
+        };
+        for url in [
+            "http://localhost:9/probe",
+            "http://127.0.0.1:9/probe",
+            "http://[::1]:9/probe",
+            "http://printer.local/probe",
+        ] {
+            let output = execute(
+                "web_fetch",
+                &serde_json::json!({"url": url}),
+                WebAccessConfig::default(),
+                Some(&port),
+                Arc::new(|| false),
+            );
+            assert_eq!(
+                output.value["code"],
+                serde_json::json!("web_url_blocked"),
+                "{url}"
+            );
+            assert_eq!(output.value["provider"], Value::Null, "{url}");
+            assert_eq!(output.value["attempts"], serde_json::json!(0), "{url}");
+            assert_eq!(
+                output.value["local_precheck"],
+                serde_json::json!(false),
+                "{url} 不得谎称执行过本地预检"
+            );
+        }
     }
 
     #[test]

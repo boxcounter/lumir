@@ -1,3 +1,5 @@
+use std::net::IpAddr;
+
 use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -70,6 +72,74 @@ pub fn canonical_web_fetch_origins(rules: &[Value]) -> Vec<String> {
         .collect()
 }
 
+/// 解析前的静态主机拒绝：只用到 URL 里已写死的字面量，与 provider 配置、DNS、网络都无关。
+/// 调用点有两处，缺一不可——`basic_args` 在 provider 解析与批准预览之前先拦一次（任何配置状态
+/// 都不得掩盖 URL 安全拒绝），`run_preflight` 每个 hop 再拦一次（redirect 目标不经 `basic_args`）。
+pub(crate) fn blocked_host(host: &str) -> Option<&'static str> {
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    let host = host.strip_suffix('.').unwrap_or(host);
+    if host.eq_ignore_ascii_case("localhost") || host.to_ascii_lowercase().ends_with(".local") {
+        return Some("localhost / .local 目标被禁止");
+    }
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if !globally_routable(ip) {
+            return Some("IP 目标不是全局单播地址");
+        }
+    }
+    None
+}
+
+pub(crate) fn globally_routable(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => ipv4_globally_routable(ip),
+        IpAddr::V6(ip) => {
+            if let Some(mapped) = ip.to_ipv4_mapped() {
+                ipv4_globally_routable(mapped)
+            } else if let Some(compatible) = ip.to_ipv4() {
+                ipv4_globally_routable(compatible)
+            } else {
+                ipv6_globally_routable(ip)
+            }
+        }
+    }
+}
+
+fn ipv4_globally_routable(ip: std::net::Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    let value = u32::from(ip);
+    !(octets[0] == 0
+        || octets[0] == 10
+        || octets[0] == 127
+        || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+        || (octets[0] == 192 && octets[1] == 168)
+        || (octets[0] == 169 && octets[1] == 254)
+        || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+        || (octets[0] == 192 && octets[1] == 0 && octets[2] == 2)
+        || (octets[0] == 198 && (octets[1] == 18 || octets[1] == 19))
+        || (octets[0] == 198 && octets[1] == 51 && octets[2] == 100)
+        || (octets[0] == 203 && octets[1] == 0 && octets[2] == 113)
+        || (octets[0] >= 224)
+        || (octets[0] == 192 && octets[1] == 0 && octets[2] == 0)
+        || (octets[0] == 192 && octets[1] == 88 && octets[2] == 99)
+        || value == u32::MAX)
+}
+
+fn ipv6_globally_routable(ip: std::net::Ipv6Addr) -> bool {
+    let segments = ip.segments();
+    !(segments[0] == 0
+        || (segments[0] & 0xff00) == 0xff00
+        || (segments[0] & 0xfe00) == 0xfc00
+        || (segments[0] & 0xffc0) == 0xfe80
+        || (segments[0] == 0x2001 && segments[1] == 0x0000)
+        || (segments[0] == 0x2001 && segments[1] == 0x0002)
+        || (segments[0] == 0x2002)
+        || ((segments[0] & 0xfff0) == 0x3ff0)
+        || (segments[0] == 0x2001 && (segments[1] & 0xfff0) == 0x0010)
+        || (segments[0] == 0x2001 && (segments[1] & 0xfff0) == 0x0020)
+        || (segments[0] == 0x2001 && segments[1] == 0x0db8)
+        || (segments[0] & 0xe000) != 0x2000)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +209,79 @@ mod tests {
             canonical_web_fetch_origins(&rules),
             vec!["https://example.com".to_string()]
         );
+    }
+
+    #[test]
+    fn blocked_host_rejects_local_names_and_non_global_ip_literals() {
+        for host in [
+            "localhost",
+            "LOCALHOST",
+            "localhost.",
+            "printer.local",
+            "printer.local.",
+            "127.0.0.1",
+            "10.0.0.1",
+            "::1",
+            "::ffff:127.0.0.1",
+            "2001:db8::1",
+        ] {
+            assert!(blocked_host(host).is_some(), "{host}");
+        }
+        for host in [
+            "example.com",
+            "example.com.",
+            "93.184.216.34",
+            "2001:4860:4860::8888",
+        ] {
+            assert!(blocked_host(host).is_none(), "{host}");
+        }
+    }
+
+    #[test]
+    fn global_ip_rules_cover_reserved_and_mapped_addresses() {
+        for ip in [
+            "127.0.0.1",
+            "10.0.0.1",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.1.1",
+            "100.64.0.1",
+            "224.0.0.1",
+            "240.0.0.1",
+            "192.0.2.1",
+            "198.51.100.1",
+            "203.0.113.1",
+            "0.0.0.0",
+            "255.255.255.255",
+            "::1",
+            "::",
+            "ff02::1",
+            "2001:db8::1",
+            "3fff::1",
+            "3fff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+            "2002:7f00:1::",
+            "2002:c0a8:101::",
+            "2002:5db8:d822::",
+            "2001::1",
+            "2001:0:5db8:d822::1",
+            "2001:2::1",
+            "2001:10::1",
+            "2001:20::1",
+            "fd00::1",
+            "fe80::1",
+            "::ffff:127.0.0.1",
+        ] {
+            let ip: IpAddr = ip.parse().unwrap();
+            assert!(!globally_routable(ip), "{ip}");
+        }
+        for ip in [
+            "93.184.216.34",
+            "203.0.114.1",
+            "2001:4860:4860::8888",
+            "::ffff:93.184.216.34",
+        ] {
+            let ip: IpAddr = ip.parse().unwrap();
+            assert!(globally_routable(ip), "{ip}");
+        }
     }
 }

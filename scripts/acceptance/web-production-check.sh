@@ -61,17 +61,26 @@ if ! rg -q "DeepSeekWebProvider::official" src-tauri/src/harness/web/mod.rs; the
   echo "FAIL 生产 Web 装配点没有 official constructor" >&2
   exit 1
 fi
-if ! rg -q 'special_host.eq_ignore_ascii_case\("localhost"\)' src-tauri/src/harness/web/preflight.rs \
-  || ! rg -q 'ends_with\("\.local"\)' src-tauri/src/harness/web/preflight.rs; then
-  echo "FAIL 生产 preflight 不再拒绝 localhost / .local" >&2
+if ! rg -q 'eq_ignore_ascii_case\("localhost"\)' src-tauri/src/harness/web/url.rs \
+  || ! rg -q 'ends_with\("\.local"\)' src-tauri/src/harness/web/url.rs; then
+  echo "FAIL 生产 URL 规则不再拒绝 localhost / .local（src-tauri/src/harness/web/url.rs）" >&2
   exit 1
 fi
-if ! rg -q "fn globally_routable" src-tauri/src/harness/web/preflight.rs \
+if ! rg -q "fn globally_routable" src-tauri/src/harness/web/url.rs \
   || ! rg -qF "addresses.iter().any(|addr| !globally_routable(addr.ip()))" src-tauri/src/harness/web/preflight.rs; then
-  echo "FAIL 生产 preflight 的全局单播校验消失或被放宽" >&2
+  echo "FAIL 生产全局单播校验消失或被放宽" >&2
   exit 1
 fi
-echo "PASS 源码：注入面只在 acceptance.rs；official 装配与 URL / DNS 拒绝规则在位"
+# 顺序不变式（876 的失败现场）：主机类拒绝必须同时存在于「provider 解析之前的基础参数层」与
+# 「preflight 每跳复查」。少了前者的那次运行里，未配置 provider 把 localhost 报成了
+# web_provider_unconfigured。真正的行为判据在 cargo test
+# harness::web::tests::web_fetch_url_safety_rejection_precedes_provider_resolution，这里只做静态在位检查。
+if ! rg -qF "url::blocked_host(&origin.host)" src-tauri/src/harness/web/mod.rs \
+  || ! rg -qF "blocked_host(host)" src-tauri/src/harness/web/preflight.rs; then
+  echo "FAIL 主机类 URL 拒绝不再是「解析前 + 每跳」双层" >&2
+  exit 1
+fi
+echo "PASS 源码：注入面只在 acceptance.rs；official 装配与 URL / DNS 拒绝规则在位（解析前 + 每跳双层）"
 
 echo "== 产物层（debug） =="
 rlib=$(artifact_rlib "")

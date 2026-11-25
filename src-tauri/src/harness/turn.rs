@@ -4835,6 +4835,82 @@ mod tests {
     }
 
     #[test]
+    fn web_fetch_localhost_fails_before_provider_in_both_configuration_states() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        // 876 的反向合同在交互路径上的等价物：provider 已配置与未配置两种状态都必须先报
+        // URL 安全拒绝，而不是 web_provider_unconfigured，且 ask 档不得为它生成批准卡。
+        for (name, keep_provider) in [
+            ("web-localhost-provider-ready", true),
+            ("web-localhost-provider-missing", false),
+        ] {
+            let fixture = fixture(name);
+            let mut config = fixture.config.clone();
+            config.permission_mode = crate::config::PermissionMode::FullAccess;
+            config.web_access.approval = crate::harness::web::config::WebApproval::Ask;
+            if !keep_provider {
+                config.providers.clear();
+            }
+            let runtime = Runtime::default();
+            runtime.acquire_turn(&fixture.scope, &config).unwrap();
+            let sink = Collect::default();
+            let events = sink.0.clone();
+            let script = r#"{"responses":[
+              {"tool_calls":[{"id":"web-localhost","name":"web_fetch","arguments":"{\"url\":\"http://localhost:9/probe\"}"}]},
+              {"text":"done"}
+            ]}"#;
+            let mut client = llm::MockClient::from_str(script, "web-localhost").unwrap();
+            run_turn_for(
+                &sink,
+                &runtime,
+                &fixture.scope,
+                &config,
+                "question",
+                None,
+                &mut client,
+            );
+            runtime.release_turn(&fixture.scope);
+            assert!(
+                events
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|event| event["type"] != "approval_request"),
+                "{name} 被拒 URL 不得生成批准卡"
+            );
+            let input = runtime
+                .with_session(&fixture.scope, |session| session.input().to_vec())
+                .unwrap();
+            let output = input
+                .iter()
+                .find(|item| item["type"] == "function_call_output")
+                .unwrap_or_else(|| panic!("{name} 缺少工具结果"))["output"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let output: serde_json::Value = serde_json::from_str(&output).unwrap();
+            assert_eq!(output["code"], "web_url_blocked", "{name}");
+            assert_eq!(output["provider"], serde_json::Value::Null, "{name}");
+            assert_eq!(output["attempts"], 0, "{name}");
+            assert_eq!(output["local_precheck"], false, "{name}");
+            assert_eq!(
+                output["source"]["url"], "http://localhost:9/probe",
+                "{name}"
+            );
+            let events = events.lock().unwrap();
+            let done = events
+                .iter()
+                .find(|event| event["type"] == "tool_call" && event["status"] == "done")
+                .unwrap_or_else(|| panic!("{name} 缺少 done 事件"));
+            assert_eq!(done["web"]["code"], "web_url_blocked", "{name}");
+            assert_eq!(done["web"]["local_precheck"], false, "{name}");
+            assert_eq!(done["web"]["provider_fetch"], false, "{name}");
+            assert_eq!(done["web"]["attempts"], 0, "{name}");
+            drop(events);
+            let _ = std::fs::remove_dir_all(&fixture.root);
+        }
+    }
+
+    #[test]
     fn web_allow_all_finishes_without_approval_card() {
         let _env_lock = crate::harness::xdg_test_lock();
         let fixture = fixture("web-allow-all-no-card");
