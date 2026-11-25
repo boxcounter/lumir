@@ -64,6 +64,7 @@ test("触发、过滤、方向键 / ⌃NP 与 Enter：完整路径、焦点和 c
   const doc = "[[al";
   await openDoc(page, doc, ["notes/Alpha.md", "notes/alphabet.md", "notes/Beta.md", "notes/readme.markdown"]);
   await expect(page.locator(OVERLAY)).toBeVisible();
+  await expect(page.locator(`${OVERLAY}-list`)).toHaveAttribute("aria-label", "筛选");
   expect(await rows(page)).toEqual(["notes/Alpha.md", "notes/alphabet.md"]);
   expect(await fileText(page, "source.md")).toBe(doc);
 

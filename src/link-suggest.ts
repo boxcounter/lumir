@@ -385,6 +385,7 @@ class LinkSuggestView {
     if (state === null) return;
     if (!this.root.isConnected) this.view.dom.ownerDocument.body.append(this.root);
     registerEscapeLayer("link-suggest", () => this.close());
+    this.list.setAttribute("aria-label", FILTER_LABEL());
     this.list.replaceChildren();
     this.empty.hidden = state.items.length !== 0;
     this.list.hidden = state.items.length === 0;
