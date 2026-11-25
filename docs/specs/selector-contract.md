@@ -52,8 +52,9 @@ Skill 候选允许向上覆盖 transcript；垂直夹取宿主 SHALL 是**面板
 游标改变后，游标 option SHALL 完整落在**真实 clip**（扣掉滚动容器的边框与 padding）内。
 
 - 已完整落在带内 ⇒ 滚动口的 `scrollTop` MUST NOT 改变。
-- 越界 ⇒ 只滚动到带边缘，并在游标与带边缘之间保留**一行上下文**（一行 = 当前 option 的高度；
-  带比一行还窄时余量取 0，目标比带还高时对齐上缘）。
+- 越界 ⇒ 只滚动到带边缘，并在游标与带边缘之间保留**一行上下文**（一行 = 当前 option 的高度）。
+  带高 ≥ 2 行时留满一行；带高不足 2 行时把剩余空间（带高 − 一行）全部留给上下文；带比一行还窄时
+  余量取 0，目标比带还高时对齐上缘。
 - 首尾 ⇒ 自然 clamp 到 `[0, scrollHeight − clientHeight]`，MUST NOT 补人造空白。
 - 揭示 MUST NOT 滚动整页、transcript、编辑器或 composer；MUST NOT 移动 composer caret。
 
@@ -80,7 +81,9 @@ Skill 候选允许向上覆盖 transcript；垂直夹取宿主 SHALL 是**面板
   因此改掉键盘刚选中的游标。视觉上 hover 可以改变底色，但 MUST NOT 抹掉游标标记（C6）。
 - 接受键作用于 `items[highlighted]`；`armed === false` 时接受键 MUST NOT 激活任何 item，按各表面的
   默认语义处理（发送普通文本 / 原生 Tab / 关闭等）。
-- 命名边界：`/tmp` 这类路径前缀不是全名（`tmp` ≠ `tmp-acc`），MUST NOT 武装。
+- 命名边界：`/tmp` 这类路径前缀不是全名（`tmp` ≠ `tmp-acc`），MUST NOT 武装。判据只看「token 前缀
+  是否逐字等于某项全名」：若某项 Skill 的全名恰好是 `tmp`，`/tmp` 就是它的全名，按全名规则武装
+  （`tests/unit/skill-menu.test.ts` 钉住该边界）。
 
 ### C5 — IME：组合期冻结，结束后按最终文档重算一次
 

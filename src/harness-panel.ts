@@ -139,7 +139,7 @@ import {
 } from "./harness-context";
 import type { HarnessContextBlock, HarnessContextSource } from "./harness-context";
 import { createHarnessDraftStore } from "./harness-draft";
-import { hoverSkillHighlight, moveSkillHighlight, skillMenuNavigationDelta, skillSelectionSpec, skillTokenAt, syncSkillMenuState } from "./skill-menu";
+import { hoverSkillHighlight, moveSkillHighlight, sameSkillMenuState, skillMenuNavigationDelta, skillSelectionSpec, skillTokenAt, syncSkillMenuState } from "./skill-menu";
 import { revealElementWithin } from "./selector-reveal";
 import { scheduleCompositionSettle, cancelCompositionSettle } from "./composition-settle";
 import type { SkillMenuState } from "./skill-menu";
@@ -4456,9 +4456,22 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   /** 候选盒的垂直夹取宿主要是**面板**（`.lumir-harness`，它才是 `overflow: hidden` 的裁切者），
-   *  不是 composer 区；允许向上覆盖 transcript。 */
-  const SKILL_MENU_MAX_HEIGHT = 200;
+   *  不是 composer 区；允许向上覆盖 transcript。max-height 的上限唯一真源是 CSS
+   *  （`.lumir-hp-skill-menu`），这里只按可用空间再收缩，MUST NOT 另留一份硬编码上限。 */
   const SKILL_MENU_PANEL_MARGIN = 8;
+  const SKILL_MENU_CARET_GAP = 4;
+
+  /** CSS `max-height` 解析成 px；`none` / 非法值视为无上限。 */
+  function skillMenuCssMaxHeight(): number {
+    const value = Number.parseFloat(getComputedStyle(skillMenuEl).maxHeight);
+    return Number.isFinite(value) ? value : Number.POSITIVE_INFINITY;
+  }
+
+  /** 实测行高（随 --lumir-hp-scale 变）：用于判断一侧空间是否还放得下一整行。 */
+  function skillMenuRowHeight(): number {
+    const first = skillMenuEl.firstElementChild;
+    return first === null ? 0 : first.getBoundingClientRect().height;
+  }
 
   /** 真实可见带 = menuRect ∩ panelRect ∩ viewport（合同 selector-contract C2）。
    *  菜单自身的 `clientHeight` 看不见祖先裁切——用它当视口会让「盒内、屏外」的项被判为可见。 */
@@ -4563,17 +4576,45 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     skillMenuEl.style.left = `${width.left - host.left}px`;
 
     // 盒先归位再谈揭示：菜单只能往上覆盖 transcript，不能被 composer 区或面板裁掉。
-    // 面板高度不足时收缩 max-height（CSS 的 200px 是上限，不是保证）。
+    // max-height 上限的唯一真源是 CSS；JS 只按可用空间收缩（改 CSS 不需要同步常量）。
+    skillMenuEl.style.maxHeight = "";
+    const cssCap = skillMenuCssMaxHeight();
+    const rowHeight = skillMenuRowHeight();
+    const naturalHeight = skillMenuEl.getBoundingClientRect().height;
     const limitTop = Math.max(panelRect.top, 0) + SKILL_MENU_PANEL_MARGIN;
     const limitBottom = Math.min(panelRect.bottom, window.innerHeight) - SKILL_MENU_PANEL_MARGIN;
-    const capacity = Math.max(0, limitBottom - limitTop);
-    skillMenuEl.style.maxHeight = capacity < SKILL_MENU_MAX_HEIGHT ? `${capacity}px` : "";
-    // 行高随 --lumir-hp-scale 变，用实测高度而不是 32px 的估算（同一语义不留第二处真源）。
+    // 下方放置以控制行（模型 chip / 发送钮等常驻可交互件）的顶缘为界：候选不得压住它。
+    const belowTop = caret.bottom + SKILL_MENU_CARET_GAP;
+    const belowLimit = Math.min(limitBottom, ctl.getBoundingClientRect().top - SKILL_MENU_CARET_GAP);
+    const aboveBottom = caret.top - SKILL_MENU_CARET_GAP;
+    const belowSpace = Math.max(0, belowLimit - belowTop);
+    const aboveSpace = Math.max(0, aboveBottom - limitTop);
+    // 放置优先级：下方放得下 ⇒ 下方；否则上方放得下 ⇒ 上方；都放不下时优先收缩上方，
+    // 上方连一行都放不下才用下方（同样收缩到控制行顶缘以上）。上翻后盒底不越过 caret。
+    let below: boolean;
+    let available: number;
+    if (naturalHeight <= belowSpace) {
+      below = true;
+      available = naturalHeight;
+    } else if (naturalHeight <= aboveSpace) {
+      below = false;
+      available = naturalHeight;
+    } else if (aboveSpace > 0 && aboveSpace >= rowHeight) {
+      below = false;
+      available = aboveSpace;
+    } else if (belowSpace > 0 && belowSpace >= rowHeight) {
+      below = true;
+      available = belowSpace;
+    } else if (aboveSpace >= belowSpace) {
+      below = false;
+      available = aboveSpace;
+    } else {
+      below = true;
+      available = belowSpace;
+    }
+    if (available < naturalHeight) skillMenuEl.style.maxHeight = `${Math.min(available, cssCap)}px`;
     const height = skillMenuEl.getBoundingClientRect().height;
-    // 下方放置仍以 composer 区为界（不压住控制行）；放不下才上翻，上翻允许覆盖 transcript。
-    const below = caret.bottom + 4;
-    const belowLimit = Math.min(limitBottom, host.bottom - SKILL_MENU_PANEL_MARGIN);
-    const top = below + height <= belowLimit ? below : caret.top - height - 4;
+    const top = below ? belowTop : aboveBottom - height;
     const clamped = Math.min(Math.max(top, limitTop), Math.max(limitTop, limitBottom - height));
     skillMenuEl.style.top = `${clamped - host.top}px`;
     return skillMenuClip(skillMenuEl.getBoundingClientRect(), panelRect);
@@ -4602,12 +4643,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (forceCatalog || newToken) {
       refreshSkillCatalog(true);
     }
-    skillMenuState = syncSkillMenuState(
+    const next = syncSkillMenuState(
       skillMenuState,
       composerView.state.doc.toString(),
       composerView.state.selection.main.head,
       skillCatalog ?? [],
     );
+    // IME settle、catalog 回包与文档回调可能对同一份最终文档各算一次：状态没变就不重建 DOM。
+    if (sameSkillMenuState(skillMenuState, next)) return;
+    skillMenuState = next;
     renderSkillMenu();
   }
 
@@ -10439,7 +10483,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       return;
     }
     if (mod) return;
+    // 武装只接受**无修饰**的 Enter / Tab（change delta「武装时无修饰的 Enter / Tab」）：
+    // Shift+Enter 换行、Shift+Tab 焦点回退、Alt 组合保持原义（C7）。
     if (skillMenuState !== null && skillMenuState.armed &&
+        !event.shiftKey && !event.altKey &&
         (event.key === "Enter" || event.key === "Tab")) {
       event.preventDefault();
       selectSkillMenuItem();

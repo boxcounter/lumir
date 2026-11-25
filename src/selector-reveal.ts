@@ -34,7 +34,8 @@ function clamp(value: number, min: number, max: number): number {
  * 返回目标完整可见所需的 scrollTop。
  *
  * - 已完整落在可见带内 ⇒ 原样返回（判据是带，不是滚动口）。
- * - 越界 ⇒ 只把目标滚到带边缘，并保留一行上下文；上下界自然 clamp。
+ * - 越界 ⇒ 只把目标滚到带边缘，并保留一行上下文（带高不足两行时把剩余空间全部留给
+ *   上下文）；上下界自然 clamp。
  * - 目标比可见带还高 ⇒ 对齐上缘（无法完整可见时不留不可能的余量）。
  */
 export function revealScrollTop(request: RevealScrollRequest): number {
@@ -48,7 +49,7 @@ export function revealScrollTop(request: RevealScrollRequest): number {
   if (itemHeight > bandHeight) return clamp(itemTop - band.top, 0, maxScroll);
   const margin = Math.min(
     Math.max(0, request.margin ?? itemHeight),
-    Math.max(0, (bandHeight - itemHeight) / 2),
+    Math.max(0, bandHeight - itemHeight),
   );
   const next = itemTop < visibleTop
     ? itemTop - band.top - margin

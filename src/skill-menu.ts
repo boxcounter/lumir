@@ -92,6 +92,24 @@ export function openSkillMenu(
   return syncSkillMenuState(null, text, caret, catalog);
 }
 
+/**
+ * 两次同步是否得到同一份候选状态（token / 游标 / 武装一致，items 逐项按引用比较）。
+ *
+ * IME settle、catalog 回包与文档回调可能对同一份最终文档各算一次；状态相同就不该重建 DOM
+ * （重建会让候选闪一下，也让「compositionend 只重算一次」无法用次数断言）。
+ */
+export function sameSkillMenuState(
+  a: SkillMenuState | null,
+  b: SkillMenuState | null,
+): boolean {
+  if (a === null || b === null) return a === b;
+  if (a.token.from !== b.token.from || a.token.to !== b.token.to ||
+      a.token.prefix !== b.token.prefix) return false;
+  if (a.highlighted !== b.highlighted || a.armed !== b.armed ||
+      a.items.length !== b.items.length) return false;
+  return a.items.every((item, index) => item === b.items[index]);
+}
+
 export function moveSkillHighlight(state: SkillMenuState, delta: number): SkillMenuState {
   if (state.items.length === 0) return state;
   const highlighted = Math.max(0, Math.min(state.items.length - 1, state.highlighted + delta));

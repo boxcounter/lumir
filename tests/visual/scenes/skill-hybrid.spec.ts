@@ -750,7 +750,7 @@ test("静止指针不抢键盘高亮，真实指针移动仍可接管且 option 
   });
 });
 
-test("指针悬停上缘部分可见项：真实 mouseenter 后只滚动菜单到最近可见位置", async ({ page }) => {
+test("指针悬停上缘部分可见项：真实 mousemove 后只滚动菜单到最近可见位置", async ({ page }) => {
   await setup(page, null, false, undefined, syntheticSkills(12));
   await page.mouse.move(10, 10);
   await page.keyboard.type("/skill");
@@ -784,7 +784,7 @@ test("指针悬停上缘部分可见项：真实 mouseenter 后只滚动菜单�
   });
   const hitOption = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest("[role=option]")?.id ?? null, target);
   expect(hitOption, `指针坐标必须真实命中部分可见 option：${JSON.stringify(target)}`).toBe(`lumir-hp-skill-option-${target.index}`);
-  // 不用 locator.hover()：它会先自动 scrollIntoView，无法区分浏览器自动揭示与产品 mouseenter 揭示。
+  // 不用 locator.hover()：它会先自动 scrollIntoView，无法区分浏览器自动揭示与产品 mousemove 揭示。
   await page.mouse.move(target.x, target.y);
   await expect(menu.locator("[role=option]").nth(target.index)).toHaveAttribute("aria-selected", "true");
   await expectHighlightedVisible(menu);
@@ -1055,3 +1055,225 @@ for (const theme of ["light", "dark", "eink"] as const) {
     expect(alpha, `${theme}：浮层背景必须完全不透明`).toBe(1);
   });
 }
+
+
+// ── 机械核验 F1：武装态只接受**无修饰**的 Enter / Tab（delta「武装时无修饰的 Enter / Tab」）──
+// 全名自动武装与显式导航两路都要证明：Shift / Alt 组合保持原义，不会被候选吞成一次 Skill 调用。
+async function armSkillMenuBy(page: Page, mode: "全名" | "导航"): Promise<void> {
+  if (mode === "全名") {
+    await page.keyboard.type("/tmp-acc");
+  } else {
+    await page.keyboard.type("/acc");
+    await page.keyboard.press("ArrowDown");
+  }
+}
+
+async function composerDoc(page: Page): Promise<string> {
+  return page.evaluate(() => (document.querySelector(".lumir-hp-composer .cm-content") as any).cmTile.root.view.state.doc.toString());
+}
+
+const ARMED_DOC = { 全名: "/tmp-acc", 导航: "/acc" } as const;
+
+for (const mode of ["全名", "导航"] as const) {
+  test(`武装态（${mode}）Shift+Enter 仍插入换行，不创建 Skill 引用`, async ({ page }) => {
+    await setup(page);
+    const composer = page.locator(".lumir-hp-composer .cm-content");
+    const menu = page.locator(".lumir-hp-skill-menu");
+    await page.mouse.move(10, 10);
+    await armSkillMenuBy(page, mode);
+    await expect(menu).toHaveAttribute("data-armed", "true");
+    await page.keyboard.press("Shift+Enter");
+    expect(await composerDoc(page), "Shift+Enter 必须换行而不是接受候选").toBe(`${ARMED_DOC[mode]}\n`);
+    await expect(composer.locator(".lumir-hp-skill-ref")).toHaveCount(0);
+    expect(await sent(page)).toEqual([]);
+    await expect(menu).toBeHidden();
+  });
+
+  test(`武装态（${mode}）Shift+Tab 仍回退焦点，不创建 Skill 引用`, async ({ page }) => {
+    await setup(page);
+    const composer = page.locator(".lumir-hp-composer .cm-content");
+    const menu = page.locator(".lumir-hp-skill-menu");
+    await page.mouse.move(10, 10);
+    await armSkillMenuBy(page, mode);
+    await expect(menu).toHaveAttribute("data-armed", "true");
+    await page.keyboard.press("Shift+Tab");
+    await expect(composer).not.toBeFocused();
+    await expect(menu).toBeHidden();
+    await expect(composer).toHaveText(ARMED_DOC[mode]);
+    await expect(composer.locator(".lumir-hp-skill-ref")).toHaveCount(0);
+    expect(await sent(page)).toEqual([]);
+    const keys = await page.evaluate(() => (window as unknown as { __keyDefaults: any[] }).__keyDefaults);
+    expect(keys.at(-1)).toMatchObject({ key: "Tab", prevented: false, shiftKey: true });
+  });
+
+  test(`武装态（${mode}）Alt+Enter 不被候选接受，按既有 Enter 语义发送纯文本`, async ({ page }) => {
+    await setup(page);
+    const menu = page.locator(".lumir-hp-skill-menu");
+    await page.mouse.move(10, 10);
+    await armSkillMenuBy(page, mode);
+    await expect(menu).toHaveAttribute("data-armed", "true");
+    await page.keyboard.press("Alt+Enter");
+    await expect.poll(async () => (await sent(page)).length).toBe(1);
+    expect((await sent(page))[0].skills_json, "Alt+Enter 不得被候选解释成接受").toBe("[]");
+    await expect(menu).toBeHidden();
+  });
+}
+
+// ── 机械核验 F2 / F7：下方放置不得压控制行；上翻不得盖 caret，优先收缩 max-height ──
+async function overlayGeometry(page: Page) {
+  return page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>(".lumir-hp-skill-menu");
+    if (root === null) throw new Error("候选不在场");
+    const view = (document.querySelector(".lumir-hp-composer .cm-content") as any).cmTile.root.view;
+    const caret = view.coordsAtPos(view.state.selection.main.head);
+    const panel = root.closest(".lumir-harness")!.getBoundingClientRect();
+    const ctl = root.closest(".lumir-hp-composer-area")!.querySelector(".lumir-hp-ctl")!.getBoundingClientRect();
+    const rect = root.getBoundingClientRect();
+    return {
+      menuTop: rect.top,
+      menuBottom: rect.bottom,
+      menuHeight: rect.height,
+      panelTop: panel.top,
+      panelBottom: panel.bottom,
+      ctlTop: ctl.top,
+      ctlBottom: ctl.bottom,
+      caretTop: caret === null ? null : caret.top,
+      caretBottom: caret === null ? null : caret.bottom,
+      inlineMaxHeight: root.style.maxHeight,
+      computedMaxHeight: getComputedStyle(root).maxHeight,
+      overflow: root.scrollHeight > root.clientHeight,
+    };
+  });
+}
+
+test("候选不覆盖控制行：下方放不下的单选项与长列表都不得压住 .lumir-hp-ctl", async ({ page }) => {
+  for (const length of [1, 12]) {
+    await setup(page, null, false, undefined, syntheticSkills(length));
+    await page.mouse.move(10, 10);
+    await page.keyboard.type("/skill");
+    const menu = page.locator(".lumir-hp-skill-menu");
+    await expect(menu.locator("[role=option]")).toHaveCount(length);
+    const geometry = await overlayGeometry(page);
+    const detail = JSON.stringify(geometry);
+    expect(geometry.ctlTop, `控制行不在场：${detail}`).toBeGreaterThan(0);
+    expect(geometry.menuBottom, `候选压住控制行：${detail}`).toBeLessThanOrEqual(geometry.ctlTop + 0.5);
+    expect(geometry.menuTop, `候选盒顶越出面板：${detail}`).toBeGreaterThanOrEqual(geometry.panelTop - 0.5);
+    expect(geometry.menuBottom, `候选盒底越出面板：${detail}`).toBeLessThanOrEqual(geometry.panelBottom + 0.5);
+    if (geometry.caretTop !== null && geometry.menuTop < geometry.caretTop) {
+      expect(geometry.menuBottom, `上翻时盒底盖住 caret：${detail}`).toBeLessThanOrEqual(geometry.caretTop + 0.5);
+    }
+  }
+});
+
+test("候选下方放置：空间足够时贴在 caret 下方，盒底止于控制行顶缘之上", async ({ page }) => {
+  // caret 停在第 1 行、下面还有 3 行：单选项在 caret 到控制行之间放得下 → 走下方分支。
+  await setup(page, { version: 3, text: "\n\n\n", caret: 0, cards: [], skills: [] }, false, undefined, syntheticSkills(1));
+  await page.mouse.move(10, 10);
+  await page.keyboard.type("/skill");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  await expect(menu.locator("[role=option]")).toHaveCount(1);
+  const geometry = await overlayGeometry(page);
+  const detail = JSON.stringify(geometry);
+  expect(geometry.caretBottom, `caret 不在场：${detail}`).not.toBeNull();
+  expect(geometry.menuTop, `下方空间足够时应放在 caret 下方：${detail}`).toBeGreaterThanOrEqual(geometry.caretBottom!);
+  expect(geometry.menuBottom, `下方放置越过控制行顶缘：${detail}`).toBeLessThanOrEqual(geometry.ctlTop + 0.5);
+  expect(geometry.menuBottom, `候选盒底越出面板：${detail}`).toBeLessThanOrEqual(geometry.panelBottom + 0.5);
+});
+
+test("短视口上翻：优先收缩候选 max-height，盒底不盖 caret、盒顶不越面板", async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 320 });
+  await setup(page, null, false, undefined, syntheticSkills(12));
+  await page.mouse.move(10, 10);
+  await page.keyboard.type("/skill");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  await expect(menu.locator("[role=option]")).toHaveCount(12);
+  const geometry = await overlayGeometry(page);
+  const detail = JSON.stringify(geometry);
+  expect(geometry.caretTop, `caret 不在场：${detail}`).not.toBeNull();
+  expect(geometry.overflow, "长列表必须真实溢出，滚动断言才不是空测量").toBe(true);
+  expect(geometry.menuTop, `上方空间不足时应上翻：${detail}`).toBeLessThan(geometry.caretTop!);
+  expect(geometry.menuBottom, `上翻后盒底盖住 caret：${detail}`).toBeLessThanOrEqual(geometry.caretTop! + 0.5);
+  expect(geometry.menuTop, `盒顶越出面板：${detail}`).toBeGreaterThanOrEqual(geometry.panelTop - 0.5);
+  expect(geometry.menuHeight, `上翻空间不足时必须收缩 max-height：${detail}`).toBeLessThan(200);
+  expect(geometry.menuHeight, `收缩后仍须保留至少一行可用高度：${detail}`).toBeGreaterThanOrEqual(20);
+});
+
+test("候选 max-height 以 CSS 为单一真源：改 CSS 后 JS 不得按旧常量放宽", async ({ page }) => {
+  // 该视口下面板容量约 197px（< 200）：按 200 常量判定的实现会把 CSS 的 90px 覆盖成 197px。
+  await page.setViewportSize({ width: 1000, height: 280 });
+  await setup(page, null, false, undefined, syntheticSkills(12));
+  await page.addStyleTag({ content: ".lumir-hp-skill-menu { max-height: 90px; }" });
+  await page.mouse.move(10, 10);
+  await page.keyboard.type("/skill");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  await expect(menu.locator("[role=option]")).toHaveCount(12);
+  const geometry = await overlayGeometry(page);
+  const detail = JSON.stringify(geometry);
+  // 用例前提：面板容量落在 (CSS 上限, 200) 之间——按 200 常量判定的实现会写 inline 上限覆盖 CSS。
+  const capacity = geometry.panelBottom - geometry.panelTop - 16;
+  expect(capacity, `面板容量必须大于 CSS 上限：${detail}`).toBeGreaterThan(90);
+  expect(capacity, `面板容量必须小于旧常量 200：${detail}`).toBeLessThan(200);
+  expect(geometry.overflow, "长列表必须真实溢出，max-height 断言才不是空测量").toBe(true);
+  expect(geometry.computedMaxHeight, `CSS 上限未被读到：${detail}`).toBe("90px");
+  expect(geometry.menuHeight, `候选高度越过 CSS 上限：${detail}`).toBeLessThanOrEqual(90.5);
+});
+
+// ── 机械核验 F4：compositionend 之后只重算一次（次数，不是最终态）──
+test("IME compositionend 只重算一次：文档回写与 settle 不得各重建一遍", async ({ page }) => {
+  await setup(page);
+  const composer = page.locator(".lumir-hp-composer .cm-content");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  await page.keyboard.type("/tmp");
+  await expect(menu).toBeVisible();
+  await composer.evaluate((el) => {
+    const view = (el as any).cmTile.root.view;
+    const observer = view.observer;
+    const host = document.querySelector(".lumir-hp-skill-menu") as HTMLElement;
+    const append = host.append.bind(host);
+    const probe = { pending: true, refreshes: 0, checks: 0 };
+    (window as any).__skillImeProbe = probe;
+    const originalPending = observer.pendingRecords.bind(observer);
+    observer.pendingRecords = () => {
+      probe.checks += 1;
+      return probe.pending ? [{}] : originalPending();
+    };
+    // renderSkillMenu = replaceChildren() 清空后逐项 append：每轮只数第一项；
+    // hideSkillMenu 的空 replaceChildren 不算重算。
+    host.append = (...nodes: Array<Node | string>) => {
+      if (host.children.length === 0 && nodes.length > 0) probe.refreshes += 1;
+      return append(...nodes);
+    };
+    el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    // 组合结束后的文档回写（CM 的真实 flush 时序）：此刻同步重算一次。
+    Object.defineProperty(view, "compositionStarted", { value: false, configurable: true });
+    view.dispatch({ changes: { from: 4, insert: "-acc" }, selection: { anchor: 8 }, userEvent: "input.compose" });
+  });
+  const immediate = await page.evaluate(() => (window as any).__skillImeProbe);
+  expect(immediate.refreshes, "settle 放行前最多一次同步重算").toBeLessThanOrEqual(1);
+  const checksBefore = immediate.checks;
+  await page.evaluate(() => { (window as any).__skillImeProbe.pending = false; });
+  await expect(menu).toHaveAttribute("data-armed", "true");
+  await page.waitForTimeout(80);
+  const after = await page.evaluate(() => (window as any).__skillImeProbe);
+  expect(after.checks, "settle 必须真的重试过，否则次数断言是空测").toBeGreaterThan(checksBefore);
+  expect(after.refreshes, "compositionend 之后只能重算一次").toBe(1);
+  expect(await composerDoc(page)).toBe("/tmp-acc");
+});
+
+// ── 机械核验 F9：技能全名恰好是 tmp 时 /tmp 按全名规则武装（批准规则的明确边界）──
+test("技能全名恰好是 tmp 时 /tmp 直接武装并接受", async ({ page }) => {
+  await setup(page, null, false, undefined, [
+    { name: "tmp", description: "全名恰为路径样式", source: "vault", user_invocable: true, model_invocable: true, invocation_valid: true },
+  ]);
+  const composer = page.locator(".lumir-hp-composer .cm-content");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  await page.mouse.move(10, 10);
+  await page.keyboard.type("/tmp");
+  await expect(menu).toHaveAttribute("data-armed", "true");
+  await expect(menu.locator("[role=option]")).toHaveCount(1);
+  await page.keyboard.press("Enter");
+  await expect(composer).toHaveText("/tmp ");
+  await expect(composer.locator(".lumir-hp-skill-ref")).toHaveCount(1);
+  expect(await sent(page)).toEqual([]);
+});

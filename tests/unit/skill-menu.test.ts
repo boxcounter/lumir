@@ -6,6 +6,7 @@ import {
   isSkillName,
   moveSkillHighlight,
   openSkillMenu,
+  sameSkillMenuState,
   skillMenuNavigationDelta,
   skillSelectionSpec,
   skillTokenAt,
@@ -65,6 +66,20 @@ test("全名逐字相等时自动武装；路径片段不算全名", () => {
   assert.equal(skillSelectionSpec("/tmp-a", partial), null);
   // grammar / 过滤是大小写敏感的：大小写不匹配时候选根本不出现，谈不上武装
   assert.equal(openSkillMenu("/TMP-ACC", 8, [skill("tmp-acc")]), null);
+});
+
+test("技能全名恰好是 tmp 时，/tmp 按全名规则武装（批准规则的明确边界）", () => {
+  const state = openSkillMenu("/tmp", 4, [skill("tmp")])!;
+  assert.equal(state.armed, true, "token 前缀逐字等于某项全名 → 武装，与名字是否像路径无关");
+  assert.equal(state.highlighted, 0);
+  assert.deepEqual(skillSelectionSpec("/tmp", state)?.changes, { from: 0, to: 4, insert: "/tmp " });
+  assert.deepEqual(skillSelectionSpec("/tmp", state)?.skill, { name: "tmp", from: 0 });
+  // 与更长的 tmp-acc 并存时，全名项仍是被指向的那一项
+  const mixed = openSkillMenu("/tmp", 4, [skill("tmp-acc"), skill("tmp")])!;
+  assert.equal(mixed.armed, true);
+  assert.equal(mixed.items[mixed.highlighted]?.name, "tmp");
+  // 差一个字符就不是全名
+  assert.equal(openSkillMenu("/tm", 3, [skill("tmp")])!.armed, false);
 });
 
 test("查询变化自动视觉高亮首项，并按名字保留上一次高亮", () => {
@@ -131,6 +146,17 @@ test("候选首次出现且 token 已是全名时，异步回包按全名规则�
   const state = syncSkillMenuState(null, "/acc-skill-abc", 14, catalog)!;
   assert.equal(state.armed, true);
   assert.equal(state.items[state.highlighted]?.name, "acc-skill-abc");
+});
+
+test("同一状态重复同步不重建：sameSkillMenuState 认 token / 游标 / 武装与逐项引用", () => {
+  const opened = openSkillMenu("/acc", 4, catalog)!;
+  assert.equal(sameSkillMenuState(opened, syncSkillMenuState(opened, "/acc", 4, catalog)), true);
+  assert.equal(sameSkillMenuState(null, null), true);
+  assert.equal(sameSkillMenuState(opened, null), false);
+  assert.equal(sameSkillMenuState(opened, moveSkillHighlight(opened, 1)), false);
+  // 真实 catalog 回包是新对象数组：即使名字相同也必须允许重建（内容可能变）
+  const refreshed = syncSkillMenuState(opened, "/acc", 4, catalog.map((item) => ({ ...item })))!;
+  assert.equal(sameSkillMenuState(opened, refreshed), false);
 });
 
 test("方向键从自动高亮项移动，到端停住；导航即武装", () => {

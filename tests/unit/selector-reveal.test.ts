@@ -54,7 +54,21 @@ test("首尾自然 clamp：不产生负 scrollTop，也不越过最大滚动量"
   assert.equal(reveal({ scrollTop: 270, itemTop: 380 }), 280);
 });
 
-test("band 比一行还窄时丢弃上下文余量，只保证贴边", () => {
+test("带高与余量的边界：≥2 行留满一行，1–2 行用尽剩余空间，≤1 行取 0", () => {
+  // 带高恰好 2 行：目标贴底时，目标与带底之间保留整一行上下文
+  assert.equal(reveal({ band: { top: 0, bottom: 40 }, itemTop: 40 }), 40);
+  // 带高 2.2 行：仍留满一行，不按对称居中缩成半行
+  assert.equal(reveal({ band: { top: 0, bottom: 44 }, itemTop: 44 }), 40);
+  // 带高 1.5 行：无法留满一行，剩余空间（半行）全部留给上下文
+  assert.equal(reveal({ band: { top: 0, bottom: 30 }, itemTop: 30 }), 30);
+  // 带高 1.2 行：剩余 0.2 行
+  assert.equal(reveal({ band: { top: 0, bottom: 24 }, itemTop: 24 }), 24);
+  // 带高 1 行：无余量可留，目标贴边
+  assert.equal(reveal({ band: { top: 0, bottom: 20 }, itemTop: 20 }), 20);
+  // 上方越界的同一组边界
+  assert.equal(reveal({ scrollTop: 40, band: { top: 0, bottom: 40 }, itemTop: 20 }), 0);
+  assert.equal(reveal({ scrollTop: 30, band: { top: 0, bottom: 30 }, itemTop: 20 }), 10);
+  // 带比一行还窄时丢弃上下文余量，只保证贴边
   assert.equal(reveal({ band: { top: 8, bottom: 28 }, itemTop: 8, itemHeight: 20 }), 0);
   assert.equal(reveal({ band: { top: 8, bottom: 28 }, itemTop: 28 }), 20);
 });

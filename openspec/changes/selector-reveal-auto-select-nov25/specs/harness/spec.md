@@ -68,7 +68,9 @@ MUST NOT 被当作显式调用依据；`/tmp`、`/usr/local` 等斜杠开头路�
 **候选几何与揭示**：真实可见带 SHALL 取 `menuRect ∩ panelRect ∩ viewport`（再扣掉候选自身的边框与
 padding），MUST NOT 取候选的 `clientHeight`——菜单盒被祖先裁掉时，盒内坐标会把屏外的行判成可见。候选盒
 SHALL 完整落在面板与视口内：面板高度不足时收缩 `max-height`，允许向上覆盖 transcript，垂直夹取宿主
-MUST NOT 是 composer 区；行高与高度 MUST 取实测值，MUST NOT 另留一份硬编码行高。
+MUST NOT 是 composer 区；行高与高度 MUST 取实测值，MUST NOT 另留一份硬编码行高。下方放置 SHALL 以
+控制行顶缘为界，MUST NOT 压住控制行；上翻空间不足时 SHALL 先按上方可用空间收缩 `max-height`，
+MUST NOT 让盒底越过 caret；`max-height` 上限的唯一真源 SHALL 是 CSS。
 
 游标经键盘或指针改变后，当前 option SHALL 完整落在真实可见带内；已完整可见时候选滚动位置 MUST NOT 改变，
 越界时 SHALL 只滚动候选到带边缘并保留一行上下文，首尾自然 clamp。首尾、长列表与指针 / 键盘混合输入均

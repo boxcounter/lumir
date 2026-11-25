@@ -29,3 +29,14 @@
 - [x] 更新验收场景 867 / 868 的导航预期与截图步
 - [ ] 主会话串行执行：`scripts/gate.sh quick` + `scripts/gate.sh visual` + 真机 867 / 868
 - [ ] 归档时执行：delta 合并进 living spec，`--archived` 审计 PASS
+
+## 机械核验收口（2026-11-25）
+
+- [x] F1 武装只接受无修饰 Enter / Tab；Shift+Enter、Shift+Tab、Alt+Enter 反例（全名自动武装 + 显式导航两路）
+- [x] F2 下方放置以 `.lumir-hp-ctl` 顶缘为界，补浏览器断言（单选项与长列表）
+- [x] F3 `max-height` 以 CSS 为单一真源，补「改 CSS 不失配」的浏览器断言
+- [x] F4 Skill 侧 `compositionend` 重算次数断言；文档回调 / catalog 回包 / settle 合并为一次重建
+- [x] F5 测试标题 / 注释 `mouseenter` → `mousemove`
+- [x] F6 带高 1–2 行时的余量口径写进 C3，补边界单测
+- [x] F7 短视口上翻优先收缩 `max-height`，盒底不越过 caret
+- [x] F9 技能全名恰好 `tmp` 的武装语义钉住（单元 + 浏览器各一条）

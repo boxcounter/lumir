@@ -31,14 +31,21 @@ composition 时，Ctrl+N 与 ArrowDown 恒产生相同的下一项状态，Ctrl+
 本合同不接管按键，既有 Emacs 行移动 MUST 保持。Shift+Arrow 与 Ctrl+Shift+N/P 继续走原生选区路径且不被
 候选消费，既有扩选 MUST 保持；Shift+Arrow 扩选使 caret 离开 Skill token 后，候选按既有
 `selectionSet → syncSkillMenu()` 路径关闭，Ctrl+Shift+N/P 另保留旧主动关闭路径，两者均不强制保留候选。
-Meta / Alt 组合与 IME composition MUST NOT 被这条候选导航吞掉；Enter / Tab 只在武装态接受（C4），
-Escape 关闭的既有合同不变。
+Meta / Alt 组合与 IME composition MUST NOT 被这条候选导航吞掉；Enter / Tab 只在武装态接受，且只认
+**无修饰**组合（C4）：Shift+Enter 仍换行、Shift+Tab 仍回退焦点、Alt 组合保持原义，Escape 关闭的
+既有合同不变。
 
 ### S2 — 高亮项始终完整可见，候选盒不被祖先裁切
 
 真实可见带 = `menuRect ∩ panelRect ∩ viewport`（再扣掉菜单自身的边框与 padding），不是菜单的
 `clientHeight`。候选盒 SHALL 完整落在面板与视口内（面板是 `.lumir-harness`，允许向上覆盖 transcript；
 高度不足时收缩 `max-height`），因为被裁区里的行无法靠 `scrollTop` 搬进屏幕。
+
+垂直放置：下方放得下 ⇒ 放在 caret 下方；否则上翻（允许覆盖 transcript）。下方放置 SHALL 以控制行
+`.lumir-hp-ctl` 的顶缘为界，MUST NOT 压住控制行；上翻 SHALL 先按上方可用空间收缩 `max-height`，
+MUST NOT 让盒底越过 caret（不得把 caret 与 composer 当前行压住）；上方连一行都放不下才回落到下方。
+`max-height` 的上限唯一真源是 CSS（`.lumir-hp-skill-menu`），JS 只按可用空间再收缩，MUST NOT
+另留硬编码上限。
 
 任意游标改变后，当前 option 的上下缘 SHALL 落在真实可见带内（允许 1px 几何取整容差）。若它已完整可见，
 候选 `scrollTop` MUST 不变；越界时只滚动候选到带边缘并保留一行上下文。首尾、长列表与指针/键盘交替满足
