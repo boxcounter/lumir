@@ -101,7 +101,7 @@ fn dns_mixed_public_private_is_rejected_before_any_connection() {
         &permissions(&[]),
         resolver,
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect_err("公私混合必须拒绝");
@@ -120,7 +120,7 @@ fn dns_failure_and_mixed_a_aaaa_answers_are_checked_directly() {
             vec![Err("synthetic DNS failure".to_string())],
         ),
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect_err("DNS 失败必须 fail closed");
@@ -139,7 +139,7 @@ fn dns_failure_and_mixed_a_aaaa_answers_are_checked_directly() {
         &permissions(&[]),
         resolver,
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect("全公网 A / AAAA 混合答案应通过");
@@ -156,7 +156,7 @@ fn dns_failure_and_mixed_a_aaaa_answers_are_checked_directly() {
         &permissions(&[]),
         resolver,
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect_err("任一非全局 AAAA 都应拒绝整组答案");
@@ -188,7 +188,7 @@ fn rebinding_second_hop_is_rejected_without_connecting_new_origin() {
         &permissions(&[]),
         resolver,
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect_err("公网到私网 rebinding 必须拒绝");
@@ -213,7 +213,7 @@ fn relative_redirect_submits_last_validated_url() {
         &permissions(&[]),
         resolver,
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect("relative redirect 必须按当前 URL 解析");
@@ -243,7 +243,7 @@ fn cross_origin_redirect_submits_only_last_validated_url() {
         &permissions(&[]),
         resolver,
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect("未封禁的跨 origin redirect 可继续");
@@ -276,7 +276,7 @@ fn redirect_origin_deny_stops_before_dns_or_connection() {
         &permissions(&["web_fetch(http://other.test)"]),
         resolver.clone(),
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect_err("redirect deny 必须短路");
@@ -295,7 +295,7 @@ fn https_preserves_original_host_and_sni_with_isolated_test_ca() {
         &permissions(&[]),
         resolver,
         tls_transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect("target.test 测试 CA 与原 SNI 必须成功");
@@ -342,7 +342,7 @@ fn system_and_manual_proxies_are_bypassed() {
         &permissions(&[]),
         resolver,
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect("no_proxy 必须直达已验证目标");
@@ -372,7 +372,7 @@ fn https_target_bypasses_proxy_and_negative_switch_proves_the_counterexample() {
         &permissions(&[]),
         ScriptedDns::public("target.test", target.port()),
         tls_transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect("HTTPS no_proxy 必须直达已验证目标");
@@ -386,7 +386,7 @@ fn https_target_bypasses_proxy_and_negative_switch_proves_the_counterexample() {
         &permissions(&[]),
         ScriptedDns::public("target.test", target.port()),
         tls_transport().with_system_proxy_for_negative_test(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect_err("错误实现恢复系统代理后必须被 HTTPS 反例判红");
@@ -410,7 +410,7 @@ fn content_type_and_range_limit_are_enforced() {
         &permissions(&[]),
         resolver,
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect("Range GET 后 HTML 可判定");
@@ -425,7 +425,7 @@ fn content_type_and_range_limit_are_enforced() {
         &permissions(&[]),
         resolver,
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect_err("PDF 不是 HTML");
@@ -442,7 +442,7 @@ fn content_type_and_range_limit_are_enforced() {
         &permissions(&[]),
         resolver,
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect_err("两次都无法判定 Content-Type");
@@ -466,7 +466,7 @@ fn range_partial_content_is_accepted_and_conflicting_content_types_fail_closed()
         &permissions(&[]),
         resolver,
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect("服务器以 206 响应 Range 时必须接受");
@@ -490,7 +490,7 @@ fn range_partial_content_is_accepted_and_conflicting_content_types_fail_closed()
         &permissions(&[]),
         resolver,
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect_err("冲突 Content-Type 不得取首个值放行");
@@ -510,7 +510,7 @@ fn downgrade_userinfo_location_and_redirect_limit_fail_closed() {
         &permissions(&[]),
         resolver,
         tls_transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect_err("HTTPS → HTTP downgrade 必须拒绝");
@@ -527,7 +527,7 @@ fn downgrade_userinfo_location_and_redirect_limit_fail_closed() {
         &permissions(&[]),
         resolver,
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect_err("带凭据 Location 必须拒绝");
@@ -540,7 +540,7 @@ fn downgrade_userinfo_location_and_redirect_limit_fail_closed() {
         &permissions(&[]),
         resolver,
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect_err("超过 5 跳必须失败");
@@ -562,7 +562,7 @@ fn backslash_location_is_rejected_before_url_normalization_or_connection() {
         &permissions(&[]),
         resolver,
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect_err("反斜杠 Location 不得先规范化再放行");
@@ -583,7 +583,7 @@ fn redirect_rechecks_length_and_target_errors_do_not_use_provider_classification
         &permissions(&[]),
         resolver.clone(),
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect_err("redirect 后 URL 仍不得超过 8192 字符");
@@ -598,7 +598,7 @@ fn redirect_rechecks_length_and_target_errors_do_not_use_provider_classification
         &permissions(&[]),
         resolver,
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect_err("目标 3xx 缺 Location 必须拒绝");
@@ -611,7 +611,7 @@ fn redirect_rechecks_length_and_target_errors_do_not_use_provider_classification
         &permissions(&[]),
         resolver,
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect_err("目标 HEAD HTTP 状态必须失败");
@@ -626,7 +626,7 @@ fn trailing_dot_origins_cannot_bypass_initial_or_redirect_deny() {
         &permissions(&["web_fetch(http://example.com)"]),
         resolver.clone(),
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect_err("初始 URL 的 DNS 尾点不得绕过规范 deny");
@@ -648,7 +648,7 @@ fn trailing_dot_origins_cannot_bypass_initial_or_redirect_deny() {
         &permissions(&["web_fetch(http://other.test)"]),
         resolver,
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect_err("redirect 的 DNS 尾点不得绕过规范 deny");
@@ -694,7 +694,7 @@ fn cancel_and_deadline_return_without_joining_blocked_work() {
         &permissions(&[]),
         resolver,
         transport(),
-        &|| false,
+        || false,
         PreflightLimits {
             hop_timeout: Duration::from_millis(40),
             chain_timeout: Duration::from_millis(200),
@@ -768,7 +768,7 @@ fn blocked_dns_honors_cancellation_and_hop_deadline_without_joining() {
         &permissions(&[]),
         BlockingDns,
         transport(),
-        &|| false,
+        || false,
         PreflightLimits {
             hop_timeout: Duration::from_millis(40),
             chain_timeout: Duration::from_millis(200),
@@ -797,7 +797,7 @@ fn hop_deadline_spans_dns_and_http_instead_of_resetting_per_operation() {
         &permissions(&[]),
         resolver,
         transport(),
-        &|| false,
+        || false,
         PreflightLimits {
             hop_timeout: Duration::from_millis(150),
             chain_timeout: Duration::from_millis(500),
@@ -824,7 +824,7 @@ fn invalid_url_shapes_and_overlength_input_fail_before_dns_or_network() {
             &permissions(&[]),
             resolver.clone(),
             transport(),
-            &|| false,
+            || false,
             PreflightLimits::default(),
         )
         .expect_err(url);
@@ -839,7 +839,7 @@ fn invalid_url_shapes_and_overlength_input_fail_before_dns_or_network() {
         &permissions(&[]),
         resolver.clone(),
         transport(),
-        &|| false,
+        || false,
         PreflightLimits::default(),
     )
     .expect_err("超过 8192 字符必须拒绝");
@@ -862,7 +862,7 @@ fn localhost_local_dns_failure_and_ip_variants_fail_before_network() {
             &permissions(&[]),
             ScriptedDns::default(),
             transport(),
-            &|| false,
+            || false,
             PreflightLimits::default(),
         )
         .expect_err(url);
