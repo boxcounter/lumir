@@ -757,10 +757,18 @@ Unicode 字符且不全为空白；count 缺省 5、本地允许 1–10，越界
 clamp；`need_content` 缺省 `false`。`web_fetch` 输入 SHALL 仅含 1–8192 字符的 `url`。工具 schema
 MUST NOT 暴露 API Key、provider、base URL、超时、重试、响应上限或任意 HTTP header。
 
-统一信封 SHALL 含 `ok` / `provider` / `provider_id` / `operation` / `attempts` / `trust` /
-`truncated` / `truncated_fields`。`provider` / `provider_id` SHALL 为 `string | null`：只有 provider
+统一信封 SHALL 含 `ok` / `provider` / `provider_id` / `operation` / `attempts` / `local_precheck` /
+`trust` / `truncated` / `truncated_fields`。`local_precheck` SHALL 记录 Fetch 是否**实际执行过**
+本地预检：未配置、配置非法、参数非法、权限拒绝等未进入 executor 的路径为 `false`；进入 executor
+后无论预检成功、失败还是取消均为 `true`。审计 MUST NOT 仅按 `operation=fetch` 推断该值。`provider` / `provider_id` SHALL 为 `string | null`：只有 provider
 解析成功才填 `"deepseek"` 与实际配置映射键；未配置、配置歧义、自定义 base URL 及解析前的参数 /
 权限 / URL 拒绝均填 null 且 `attempts=0`，MUST NOT 伪造 `"deepseek"` 为配置 id 或在多候选时暗选。
+基础参数形状与 URL 静态安全校验（scheme / userinfo / 控制字符 / 反斜杠 / 缺失 host，以及
+`localhost`、`.local`、非全局单播 IP 字面量）SHALL 在 provider 解析与可选批准预览之前完成：
+任一 provider 配置状态（未配置、配置歧义、自定义 base URL）都 MUST NOT 掩盖 URL 安全拒绝，
+被拒调用 MUST NOT 变成 `web_provider_unconfigured`，也 MUST NOT 产生批准卡；这些路径的
+`local_precheck` 为 `false`（预检未执行），`attempts` 为 `0`，可解析出 origin 的拒绝仍带
+`source.url`，带凭据的输入 MUST NOT 被抄进 `source`。
 成功 Search SHALL 另带完整 query 与 `results: WebSource[]`，成功 Fetch SHALL 另带
 `source: WebSource`。`WebSource` SHALL 固定包含 `url` / `title` / `snippet` / `summary` /
 `content` / `content_format` / `site` / `date` / `authority`。title SHALL 始终为 string，
@@ -775,7 +783,8 @@ MUST NOT 伪造 provider 未返回的 final URL。
 
 系统 SHALL 同时限制 API 响应字节与进入模型上下文的字符：Search title / snippet / summary 每项上限
 300 / 500 / 1,200 Unicode 字符，Search content 每项 4,000 字符且全部 results 文本合计 24,000 字符，
-Fetch Markdown 24,000 字符，Lumir message / provider_message 各 1,000 字符；Search / Fetch API 响应
+Fetch Markdown 24,000 字符，Lumir message / provider_message / request_id / provider_code 各 1,000
+字符；Search / Fetch API 响应
 分别不得超过 2 / 4 MiB。聚合裁剪 SHALL 按 content → summary → snippet 顺序，结果只能整条移除；
 URL / date / authority / provider MUST NOT 被裁剪。任何字段或数组被裁剪时 SHALL 同时置
 `truncated:true` 并在 `truncated_fields` 列出稳定路径；未截断时该数组为 `[]`。只在文本末尾加省略号
@@ -798,6 +807,14 @@ URL / date / authority / provider MUST NOT 被裁剪。任何字段或数组被�
 - **THEN** 前三者的 `provider` / `provider_id` 均为 null 且 `attempts=0`，不暗选或伪造 id；
   最后一者的 `source.title` 为 `""` 而非 null
 
+#### Scenario: URL 安全拒绝先于 provider 解析
+
+- **WHEN** `web_fetch` 收到 `localhost`、`.local`、非全局单播 IP 字面量、非 HTTP(S) scheme 或带凭据的
+  URL，且 provider 处于未配置 / 配置歧义 / 自定义 base URL 任一状态（`approval` 为任意值）
+- **THEN** 结果恒为 `web_url_blocked`（参数形状非法则为 `web_args_invalid`），MUST NOT 被配置状态
+  改写成 `web_provider_unconfigured`；`provider` / `provider_id` 为 null、`attempts=0`、
+  `local_precheck=false`，不产生批准卡，可解析出 origin 的路径仍带 `source.url`
+
 #### Scenario: 截断显式且 JSON 完整
 
 - **WHEN** 搜索摘要、正文、结果数组或 provider 错误文案超过预算
@@ -808,6 +825,19 @@ URL / date / authority / provider MUST NOT 被裁剪。任何字段或数组被�
 
 - **WHEN** DeepSeek 响应超过对应 2 / 4 MiB 上限，或合法响应的正文超过模型字符预算
 - **THEN** 前者返回 `web_response_too_large` 且不解析半截 JSON；后者可返回有界结果但必须显式标记截断
+
+#### Scenario: 错误元数据同样有界
+
+- **WHEN** provider 的错误响应带超长 `message` / `provider_message` / `request_id` / `provider_code`，
+  或本地预检失败的错误串包含完整 8,192 字符 URL
+- **THEN** 四个字段各自不超过 1,000 字符，且被裁字段逐一进入 `truncated_fields`；URL 本身的
+  `source.url` 不被裁剪
+
+#### Scenario: 审计按实际发生记录预检与外发
+
+- **WHEN** 分别发生 allow_all 正常执行、ask 批准后执行、deny、未配置
+- **THEN** 只有进入 executor 的 Fetch 审计 `local_precheck=true`；`provider_fetch` 只在
+  `attempts>0` 时为 true；deny / 未配置的审计两个布尔均为 false，MUST NOT 按 operation 恒猜
 
 ### Requirement: Web 访问策略与 origin 例外
 
@@ -897,7 +927,9 @@ HTTP / HTTPS、含 host、无 userinfo；其它 scheme、控制字符、反斜�
 MUST NOT 修复成另一个 URL。IP 字面量与 DNS 的全部 A / AAAA 结果 SHALL 都是全局可路由单播；
 任一结果为 loopback、private、link-local、unspecified、multicast、reserved、documentation、CGNAT、
 IPv4-mapped / 兼容映射的非全局地址时整条拒绝，MUST NOT 只挑一个公网地址放行。`localhost`、
-`.local` 与 DNS 解析失败 SHALL fail closed。
+`.local` 与 DNS 解析失败 SHALL fail closed。初始 URL 的 scheme / 凭据与主机类判定（`localhost`、
+`.local`、IP 字面量是否全局可路由）只依赖 URL 字面量，SHALL 在 provider 解析之前完成；重定向的
+每一跳仍 SHALL 重新执行同一套主机类判定，两处共用同一判定实现（同一语义 MUST NOT 两处真源）。
 
 连接 SHALL 只使用已验证地址集，并保留原 host 的 Host 与 TLS SNI；连接前 MUST NOT 再次由系统 resolver
 自由选择地址。目标预检与 DeepSeek client SHALL 都显式 `no_proxy`，每个 hop MUST NOT 重新继承
@@ -939,6 +971,11 @@ DNS / redirect，也不得把预检 URL 当作远端 final URL。若不能维持
 - **THEN** GET 最多读取 4 KiB 即关闭，正文不进入模型；下一跳重新做 URL / DNS 校验，整链超过时限或
   5 跳即失败且不调用 DeepSeek
 
+#### Scenario: 整次 deadline 覆盖预检
+
+- **WHEN** Fetch 的本地预检耗时超过整次工具调用预算（150 秒；测试注入更短值）
+- **THEN** 在共享 deadline 用尽时返回 `web_timeout`、`attempts=0`，且不再向 DeepSeek 发送任何请求
+
 #### Scenario: 非 HTML 不自动回落 curl
 
 - **WHEN** 预检确认目标为 PDF / 二进制，或无法确认其为 HTML
@@ -952,14 +989,18 @@ DNS / redirect，也不得把预检 URL 当作远端 final URL。若不能维持
 
 ### Requirement: Web 请求可靠性与计费边界
 
-DeepSeek 每次 attempt SHALL 连接超时 5 秒；Search / Fetch attempt 总超时分别 30 / 45 秒，含退避的
-整次工具调用分别不超过 100 / 150 秒。响应头与 body 读取 SHALL 计入 deadline。取消 SHALL 复用
+DeepSeek 每次 attempt SHALL 连接超时 5 秒；Search / Fetch attempt 总超时分别 30 / 45 秒，含退避与
+本地预检的整次工具调用分别不超过 100 / 150 秒。Fetch 的本地预检与 DeepSeek 阶段 SHALL 共享同一
+deadline：预检只使用剩余时间，整次 deadline 用尽后 MUST NOT 再发 provider 请求，返回 `web_timeout`
+且 `attempts=0`。响应头与 body 读取 SHALL 计入 deadline。取消 SHALL 复用
 `ctx.aborted()` 的同一事实源，在发起前、退避、响应等待与 body 分块读取时检查，且 MUST NOT 持会话锁。
 取消后 SHALL 关闭响应、不再发新 attempt、返回 `web_cancelled`，部分 JSON 不得当成功解析；
 已在 OS / provider 处理的请求无法撤销，系统 MUST NOT 承诺取消可撤销潜在费用。
 
 自动重试 SHALL 只针对 DeepSeek tools API 的 HTTP 408 / 429 / 5xx，最多初次 + 2 次重试；退避优先使用
-上限 2 秒的 `Retry-After`，缺失时使用 250ms、1s。其它 4xx（含 425）、本地 DNS / connect / TLS /
+上限 2 秒的 `Retry-After`（delta-seconds 或 RFC 2822 / IMF-fixdate 的 HTTP-date；obsolete RFC 850 /
+asctime 形态按缺失处理），缺失时使用 250ms、1s。重试耗尽后的 `message` SHALL 如实写明「已尝试
+初次 + 重试」；单次不可重试的失败才使用「未自动重试」。其它 4xx（含 425）、本地 DNS / connect / TLS /
 timeout、取消、200 后响应过大 / 非 JSON / 坏 JSON / 形状不符 / 空正文 MUST NOT 自动重试。
 本地预检 MUST NOT 自动重试。Search 空 results 不视为错误，Fetch 空 Markdown 即使官方不计费也不重试。
 200 已到达后的本地解析失败 MUST NOT 为追求成功而重复请求。

@@ -1,7 +1,7 @@
 // 设置面板（change add-model-automation-settings-oct24 tasks §5；capability `settings`）。
 //
 // 单页两节，没有 TAB / 侧边导航：**模型接入**（provider 列表 + 选中项的编辑表单，可增删改）
-// 与**自动化**（四个全局开关 + 会话命名 / 图片命名各自内联的目标选择与一行生效说明）。
+// 与**自动化**（四个全局开关 + 会话命名 / 图片命名各自内联的目标选择与一行生效说明，另有独立的网页访问网络授权区）。
 //
 // 分层（与本仓既有面板同一条纪律）：
 //   - **纯模型层**（本文件上半部，零 DOM）：草稿 `Draft`、脏判定、patch 构造、命名目标预览、
@@ -44,6 +44,9 @@ import type { WireApi } from "./bindings/WireApi";
 import type { FieldEdit } from "./bindings/FieldEdit";
 import type { ApiKeyEdit } from "./bindings/ApiKeyEdit";
 import type { AutomationPatch } from "./bindings/AutomationPatch";
+import type { WebAccessPatch } from "./bindings/WebAccessPatch";
+import type { WebApproval } from "./bindings/WebApproval";
+import type { WebProviderStatus } from "./bindings/WebProviderStatus";
 
 // ---------------------------------------------------------------------------
 // 文案键（全部走文案表；本文件零 CJK 串字面量——文案层门禁扫描 src/**）
@@ -217,6 +220,38 @@ const C = {
   unknownPreset: "D857",
   providerIgnoredBody: "D858",
   targetNone: "D818",
+  webTitle: "D992",
+  webDesc: "D993",
+  webEnabled: "D994",
+  webApproval: "D995",
+  webAllowAll: "D996",
+  webAsk: "D997",
+  webProviderLabel: "D998",
+  webProviderReady: "D999",
+  webProviderMissing: "D1000",
+  webProviderMissingKey: "D1001",
+  webProviderAmbiguous: "D1002",
+  webProviderCustom: "D1003",
+  webProviderNotEvaluated: "D1004",
+  webProviderJump: "D1005",
+  webOriginsTitle: "D1006",
+  webOriginsEmpty: "D1007",
+  webOriginPlaceholder: "D1008",
+  webOriginAdd: "D1009",
+  webOriginRemove: "D1010",
+  webOriginClear: "D1011",
+  webNextTurn: "D1012",
+  webReason: "D1013",
+  webSearchAsk: "D1014",
+  webFetchAsk: "D1015",
+  webQuery: "D1016",
+  webUrl: "D1017",
+  webOrigin: "D1018",
+  webProvider: "D1019",
+  webProviderUnresolved: "D1020",
+  webSearchEgress: "D1021",
+  webFetchEgress: "D1022",
+  webUntrusted: "D1023",
 } satisfies Record<string, CopyKey>;
 
 // ---------------------------------------------------------------------------
@@ -321,6 +356,18 @@ export interface DraftNamingTarget {
   model: string | null;
 }
 
+export type DraftWebOriginEdit =
+  | { kind: "add"; value: string }
+  | { kind: "remove"; value: string }
+  | { kind: "clear" };
+
+export interface DraftWebAccess {
+  enabled: DraftAutomationFlag;
+  approval: { value: WebApproval; explicit: boolean };
+  origins: string[];
+  originEdit: DraftWebOriginEdit | null;
+}
+
 export interface Draft {
   providers: DraftProvider[];
   active: string | null;
@@ -333,6 +380,7 @@ export interface Draft {
   automation: Record<AutomationKey, DraftAutomationFlag>;
   naming: Record<NamingKind, DraftNamingTarget>;
   namingTouched: Record<NamingKind, { provider: boolean; model: boolean }>;
+  web: DraftWebAccess;
   selection: string | null;
   /** 表单正在编辑的 provider 的**草稿下标**（id 可能重复：新增撞已有 id 时两条草稿同 id，
    *  按 id 查会稳定命中第一条，P1-1 r1 实测）。`null` = 按 `selection` 反查。 */
@@ -347,6 +395,10 @@ export interface Draft {
     active: string | null;
     automation: Record<AutomationKey, DraftAutomationFlag>;
     naming: Record<NamingKind, DraftNamingTarget>;
+    web: {
+      enabled: DraftAutomationFlag;
+      approval: { value: WebApproval; explicit: boolean };
+    };
   };
 }
 
@@ -487,6 +539,18 @@ export function createDraft(snapshot: SettingsSnapshot): Draft {
       session: { provider: false, model: false },
       attachment: { provider: false, model: false },
     },
+    web: {
+      enabled: {
+        value: snapshot.web_access.effective.enabled,
+        explicit: snapshot.web_access.enabled.kind === "present",
+      },
+      approval: {
+        value: snapshot.web_access.effective.approval,
+        explicit: snapshot.web_access.approval.kind === "present",
+      },
+      origins: [...snapshot.web_access.origins],
+      originEdit: null,
+    },
     selection: defaultSelection(snapshot.providers),
     focusedIndex: null,
     add: null,
@@ -508,6 +572,16 @@ export function createDraft(snapshot: SettingsSnapshot): Draft {
         attachment: {
           provider: snapshot.naming.attachment.override_provider,
           model: snapshot.naming.attachment.override_model,
+        },
+      },
+      web: {
+        enabled: {
+          value: snapshot.web_access.effective.enabled,
+          explicit: snapshot.web_access.enabled.kind === "present",
+        },
+        approval: {
+          value: snapshot.web_access.effective.approval,
+          explicit: snapshot.web_access.approval.kind === "present",
         },
       },
     },
@@ -605,6 +679,7 @@ export function draftIsDirty(draft: Draft): boolean {
   }
   if (draft.activeTouched) return true;
   if (AUTOMATION_KEYS.some((key) => automationTouched(draft, key))) return true;
+  if (webAccessTouched(draft)) return true;
   return NAMING_KINDS.some((kind) => draft.namingTouched[kind].provider || draft.namingTouched[kind].model);
 }
 
@@ -614,6 +689,81 @@ export function automationTouched(draft: Draft, key: AutomationKey): boolean {
   const base = draft.baseline.automation[key];
   if (flag.explicit !== base.explicit) return true;
   return flag.explicit && flag.value !== base.value;
+}
+
+function webFieldTouched<T>(value: T, explicit: boolean, baseline: { value: T; explicit: boolean }): boolean {
+  if (explicit !== baseline.explicit) return true;
+  return explicit && value !== baseline.value;
+}
+
+function webAccessTouched(draft: Draft): boolean {
+  return (
+    webFieldTouched(draft.web.enabled.value, draft.web.enabled.explicit, draft.baseline.web.enabled) ||
+    webFieldTouched(draft.web.approval.value, draft.web.approval.explicit, draft.baseline.web.approval) ||
+    draft.web.originEdit !== null
+  );
+}
+
+export function setWebEnabledDraft(draft: Draft, value: boolean): void {
+  draft.web.enabled = { value, explicit: true };
+}
+
+export function setWebApprovalDraft(draft: Draft, value: WebApproval): void {
+  draft.web.approval = { value, explicit: true };
+}
+
+export function addWebOriginDraft(draft: Draft, value: string): void {
+  const origin = value.trim();
+  if (origin === "") return;
+  draft.web.originEdit = { kind: "add", value: origin };
+}
+
+export function removeWebOriginDraft(draft: Draft, value: string): void {
+  draft.web.originEdit = { kind: "remove", value };
+}
+
+export function clearWebOriginsDraft(draft: Draft): void {
+  draft.web.originEdit = { kind: "clear" };
+}
+
+export type WebProviderDestination = { kind: "provider"; id: string } | { kind: "add_deepseek" };
+
+export function webProviderDestination(draft: Draft, snapshot: SettingsSnapshot): WebProviderDestination {
+  const resolved = snapshot.web_access.provider.provider_id;
+  const actual = resolved === null ? null : findProvider(draft, resolved);
+  if (actual !== null && !actual.removed) return { kind: "provider", id: actual.id };
+  const deepseek = draft.providers.find((provider) => provider.preset === "deepseek" && !provider.removed);
+  return deepseek === undefined ? { kind: "add_deepseek" } : { kind: "provider", id: deepseek.id };
+}
+
+function buildWebAccess(draft: Draft): WebAccessPatch | undefined {
+  if (!draft.pageReset && !webAccessTouched(draft)) return undefined;
+  const patch: WebAccessPatch = {};
+  const enabledTouched = webFieldTouched(
+    draft.web.enabled.value,
+    draft.web.enabled.explicit,
+    draft.baseline.web.enabled,
+  );
+  const approvalTouched = webFieldTouched(
+    draft.web.approval.value,
+    draft.web.approval.explicit,
+    draft.baseline.web.approval,
+  );
+  if (draft.pageReset || enabledTouched) {
+    patch.enabled = draft.web.enabled.explicit
+      ? { kind: "set", value: draft.web.enabled.value }
+      : { kind: "reset" };
+  }
+  if (draft.pageReset || approvalTouched) {
+    patch.approval = draft.web.approval.explicit
+      ? { kind: "set", value: draft.web.approval.value }
+      : { kind: "reset" };
+  }
+  const origin = draft.web.originEdit;
+  if (origin?.kind === "add") patch.add_origin = origin.value;
+  if (origin?.kind === "remove") patch.remove_origin = origin.value;
+  if (origin?.kind === "clear") patch.clear_origins = true;
+  return patch;
 }
 
 function automationEdit(draft: Draft, key: AutomationKey): FieldEdit<boolean> | undefined {
@@ -762,6 +912,8 @@ export function buildPatch(draft: Draft, snapshot: SettingsSnapshot, baseRevisio
 
   const naming = buildNaming(draft);
   if (naming !== undefined) patch.naming = naming;
+  const webAccess = buildWebAccess(draft);
+  if (webAccess !== undefined) patch.web_access = webAccess;
   return patch;
 }
 
@@ -995,10 +1147,7 @@ export function applyDraftDelete(draft: Draft): void {
 
 /** 页级「还原此页默认」（spec「页级还原默认只改草稿」）：把设置面拥有的键全部标为删键；
  *  provider 条目本身保留（id 与预设是身份，不是设置值），还原后的空条目仍可保存。 */
-export function pageResetDraft(
-  draft: Draft,
-  defaults: Record<AutomationKey, boolean>,
-): void {
+export function pageResetDraft(draft: Draft, snapshot: SettingsSnapshot): void {
   for (const provider of draft.providers) {
     if (provider.removed || provider.ignored) continue;
     provider.keyEdit = { kind: "clear", value: "" };
@@ -1017,7 +1166,12 @@ export function pageResetDraft(
   draft.activeOwner = null;
   draft.activeTouched = true;
   draft.pageReset = true;
-  for (const key of AUTOMATION_KEYS) draft.automation[key] = { value: defaults[key], explicit: false };
+  for (const key of AUTOMATION_KEYS) {
+    draft.automation[key] = { value: snapshot.defaults[FLAG_KEYS[key]], explicit: false };
+  }
+  draft.web.enabled = { value: snapshot.defaults.web_access_enabled, explicit: false };
+  draft.web.approval = { value: snapshot.defaults.web_access_approval, explicit: false };
+  draft.web.originEdit = null;
   for (const kind of NAMING_KINDS) {
     draft.naming[kind] = { provider: null, model: null };
     draft.namingOwner[kind] = null;
@@ -1317,6 +1471,7 @@ export interface FieldErrors {
   models: Record<string, Record<number, { id?: string; window?: string; other?: string }>>;
   sessionNaming: string | null;
   attachmentNaming: string | null;
+  web: string | null;
   fileLevel: string | null;
   conflict: string | null;
 }
@@ -1333,6 +1488,7 @@ export function emptyFieldErrors(): FieldErrors {
     models: {},
     sessionNaming: null,
     attachmentNaming: null,
+    web: null,
     fileLevel: null,
     conflict: null,
   };
@@ -1369,6 +1525,15 @@ export function mapFieldErrors(errors: readonly SettingsFieldError[]): FieldErro
     }
     if (path === "harness.provider" || path === "active_provider") {
       out.active ??= text;
+      continue;
+    }
+    if (
+      path === "web_access" ||
+      path.startsWith("web_access.") ||
+      path.startsWith("harness.web_access") ||
+      path.startsWith("harness.permissions")
+    ) {
+      out.web ??= text;
       continue;
     }
     if (path.startsWith("harness.session_naming")) {
@@ -1571,7 +1736,9 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
   const automationBody = element("p", "lumir-set-source");
   const automationDiags = element("div", "lumir-set-diags");
   const automationList = element("div", "lumir-set-auto-list");
-  automationPane.append(automationBody, automationDiags, automationList);
+  const webAccess = element("section", "lumir-set-web");
+  webAccess.dataset.webAccess = "";
+  automationPane.append(automationBody, automationDiags, automationList, webAccess);
   automationSection.append(automationHead, automationPane);
 
   body.append(bannerSlot, modelSection, automationSection);
@@ -1668,6 +1835,7 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     modelSource.textContent = t(C.modelSource, { path: snapshot.path });
     renderModelPane();
     renderAutomation();
+    renderWebAccess();
     renderDiagnostics();
     renderFooter();
   }
@@ -1680,6 +1848,7 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     form.replaceChildren(element("p", "lumir-set-hint", t(C.statusLoading)));
     automationList.replaceChildren();
     automationRows.clear();
+    webAccess.replaceChildren();
     renderFooter();
   }
 
@@ -2735,6 +2904,198 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     }
   }
 
+  function webProviderStatusText(status: WebProviderStatus, providerId: string | null): string {
+    switch (status) {
+      case "ready":
+        return t(C.webProviderReady, { id: providerId ?? "" });
+      case "missing":
+        return t(C.webProviderMissing);
+      case "missing_key":
+        return t(C.webProviderMissingKey);
+      case "ambiguous":
+        return t(C.webProviderAmbiguous);
+      case "custom_base_url":
+        return t(C.webProviderCustom);
+      default:
+        return t(C.webProviderNotEvaluated);
+    }
+  }
+
+  function renderWebAccess(): void {
+    if (draft === null || snapshot === null) return;
+    const web = snapshot.web_access;
+    webAccess.replaceChildren();
+    const title = element("h3", "lumir-set-web-title", t(C.webTitle));
+    const description = element("p", "lumir-set-auto-desc", t(C.webDesc));
+    const timing = element("p", "lumir-set-auto-meta", t(C.webNextTurn));
+    webAccess.append(title, description, timing);
+
+    const enabledRow = element("div", "lumir-set-auto-row");
+    const enabledCopy = element("div", "lumir-set-auto-copy");
+    const enabledTitle = element("div", "lumir-set-auto-title", t(C.webEnabled));
+    const enabledBadge = element("span", "lumir-set-badge", t(C.defaultBadge));
+    enabledBadge.hidden = draft.web.enabled.explicit;
+    enabledTitle.append(enabledBadge);
+    enabledCopy.append(enabledTitle);
+    const enabledActions = element("div", "lumir-set-auto-actions");
+    const enabledRestore = button("lumir-set-btn-link", t(C.restoreDefault));
+    enabledRestore.hidden = !draft.web.enabled.explicit;
+    enabledRestore.disabled = locked();
+    enabledRestore.addEventListener("click", () => {
+      if (draft === null || snapshot === null) return;
+      draft.web.enabled = { value: snapshot.defaults.web_access_enabled, explicit: false };
+      markDirty();
+      render();
+    });
+    const enabledSwitch = element("button", "lumir-set-switch");
+    enabledSwitch.type = "button";
+    enabledSwitch.dataset.webEnabled = "";
+    enabledSwitch.setAttribute("role", "switch");
+    enabledSwitch.setAttribute("aria-label", t(C.webEnabled));
+    enabledSwitch.setAttribute("aria-checked", String(draft.web.enabled.value));
+    enabledSwitch.classList.toggle("is-on", draft.web.enabled.value);
+    enabledSwitch.disabled = locked();
+    enabledSwitch.append(element("span", "lumir-set-knob"));
+    enabledSwitch.addEventListener("click", () => {
+      if (draft === null || locked()) return;
+      setWebEnabledDraft(draft, !draft.web.enabled.value);
+      markDirty();
+      render();
+    });
+    enabledActions.append(enabledRestore, enabledSwitch);
+    enabledRow.append(enabledCopy, enabledActions);
+    webAccess.append(enabledRow);
+
+    const approvalRow = element("div", "lumir-set-auto-row");
+    const approvalCopy = element("div", "lumir-set-auto-copy");
+    const approvalTitle = element("div", "lumir-set-auto-title", t(C.webApproval));
+    const approvalBadge = element("span", "lumir-set-badge", t(C.defaultBadge));
+    approvalBadge.hidden = draft.web.approval.explicit;
+    approvalTitle.append(approvalBadge);
+    approvalCopy.append(approvalTitle);
+    const approvalActions = element("div", "lumir-set-auto-actions");
+    const approvalRestore = button("lumir-set-btn-link", t(C.restoreDefault));
+    approvalRestore.hidden = !draft.web.approval.explicit;
+    approvalRestore.disabled = locked();
+    approvalRestore.addEventListener("click", () => {
+      if (draft === null || snapshot === null) return;
+      draft.web.approval = { value: snapshot.defaults.web_access_approval, explicit: false };
+      markDirty();
+      render();
+    });
+    const approvalSelect = element("select", "lumir-set-naming-select");
+    approvalSelect.dataset.webApproval = "";
+    approvalSelect.setAttribute("aria-label", t(C.webApproval));
+    approvalSelect.disabled = locked();
+    for (const approval of snapshot.capabilities.web_approval_options) {
+      approvalSelect.append(
+        option(approval === "allow_all" ? t(C.webAllowAll) : t(C.webAsk), approval, draft.web.approval.value === approval),
+      );
+    }
+    approvalSelect.addEventListener("change", () => {
+      if (draft === null || locked()) return;
+      setWebApprovalDraft(draft, approvalSelect.value as WebApproval);
+      markDirty();
+      render();
+    });
+    approvalActions.append(approvalRestore, approvalSelect);
+    approvalRow.append(approvalCopy, approvalActions);
+    webAccess.append(approvalRow);
+
+    const providerRow = element("div", "lumir-set-web-provider");
+    const providerLabel = element("span", "lumir-set-label", t(C.webProviderLabel));
+    const providerStatus = element("span", "lumir-set-auto-effective", webProviderStatusText(web.provider.status, web.provider.provider_id));
+    providerStatus.dataset.webProviderStatus = "";
+    const providerJump = button("lumir-set-btn-link", t(C.webProviderJump));
+    providerJump.dataset.webProviderJump = "";
+    providerJump.disabled = locked();
+    providerJump.addEventListener("click", () => {
+      if (draft === null || snapshot === null || locked()) return;
+      const destination = webProviderDestination(draft, snapshot);
+      if (destination.kind === "add_deepseek") {
+        draft.add = { id: "", preset: "deepseek", error: null };
+        draft.remove = null;
+        renderModelPane();
+        focusAfterRender("#lumir-set-add-id");
+        return;
+      }
+      const index = draft.providers.findIndex((provider) => provider.id === destination.id);
+      if (index >= 0) selectProvider(index);
+    });
+    providerRow.append(providerLabel, providerStatus, providerJump);
+    webAccess.append(providerRow);
+
+    if (web.invalid !== null) {
+      webAccess.append(element("p", "lumir-set-field-error", errorText(web.invalid)));
+    }
+    if (errors.web !== null) {
+      const outlet = element("p", "lumir-set-field-error lumir-set-error-outlet", errors.web);
+      outlet.tabIndex = -1;
+      webAccess.append(outlet);
+    }
+
+    const originsTitle = element("h4", "lumir-set-web-subtitle", t(C.webOriginsTitle));
+    webAccess.append(originsTitle);
+    if (web.origins.length === 0) {
+      webAccess.append(element("p", "lumir-set-auto-meta", t(C.webOriginsEmpty)));
+    } else {
+      const list = element("ul", "lumir-set-origin-list");
+      for (const origin of web.origins) {
+        const item = element("li", "lumir-set-origin-row");
+        item.append(element("code", "lumir-set-origin", origin));
+        const remove = button("lumir-set-btn-link", t(C.webOriginRemove));
+        remove.dataset.webOriginRemove = origin;
+        remove.disabled = locked();
+        remove.addEventListener("click", () => {
+          if (draft === null || locked()) return;
+          removeWebOriginDraft(draft, origin);
+          markDirty();
+          render();
+        });
+        item.append(remove);
+        list.append(item);
+      }
+      webAccess.append(list);
+    }
+    const addRow = element("div", "lumir-set-origin-add");
+    const originInput = element("input", "lumir-set-input lumir-set-mono");
+    originInput.dataset.webOriginInput = "";
+    originInput.type = "text";
+    originInput.placeholder = t(C.webOriginPlaceholder);
+    originInput.setAttribute("aria-label", t(C.webOriginsTitle));
+    originInput.disabled = locked();
+    const add = button("lumir-set-btn", t(C.webOriginAdd));
+    add.dataset.webOriginAdd = "";
+    add.disabled = locked();
+    const addOrigin = (): void => {
+      if (draft === null || locked()) return;
+      addWebOriginDraft(draft, originInput.value);
+      markDirty();
+      render();
+    };
+    add.addEventListener("click", addOrigin);
+    originInput.addEventListener("keydown", (event: KeyboardEvent) => {
+      if (event.key === "Enter" && !event.isComposing) {
+        event.preventDefault();
+        addOrigin();
+      }
+    });
+    addRow.append(originInput, add);
+    webAccess.append(addRow);
+    if (web.origins.length > 0) {
+      const clear = button("lumir-set-btn-link", t(C.webOriginClear));
+      clear.dataset.webOriginClear = "";
+      clear.disabled = locked();
+      clear.addEventListener("click", () => {
+        if (draft === null || locked()) return;
+        clearWebOriginsDraft(draft);
+        markDirty();
+        render();
+      });
+      webAccess.append(clear);
+    }
+  }
+
   function defaultFlagValue(key: AutomationKey): boolean {
     if (snapshot === null) return true;
     return snapshot.defaults[FLAG_KEYS[key]];
@@ -3138,9 +3499,8 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
 
   // ── 页级还原（默认值来自快照，纯函数在模块层）──────────────────────────
   function pageReset(target: Draft): void {
-    const defaults = {} as Record<AutomationKey, boolean>;
-    for (const key of AUTOMATION_KEYS) defaults[key] = defaultFlagValue(key);
-    pageResetDraft(target, defaults);
+    if (snapshot === null) return;
+    pageResetDraft(target, snapshot);
     automationRows.clear();
   }
 

@@ -54,6 +54,9 @@ pub struct ToolContext<'a> {
     /// （`SessionContext::cron_port` 在交接契约槽位返回 `None`）。`None` 时三件调度工具对这个
     /// 运行而言就是清单外的工具名——可见面与可执行面由同一个判据控制。
     pub cron: Option<&'a dyn cron::CronPort>,
+    pub web: Option<&'a dyn super::web::WebToolPort>,
+    pub web_access: super::web::config::WebAccessConfig,
+    pub web_abort: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
 /// 批准预览（ask 档 approval_request 事件的载荷来源）。
@@ -74,6 +77,7 @@ pub struct ApprovalPreview {
     /// add-cron-conversational-registration design §6.3）：五要素的待批准快照。
     /// 事件载荷键 `cron_task`；`prompt` 全文只出现在这里（不进诊断日志）。
     pub cron_task: Option<serde_json::Value>,
+    pub web: Option<super::web::output::WebApprovalPayload>,
 }
 
 impl ApprovalPreview {
@@ -84,6 +88,7 @@ impl ApprovalPreview {
             revision: None,
             purpose: None,
             cron_task: None,
+            web: None,
         }
     }
 }
@@ -470,6 +475,17 @@ pub fn permission_subject(name: &str, args: &serde_json::Value) -> String {
             .or_else(|| args.get("path").and_then(|v| v.as_str()))
             .unwrap_or("")
             .to_string(),
+        "web_search" => args
+            .get("query")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        "web_fetch" => args
+            .get("url")
+            .and_then(|v| v.as_str())
+            .and_then(|url| super::web::url::Origin::from_url(url).ok())
+            .map(|origin| origin.as_str())
+            .unwrap_or_default(),
         "cron_task_create" | "cron_task_remove" => {
             let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
             let at = args.get("at").and_then(|v| v.as_str()).unwrap_or("");
@@ -498,8 +514,13 @@ fn join_days(items: &[serde_json::Value]) -> String {
 }
 
 /// 注册表入口：工具名 + JSON 参数 → JSON 结果。
-pub fn execute(name: &str, args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
-    execute_with_revision(name, args, ctx, None)
+pub fn execute(
+    name: &str,
+    args: &serde_json::Value,
+    ctx: &ToolContext,
+    aborted: &dyn Fn() -> bool,
+) -> ToolOutput {
+    execute_with_revision(name, args, ctx, None, aborted)
 }
 
 /// 批准执行入口：写工具带预览基准 revision 走（ask 档采纳后的 CAS 基准；None = 直执行，
@@ -509,6 +530,7 @@ pub fn execute_with_revision(
     args: &serde_json::Value,
     ctx: &ToolContext,
     revision: Option<&str>,
+    _aborted: &dyn Fn() -> bool,
 ) -> ToolOutput {
     match name {
         "vault_read" => vault_read(args, ctx),
@@ -525,6 +547,9 @@ pub fn execute_with_revision(
         "cron_task_create" => cron_task_create(args, ctx),
         "cron_task_list" => cron_task_list(ctx),
         "cron_task_remove" => cron_task_remove(args, ctx),
+        "web_search" | "web_fetch" => {
+            super::web::execute(name, args, ctx.web_access, ctx.web, ctx.web_abort.clone())
+        }
         _ => ToolOutput::err("tool_unknown", format!("未知工具：{name}")),
     }
 }
@@ -571,6 +596,7 @@ pub fn approval_preview(
                 revision: Some(revision),
                 purpose: None,
                 cron_task: None,
+                web: None,
             })
         }
         "vault_create" => {
@@ -581,6 +607,7 @@ pub fn approval_preview(
                 revision: None,
                 purpose: None,
                 cron_task: None,
+                web: None,
             })
         }
         // vault_move：源 → 目标路径对（design §5.1 的批准预览）。
@@ -592,6 +619,7 @@ pub fn approval_preview(
                 revision: None,
                 purpose: None,
                 cron_task: None,
+                web: None,
             })
         }
         // vault_delete：路径（面板侧附「将移入系统废纸篓，可恢复」的说明文案）。
@@ -603,6 +631,7 @@ pub fn approval_preview(
                 revision: None,
                 purpose: None,
                 cron_task: None,
+                web: None,
             })
         }
         "cli_run" => {
@@ -616,8 +645,17 @@ pub fn approval_preview(
                 revision: None,
                 purpose: (!purpose.is_empty()).then(|| purpose.to_string()),
                 cron_task: None,
+                web: None,
             })
         }
+        "web_search" | "web_fetch" => Ok(ApprovalPreview {
+            diff: None,
+            argv: None,
+            revision: None,
+            purpose: None,
+            cron_task: None,
+            web: Some(super::web::approval_preview(name, args, ctx.web)?),
+        }),
         // 定时任务注册（design §6.3）：五要素 + prompt 全文 + 「今天还触不触发」。
         // 预览不校验（校验在执行侧，失败走结构化错误回送模型），只按草稿给出待批准快照。
         "cron_task_create" => Ok(ApprovalPreview {
@@ -629,6 +667,7 @@ pub fn approval_preview(
                 &cron::CronTaskDraft::from_args(args, &ctx.root.display().to_string()),
                 &cron::LocalNow::now(),
             )),
+            web: None,
         }),
         // 删除：id + at（卡片要让人看见删的是哪一条）。
         "cron_task_remove" => {
@@ -647,6 +686,7 @@ pub fn approval_preview(
                     "id": id,
                     "at": at,
                 })),
+                web: None,
             })
         }
         _ => Ok(ApprovalPreview::empty()),
@@ -1606,6 +1646,9 @@ mod tests {
             policy,
             skills,
             cron: None,
+            web: None,
+            web_access: Default::default(),
+            web_abort: std::sync::Arc::new(|| false),
         }
     }
 
@@ -1621,6 +1664,73 @@ mod tests {
         let defaults = crate::config::VaultConfig::default();
         let policy = IgnorePolicy::load(&root, &[".gitignore".to_string()], &defaults.ignore);
         (root, policy)
+    }
+
+    #[derive(Default)]
+    struct AbortProbe {
+        observations: std::sync::Mutex<Vec<bool>>,
+    }
+
+    impl super::super::web::WebToolPort for AbortProbe {
+        fn approval_preview(
+            &self,
+            _operation: super::super::web::output::WebOperation,
+            _args: &serde_json::Value,
+        ) -> Result<super::super::web::output::WebApprovalPayload, ToolOutput> {
+            Err(ToolOutput::err("web_args_invalid", "测试 port 不提供预览"))
+        }
+
+        fn execute(
+            &self,
+            operation: super::super::web::output::WebOperation,
+            _args: &serde_json::Value,
+            aborted: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
+        ) -> super::super::web::output::WebEnvelope {
+            use super::super::web::output::{WebEnvelope, WebErrorCode};
+
+            let aborted = aborted();
+            self.observations.lock().unwrap().push(aborted);
+            if aborted {
+                WebEnvelope::failure(operation, WebErrorCode::WebCancelled, "cancelled", None, 0)
+            } else {
+                WebEnvelope::search_success(None, 0, "synthetic".to_string(), Vec::new())
+            }
+        }
+    }
+
+    #[test]
+    fn approved_web_execution_forwards_the_real_abort_signal() {
+        let (root, policy) = fixture_vault("web-approved-abort");
+        let skills = Vec::<SkillEntry>::new();
+        let port = AbortProbe::default();
+        let aborted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let abort_flag = aborted.clone();
+        let ctx = ToolContext {
+            root: &root,
+            policy: &policy,
+            skills: &skills,
+            cron: None,
+            web: Some(&port),
+            web_access: Default::default(),
+            web_abort: std::sync::Arc::new(move || {
+                abort_flag.load(std::sync::atomic::Ordering::SeqCst)
+            }),
+        };
+        let args = serde_json::json!({"query": "synthetic"});
+        let cancelled = execute_with_revision(
+            "web_search",
+            &args,
+            &ctx,
+            Some("approved-preview-revision"),
+            &|| true,
+        );
+        assert_eq!(cancelled.value["code"], "web_cancelled");
+        assert_eq!(cancelled.value["attempts"], 0);
+        aborted.store(false, std::sync::atomic::Ordering::SeqCst);
+        let executed = execute("web_search", &args, &ctx, &|| false);
+        assert!(executed.succeeded(), "{executed:?}");
+        assert_eq!(*port.observations.lock().unwrap(), vec![true, false]);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -1739,7 +1849,7 @@ mod tests {
         assert_eq!(out.value["truncated"], false);
         assert!(out.value.get("next_cursor").is_none(), "{out:?}");
         // 注册表入口同一条实现（名字 → 函数的接线不是「只在单测里存在」的第二条路径）。
-        let via_registry = execute("vault_list", &serde_json::json!({}), &ctx);
+        let via_registry = execute("vault_list", &serde_json::json!({}), &ctx, &|| false);
         assert!(via_registry.succeeded(), "{via_registry:?}");
         assert_eq!(
             via_registry.value["entries"].as_array().unwrap().len(),
@@ -2254,6 +2364,7 @@ mod tests {
             "vault_move",
             &serde_json::json!({"path": "a.md", "new_path": "sub/a.md"}),
             &ctx,
+            &|| false,
         );
         assert!(out.succeeded(), "{out:?}");
         assert_eq!(out.value["path"], "sub/a.md");
@@ -2264,6 +2375,7 @@ mod tests {
             "vault_delete",
             &serde_json::json!({"path": "sub/a.md"}),
             &ctx,
+            &|| false,
         );
         assert!(out.succeeded(), "{out:?}");
         assert_eq!(out.value["path"], "sub/a.md");
@@ -2273,6 +2385,7 @@ mod tests {
             "vault_move",
             &serde_json::json!({"path": "sub", "new_path": "../escaped"}),
             &ctx,
+            &|| false,
         );
         assert!(!out.succeeded());
         assert_eq!(out.value["code"], "fs_path_escape");
@@ -2336,7 +2449,7 @@ mod tests {
 
         // 批准窗内文件被外部修改 ⇒ 以预览基准执行必须被 CAS 拒掉（零覆盖）。
         std::fs::write(root.join("a.md"), "old\n用户手改\n").unwrap();
-        let out = execute_with_revision("vault_patch", &args, &ctx, Some(&revision));
+        let out = execute_with_revision("vault_patch", &args, &ctx, Some(&revision), &|| false);
         assert!(!out.succeeded(), "{out:?}");
         assert_eq!(out.value["code"], "document_conflict");
         assert_eq!(
@@ -2346,7 +2459,7 @@ mod tests {
 
         // 同一参数走「执行时刻当前值」（None）则照常成功——证明上一条的失败来自基准对账，
         // 不是参数或命中语义错。`old_string` 在新内容里唯一命中 ⇒ 替换后为 patched + 用户那行。
-        let out = execute_with_revision("vault_patch", &args, &ctx, None);
+        let out = execute_with_revision("vault_patch", &args, &ctx, None, &|| false);
         assert!(out.succeeded(), "{out:?}");
         assert_eq!(
             std::fs::read_to_string(root.join("a.md")).unwrap(),
@@ -2536,6 +2649,9 @@ mod tests {
             policy,
             skills,
             cron: Some(port),
+            web: None,
+            web_access: Default::default(),
+            web_abort: std::sync::Arc::new(|| false),
         }
     }
 
@@ -2583,6 +2699,7 @@ mod tests {
             "cron_task_create",
             &serde_json::json!({"id": "a", "at": "21:00", "prompt": "p"}),
             &empty_ctx,
+            &|| false,
         );
         assert!(!out.succeeded());
         assert_eq!(out.value["code"], "tool_unknown");
@@ -2605,6 +2722,7 @@ mod tests {
             "cron_task_create",
             &serde_json::json!({"id": "daily-log", "at": "21:00", "prompt": "写今日 log"}),
             &cron_ctx(&root, &policy, &skills, &port),
+            &|| false,
         );
         assert!(out.succeeded(), "{:?}", out.value);
         assert_eq!(out.value["effect"], "active");
@@ -2645,6 +2763,7 @@ mod tests {
             "cron_task_create",
             &serde_json::json!({"id": "daily-log", "at": "21:00", "prompt": "写今日 log"}),
             &cron_ctx(&root, &policy, &skills, &port),
+            &|| false,
         );
         assert!(out.succeeded(), "{:?}", out.value);
         assert_eq!(out.value["notice"], notice);
@@ -2659,6 +2778,7 @@ mod tests {
             "cron_task_create",
             &serde_json::json!({"id": "daily-log", "at": "21:00", "prompt": "写今日 log"}),
             &cron_ctx(&root, &policy, &skills, &port),
+            &|| false,
         );
         assert!(out.succeeded(), "{:?}", out.value);
         assert!(
@@ -2688,6 +2808,7 @@ mod tests {
             "cron_task_list",
             &serde_json::json!({}),
             &cron_ctx(&root, &policy, &skills, &port),
+            &|| false,
         );
         assert!(out.succeeded(), "{:?}", out.value);
         assert!(out.value["tasks"][0]["last_fired"].is_null());
@@ -2698,6 +2819,7 @@ mod tests {
             "cron_task_list",
             &serde_json::json!({}),
             &cron_ctx(&root, &policy, &skills, &port),
+            &|| false,
         );
         assert_eq!(out.value["tasks"][0]["last_fired"], "2026-10-19");
         std::fs::remove_dir_all(&root).ok();
@@ -2719,6 +2841,7 @@ mod tests {
             "cron_task_remove",
             &serde_json::json!({"id": "x"}),
             &cron_ctx(&root, &policy, &skills, &port),
+            &|| false,
         );
         assert!(!out.succeeded());
         assert_eq!(out.value["code"], "cron_task_not_found");
@@ -2728,6 +2851,7 @@ mod tests {
             "cron_task_remove",
             &serde_json::json!({"id": "  "}),
             &cron_ctx(&root, &policy, &skills, &port),
+            &|| false,
         );
         assert_eq!(out.value["code"], "cron_task_invalid");
         assert_eq!(out.value["message"], "id：缺失或不是字符串");
@@ -3328,6 +3452,9 @@ mod tests {
             policy: &policy,
             skills: &skills,
             cron: None,
+            web: None,
+            web_access: Default::default(),
+            web_abort: std::sync::Arc::new(|| false),
         };
         let _counter_lock = skill_content_test_lock();
         reset_skill_content_load_count();

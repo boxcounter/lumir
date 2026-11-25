@@ -473,6 +473,36 @@ pub fn run_turn_for_with_skills(
     );
 }
 
+/// 验收构建专用（`acceptance-web` feature）：与 [`run_turn_for`] 同一条循环，但把 Web 端口
+/// 换成合成 HTTP 装配。普通构建不编译本函数。
+#[cfg(feature = "acceptance-web")]
+#[allow(clippy::too_many_arguments)]
+pub fn run_turn_for_with_web_port(
+    sink: &dyn EventSink,
+    runtime: &Runtime,
+    scope: &VaultScope,
+    config: &HarnessConfig,
+    parts: impl Into<DeliveryInput>,
+    context_section: Option<String>,
+    client: &mut dyn LlmClient,
+    web_port: std::sync::Arc<dyn super::web::WebToolPort>,
+) {
+    runtime.seed_permissions(&config.permissions);
+    let mut ctx =
+        SessionContext::new(sink, runtime, scope, config).with_web_port_for_acceptance(web_port);
+    let _ = run_turn_core_with_mode(
+        &mut ctx,
+        config,
+        TurnInput::User {
+            parts: parts.into(),
+            context_section,
+            skill_names: Vec::new(),
+        },
+        TurnOrigin::Interactive,
+        client,
+    );
+}
+
 /// 显式重试的单测入口（change add-harness-turn-retry-nov23 R4 / R5 / R10 的落点）：
 /// 与生产 [`run_turn_resume`] 同一实现（`TurnInput::Resume` + `TurnOrigin::Retry`），不接
 /// `AppHandle`——调用方已用 [`Runtime::begin_retry`] 完成守卫与 `begin_turn`。
@@ -486,6 +516,31 @@ pub fn run_turn_resume_for(
 ) {
     runtime.seed_permissions(&config.permissions);
     let mut ctx = SessionContext::new(sink, runtime, scope, config);
+    let _ = run_turn_core_with_mode(
+        &mut ctx,
+        config,
+        TurnInput::Resume { user_text },
+        TurnOrigin::Retry,
+        client,
+    );
+}
+
+/// 验收构建专用的显式重试入口（`acceptance-web` feature）：与 [`run_turn_resume_for`]
+/// 同一条循环，但把 Web 端口换成合成 HTTP 装配——用于证明真实 LLM 失败后的显式重试不会
+/// 重放 Web 工具或增加 Web HTTP 次数。
+#[cfg(feature = "acceptance-web")]
+pub fn run_turn_resume_for_with_web_port(
+    sink: &dyn EventSink,
+    runtime: &Runtime,
+    scope: &VaultScope,
+    config: &HarnessConfig,
+    user_text: String,
+    client: &mut dyn LlmClient,
+    web_port: std::sync::Arc<dyn super::web::WebToolPort>,
+) {
+    runtime.seed_permissions(&config.permissions);
+    let mut ctx =
+        SessionContext::new(sink, runtime, scope, config).with_web_port_for_acceptance(web_port);
     let _ = run_turn_core_with_mode(
         &mut ctx,
         config,
@@ -736,11 +791,15 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
     // 调度工具端口在回合开始时取一次（与工具定义快照同刻）：交互路径有、交接契约槽位与
     // 子运行没有。`Arc` 由这里持有，`ToolContext` 只借它的 trait object。
     let cron_port = ctx.cron_port();
+    let web_port = ctx.web_port();
     let tctx = ToolContext {
         root: &root,
         policy: &policy,
         skills: &skills,
         cron: cron_port.as_deref(),
+        web: web_port.as_deref(),
+        web_access: config.web_access,
+        web_abort: ctx.web_abort(),
     };
 
     let mut rounds: usize = 0;
@@ -1504,14 +1563,20 @@ fn handle_call<C: RunContext>(
     // 三件调度工具只在交互路径「已知」：判据与定义注册面、`ToolContext::cron` 同源——
     // 无人值守运行 / 子运行里同名调用仍是清单外的工具名（change
     // add-cron-conversational-registration design §2.2）。
+    let is_web = super::web::WEB_TOOL_NAMES.contains(&call.name.as_str());
+    let invalid_web = is_web
+        && tctx.web.is_some()
+        && tctx.web_access.status == crate::harness::web::config::WebAccessConfigStatus::Invalid;
     let known = tools::TOOL_NAMES.contains(&call.name.as_str())
-        || (tools::CRON_TOOL_NAMES.contains(&call.name.as_str()) && tctx.cron.is_some());
-    let subject = tools::permission_subject(&call.name, &args);
+        || (tools::CRON_TOOL_NAMES.contains(&call.name.as_str()) && tctx.cron.is_some())
+        || (is_web && (tctx.web.is_some() || !ctx.tool_allowed(&call.name)));
 
     // 批准闸决定（面板 decision 字段的数据源，M413）：只有 ask 档批准闸产出
     // approved / rejected；allow / deny / 重定向路径没有批准动作，字段缺席。
     let mut gate_decision: Option<&'static str> = None;
-    let output = if !known {
+    let output = if invalid_web {
+        tools::execute(&call.name, &args, tctx, &|| ctx.aborted())
+    } else if !known {
         ToolOutput::err("tool_unknown", format!("未知工具：{}", call.name))
     } else if !ctx.tool_allowed(&call.name) {
         // 执行层二次校验（design §8.2）：子运行只拿到定义白名单里的工具，未声明的调用
@@ -1528,21 +1593,28 @@ fn handle_call<C: RunContext>(
     } else if let Err(output) = tools::check_purpose(&call.name, &args) {
         // purpose 校验在判定管线之前（design §3.4）：ask 档批准卡必须已有用途句可展示。
         output
+    } else if let Err(output) = super::web::precheck(&call.name, &args) {
+        output
     } else {
+        let subject = tools::permission_subject(&call.name, &args);
         // 判定与批准缓存命中都经上下文（缓存键 / 层序在实现侧，见 `RunContext::decide`）；
         // 只有「已知 + 参数合法 + purpose 合法」的调用才进判定（回抽前同样不判定前两档）。
         let verdict = ctx.decide(&call.name, &subject, &args);
         match verdict.decision {
             // 模式层不产出 Deny（只读档 = Always Ask），Deny 只来自第 1 层的用户 deny 规则。
             // M459：回送文案带上命中的规则原文（「是哪条规则拦的」不必回配置文件核对）。
-            Decision::Deny => ToolOutput::err(
-                "permission_denied",
-                denied_message(&call.name, &subject, verdict.reason.as_ref()),
-            ),
+            Decision::Deny => {
+                let message = denied_message(&call.name, &subject, verdict.reason.as_ref());
+                if is_web {
+                    super::web::denied_output(&call.name, &args, message)
+                } else {
+                    ToolOutput::err("permission_denied", message)
+                }
+            }
             // deny 的留痕是 wire 口径：带 `permission_denied` 错误码的结果随历史进
             // 下一条 llm_request.messages（tool_denied 事件类已废弃），面板 tool 行
             // 的细分状态照常由 status 承担。
-            Decision::Allow => tools::execute(&call.name, &args, tctx),
+            Decision::Allow => tools::execute(&call.name, &args, tctx, &|| ctx.aborted()),
             Decision::Ask => {
                 // 判定依据（M459）随批准请求进批准闸——事件与快照两条通道同取这一个值。
                 let (out, decision) = gated_execute(
@@ -1595,11 +1667,16 @@ fn finish_call<C: RunContext>(
     // 事件 status 只发契约内的 started|done（m303 面板按非 done 即 started 归并——
     // 发细分值会产生永不完结的「正在执行」幻影行）；细分状态放 summary（D344 展示）。
     let result_summary = summarize_result(status, &output);
-    ctx.sink().emit(events::tool_call(
+    let web = super::web::operation(&call.name).map(|operation| {
+        let input = serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
+        super::web::output::audit_metadata(operation, &output.value, &input)
+    });
+    ctx.sink().emit(events::tool_call_with_web(
         &call.name,
         "done",
         &result_summary,
         &call.call_id,
+        web,
     ));
     // 面板快照持久化 summary（M367）：成功 = 参数摘要（恢复后工具行显示「调用了什么工具、
     // 带了什么参数」）；失败 = 结果摘要（含细分状态与错误码）。修前 summary 恒 None，面板
@@ -1681,7 +1758,8 @@ fn gated_actions(
 ) -> Option<permissions::PermissionActions> {
     match reason {
         Some(permissions::DecisionReason::DangerousWrapper { .. })
-        | Some(permissions::DecisionReason::DangerousCommand) => None,
+        | Some(permissions::DecisionReason::DangerousCommand)
+        | Some(permissions::DecisionReason::WebAccessPolicy { .. }) => None,
         _ => permissions::permission_prefix(tool, argv, subject),
     }
 }
@@ -1732,7 +1810,8 @@ fn gated_execute<C: RunContext>(
         actions.as_ref().and_then(|a| a.rule.clone()),
         tx,
     )
-    .with_cron_task(preview.cron_task.clone());
+    .with_cron_task(preview.cron_task.clone())
+    .with_web(preview.web.clone());
     // 事件载荷（purpose / 判定依据与批准卡同源）由上下文在挂起成功后发行；无人值守槽位
     // 在这里得到 `approval_required`（程序性中止原因已由上下文置进会话）。
     let decision = match ctx.approval(request, rx) {
@@ -1773,7 +1852,13 @@ fn gated_execute<C: RunContext>(
         // 写工具带预览基准 revision 执行：批准窗内文件被改 ⇒ fs_patch_file CAS
         // 拒掉（document_conflict 回送模型），落盘不与已批准 diff 分叉。
         (
-            tools::execute_with_revision(&call.name, args, tctx, preview.revision.as_deref()),
+            tools::execute_with_revision(
+                &call.name,
+                args,
+                tctx,
+                preview.revision.as_deref(),
+                &|| ctx.aborted(),
+            ),
             Some("approved"),
         )
     } else {
@@ -3144,6 +3229,10 @@ mod tests {
             self.inner.cron_port()
         }
 
+        fn web_port(&self) -> Option<std::sync::Arc<dyn crate::harness::web::WebToolPort>> {
+            self.inner.web_port()
+        }
+
         fn decide(
             &self,
             tool: &str,
@@ -3183,6 +3272,10 @@ mod tests {
 
         fn aborted(&self) -> bool {
             self.inner.aborted()
+        }
+
+        fn web_abort(&self) -> std::sync::Arc<dyn Fn() -> bool + Send + Sync> {
+            self.inner.web_abort()
         }
 
         fn vault_root(&self) -> &std::path::Path {
@@ -4375,5 +4468,634 @@ mod tests {
                 let _ = std::fs::remove_dir_all(&fixture.root);
             }
         }
+    }
+
+    #[test]
+    fn web_hallucination_distinguishes_disabled_from_invalid() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        for (name, web_access, cron_contract, expected_code) in [
+            (
+                "disabled",
+                crate::harness::web::config::WebAccessConfig {
+                    enabled: false,
+                    ..Default::default()
+                },
+                false,
+                "tool_unknown",
+            ),
+            (
+                "invalid",
+                crate::harness::web::config::validate_web_access(Some(&serde_json::json!(null))).0,
+                false,
+                "web_access_config_invalid",
+            ),
+            (
+                "invalid-cron",
+                crate::harness::web::config::validate_web_access(Some(&serde_json::json!(null))).0,
+                true,
+                "tool_unknown",
+            ),
+        ] {
+            let fixture = fixture(&format!("web-hallucination-{name}"));
+            let mut config = fixture.config.clone();
+            config.web_access = web_access;
+            let runtime = Runtime::default();
+            runtime.acquire_turn(&fixture.scope, &config).unwrap();
+            if cron_contract {
+                runtime.set_tool_policy(
+                    &fixture.scope,
+                    crate::harness::run::ToolPolicy {
+                        allow: tools::TOOL_NAMES.map(str::to_string).to_vec(),
+                    },
+                );
+            }
+            let script = r#"{"responses":[
+              {"tool_calls":[{"id":"web-1","name":"web_search","arguments":"{\"query\":\"synthetic\"}"}]},
+              {"text":"done"}
+            ]}"#;
+            let mut client = llm::MockClient::from_str(script, "web-hallucination").unwrap();
+            run_turn_for(
+                &NullSink,
+                &runtime,
+                &fixture.scope,
+                &config,
+                "question",
+                None,
+                &mut client,
+            );
+            runtime.release_turn(&fixture.scope);
+            let input = runtime
+                .with_session(&fixture.scope, |session| session.input().to_vec())
+                .unwrap();
+            let output = input
+                .iter()
+                .find(|item| item["type"] == "function_call_output")
+                .expect("Web 幻觉调用必须有 output")["output"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let output: serde_json::Value = serde_json::from_str(&output).unwrap();
+            assert_eq!(output["code"], serde_json::json!(expected_code), "{output}");
+            if expected_code == "web_access_config_invalid" {
+                assert_eq!(output["provider"], serde_json::Value::Null);
+                assert_eq!(output["provider_id"], serde_json::Value::Null);
+                assert_eq!(output["attempts"], serde_json::json!(0));
+            }
+            let _ = std::fs::remove_dir_all(&fixture.root);
+        }
+    }
+
+    fn wait_for_web_approval(
+        runtime: &Runtime,
+        scope: &VaultScope,
+        config: &HarnessConfig,
+    ) -> super::session::PendingApprovalSnapshot {
+        for _ in 0..2_000 {
+            let snapshot = runtime.snapshot(scope, config);
+            if let Some(pending) = snapshot.pending_approvals.first() {
+                return pending.clone();
+            }
+            std::thread::park_timeout(std::time::Duration::from_millis(1));
+        }
+        panic!("2 秒内没有 Web 批准请求")
+    }
+
+    fn reject_web_approval(runtime: &Runtime, scope: &VaultScope, request_id: &str) {
+        runtime
+            .with_session(scope, |session| {
+                session.resolve_approval(
+                    request_id,
+                    false,
+                    Some("stage2 synthetic reject".to_string()),
+                    false,
+                    false,
+                )
+            })
+            .unwrap()
+            .unwrap();
+    }
+
+    #[test]
+    fn web_permission_matrix_uses_web_policy_in_every_mode() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("web-permission-matrix");
+        for mode in [
+            crate::config::PermissionMode::ReadOnly,
+            crate::config::PermissionMode::VaultWrite,
+            crate::config::PermissionMode::FullAccess,
+        ] {
+            for approval in [
+                crate::harness::web::config::WebApproval::AllowAll,
+                crate::harness::web::config::WebApproval::Ask,
+            ] {
+                let mut config = fixture.config.clone();
+                config.permission_mode = mode;
+                config.web_access.approval = approval;
+                let runtime = Runtime::default();
+                runtime.acquire_turn(&fixture.scope, &config).unwrap();
+                let sink = NullSink;
+                let ctx = SessionContext::new(&sink, &runtime, &fixture.scope, &config);
+                let verdict = ctx.decide(
+                    "web_search",
+                    "synthetic query",
+                    &serde_json::json!({"query": "synthetic query"}),
+                );
+                match approval {
+                    crate::harness::web::config::WebApproval::AllowAll => {
+                        assert_eq!(verdict.decision, Decision::Allow, "{mode:?}");
+                        assert!(verdict.reason.is_none());
+                    }
+                    crate::harness::web::config::WebApproval::Ask => {
+                        assert_eq!(verdict.decision, Decision::Ask, "{mode:?}");
+                        assert_eq!(
+                            verdict.reason,
+                            Some(permissions::DecisionReason::WebAccessPolicy {
+                                approval: crate::harness::web::config::WebApproval::Ask,
+                            }),
+                            "{mode:?} 不得回落 ModeDefault"
+                        );
+                    }
+                }
+                runtime.release_turn(&fixture.scope);
+            }
+        }
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn web_ask_ignores_allow_rules_and_session_approval_cache() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("web-ask-ignores-allow-and-cache");
+        let mut config = fixture.config.clone();
+        config.permission_mode = crate::config::PermissionMode::FullAccess;
+        config.web_access.approval = crate::harness::web::config::WebApproval::Ask;
+        config.permissions.allow = vec![
+            "web_search".to_string(),
+            "web_fetch(https://example.com)".to_string(),
+        ];
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&fixture.scope, &config).unwrap();
+        let sink = NullSink;
+        let mut ctx = SessionContext::new(&sink, &runtime, &fixture.scope, &config);
+        for (tool, subject, args) in [
+            (
+                "web_search",
+                "synthetic query",
+                serde_json::json!({"query": "synthetic query"}),
+            ),
+            (
+                "web_fetch",
+                "https://example.com",
+                serde_json::json!({"url": "https://example.com/a"}),
+            ),
+        ] {
+            ctx.remember_approval(tool, subject);
+            let verdict = ctx.decide(tool, subject, &args);
+            assert_eq!(verdict.decision, Decision::Ask, "{tool}");
+            assert_eq!(
+                verdict.reason,
+                Some(permissions::DecisionReason::WebAccessPolicy {
+                    approval: crate::harness::web::config::WebApproval::Ask,
+                }),
+                "allow 规则与会话缓存都不得授权 {tool}"
+            );
+        }
+        runtime.release_turn(&fixture.scope);
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn web_ask_preview_is_structured_identical_in_event_and_snapshot() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        for operation in ["search", "fetch"] {
+            let fixture = fixture(&format!("web-ask-preview-{operation}"));
+            let mut config = if operation == "fetch" {
+                crate::config::test_harness(
+                    "deepseek-work",
+                    crate::config::test_provider(
+                        crate::config::ProviderPreset::Deepseek,
+                        "stage2-secret",
+                        &[],
+                    ),
+                )
+            } else {
+                fixture.config.clone()
+            };
+            config.permission_mode = crate::config::PermissionMode::FullAccess;
+            config.web_access.approval = crate::harness::web::config::WebApproval::Ask;
+            let runtime = Runtime::default();
+            runtime.acquire_turn(&fixture.scope, &config).unwrap();
+            let sink = Collect::default();
+            let events = sink.0.clone();
+            let (call_name, arguments) = if operation == "search" {
+                (
+                    "web_search",
+                    serde_json::json!({"query": "synthetic query with spaces"}).to_string(),
+                )
+            } else {
+                (
+                    "web_fetch",
+                    serde_json::json!({"url": "HTTPS://EXAMPLE.COM:443/a?q=1"}).to_string(),
+                )
+            };
+            let script = serde_json::json!({
+                "responses": [
+                    {"tool_calls": [{"id": "web-preview", "name": call_name, "arguments": arguments}]},
+                    {"text": "done"}
+                ]
+            })
+            .to_string();
+            let mut client = llm::MockClient::from_str(&script, "web-preview").unwrap();
+            let runtime_worker = runtime.clone();
+            let scope_worker = fixture.scope.clone();
+            let config_worker = config.clone();
+            let worker = std::thread::spawn(move || {
+                run_turn_for(
+                    &sink,
+                    &runtime_worker,
+                    &scope_worker,
+                    &config_worker,
+                    "question",
+                    None,
+                    &mut client,
+                );
+            });
+            let pending = wait_for_web_approval(&runtime, &fixture.scope, &config);
+            let pending_json = serde_json::to_value(&pending).unwrap();
+            let event_json = events
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|event| event["type"] == "approval_request")
+                .cloned()
+                .expect("Ask 必须发 approval_request");
+            reject_web_approval(&runtime, &fixture.scope, &pending.id);
+            worker.join().unwrap();
+            runtime.release_turn(&fixture.scope);
+
+            assert_eq!(pending_json["web"], event_json["web"]);
+            assert_eq!(pending_json["reason"], event_json["reason"]);
+            assert_eq!(pending_json["reason"]["kind"], "web_access_policy");
+            assert_eq!(pending_json["reason"]["approval"], "ask");
+            assert!(pending_json.get("remember").is_none());
+            assert!(pending_json.get("persist_rule").is_none());
+            let web = &pending_json["web"];
+            assert_eq!(web["trust"], "untrusted");
+            assert_eq!(web["cost_per_1000_success_cny"], 5);
+            if operation == "search" {
+                assert_eq!(web["operation"], "search");
+                assert_eq!(web["query"], "synthetic query with spaces");
+                assert_eq!(web["provider"], serde_json::Value::Null);
+                assert_eq!(web["provider_id"], serde_json::Value::Null);
+                assert_eq!(web["provider_status"], "missing");
+                assert_eq!(web["local_precheck"], false);
+                assert_eq!(web["provider_fetch"], true);
+            } else {
+                assert_eq!(web["operation"], "fetch");
+                assert_eq!(web["url"], "HTTPS://EXAMPLE.COM:443/a?q=1");
+                assert_eq!(web["origin"], "https://example.com");
+                assert_eq!(web["provider"], "deepseek");
+                assert_eq!(web["provider_id"], "deepseek-work");
+                assert_eq!(web["provider_status"], "ready");
+                assert_eq!(web["local_precheck"], true);
+                assert_eq!(web["provider_fetch"], true);
+            }
+            let _ = std::fs::remove_dir_all(&fixture.root);
+        }
+    }
+
+    #[test]
+    fn web_userinfo_url_fails_before_ask_without_card() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("web-userinfo-precheck");
+        let mut config = fixture.config.clone();
+        config.permission_mode = crate::config::PermissionMode::FullAccess;
+        config.web_access.approval = crate::harness::web::config::WebApproval::Ask;
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&fixture.scope, &config).unwrap();
+        let sink = Collect::default();
+        let events = sink.0.clone();
+        let script = r#"{"responses":[
+          {"tool_calls":[{"id":"web-userinfo","name":"web_fetch","arguments":"{\"url\":\"https://user:pass@example.com/a\"}"}]},
+          {"text":"done"}
+        ]}"#;
+        let mut client = llm::MockClient::from_str(script, "web-userinfo").unwrap();
+        let runtime_worker = runtime.clone();
+        let scope_worker = fixture.scope.clone();
+        let config_worker = config.clone();
+        let worker = std::thread::spawn(move || {
+            run_turn_for(
+                &sink,
+                &runtime_worker,
+                &scope_worker,
+                &config_worker,
+                "question",
+                None,
+                &mut client,
+            );
+        });
+        let mut pending = None;
+        for _ in 0..2_000 {
+            let snapshot = runtime.snapshot(&fixture.scope, &config);
+            if let Some(request) = snapshot.pending_approvals.first() {
+                pending = Some(request.id.clone());
+                break;
+            }
+            if worker.is_finished() {
+                break;
+            }
+            std::thread::park_timeout(std::time::Duration::from_millis(1));
+        }
+        if let Some(request_id) = pending {
+            reject_web_approval(&runtime, &fixture.scope, &request_id);
+        }
+        worker.join().unwrap();
+        runtime.release_turn(&fixture.scope);
+        assert!(
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|event| event["type"] != "approval_request"),
+            "带凭据 URL 不得生成批准卡"
+        );
+        let input = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let output = input
+            .iter()
+            .find(|item| item["type"] == "function_call_output")
+            .unwrap()["output"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let output: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(output["code"], "web_url_blocked");
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn web_fetch_localhost_fails_before_provider_in_both_configuration_states() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        // 876 的反向合同在交互路径上的等价物：provider 已配置与未配置两种状态都必须先报
+        // URL 安全拒绝，而不是 web_provider_unconfigured，且 ask 档不得为它生成批准卡。
+        for (name, keep_provider) in [
+            ("web-localhost-provider-ready", true),
+            ("web-localhost-provider-missing", false),
+        ] {
+            let fixture = fixture(name);
+            let mut config = fixture.config.clone();
+            config.permission_mode = crate::config::PermissionMode::FullAccess;
+            config.web_access.approval = crate::harness::web::config::WebApproval::Ask;
+            if !keep_provider {
+                config.providers.clear();
+            }
+            let runtime = Runtime::default();
+            runtime.acquire_turn(&fixture.scope, &config).unwrap();
+            let sink = Collect::default();
+            let events = sink.0.clone();
+            let script = r#"{"responses":[
+              {"tool_calls":[{"id":"web-localhost","name":"web_fetch","arguments":"{\"url\":\"http://localhost:9/probe\"}"}]},
+              {"text":"done"}
+            ]}"#;
+            let mut client = llm::MockClient::from_str(script, "web-localhost").unwrap();
+            run_turn_for(
+                &sink,
+                &runtime,
+                &fixture.scope,
+                &config,
+                "question",
+                None,
+                &mut client,
+            );
+            runtime.release_turn(&fixture.scope);
+            assert!(
+                events
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|event| event["type"] != "approval_request"),
+                "{name} 被拒 URL 不得生成批准卡"
+            );
+            let input = runtime
+                .with_session(&fixture.scope, |session| session.input().to_vec())
+                .unwrap();
+            let output = input
+                .iter()
+                .find(|item| item["type"] == "function_call_output")
+                .unwrap_or_else(|| panic!("{name} 缺少工具结果"))["output"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let output: serde_json::Value = serde_json::from_str(&output).unwrap();
+            assert_eq!(output["code"], "web_url_blocked", "{name}");
+            assert_eq!(output["provider"], serde_json::Value::Null, "{name}");
+            assert_eq!(output["attempts"], 0, "{name}");
+            assert_eq!(output["local_precheck"], false, "{name}");
+            assert_eq!(
+                output["source"]["url"], "http://localhost:9/probe",
+                "{name}"
+            );
+            let events = events.lock().unwrap();
+            let done = events
+                .iter()
+                .find(|event| event["type"] == "tool_call" && event["status"] == "done")
+                .unwrap_or_else(|| panic!("{name} 缺少 done 事件"));
+            assert_eq!(done["web"]["code"], "web_url_blocked", "{name}");
+            assert_eq!(done["web"]["local_precheck"], false, "{name}");
+            assert_eq!(done["web"]["provider_fetch"], false, "{name}");
+            assert_eq!(done["web"]["attempts"], 0, "{name}");
+            drop(events);
+            let _ = std::fs::remove_dir_all(&fixture.root);
+        }
+    }
+
+    #[test]
+    fn web_allow_all_finishes_without_approval_card() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("web-allow-all-no-card");
+        let mut config = fixture.config.clone();
+        config.permission_mode = crate::config::PermissionMode::FullAccess;
+        config.web_access.approval = crate::harness::web::config::WebApproval::AllowAll;
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&fixture.scope, &config).unwrap();
+        let sink = Collect::default();
+        let events = sink.0.clone();
+        let script = r#"{"responses":[
+          {"tool_calls":[{"id":"web-allowed","name":"web_search","arguments":"{\"query\":\"synthetic query\"}"}]},
+          {"text":"done"}
+        ]}"#;
+        let mut client = llm::MockClient::from_str(script, "web-allow-all").unwrap();
+        run_turn_for(
+            &sink,
+            &runtime,
+            &fixture.scope,
+            &config,
+            "question",
+            None,
+            &mut client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert!(runtime
+            .snapshot(&fixture.scope, &config)
+            .pending_approvals
+            .is_empty());
+        assert!(events
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|event| event["type"] != "approval_request"));
+        let input = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let output = input
+            .iter()
+            .find(|item| item["type"] == "function_call_output")
+            .expect("allow_all 必须直接进入 Web port")["output"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let output: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(output["code"], "web_provider_unconfigured");
+        assert_eq!(output["attempts"], 0);
+        let events = events.lock().unwrap();
+        let done = events
+            .iter()
+            .find(|event| event["type"] == "tool_call" && event["status"] == "done")
+            .expect("Web done 事件");
+        assert_eq!(done["web"]["query"], "synthetic query");
+        assert_eq!(done["web"]["provider"], serde_json::Value::Null);
+        assert_eq!(done["web"]["provider_id"], serde_json::Value::Null);
+        assert_eq!(done["web"]["attempts"], 0);
+        assert_eq!(done["web"]["cost_per_1000_success_cny"], 5);
+        assert_eq!(done["web"]["local_precheck"], false);
+        assert_eq!(
+            done["web"]["provider_fetch"], false,
+            "未配置时没有 provider 请求"
+        );
+        assert_eq!(done["web"]["trust"], "untrusted");
+        assert!(done["web"].get("results").is_none());
+        assert!(done["web"].get("content").is_none());
+        drop(events);
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn web_done_audit_local_precheck_and_provider_fetch_follow_actual_facts() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let cases = [
+            ("web-audit-allow-unconfigured", false, None),
+            ("web-audit-ask-unconfigured", true, None),
+            (
+                "web-audit-deny",
+                false,
+                Some("web_fetch(https://example.com)"),
+            ),
+        ];
+        for (name, ask, deny) in cases {
+            let fixture = fixture(name);
+            let mut config = fixture.config.clone();
+            config.permission_mode = crate::config::PermissionMode::FullAccess;
+            config.web_access.approval = if ask {
+                crate::harness::web::config::WebApproval::Ask
+            } else {
+                crate::harness::web::config::WebApproval::AllowAll
+            };
+            if let Some(rule) = deny {
+                config.permissions.deny = vec![rule.to_string()];
+            }
+            let runtime = Runtime::default();
+            runtime.acquire_turn(&fixture.scope, &config).unwrap();
+            let sink = Collect::default();
+            let events = sink.0.clone();
+            let script = r#"{"responses":[
+              {"tool_calls":[{"id":"web-matrix","name":"web_fetch","arguments":"{\"url\":\"https://example.com/a\"}"}]},
+              {"text":"done"}
+            ]}"#;
+            let mut client = llm::MockClient::from_str(script, "web-audit-matrix").unwrap();
+            if ask {
+                let runtime_worker = runtime.clone();
+                let scope_worker = fixture.scope.clone();
+                let config_worker = config.clone();
+                let worker = std::thread::spawn(move || {
+                    run_turn_for(
+                        &sink,
+                        &runtime_worker,
+                        &scope_worker,
+                        &config_worker,
+                        "question",
+                        None,
+                        &mut client,
+                    );
+                });
+                let pending = wait_for_web_approval(&runtime, &fixture.scope, &config);
+                runtime
+                    .with_session(&fixture.scope, |session| {
+                        session.resolve_approval(&pending.id, true, None, false, false)
+                    })
+                    .unwrap()
+                    .unwrap();
+                worker.join().unwrap();
+            } else {
+                run_turn_for(
+                    &sink,
+                    &runtime,
+                    &fixture.scope,
+                    &config,
+                    "question",
+                    None,
+                    &mut client,
+                );
+            }
+            runtime.release_turn(&fixture.scope);
+            let events = events.lock().unwrap();
+            let done = events
+                .iter()
+                .find(|event| event["type"] == "tool_call" && event["status"] == "done")
+                .unwrap_or_else(|| panic!("{name} 缺少 done 事件"));
+            assert_eq!(done["web"]["local_precheck"], false, "{name}");
+            assert_eq!(done["web"]["provider_fetch"], false, "{name}");
+            assert_eq!(done["web"]["attempts"], 0, "{name}");
+            let _ = std::fs::remove_dir_all(&fixture.root);
+        }
+    }
+
+    #[test]
+    fn web_deny_finishes_without_approval_card() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("web-deny-no-card");
+        let mut config = fixture.config.clone();
+        config.permission_mode = crate::config::PermissionMode::FullAccess;
+        config.web_access.approval = crate::harness::web::config::WebApproval::Ask;
+        config.permissions.deny = vec!["web_search".to_string()];
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&fixture.scope, &config).unwrap();
+        let sink = Collect::default();
+        let events = sink.0.clone();
+        let script = r#"{"responses":[
+          {"tool_calls":[{"id":"web-denied","name":"web_search","arguments":"{\"query\":\"synthetic query\"}"}]},
+          {"text":"done"}
+        ]}"#;
+        let mut client = llm::MockClient::from_str(script, "web-denied").unwrap();
+        run_turn_for(
+            &sink,
+            &runtime,
+            &fixture.scope,
+            &config,
+            "question",
+            None,
+            &mut client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert!(runtime
+            .snapshot(&fixture.scope, &config)
+            .pending_approvals
+            .is_empty());
+        assert!(events
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|event| event["type"] != "approval_request"));
+        let _ = std::fs::remove_dir_all(&fixture.root);
     }
 }

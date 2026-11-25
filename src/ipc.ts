@@ -27,6 +27,7 @@ import type { LinkResolveResult } from "./bindings/LinkResolveResult";
 import type { CreateNoteResult } from "./bindings/CreateNoteResult";
 import type { ThinkingEffort } from "./bindings/ThinkingEffort";
 import type { DecisionReason } from "./bindings/DecisionReason";
+import type { WebApprovalPayload } from "./bindings/WebApprovalPayload";
 import type { VaultWorkspace } from "./bindings/VaultWorkspace";
 import type { RemovedVault } from "./bindings/RemovedVault";
 import type { SessionResumeInfo } from "./bindings/SessionResumeInfo";
@@ -503,7 +504,7 @@ export type HarnessEvent = HarnessEventEnvelope &
   (
     | { type: "text_chunk"; text: string }
     | { type: "reasoning_chunk"; text: string; index: number }
-    | { type: "tool_call"; name: string; status: "started" | "done"; summary: string ; call_id: string }
+    | { type: "tool_call"; name: string; status: "started" | "done"; summary: string ; call_id: string; web?: unknown }
     // approval_request 的 argv 是**数组**（后端 events.rs 发完整 argv 的 JSON 数组；
     // M406 修类型错配——此前这里声明 string，live 渲染成逗号拼接、快照恢复整段丢弃）。
     // purpose 是 M407 契约的可选字段（模型自述的用途句，阅读辅助——卡片展示用，
@@ -515,11 +516,11 @@ export type HarnessEvent = HarnessEventEnvelope &
     // reason 是 M459 契约的可选字段（判定依据：哪一层让这次调用进闸，面板「判定依据」行据它渲染）；
     // 类型取 Rust 侧的 ts-rs 导出（`src/bindings/DecisionReason.ts`，单一来源）。注意该联合里的
     // `deny_rule` 变体**不会到达前端**（deny 不产批准卡，规则原文走工具行的错误文案）——
-    // 前端只处理三个可上卡的 kind（见 harness-panel.ts 的 parseDecisionReason）。
+    // 前端处理三个既有 kind 与 Web 策略 kind（见 harness-panel.ts 的 parseDecisionReason）。
     // cron_task 是 change add-cron-conversational-registration 的可选字段（定时任务要素预览；
     // 形状由 Rust `ApprovalPreview.cron_task` 给出，前端按宽容解析消费——此处只声明键在场，
     // 不复制第二份形状定义，见 harness-panel.ts 的 `parseCronTaskPreview`）。
-    | { type: "approval_request"; id: string; tool: string; diff?: string; argv?: string[]; purpose?: string; reason?: DecisionReason; cron_task?: Record<string, unknown>; remember?: string; persist_rule?: string; source?: ApprovalSource }
+    | { type: "approval_request"; id: string; tool: string; diff?: string; argv?: string[]; purpose?: string; reason?: DecisionReason; cron_task?: Record<string, unknown>; web?: WebApprovalPayload; remember?: string; persist_rule?: string; source?: ApprovalSource }
     // usage（M443，change harness-cache-metrics §4.1）：cache 侧口径拆成会话累计与单回合两个
     // 投影——`cache_pct_session` = 控制行主读数（本逻辑会话 Σcached÷Σinput）、`cache_pct_turn`
     // = hover 气泡里的单回合值、`cache_write_tokens[_session]` = 本回合 / 本会话累计的缓存写入、
@@ -718,7 +719,7 @@ export function harnessSetThinkingEffort(effort: ThinkingEffort): Promise<void> 
  * 缓存写入两值 + 成因标注；旧 `cache_pct` 单回合键退役。M526 的五个绝对值键与事件侧同属一份
  * 载荷——同键同值不变量见 HarnessEvent 的 usage 成员注：两侧键集合由同一份 `UsageSnapshot`
  * 序列化产出，改一侧即须同改另一侧）、
- * `pending_approvals[]{id,tool,diff?,argv?,purpose?,reason?,cron_task?,remember?,persist_rule?,source}`（列表，change
+ * `pending_approvals[]{id,tool,diff?,argv?,purpose?,reason?,cron_task?,web?,remember?,persist_rule?,source}`（列表，change
  * add-harness-subagents §8.3 起替代单槽 `pending_approval`：并行时多个子运行可以同时等批准；
  * `source` 是发起者，`kind: "subrun"` 的卡渲染在任务面板该 run 的行内。argv 是**字符串数组**，
  * M406 起与事件侧同型——此前前端按 string 读，快照恢复把数组整段丢弃；purpose 是 M413 契约

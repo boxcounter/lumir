@@ -15,6 +15,9 @@ marker: "HNL-ALPHA"
 config:
   harness:
     provider: mock
+    # 本场景不验证 Web；显式关闭以固定工具面（阶段5全量回扫）。
+    web_access:
+      enabled: false
     fixture: "$fixtures/harness-mock-cron-register.json"
 steps:
   - name: 记下批准前的配置基线（采纳后要判「写进去了」，不是「文件本来就长这样」）

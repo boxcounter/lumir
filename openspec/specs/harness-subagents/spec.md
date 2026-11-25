@@ -300,9 +300,9 @@ sidecar 重建一条自动化通知并上屏（agent / description / 终态 / `s
 只读工具、**可由定义显式声明授予**（缺省集不变，仍为只读三件；声明的子运行因此能列目录）；写类
 工具与 `cli_run` MUST 由定义显式声明后才可见。未声明的工具 MUST NOT 出现在子运行的工具定义里。
 **缺省收紧只是缺省值，不是能力上限**：`tools` SHALL 接受上述 9 件工具的任意子集（含写类与
-`cli_run`），声明后的可见性不受额外限制。工具集里 MUST NOT 包含 web 类工具——这是 harness 本体的
-能力边界（主会话同样没有 web 工具），MUST NOT 被表述为「子代理被额外削减」；联网检索的现时方式是
-`cli_run` 调用外部 CLI（与主会话同权，受权限管线与批准闸约束）。
+`cli_run`），声明后的可见性不受额外限制。工具集里 MUST NOT 包含 `web_search` / `web_fetch`；交互主会话
+新增这两件 Web 工具 MUST NOT 被解释为子运行同步扩权。子运行需要特殊站点或非 HTML 内容时，仍只能经
+`cli_run` 调用外部 CLI，并受既有权限管线与批准闸约束。
 
 工具是否可见（白名单）与是否放行（权限管线）SHALL 是两道独立的闸：白名单只决定子运行的工具定义，
 放行仍走既有五层权限管线与三档权限模式，MUST NOT 因「子 agent」而放松或额外收紧用户选定的档位。
@@ -323,6 +323,12 @@ sidecar 重建一条自动化通知并上屏（agent / description / 终态 / `s
 
 - **WHEN** 子运行模型发起一个不在白名单内的工具调用
 - **THEN** 执行层拒绝并回送 `tool_not_allowed`，不执行该工具
+
+#### Scenario: 主会话 Web 工具不扩权到子运行
+
+- **WHEN** 交互主会话已注册 `web_search` / `web_fetch`，子运行定义声明 `tools: [web_search]` 或模型
+  直接幻觉出 Web 工具调用
+- **THEN** 该定义按闭集合外工具处理；幻觉调用回送 `tool_not_allowed`，子运行的 9 件 vault 工具边界不变
 
 ### Requirement: 三重失控闸与部分结果收敛
 

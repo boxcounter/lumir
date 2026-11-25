@@ -57,6 +57,7 @@ pub mod thinking;
 pub mod title;
 pub mod tools;
 pub mod turn;
+pub mod web;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -3890,5 +3891,51 @@ mod tests {
         assert_eq!(error.code, "harness_busy");
         runtime.release_turn(&scope);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn restored_web_panel_preserves_source_error_and_truncation_metadata() {
+        let search = serde_json::json!({
+            "ok": true, "provider": "deepseek", "provider_id": "deepseek-work",
+            "operation": "search", "attempts": 1, "trust": "untrusted",
+            "truncated": true, "truncated_fields": ["results"],
+            "query": "full synthetic query", "results": []
+        })
+        .to_string();
+        let fetch = serde_json::json!({
+            "ok": false, "provider": "deepseek", "provider_id": "deepseek-work",
+            "operation": "fetch", "attempts": 3, "trust": "untrusted",
+            "truncated": false, "truncated_fields": [], "code": "web_http_error",
+            "message": "synthetic", "http_status": 503,
+            "source": {"url": "https://other.example/b", "title": "", "snippet": null,
+                "summary": null, "content": null, "content_format": null,
+                "site": "other.example", "date": null, "authority": null}
+        })
+        .to_string();
+        let restored = vec![
+            session::function_call_item(
+                "web-1",
+                "web_search",
+                r#"{"query":"full synthetic query"}"#,
+            ),
+            session::function_call_item(
+                "web-2",
+                "web_fetch",
+                r#"{"url":"https://other.example/b"}"#,
+            ),
+            session::function_call_output_item("web-1", &search),
+            session::function_call_output_item("web-2", &fetch),
+        ];
+        let messages = restored_panel_messages(&restored, &[], &[]);
+        assert_eq!(messages.len(), 2);
+        let search_text = messages[0].text.as_deref().unwrap();
+        assert!(search_text.contains("\"truncated\":true"));
+        assert!(search_text.contains("\"truncated_fields\":[\"results\"]"));
+        assert!(search_text.contains("full synthetic query"));
+        let fetch_text = messages[1].text.as_deref().unwrap();
+        assert!(fetch_text.contains("https://other.example/b"));
+        assert!(fetch_text.contains("\"http_status\":503"));
+        assert!(fetch_text.contains("\"attempts\":3"));
+        assert_eq!(messages[1].status.as_deref(), Some("error"));
     }
 }

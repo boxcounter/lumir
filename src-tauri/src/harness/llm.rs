@@ -4787,4 +4787,117 @@ data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":3}}
         assert!(!messages.contains("lumir_skill"));
         assert!(messages.contains("UNIQUE-SKILL-WIRE-BODY"));
     }
+
+    #[test]
+    fn responses_chat_and_mock_wire_preserve_web_outputs_and_call_order() {
+        use crate::harness::session;
+
+        let search_output = serde_json::json!({
+            "ok": true,
+            "provider": "deepseek",
+            "provider_id": "deepseek-work",
+            "operation": "search",
+            "attempts": 1,
+            "trust": "untrusted",
+            "truncated": true,
+            "truncated_fields": ["results"],
+            "query": "full synthetic query",
+            "results": [{"url": "https://example.com/a", "title": "A", "snippet": null,
+                "summary": null, "content": null, "content_format": null, "site": "example.com",
+                "date": null, "authority": 3}]
+        })
+        .to_string();
+        let fetch_error = serde_json::json!({
+            "ok": false,
+            "provider": "deepseek",
+            "provider_id": "deepseek-work",
+            "operation": "fetch",
+            "attempts": 3,
+            "trust": "untrusted",
+            "truncated": false,
+            "truncated_fields": [],
+            "code": "web_http_error",
+            "message": "synthetic HTTP failure",
+            "http_status": 503,
+            "source": {"url": "https://other.example/b", "title": "", "snippet": null,
+                "summary": null, "content": null, "content_format": null, "site": "other.example",
+                "date": null, "authority": null}
+        })
+        .to_string();
+        let items = vec![
+            session::function_call_item(
+                "web-1",
+                "web_search",
+                r#"{"query":"full synthetic query"}"#,
+            ),
+            session::function_call_item(
+                "web-2",
+                "web_fetch",
+                r#"{"url":"https://other.example/b"}"#,
+            ),
+            session::function_call_output_item("web-1", &search_output),
+            session::function_call_output_item("web-2", &fetch_error),
+        ];
+        let request = Request {
+            system: "sys".into(),
+            input: items.clone(),
+            tools: Vec::new(),
+            effort: ThinkingEffort::default(),
+        };
+        let responses = ResponsesClient {
+            http: reqwest::blocking::Client::new(),
+            endpoint: "https://example.invalid".into(),
+            api_key: "test".into(),
+            model: "test-model".into(),
+            effort_supported: false,
+            store_false: false,
+            vault_id: "no-attachments".into(),
+            preset: &KIMI_PRESET,
+        };
+        let body = responses.wire_body(&request).unwrap();
+        assert_eq!(body["input"], serde_json::Value::Array(items.clone()));
+        let types: Vec<&str> = body["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|item| item["type"].as_str())
+            .collect();
+        assert_eq!(
+            types,
+            vec![
+                "function_call",
+                "function_call",
+                "function_call_output",
+                "function_call_output"
+            ]
+        );
+
+        let (messages, diagnostics) = chat_messages("sys", &items);
+        assert!(diagnostics.is_empty());
+        let assistant = messages
+            .iter()
+            .find(|message| message["role"] == "assistant")
+            .unwrap();
+        let ids: Vec<&str> = assistant["tool_calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|call| call["id"].as_str())
+            .collect();
+        assert_eq!(ids, vec!["web-1", "web-2"]);
+        let tool_outputs: Vec<&str> = messages
+            .iter()
+            .filter(|message| message["role"] == "tool")
+            .filter_map(|message| message["content"].as_str())
+            .collect();
+        assert_eq!(
+            tool_outputs,
+            vec![search_output.as_str(), fetch_error.as_str()]
+        );
+
+        let mut mock =
+            MockClient::from_str(r#"{"responses":[{"text":"ok"}]}"#, "web-wire").unwrap();
+        mock.complete(&request, &TestStream::default());
+        assert_eq!(mock.received_inputs(), &[items]);
+    }
 }

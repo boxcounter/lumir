@@ -169,6 +169,7 @@ function settingsSnapshot(overrides: Json = {}): Json {
       provider_order: ["kimi", "deepseek", "generic", "mock"],
       model_window_min: 1,
       model_window_max: 10_000_000,
+      web_approval_options: ["allow_all", "ask"],
     },
     defaults: {
       auto_compact: true,
@@ -176,8 +177,18 @@ function settingsSnapshot(overrides: Json = {}): Json {
       attachment_naming_enabled: true,
       subagents_enabled: true,
       model_window: 131072,
+      web_access_enabled: true,
+      web_access_approval: "allow_all",
     },
     diagnostics: [],
+    web_access: {
+      enabled: { kind: "absent" },
+      approval: { kind: "absent" },
+      effective: { enabled: true, approval: "allow_all", status: "valid" },
+      invalid: null,
+      provider: { provider: null, provider_id: null, status: "missing" },
+      origins: [],
+    },
     ...rest,
   };
 }
@@ -460,7 +471,7 @@ test("设置面板：删除当前使用项 + 两个命名引用 → 三块替代
 });
 
 /** 取本页发过的 settings_apply patch（桩记在 window.__settingsPatches 上）。 */
-async function appliedPatches(page: Page): Promise<Array<{ providers: Array<Record<string, unknown>>; active_provider?: unknown }>> {
+async function appliedPatches(page: Page): Promise<Array<{ providers: Array<Record<string, unknown>>; active_provider?: unknown; web_access?: Record<string, unknown> }>> {
   return page.evaluate(
     () => (window as unknown as { __settingsPatches: Array<{ providers: Array<Record<string, unknown>>; active_provider?: unknown }> }).__settingsPatches,
   );
@@ -1362,4 +1373,164 @@ test("设置面板：保存中「取消」禁用（关闭路径也被挡在请�
   await expect(cancel).toBeDisabled();
   await expect(page.locator(".lumir-set-close")).toBeDisabled();
   await expect(page.locator(".lumir-set-panel")).toBeVisible();
+});
+
+test("网页访问：独立两键、真实 provider、origin 新增/单删/全清统一进入 settings_apply", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await openSettings(page, {
+    snapshot: settingsSnapshot({
+      providers: [provider("deepseek-work", "deepseek")],
+      web_access: {
+        enabled: { kind: "absent" },
+        approval: { kind: "absent" },
+        effective: { enabled: true, approval: "allow_all", status: "valid" },
+        invalid: null,
+        provider: { provider: "deepseek", provider_id: "deepseek-work", status: "ready" },
+        origins: ["https://example.com", "https://example.org:8443"],
+      },
+    }),
+  });
+  const web = page.locator("[data-web-access]");
+  await expect(web).toBeVisible();
+  await expect(page.locator("[data-auto-row]")).toHaveCount(4);
+  await expect(web.locator("[data-web-provider-status]")).toContainText("deepseek-work");
+  await expect(web.locator("[data-web-origin-remove]")).toHaveCount(2);
+
+  if (process.env.LUMIR_WEB_CANDIDATE_DIR !== undefined) {
+    mkdirSync(process.env.LUMIR_WEB_CANDIDATE_DIR, { recursive: true });
+    await page.locator(".lumir-set-body").evaluate((node) => {
+      (node as HTMLElement).scrollTop = 0;
+    });
+    await page.locator(".lumir-set-panel").screenshot({
+      path: join(process.env.LUMIR_WEB_CANDIDATE_DIR, "settings-web-access-top.png"),
+    });
+  }
+
+  await web.locator("[data-web-enabled]").click();
+  await web.locator("[data-web-approval]").selectOption("ask");
+  await web.locator("[data-web-origin-input]").fill("HTTPS://EXAMPLE.NET:443/a?q=1");
+  await web.locator("[data-web-origin-add]").click();
+  await page.locator(".lumir-set-btn-primary").click();
+  let patches = await appliedPatches(page);
+  expect(patches.at(-1)).toMatchObject({
+    web_access: {
+      enabled: { kind: "set", value: false },
+      approval: { kind: "set", value: "ask" },
+      add_origin: "HTTPS://EXAMPLE.NET:443/a?q=1",
+    },
+  });
+
+  await web.locator('[data-web-origin-remove="https://example.com"]').click();
+  await page.locator(".lumir-set-btn-primary").click();
+  patches = await appliedPatches(page);
+  expect(patches.at(-1)).toMatchObject({
+    web_access: { remove_origin: "https://example.com" },
+  });
+
+  await web.locator("[data-web-origin-clear]").click();
+  await page.locator(".lumir-set-btn-primary").click();
+  patches = await appliedPatches(page);
+  expect(patches.at(-1)).toMatchObject({ web_access: { clear_origins: true } });
+
+  await web.locator("[data-web-provider-jump]").click();
+  await expect(page.locator('.lumir-set-provider-row[data-provider-id="deepseek-work"]')).toHaveAttribute("aria-current", "true");
+
+  if (process.env.LUMIR_WEB_CANDIDATE_DIR !== undefined) {
+    mkdirSync(process.env.LUMIR_WEB_CANDIDATE_DIR, { recursive: true });
+    await page.locator(".lumir-set-body").evaluate((node) => {
+      (node as HTMLElement).scrollTop = (node as HTMLElement).scrollHeight;
+    });
+    await page.locator(".lumir-set-panel").screenshot({
+      path: join(process.env.LUMIR_WEB_CANDIDATE_DIR, "settings-web-access.png"),
+    });
+  }
+});
+
+test("网页访问：页级还原取消旧 origin 意图，后续 Web 字段编辑优先保存", async ({ page }) => {
+  await openSettings(page, {
+    snapshot: settingsSnapshot({
+      web_access: {
+        enabled: { kind: "present", value: { kind: "bool", text: "false" } },
+        approval: { kind: "present", value: { kind: "string", text: "ask" } },
+        effective: { enabled: false, approval: "ask", status: "valid" },
+        invalid: null,
+        provider: { provider: null, provider_id: null, status: "not_evaluated" },
+        origins: ["https://example.com"],
+      },
+    }),
+  });
+  const web = page.locator("[data-web-access]");
+  await expect(web.locator("[data-web-origin-remove]")).toHaveCount(1);
+  await web.locator("[data-web-origin-clear]").click();
+  await page.locator(".lumir-set-foot > button:first-child").click();
+  await web.locator("[data-web-enabled]").click();
+  await web.locator("[data-web-approval]").selectOption("ask");
+  await page.locator(".lumir-set-btn-primary").click();
+  const patches = await appliedPatches(page);
+  expect(patches.at(-1)).toMatchObject({
+    web_access: {
+      enabled: { kind: "set", value: false },
+      approval: { kind: "set", value: "ask" },
+    },
+  });
+  expect(patches.at(-1)?.web_access).not.toHaveProperty("clear_origins");
+  await expect(web.locator("[data-web-origin-remove]")).toHaveCount(1);
+});
+
+test("网页访问：provider 异常状态显示并跳转，无条目时落到 DeepSeek 添加管理面", async ({ page }) => {
+  const cases = [
+    {
+      status: "missing_key",
+      text: COPY.D1001.zh,
+      providers: [provider("deepseek-no-key", "deepseek", { configured: false, status: "missing_key", api_key: { state: "unset" } })],
+      destination: "deepseek-no-key",
+    },
+    {
+      status: "ambiguous",
+      text: COPY.D1002.zh,
+      providers: [provider("deepseek-one", "deepseek"), provider("deepseek-two", "deepseek")],
+      destination: "deepseek-one",
+    },
+    {
+      status: "custom_base_url",
+      text: COPY.D1003.zh,
+      providers: [provider("deepseek-custom", "deepseek", {
+        base_url: { kind: "present", value: { kind: "string", text: "https://example.invalid/v1" } },
+        effective: {
+          official_base_url: "https://api.deepseek.com",
+          base_url: "https://example.invalid/v1",
+          wire_api: "responses",
+          models: [modelDraft("deepseek-chat", true, true, 131072)],
+        },
+      })],
+      destination: "deepseek-custom",
+    },
+  ];
+  for (const item of cases) {
+    const statusPage = await page.context().newPage();
+    await openSettings(statusPage, {
+      snapshot: settingsSnapshot({
+        providers: item.providers,
+        active: item.providers[0]!.id,
+        web_access: {
+          enabled: { kind: "absent" },
+          approval: { kind: "absent" },
+          effective: { enabled: true, approval: "allow_all", status: "valid" },
+          invalid: null,
+          provider: { provider: null, provider_id: null, status: item.status },
+          origins: [],
+        },
+      }),
+    });
+    await expect(statusPage.locator("[data-web-provider-status]")).toHaveText(item.text);
+    await statusPage.locator("[data-web-provider-jump]").click();
+    await expect(statusPage.locator(`.lumir-set-provider-row[data-provider-id="${item.destination}"]`)).toHaveAttribute("aria-current", "true");
+    await statusPage.close();
+  }
+
+  await openSettings(page, { snapshot: settingsSnapshot({ providers: [], active: null }) });
+  await expect(page.locator("[data-web-provider-status]")).toHaveText(COPY.D1000.zh);
+  await page.locator("[data-web-provider-jump]").click();
+  await expect(page.locator("#lumir-set-add-id")).toBeVisible();
+  await expect(page.locator('[data-preset="deepseek"]')).toHaveAttribute("aria-pressed", "true");
 });

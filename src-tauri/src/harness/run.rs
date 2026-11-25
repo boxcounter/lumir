@@ -297,6 +297,9 @@ pub trait RunContext {
     /// 本轮是否已被请求停止。
     fn aborted(&self) -> bool;
 
+    /// Web 独立工作单元使用的同一取消事实源（拥有所有权，可跨阻塞 DNS / HTTP 轮询）。
+    fn web_abort(&self) -> std::sync::Arc<dyn Fn() -> bool + Send + Sync>;
+
     fn vault_root(&self) -> &Path;
 
     fn ignore_policy(&self) -> &IgnorePolicy;
@@ -329,6 +332,10 @@ pub trait RunContext {
     /// `turn::run_turn` 注入的端口；**交接契约槽位与子运行恒 `None`**——那些运行的注册表里
     /// 本来就没有三件调度工具。
     fn cron_port(&self) -> Option<std::sync::Arc<dyn crate::cron::CronPort>> {
+        None
+    }
+
+    fn web_port(&self) -> Option<std::sync::Arc<dyn super::web::WebToolPort>> {
         None
     }
 
@@ -407,6 +414,30 @@ pub struct SessionContext<'a> {
     /// **只在交互路径**（`tool_policy = None`）对模型可见 / 可执行（[`Self::cron_port`] 的判据）。
     /// 单测直接构造上下文时缺省 `None`。
     cron: Option<std::sync::Arc<dyn crate::cron::CronPort>>,
+    /// 验收构建（`acceptance-web` feature）的 Web 端口覆盖：普通构建没有这个字段，
+    /// 生产装配始终从官方 provider 现建。只在合成 HTTP 集成测试里注入。
+    #[cfg(feature = "acceptance-web")]
+    web_port_override: Option<std::sync::Arc<dyn super::web::WebToolPort>>,
+}
+
+/// 回合取消的唯一事实源：主会话看 session 的停止标志，并在读到停止时广播给本回合起的子运行。
+/// `aborted()`（工具循环）与 `web_abort()`（Web 独立工作单元）共用这一处判据。
+fn session_aborted(
+    runtime: &Runtime,
+    scope: &VaultScope,
+    hub: Option<&subagents::SubagentHub>,
+) -> bool {
+    let aborted = runtime
+        .with_session(scope, |session| session.abort_requested())
+        .unwrap_or(false);
+    // 父回合停止是**广播**的（design §12.4）：本回合起的子运行在下一检查点收敛
+    // `Aborted`。只在读到停止时同步一次，正常路径零开销。
+    if aborted {
+        if let Some(hub) = hub {
+            hub.broadcast_abort();
+        }
+    }
+    aborted
 }
 
 /// 压缩跨边界的子运行种子（M822）：模型桶 + 逐 run 终态汇总。新文件没有旧的 `subrun` sidecar，
@@ -473,7 +504,19 @@ impl<'a> SessionContext<'a> {
             hub,
             tool_policy,
             cron: None,
+            #[cfg(feature = "acceptance-web")]
+            web_port_override: None,
         }
+    }
+
+    /// 验收构建专用：把合成 HTTP 端口交给本回合（只有 `acceptance-web` feature 下存在）。
+    #[cfg(feature = "acceptance-web")]
+    pub fn with_web_port_for_acceptance(
+        mut self,
+        port: std::sync::Arc<dyn super::web::WebToolPort>,
+    ) -> Self {
+        self.web_port_override = Some(port);
+        self
     }
 
     /// 注入调度工具端口（`turn::run_turn` 的接线点）：交互路径持有一个，
@@ -524,6 +567,9 @@ impl RunContext for SessionContext<'_> {
         // design §2.2）：交接契约槽位（cron 定时 / 点击）与子运行拿到的定义里没有它们。
         if self.is_interactive() {
             definitions.extend(tools::cron_definitions());
+            if self.config.web_access.is_valid_and_enabled() {
+                definitions.extend(super::web::definitions());
+            }
         }
         filter_tool_definitions(definitions, self.tool_policy.as_ref())
     }
@@ -535,7 +581,31 @@ impl RunContext for SessionContext<'_> {
         self.cron.clone()
     }
 
+    fn web_port(&self) -> Option<std::sync::Arc<dyn super::web::WebToolPort>> {
+        #[cfg(feature = "acceptance-web")]
+        if let Some(port) = &self.web_port_override {
+            return Some(port.clone());
+        }
+        if !self.is_interactive()
+            || (self.config.web_access.status == super::web::config::WebAccessConfigStatus::Valid
+                && !self.config.web_access.enabled)
+        {
+            return None;
+        }
+        Some(std::sync::Arc::new(super::web::ConfiguredWebToolPort::new(
+            self.config,
+        )))
+    }
+
     fn decide(&self, tool: &str, subject: &str, args: &serde_json::Value) -> permissions::Verdict {
+        if super::web::operation(tool).is_some() {
+            return permissions::decide_web(
+                &self.runtime.live_permissions(&self.config.permissions),
+                tool,
+                subject,
+                self.config.web_access.approval,
+            );
+        }
         let cached = self
             .cache_namespace()
             .is_some_and(|namespace| permission_cache::is_remembered(&namespace, tool, subject));
@@ -572,6 +642,7 @@ impl RunContext for SessionContext<'_> {
         let purpose = request.purpose.clone();
         let reason = request.reason.clone();
         let cron_task = request.cron_task.clone();
+        let web = request.web.clone();
         let remember = request.remember.clone();
         let persist_rule = request.persist_rule.clone();
         let id = match self.runtime.park_approval(self.scope, request) {
@@ -589,6 +660,7 @@ impl RunContext for SessionContext<'_> {
             cron_task.as_ref(),
             remember.as_deref(),
             persist_rule.as_deref(),
+            web.as_ref(),
         ));
         // 未决批准项不自动超时通过：通道失效（会话重置 / vault 切换）⇒ 判过期，不执行。
         match rx.recv() {
@@ -662,18 +734,14 @@ impl RunContext for SessionContext<'_> {
     }
 
     fn aborted(&self) -> bool {
-        let aborted = self
-            .runtime
-            .with_session(self.scope, |session| session.abort_requested())
-            .unwrap_or(false);
-        // 父回合停止是**广播**的（design §12.4）：本回合起的子运行在下一检查点收敛
-        // `Aborted`。只在读到停止时同步一次，正常路径零开销。
-        if aborted {
-            if let Some(hub) = &self.hub {
-                hub.broadcast_abort();
-            }
-        }
-        aborted
+        session_aborted(self.runtime, self.scope, self.hub.as_deref())
+    }
+
+    fn web_abort(&self) -> std::sync::Arc<dyn Fn() -> bool + Send + Sync> {
+        let runtime = self.runtime.clone();
+        let scope = self.scope.clone();
+        let hub = self.hub.clone();
+        std::sync::Arc::new(move || session_aborted(&runtime, &scope, hub.as_deref()))
     }
 
     fn vault_root(&self) -> &Path {
@@ -981,7 +1049,7 @@ mod tests {
         runtime.acquire_turn(&scope, &config).unwrap();
         let sink = NullSink;
         let ctx = SessionContext::new(&sink, &runtime, &scope, &config);
-        // 交互路径 = 9 件 vault 工具（逐字节不变）+ 3 件调度工具（子代理关闭时 `task` 缺席）。
+        // 交互路径 = 9 件 vault 工具（逐字节不变）+ 3 件调度工具 + 2 件 Web 工具（子代理关闭时 `task` 缺席）。
         let definitions = ctx.tool_definitions();
         assert_eq!(
             definitions[..tools::definitions().len()],
@@ -990,7 +1058,9 @@ mod tests {
         );
         assert_eq!(
             definitions.len(),
-            tools::TOOL_NAMES.len() + tools::CRON_TOOL_NAMES.len()
+            tools::TOOL_NAMES.len()
+                + tools::CRON_TOOL_NAMES.len()
+                + crate::harness::web::WEB_TOOL_NAMES.len()
         );
         let names: Vec<&str> = definitions
             .iter()
@@ -1047,7 +1117,10 @@ mod tests {
         let definitions = ctx.tool_definitions();
         assert_eq!(
             definitions.len(),
-            tools::definitions().len() + 1 + tools::CRON_TOOL_NAMES.len()
+            tools::definitions().len()
+                + 1
+                + tools::CRON_TOOL_NAMES.len()
+                + crate::harness::web::WEB_TOOL_NAMES.len()
         );
         let task = definitions
             .iter()
@@ -1138,7 +1211,10 @@ mod tests {
         let ctx = SessionContext::new(&sink, &runtime, &scope, &config);
         assert_eq!(
             ctx.tool_definitions().len(),
-            tools::definitions().len() + 1 + tools::CRON_TOOL_NAMES.len()
+            tools::definitions().len()
+                + 1
+                + tools::CRON_TOOL_NAMES.len()
+                + crate::harness::web::WEB_TOOL_NAMES.len()
         );
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1281,5 +1357,91 @@ mod tests {
         let open = gate_tool_definitions(definitions, true);
         assert_eq!(open.len(), tools::definitions().len() + 1);
         assert_eq!(open.last(), Some(&task));
+    }
+
+    #[test]
+    fn web_tool_registration_is_interactive_enabled_and_valid_only() {
+        let root = std::env::temp_dir().join(format!(
+            "lumir-run-web-registry-{}-{:016x}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let _xdg = crate::harness::xdg_test_lock();
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+        let vault = root.join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let scope = VaultScope {
+            root: vault.clone(),
+            policy: {
+                let defaults = crate::config::VaultConfig::default();
+                IgnorePolicy::load(&vault, &[".gitignore".to_string()], &defaults.ignore)
+            },
+            vault_id: "vault-web-registry".to_string(),
+        };
+        let runtime = Runtime::default();
+        let sink = NullSink;
+
+        for (web_access, expected_definitions, expected_port) in [
+            (
+                crate::harness::web::config::WebAccessConfig::default(),
+                true,
+                true,
+            ),
+            (
+                crate::harness::web::config::WebAccessConfig {
+                    enabled: false,
+                    ..Default::default()
+                },
+                false,
+                false,
+            ),
+            (
+                crate::harness::web::config::validate_web_access(Some(&serde_json::json!("on"))).0,
+                false,
+                true,
+            ),
+        ] {
+            let mut config = crate::config::test_mock(Some("/tmp/fixture.json"));
+            config.subagents.enabled = false;
+            config.web_access = web_access;
+            runtime.acquire_turn(&scope, &config).unwrap();
+            let ctx = SessionContext::new(&sink, &runtime, &scope, &config);
+            let definitions = ctx.tool_definitions();
+            for name in crate::harness::web::WEB_TOOL_NAMES {
+                assert_eq!(
+                    definitions
+                        .iter()
+                        .any(|definition| definition["name"] == name),
+                    expected_definitions,
+                    "{definitions:?}"
+                );
+            }
+            assert_eq!(ctx.web_port().is_some(), expected_port);
+            runtime.release_turn(&scope);
+        }
+
+        let mut config = crate::config::test_mock(Some("/tmp/fixture.json"));
+        config.web_access =
+            crate::harness::web::config::validate_web_access(Some(&serde_json::json!(null))).0;
+        runtime.acquire_turn(&scope, &config).unwrap();
+        runtime.set_tool_policy(
+            &scope,
+            ToolPolicy {
+                allow: tools::TOOL_NAMES.map(str::to_string).to_vec(),
+            },
+        );
+        let ctx = SessionContext::new(&sink, &runtime, &scope, &config);
+        let definitions = ctx.tool_definitions();
+        for name in crate::harness::web::WEB_TOOL_NAMES {
+            assert!(!tools::TOOL_NAMES.contains(&name));
+            assert!(!definitions
+                .iter()
+                .any(|definition| definition["name"] == name));
+        }
+        assert!(ctx.web_port().is_none());
+        runtime.release_turn(&scope);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

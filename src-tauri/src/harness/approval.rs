@@ -72,13 +72,14 @@ pub struct ApprovalRequest {
     /// [`super::tools::ApprovalPreview::purpose`]，事件与快照都从这里取（单一真源）。
     pub purpose: Option<String>,
     /// 判定依据（M459，change add-approval-decision-reason）：这次调用**为什么**进闸
-    /// （`DecisionReason`，只可能来自产批准卡的两层）。事件与快照两条 UI 通道都从这里取
+    /// （`DecisionReason`，来自既有批准层或独立 Web 策略）。事件与快照两条 UI 通道都从这里取
     /// （单一真源）；`None` = 无依据可讲（旧载荷 / 未来新增的 Ask 层未标依据）。
     pub reason: Option<DecisionReason>,
     /// 定时任务预览（change add-cron-conversational-registration design §6.3）：`cron_task_create` /
     /// `cron_task_remove` 的五要素快照（`prompt` 全文只在这里出现，不进诊断日志）。
     /// 事件载荷键 `cron_task` 与 `PendingApprovalSnapshot.cron_task` 同源（都取自本字段）。
     pub cron_task: Option<serde_json::Value>,
+    pub web: Option<super::web::output::WebApprovalPayload>,
     /// 该批准卡支持「采纳且本会话不再问（记住 `<粒度>`）」次级动作：`Some(粒度)` = 显示，
     /// `None` = 不显示。粒度由 [`super::permissions::permission_prefix`] 从 argv / 路径现算
     /// （单一真源）；危险黑名单层恒 `None`——那一层先于 allow 规则与会话缓存，按钮点了也不
@@ -120,6 +121,7 @@ impl ApprovalRequest {
             purpose,
             reason,
             cron_task: None,
+            web: None,
             remember,
             persist_rule,
             subject,
@@ -136,6 +138,11 @@ impl ApprovalRequest {
     /// 附带定时任务预览（`cron_task_create` / `cron_task_remove` 的批准卡载荷）。
     pub fn with_cron_task(mut self, cron_task: Option<serde_json::Value>) -> Self {
         self.cron_task = cron_task;
+        self
+    }
+
+    pub fn with_web(mut self, web: Option<super::web::output::WebApprovalPayload>) -> Self {
+        self.web = web;
         self
     }
 

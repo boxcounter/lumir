@@ -2511,6 +2511,22 @@ impl EventSink for NullSink {
     fn emit(&self, _payload: serde_json::Value) {}
 }
 
+/// 子运行的取消事实源（`aborted()` 与 Web 独立工作单元的 `web_abort()` 共用同一判据）：
+/// 本地 abort 标志、中枢关闭、父会话不再存活，任一命中即视为已停止。
+fn subrun_aborted(
+    abort: &Arc<AtomicBool>,
+    hub: &HubInner,
+    runtime: &Runtime,
+    scope: &VaultScope,
+    parent_token: u64,
+) -> bool {
+    abort.load(Ordering::SeqCst)
+        || hub.closed.load(Ordering::SeqCst)
+        || !runtime
+            .with_session(scope, |session| session.subagent_token() == parent_token)
+            .unwrap_or(false)
+}
+
 /// 子运行上下文（design §2.3 / §4.1）：本地会话、工具白名单、三重闸、批准透传。
 pub(crate) struct ChildContext {
     session: Session,
@@ -2674,17 +2690,13 @@ impl ChildContext {
     }
 
     fn is_aborted_now(&self) -> bool {
-        self.abort.load(Ordering::SeqCst)
-            || self.hub.inner.closed.load(Ordering::SeqCst)
-            || !self.parent_alive()
-    }
-
-    fn parent_alive(&self) -> bool {
-        self.runtime
-            .with_session(&self.scope, |session| {
-                session.subagent_token() == self.parent_token
-            })
-            .unwrap_or(false)
+        subrun_aborted(
+            &self.abort,
+            &self.hub.inner,
+            &self.runtime,
+            &self.scope,
+            self.parent_token,
+        )
     }
 
     fn elapsed_running(&self) -> Duration {
@@ -2857,6 +2869,7 @@ impl RunContext for ChildContext {
         let argv = request.argv.clone();
         let purpose = request.purpose.clone();
         let reason = request.reason.clone();
+        let web = request.web.clone();
         let remember = request.remember.clone();
         let persist_rule = request.persist_rule.clone();
         let request = request.with_id(id.clone()).with_source(source.clone());
@@ -2887,6 +2900,7 @@ impl RunContext for ChildContext {
                 None,
                 remember.as_deref(),
                 persist_rule.as_deref(),
+                web.as_ref(),
             ));
         }
         let wait_start = Instant::now();
@@ -2943,7 +2957,22 @@ impl RunContext for ChildContext {
     }
 
     fn aborted(&self) -> bool {
-        self.is_aborted_now()
+        subrun_aborted(
+            &self.abort,
+            &self.hub.inner,
+            &self.runtime,
+            &self.scope,
+            self.parent_token,
+        )
+    }
+
+    fn web_abort(&self) -> Arc<dyn Fn() -> bool + Send + Sync> {
+        let abort = self.abort.clone();
+        let hub = self.hub.inner.clone();
+        let runtime = self.runtime.clone();
+        let scope = self.scope.clone();
+        let parent_token = self.parent_token;
+        Arc::new(move || subrun_aborted(&abort, &hub, &runtime, &scope, parent_token))
     }
 
     fn vault_root(&self) -> &std::path::Path {
@@ -3728,6 +3757,25 @@ mod tests {
         let run_id = out["run_id"].as_str().unwrap();
         let audit = std::fs::read_to_string(f.audit_path(run_id)).unwrap();
         assert!(audit.contains("tool_not_allowed"), "{audit}");
+    }
+
+    #[test]
+    fn web_tool_is_rejected_at_execution_without_expanding_subrun_allowlist() {
+        let f = Fixture::new(
+            "web-closed-set",
+            r#"{"responses":[
+                {"tool_calls": [{"id":"web-1","name":"web_search","arguments":"{\"query\":\"synthetic\"}"}]},
+                {"text":"不用搜"}
+            ]}"#,
+            |_| {},
+        );
+        f.research("");
+        let out = f.run_task(args("research", "试试网页搜索"));
+        assert_eq!(out["status"], "completed", "{out}");
+        let run_id = out["run_id"].as_str().unwrap();
+        let audit = std::fs::read_to_string(f.audit_path(run_id)).unwrap();
+        assert!(audit.contains("tool_not_allowed"), "{audit}");
+        assert!(!audit.contains("web_provider_unconfigured"), "{audit}");
     }
 
     /// resume：同 run / segment=2 / 审计同文件追加 / 可完成；agent 不匹配与运行中被拒。

@@ -11,6 +11,9 @@ config:
     fixture: "$fixtures/harness-mock-skill-hybrid.json"
     permissions:
       deny: ["skill_load(default)"]
+    # 本场景不验证 Web；显式关闭以固定工具面（阶段5回扫）。
+    web_access:
+      enabled: false
 seed:
   registry:
     - { id: acc-hybrid, path: $vault, lastOpenedAt: 1757000002000 }

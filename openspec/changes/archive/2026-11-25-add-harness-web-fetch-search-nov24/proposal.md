@@ -108,7 +108,7 @@ D1 / D2 已批准，不再列默认批准策略裁决点。以下 fail-closed �
 
 ## Non-goals
 
-- 本提交只创建 proposal / design / tasks / spec delta，**不实现产品、测试或验收场景**。
+- **历史范围（仅指最初提案提交）**：当时只创建 proposal / design / tasks / spec delta，不实现产品、测试或验收场景；该范围限制不描述后续已批准实现提交。阶段1已实现合同、provider 解析、注册与 settings 后端，阶段2已实现权限管线、Ask 预览与设置 UI，阶段3已实现 URL / DNS、固定地址 transport、手动 redirect、预检与取消，阶段4已实现真实 DeepSeek provider / executor、deadline、重试、预算、默认无卡审计与 wire / 恢复；全量场景回扫与真机验收归阶段5。
 - 不实现 Tavily / Brave 适配器；Tavily Extract 仅保留为真实使用后的备选依据
   （[Tavily Extract](https://docs.tavily.com/documentation/api-reference/endpoint/extract)）。
 - 不新增 `search` / `fetch` / `web` 等别名，不做兼容层、双写或第二套工具合同。
@@ -120,7 +120,7 @@ D1 / D2 已批准，不再列默认批准策略裁决点。以下 fail-closed �
 - 不实现浏览器渲染、JavaScript 执行、图片 / PDF / 下载器、网页存档、登录态或 Cookie 复用。
 - 不做账单对账、成本补偿或自动换 provider；不保证 DeepSeek 远端抓取的内部 DNS / redirect 行为。
 - 不为真机验收在生产构建保留自定义 endpoint、loopback 白名单、代理或跳过 DNS / URL 校验的开关。
-- 不改 living specs、产品代码、测试、backlog；不进入归档。
+- **历史范围（仅指最初提案提交）**：当时不改 living specs、产品代码、测试、backlog；实现期按已批准 delta 与 tasks 修改对应制品。本 change 尚未归档，当前阶段分支不能 merge 或 dogfood。
 
 ## Impact
 
@@ -147,6 +147,24 @@ D1 / D2 已批准，不再列默认批准策略裁决点。以下 fail-closed �
   状态、字节流、重定向、DNS 或代理证据。完整矩阵见 `design.md` 与 `tasks.md`。
 - 真机只用隔离测试装配与本地合成 DeepSeek / 目标 HTTP 服务；真实 DeepSeek 计费 API 不属于验收依赖。
   证据落主仓 `.local/`，不落 worktree；覆盖声明必须附场景名与 PASS 计数。
+
+## 节点 2：归档放行（五要件）
+
+机器 + 独立评审放行，按 `docs/process/openspec-workflow.md` 的节点 2 口径记录；不命中必须找 Alex 的例外类别。
+
+1. **方案已批准**：节点 1 于 2026-11-24 通过，Alex 对 D1 回复「默认允许所有」、对 D2 回复「好」；实现期按阶段 1–5 落地，无静默扩 scope。批准口径见本文「节点 1 已批准口径」。
+2. **独立 reviewer clean / merge**：阶段5 tower verdict `clean`，绑定 tip `9ed11c19`，P1 / P2 / P3 均无。评审文件：`/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/harness-web-tools-nov25/stage5-tower-verdict.md`；阶段 1–4 的独立结论同目录 `stage1-k3-verdict.md` / `stage2-k3-verdict.md` / `stage3-k3-verdict.md` / `stage4-tower-verdict.md`。
+3. **tasks 完成**：`tasks.md` 88/88 全部勾选；2.10 / 8.5 / 8.6 / 8.7 的最终证据见各任务行。725/726 的预存在失败不计入 Web 通过，归因见第 4 条。
+4. **门禁与真机证据**：
+   - quick：`GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0，`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-stage5-web/stage5-gate-quick-final.log`。
+   - 完整 visual：`GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0，`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-stage5-web/stage5-gate-visual-final-r3.log`；基线零改动，无待 Alex 批准的候选。
+   - acceptance-web：14/14 PASS，`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-stage5-web/stage5-web-acceptance-final.log`。
+   - 生产反向：debug / release 产物与生产 dev 运行态均不激活注入，`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-stage5-web/stage5-production-check-final.log`、`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-stage5-web/stage5-production-runtime-final.log`。
+   - 真机 869–876：6/6 PASS、50 条断言，`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-stage5-web/final-869-876-r2/summary.md`。
+   - 权限 / 批准闸回扫：17 个既有场景已全部补钉 `web_access.enabled=false`，最终 15/17 PASS，`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-stage5-web/approval-sweep/summary.md`；725/726 在无 Web 实现的分支同步骤失败，属预存在，另立修复，不记为 Web 通过。
+5. **规格对账（归档前）**：`scripts/openspec-archive-check.mjs` 门禁模式 PASS（16 MODIFIED / 359 段 / 0 静默丢段）；`validate --all --strict` 38/38；`docs/backlog.md` 归档队列恰一条 `add-harness-web-fetch-search-nov24`。读数取自 2026-11-25 归档前工作区。
+
+**归档后记录（2026-11-25T19:43+0800）**：归档提交 `d5c1143d9136260da8eac5a017df3057f378a0d7`；包装器输出 `Change 'add-harness-web-fetch-search-nov24' archived as '2026-11-25-add-harness-web-fetch-search-nov24'` / `Specs updated successfully` / `归档后修链 0 处（扫过 6 篇 Markdown / 0 条相对链接）` / `openspec-links: PASS（校验 700 条相对链接，全部可达）`；`node scripts/openspec-archive-check.mjs --archived add-harness-web-fetch-search-nov24` → `PASS（openspec/changes/archive/2026-11-25-add-harness-web-fetch-search-nov24：9 条 MODIFIED，对比 250 段；人工恢复 0 段，声明认领 0 段）`。
 
 ## 关联材料
 

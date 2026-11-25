@@ -12,6 +12,9 @@ config:
   harness:
     provider: mock
     fixture: "$fixtures/harness-mock-retry-approval.json"
+    # 本场景不验证 Web；显式关闭以固定工具面（阶段5回扫）。
+    web_access:
+      enabled: false
 steps:
   - name: 准备两份待删文件
     do: vaultWrite

@@ -24,6 +24,9 @@ marker: "HNL-ALPHA"
 config:
   harness:
     provider: mock
+    # 本场景不验证 Web；显式关闭以固定工具面（阶段5全量回扫）。
+    web_access:
+      enabled: false
     fixture: "$fixtures/harness-mock-workspace.json"
 steps:
   - name: ⌘⇧A 打开 harness pane（旁侧分栏）
