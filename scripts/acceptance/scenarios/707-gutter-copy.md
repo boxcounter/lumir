@@ -112,19 +112,34 @@ steps:
     expect:
       - label: 路径落进快速打开输入框
         ax: { has: "/AXComboBox \\(按路径快速打开文件\\) Value: /etc/hosts/" }
-  - name: 等直接行给出只读打开意图
-    do: waitFor
-    waitFor:
-      has: ['/按 Enter 只读打开\s*\/etc\/\s*hosts/']
-    timeoutMs: 5000
+  - name: Enter 前只保留通用帮助，不生成 direct action 或普通空态
+    do: settle
+    expect:
+      - label: 外部精确路径没有真实候选时保留通用帮助
+        ax: { has: "输入路径或文件名；可加 :12 这样的行号后缀" }
+      - label: 不生成 vault 内 direct action 伪候选
+        ax: { not: "按 Enter 打开" }
+      - label: 不生成外部 direct action 伪候选
+        ax: { not: "按 Enter 只读打开" }
+      - label: 外部文件尚未读取时不得抢先落普通空态
+        ax: { not: "没有匹配的条目" }
   - name: Enter 打开
     do: key
     key: enter
+  - name: 等外部文件经真实只读链装载
+    do: waitFor
+    waitFor:
+      has: ["localhost"]
+    timeoutMs: 15000
+  - name: 外部只读文件就位
+    do: settle
     expect:
       - label: 外部文件已打开（modeline 路径段是绝对路径；显示层把 / 换成「 / 」）
         ax: { has: "etc / hosts" }
       - label: 外部会话带「vault 外 · 只读」读法
         ax: { has: "vault 外 · 只读" }
+      - label: 外部文件正文精确来自 /etc/hosts
+        editor: { has: "localhost" }
       - shot: external-起点
 
   - name: 右键外部只读文档的 gutter 首行（外部文件同样是 code 模式，系数同上）

@@ -756,6 +756,8 @@ export function checkScenario(scenario) {
         push(`${at} do=typeInNode 不接受 gapMs（整串一次粘贴，无逐键间隔——迁移自 do:keys 时请删掉）`);
       if (step.keys !== undefined)
         push(`${at} do=typeInNode 与 keys 互斥（迁移自 do:keys 时把 keys 数组合成 text 字符串后删掉 keys）`);
+      if (step.replace !== undefined && typeof step.replace !== "boolean")
+        push(`${at} do=typeInNode 的 replace 需要布尔值（缺省 false=追加；true=全选后替换）`);
     }
     if (step.do === "waitFor") {
       // 轮询判据（M296）：`has` / `not` 两份字符串清单，至少一项非空；写错键名会静默变成
@@ -909,6 +911,8 @@ export function checkScenario(scenario) {
     if (step.do === "vaultSparse" && !step.file) push(`${at} do=vaultSparse 需要 file`);
     if (step.do === "vaultSparse" && step.vault !== undefined && step.vault !== "second")
       push(`${at} do=vaultSparse 的 vault 只能是 "second"（缺省 = 验收 vault）`);
+    if (step.do === "vaultWrite" && step.vault !== undefined && step.vault !== "second")
+      push(`${at} do=vaultWrite 的 vault 只能是 "second"（缺省 = 验收 vault）`);
     // 合成图片置剪贴板（M416）：只有 width/height/seed 三个正整数参数。键名写错会静默走缺省
     // （合成出不是场景以为的那张图），因此在静态检查里挡掉。
     if (step.do === "clipboardImage") {
@@ -1152,6 +1156,11 @@ export function checkScenario(scenario) {
         for (const k of ["minWidth", "minHeight"])
           if (spec[k] !== undefined && (typeof spec[k] !== "number" || spec[k] <= 0))
             push(`${at} expect[${j}] geom.${k} 需要正数，实际 ${JSON.stringify(spec[k])}`);
+        for (const k of ["record", "unchangedSince"])
+          if (spec[k] !== undefined && (typeof spec[k] !== "string" || spec[k].trim() === ""))
+            push(`${at} expect[${j}] geom.${k} 需要非空字符串基线名`);
+        if (spec.record !== undefined && spec.unchangedSince !== undefined)
+          push(`${at} expect[${j}] geom.record 与 unchangedSince 互斥（记录与比较分两步写）`);
         if (spec.painted !== undefined) {
           if (!isPlainTable(spec.painted)) push(`${at} expect[${j}] geom.painted 需要对象`);
           else {
@@ -1161,7 +1170,7 @@ export function checkScenario(scenario) {
           }
         }
         for (const k of Object.keys(spec)) {
-          if (!["target", "minWidth", "minHeight", "painted"].includes(k))
+          if (!["target", "minWidth", "minHeight", "painted", "record", "unchangedSince"].includes(k))
             push(`${at} expect[${j}] geom 未知键 ${k}（拼错即静默不判）`);
         }
       }
@@ -1216,6 +1225,9 @@ async function appMetaTokens() {
     // 合成验收 vault 的绝对路径（M244）：剪贴板类断言要比对**绝对路径**，而它随
     // LUMIR_ACCEPTANCE_VAULT 覆写而变——场景 MUST NOT 硬编码 /tmp 那一份。
     $vault: vaultDir(),
+    // 第二合成 vault 与主 vault 同属步骤级 token：loadScenario 对整棵 front-matter 只解析一次，
+    // typeInNode.text/target、ax、record/file 等消费者因此拿到同一个绝对路径，不再只有 seed 能解析。
+    $vault2: secondVaultDir(),
     // 套件 fixtures 目录的绝对路径（M304）：只读引用 fixture 原文（如 harness mock 脚本）
     // 走这个 token——不拷进 vault，避免在 vault 根留下非 .md 残留（resetVault 的 M296 缺口
     // 不清这类文件，场景 28/65 的「vault 里无 json/tmp 产物」断言会被串红）。
@@ -1234,13 +1246,10 @@ async function appMetaTokens() {
 
 /** 深度遍历 YAML 产物，字符串里的占位符全部替换。
  *
- *  **词边界替换**（M252 finding）：`$vault`（本表）与种子里的第二 vault 惯用记号 `$vault2`
- *  共享前缀——用 `replaceAll` 会把 `$vault2` 吃成 `<vault 路径>2`（一个不存在的目录），
- *  凡在 `seed` 里写 `$vault2` 的场景（17 / 19 / 32）第二 vault 都会变成「路径不可用」行。
- *  因此 token 后面**紧跟标识符字符（字母 / 数字 / 下划线）时不替换**：
- *   - `$vault2` 原样留给 `app.mjs` 的 `resolveSeedPath`（它按 `secondVaultDir()` 解析）；
- *   - `$vault-b` 照常替换（`-` 不是标识符字符）——它与 `secondVaultDir()` 的兜底口径
- *     `${vaultDir()}-b` 逐字一致，两种写法都落到同一个目录。
+ *  **词边界替换**（M252 finding）：`$vault` 与 `$vault2` 共享前缀；两个 token 都在本表时，
+ *  仍须防止 `$vault2x` 这类近名标识符被截成「第二 vault 路径 + x」。因此 token 后面紧跟
+ *  标识符字符（字母 / 数字 / 下划线）时不替换；`$vault-b` 照常替换（`-` 不是标识符字符），
+ *  它与 `secondVaultDir()` 的兜底口径 `${vaultDir()}-b` 逐字一致。
  *  `$appName` / `$appVersion` 同样受这条边界保护（`$appNameX` 之类不会被误吃）。 */
 function substituteTokens(value, tokens) {
   if (typeof value === "string") {
@@ -2325,6 +2334,15 @@ export async function readStableEditor(readOnce, { attempts = 6, gapMs = 200 } =
   };
 }
 
+export function geomBaselineProblem(baseline, current) {
+  if (!baseline) return "缺已记录的 bbox 基线";
+  if (!current) return "当前目标缺 bbox";
+  const changes = ["x", "y", "w", "h"]
+    .filter((key) => baseline[key] !== current[key])
+    .map((key) => `${key}: ${baseline[key]} → ${current[key]}`);
+  return changes.length === 0 ? null : `bbox 逐值变化（${changes.join("，")}）`;
+}
+
 /**
  * 跑一个场景。ctx: { cu, app, evidence, resultsRoot, restartApp() }
  * 返回 { status, fails, records }
@@ -2594,6 +2612,14 @@ export async function runScenario(ctx, scenario) {
       if (!node) return fail(`${label}（找不到节点 ${JSON.stringify(t)}）`, "", ax);
       if (!node.bbox) return fail(`${label}（节点 ${JSON.stringify(t)} 没有 bbox——AX 量不到几何）`, "", ax);
       const { x, y, w, h } = node.bbox;
+      vars.geomBaselines ??= {};
+      if (spec.record !== undefined) vars.geomBaselines[spec.record] = { x, y, w, h };
+      if (spec.unchangedSince !== undefined) {
+        const problem = geomBaselineProblem(vars.geomBaselines[spec.unchangedSince], node.bbox);
+        if (problem !== null) {
+          return fail(`${label}（${spec.unchangedSince}：${problem}）`, `当前包围盒 @${x},${y} ${w}×${h}`, ax);
+        }
+      }
       const minW = spec.minWidth ?? 1;
       const minH = spec.minHeight ?? 1;
       const problems = [];
@@ -2624,6 +2650,8 @@ export async function runScenario(ctx, scenario) {
       }
       const detail =
         `包围盒 @${x},${y} ${w}×${h}（视口 ${shot.w}×${shot.h}，宽高下限 ${minW}×${minH}）` +
+        (spec.record ? `；已记录基线 ${spec.record}` : "") +
+        (spec.unchangedSince ? `；与基线 ${spec.unchangedSince} 逐值一致` : "") +
         (painted
           ? `；区域最大亮度跨度 ${painted.spread} @${painted.x},${painted.y}（采样方块 ${paintedPatch}px）`
           : "");
@@ -4055,6 +4083,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         text: step.text,
         retries: step.retries ?? 3,
         label: JSON.stringify(t),
+        replace: step.replace === true,
       });
       if (!out.focused) {
         evidence.record({
@@ -4091,13 +4120,13 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       }
       if (out.verdict === "partial") {
         throw new Error(
-          `typeInNode 注入部分落地：目标串「${step.text}」出现 ${countOf(out.lastValue)} 次（期望 ${out.baseline + 1}），但目标内容已变——` +
+          `typeInNode 注入部分落地：目标串「${step.text}」出现 ${countOf(out.lastValue)} 次（期望 ${step.replace === true ? `整个值=${JSON.stringify(step.text)}` : out.baseline + 1}），但目标内容已变——` +
             `不重试：再注入整串会拼出脏文本。基线=${JSON.stringify(out.baselineValue.slice(0, 200))} ` +
             `现值=${JSON.stringify(out.lastValue.slice(0, 200))}`,
         );
       }
       throw new Error(
-        `typeInNode 注入未落地：${out.attempts} 次注入后目标串「${step.text}」出现 ${countOf(out.lastValue)} 次（期望 ${out.baseline + 1}）；` +
+        `typeInNode 注入未落地：${out.attempts} 次注入后目标串「${step.text}」出现 ${countOf(out.lastValue)} 次（期望 ${step.replace === true ? `整个值=${JSON.stringify(step.text)}` : out.baseline + 1}）；` +
           `目标内容每次注入前后逐字节一致（丢在注入链路；前置诊断：目标节点${out.focused ? "有" : "无"} (focused) 标记，` +
           "无标记时注入落在当前焦点元素上、回读必然未落地）",
       );
@@ -4939,7 +4968,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       );
     }
     case "vaultWrite": {
-      const file = path.join(vaultDir(), step.file);
+      const file = path.join(step.vault === "second" ? secondVaultDir() : vaultDir(), step.file);
       await mkdirp(path.dirname(file)); // 嵌套路径（M221 场景 36 起）：目录行的 chevron 对齐需要真目录
       await writeFile(file, step.content ?? "");
       return file;

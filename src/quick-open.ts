@@ -8,18 +8,14 @@
 //   - **DOM 适配层**：[`createQuickOpen`] 的浮层、就地键与异步打开编排；打开动作、存在探测与
 //     提示出口全部由装配层经 deps 注入（本模块不持第二份打开链路）。
 //
-// **判决同源（M700）**：结果区画什么（直接打开行 / 候选 / 空态）与 Enter 打开哪个目标，
+// **判决同源（M700）**：结果区画什么（真实候选 / 空态）与 Enter 打开哪个目标，
 // 都消费 [`resolveQuickOpen`] 的同一份判决。结果区 MUST NOT 另写一套「有没有这个文件」的判据
 // （REVIEW.md「同一语义两处真源」条）：此前 render 只用「索引 + 子串」判空，confirm 却用
 // 「索引 → 折叠 → 目录 → 探测」，于是 vault 外绝对路径与索引外的惰性文件同时出现
 // 「没有匹配的条目」与 Enter 能打开。
 //
-// 形态复用 `.lumir-toc` 的**几何**（design §8：挂 `shell.modeline`、`bottom: 100%` 向上展开、
-// 列表是唯一滚动容器、下划线输入框；MUST NOT 新增色值 / 字号 / 圆角 token）——`src/style.css`
-// 的浮层规则写成**选择器列表**（`.lumir-toc, .lumir-qo { … }`，同一份几何两个名字），本模块
-// 只用 `.lumir-qo*` 这一组 class。为什么不是「直接借 `.lumir-toc` 的 class」：那会让既有场景
-// 与消费者的 `.lumir-toc` 选择器同时命中两个浮层（strict-mode 撞车），也会让两块浮层的语义
-// 混成一个。**也不复制一份 CSS**：复制几何就是 REVIEW.md「同一语义两处真源」条的下一次现场。
+// 浮层挂 `shell.modeline`、`bottom: 100%` 向上展开，列表是唯一滚动容器；输入框置底，
+// 候选/空态同区域。Quick Open 的宽度与稳定网格独立于 TOC，配色/字号/圆角仍复用既有 token。
 //
 // 四条硬口径（spec `quick-open`）：
 //   1. **整串优先**：输入串先整体当路径试，不成立才剥尾部行号后缀（D5）。文件名里可以有冒号
@@ -28,9 +24,9 @@
 //      `lineSuffixAt`（MUST NOT 复制 `LINE_SUFFIX`，与 M632 的落点口径逐字一致）；
 //   3. **vault 外绝对路径走同一次序**（归一化阶段 MUST NOT 提前分流）：命中后按只读会话打开，
 //      解析次序与 vault 内完全同构；
-//   4. **目录语境只列直接子级**（change fix-quick-open-select-all-directory-children-nov21）：
-//      判决带出 `directory`，结果区据此把候选收窄为该目录的**直接子级文件**（不混入深层后代 /
-//      同前缀兄弟目录），提示行说明这是目录；尾斜杠只是目录断言，不是另一套解析次序。
+//   4. **显式目录语境只列一层**（change add-quick-open-directory-stable-nov25）：vault 内复用
+//      `fs_scan_dir`，外部走独立只读命令；文件与子目录都作候选，子目录接受后进入下一层，
+//      lazy 不进普通索引；尾斜杠只是目录断言，不是另一套解析次序。
 import { NO_MATCH_TEXT, filterIndices, foldCase } from "./list-filter";
 import { keyToken } from "./keys";
 import { escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
@@ -52,6 +48,22 @@ export interface QuickOpenAttempt {
   line?: number;
   /** false = 走 vault 内打开链路；true = 走 vault 外只读通道。 */
   external: boolean;
+}
+
+export type QuickOpenEntryKind = "file" | "dir";
+
+export interface QuickOpenDirectoryEntry {
+  path: string;
+  kind: QuickOpenEntryKind;
+}
+
+export type QuickOpenDirectoryStatus = "pending" | "ready" | "empty" | "missing" | "unreadable";
+
+export interface QuickOpenDirectoryContext {
+  path: string;
+  external: boolean;
+  status: QuickOpenDirectoryStatus;
+  entries?: readonly QuickOpenDirectoryEntry[];
 }
 
 /** 输入解析的结果：无输入 / 候选阶梯 + 候选列表的查询串。 */
@@ -165,29 +177,6 @@ export function quickOpenAttempts(raw: string, root: string | undefined): QuickO
   };
 }
 
-/**
- * 目录语境的候选下标：`files` 里**父目录逐字等于 `dir`** 的条目（保持索引序）。
- *
- * 目录语境只列直接子级文件——深层后代（`notes/sub/deep.md`）与同前缀兄弟目录
- * （`notes-extra/note.md`）都 MUST NOT 混入。边界是 `/` 而不是字符串前缀：`startsWith(dir)`
- * 会把 `notes-extra` 当成 `notes` 的子级，那正是本判据要挡的形态。
- *
- * 只认文件索引里的条目（与候选列表同源）：子目录本身不是可打开目标，本能力也不做目录浏览。
- * 大小写口径与目录判定同源（`FileTree.hasDir` 逐字），MUST NOT 在这里另做折叠。
- */
-export function directChildIndices(files: readonly string[], dir: string): number[] {
-  const prefix = `${dir}/`;
-  const children: number[] = [];
-  for (let index = 0; index < files.length; index += 1) {
-    const path = files[index] as string;
-    if (!path.startsWith(prefix)) continue;
-    const rest = path.slice(prefix.length);
-    if (rest === "" || rest.includes("/")) continue;
-    children.push(index);
-  }
-  return children;
-}
-
 // ---------------------------------------------------------------------------
 // 纯函数：vault 内存在性裁决（索引 → 折叠等值 → 批量存在探测）
 // ---------------------------------------------------------------------------
@@ -214,6 +203,8 @@ export interface VaultLookupEnv {
   isDir(path: string): boolean;
   /** 索引外的存在探测（`fs_paths_exist`：被忽略规则挡在枚举结果之外、但仍在 vault 内的文件）。 */
   probe(paths: readonly string[]): Promise<readonly string[]>;
+  /** 显式目录语境的一层只读扫描（vault 内 `fs_scan_dir` / 外部 `fs_list_external_dir`）。 */
+  scanDirectory(path: string, external: boolean): Promise<readonly QuickOpenDirectoryEntry[]>;
 }
 
 /**
@@ -285,24 +276,25 @@ export type QuickOpenVerdict =
 export interface QuickOpenResolution {
   plan: QuickOpenPlan;
   verdict: QuickOpenVerdict;
-  /**
-   * 目录语境（verdict 为 `dir` 时恒有；`notes/` 这类尾斜杠目录断言成立时也有）：结果区据此把
-   * 候选收窄为直接子级，Enter 的两段式也读它。非目录语境为 undefined。
-   */
-  directory?: string;
+  /** 显式目录语境；普通文件搜索为 undefined。 */
+  directory?: QuickOpenDirectoryContext;
 }
 
-/**
- * 尾斜杠的**目录断言**：去掉恰好一个尾斜杠后归一化成 vault 内路径。这里只回答「用户声明的
- * 目录路径是什么」，MUST NOT 在这里判存在性 / 发探测——目录判定仍只走 `env.isDir`（与解析到
- * 目录的判据同一份）。vault 外路径不走本档：本能力没有外部目录列举，外部路径仍按尝试入口处置。
- */
-function explicitDirectoryPath(raw: string, root: string | undefined): string | undefined {
+function explicitDirectoryPath(
+  raw: string,
+  root: string | undefined,
+): { path: string; external: boolean } | undefined {
   const trimmed = raw.trim();
   if (!trimmed.endsWith("/")) return undefined;
-  const normalized = normalizeQuickOpenInput(trimmed.slice(0, -1), root);
-  if (normalized.kind !== "path" || normalized.external) return undefined;
-  return normalized.path;
+  if (trimmed === "/") return { path: "/", external: true };
+  const withoutSlash = trimmed.slice(0, -1);
+  const base = root !== undefined && root.endsWith("/") ? root.slice(0, -1) : root;
+  if (base !== undefined && foldCase(withoutSlash) === foldCase(base)) {
+    return { path: "", external: false };
+  }
+  const normalized = normalizeQuickOpenInput(withoutSlash, root);
+  if (normalized.kind !== "path") return undefined;
+  return { path: normalized.path, external: normalized.external };
 }
 
 const NO_MISSING: ReadonlySet<string> = new Set();
@@ -333,12 +325,13 @@ export function resolveQuickOpenSync(
 ): QuickOpenResolution {
   const plan = quickOpenAttempts(raw, root);
   if (plan.kind === "empty") return { plan, verdict: { kind: "empty" } };
-  // 尾斜杠目录断言：`notes/` 的 plan 是 invalid（尾斜杠不是合法路径），但 `notes` 确实是目录时
-  // 它表达的是目录语境。判决仍是 invalid（Enter 沿用既有 invalid 分支的候选打开行为，本 change
-  // 只改结果区的筛选与提示）；目录路径经 `directory` 单独带出。
   const explicitDir = explicitDirectoryPath(raw, root);
-  if (explicitDir !== undefined && env.isDir(explicitDir)) {
-    return { plan, verdict: { kind: "invalid" }, directory: explicitDir };
+  if (explicitDir !== undefined) {
+    return {
+      plan,
+      verdict: { kind: "invalid" },
+      directory: { ...explicitDir, status: "pending" },
+    };
   }
   if (plan.attempts.length === 0) return { plan, verdict: { kind: "invalid" } };
   if (plan.attempts[0]!.external) {
@@ -354,13 +347,37 @@ export function resolveQuickOpenSync(
       return { plan, verdict: { kind: "ambiguous", path: attempt.path, paths: sync.paths } };
     }
     if (sync.kind === "dir") {
-      return { plan, verdict: { kind: "dir", path: attempt.path }, directory: attempt.path };
+      return {
+        plan,
+        verdict: { kind: "dir", path: attempt.path },
+        directory: { path: attempt.path, external: false, status: "pending" },
+      };
     }
     if (!knownMissing.has(attempt.path)) {
       return { plan, verdict: { kind: "undecided", attempt } };
     }
   }
   return { plan, verdict: { kind: "missing" } };
+}
+
+async function scanQuickOpenDirectory(
+  directory: QuickOpenDirectoryContext,
+  env: VaultLookupEnv,
+): Promise<QuickOpenDirectoryContext> {
+  try {
+    const entries = await env.scanDirectory(directory.path, directory.external);
+    return {
+      ...directory,
+      status: entries.length === 0 ? "empty" : "ready",
+      entries,
+    };
+  } catch (error) {
+    const code = typeof error === "object" && error !== null ? (error as { code?: unknown }).code : undefined;
+    return {
+      ...directory,
+      status: code === "fs_not_found" || code === "fs_path_invalid" ? "missing" : "unreadable",
+    };
+  }
 }
 
 /**
@@ -375,6 +392,12 @@ export async function resolveQuickOpen(
   const knownMissing = new Set<string>();
   for (;;) {
     const resolution = resolveQuickOpenSync(raw, root, env, knownMissing);
+    if (resolution.directory?.status === "pending") {
+      return {
+        ...resolution,
+        directory: await scanQuickOpenDirectory(resolution.directory, env),
+      };
+    }
     if (resolution.verdict.kind !== "undecided") return resolution;
     const attempt = resolution.verdict.attempt;
     let existing: readonly string[] = [];
@@ -408,8 +431,9 @@ export const quickOpenMissingText = (query: string): string => t("D573", { query
 /** 解析到目录（不做目录浏览）。 */
 export const quickOpenDirText = (path: string): string => t("D574", { path });
 /**
- * 目录语境的提示行：说明列表已收窄为该目录的直接子级文件，并给出数量；没有直接子级文件与
- * 超过渲染上限各有专条（MUST NOT 把「0 条」或截断说明塞进同一个模板再特判）。
+ * 目录语境的状态文案：说明列表已收窄为该目录的直接子项并给出数量；空目录与超过渲染上限
+ * 各有专条（MUST NOT 把「0 条」或截断说明塞进同一个模板再特判）。有候选时落在提示行，
+ * 无候选时只落在结果区，提示行保留通用帮助。
  */
 export const quickOpenDirectoryHint = (path: string, count: number): string =>
   count === 0
@@ -417,6 +441,20 @@ export const quickOpenDirectoryHint = (path: string, count: number): string =>
     : count > CANDIDATE_LIMIT
       ? tPlural("D944", count, { path, count, limit: CANDIDATE_LIMIT })
       : tPlural("D943", count, { path, count });
+export const quickOpenDirectoryStatusText = (directory: QuickOpenDirectoryContext): string => {
+  const path = directory.path === "" ? "/" : directory.path;
+  switch (directory.status) {
+    case "pending":
+      return t("D989", { path });
+    case "empty":
+    case "ready":
+      return quickOpenDirectoryHint(path, directory.entries?.length ?? 0);
+    case "missing":
+      return t("D990", { path });
+    case "unreadable":
+      return t("D991", { path });
+  }
+};
 /** 命中总数（未超上限）。 */
 export const quickOpenCountText = (count: number): string =>
   tPlural("D575", count, { count });
@@ -425,12 +463,6 @@ export const quickOpenTruncatedText = (count: number): string =>
   tPlural("D576", count, { count, limit: CANDIDATE_LIMIT });
 /** 打开失败而打开链路自己已上屏原因时的一行指路。 */
 export const QUICK_OPEN_FAILED = (): string => t("D581");
-/** 结果区的「直接打开」行（vault 内解析到的文件）。 */
-export const quickOpenDirectText = (path: string): string => t("D589", { path });
-/** 结果区的「直接打开」行（vault 外：读取前判不了存在性，这一行是**尝试入口**）。 */
-export const quickOpenDirectExternalText = (path: string): string => t("D590", { path });
-/** 直接打开行的落点行标记（带合法行号后缀时附在路径之后）。 */
-export const quickOpenDirectLineText = (line: number): string => t("D591", { line });
 /** 折叠等值多命中的两段式第一段：只揭示、不猜（第二次 Enter 才打开游标行）。 */
 export const QUICK_OPEN_AMBIGUOUS = (): string => t("D592");
 
@@ -459,6 +491,8 @@ export interface QuickOpenOptions {
   isDir(path: string): boolean;
   /** 索引外的存在探测（`fs_paths_exist`）。 */
   probe(paths: readonly string[]): Promise<readonly string[]>;
+  /** 显式目录语境的一层只读扫描。 */
+  scanDirectory(path: string, external: boolean): Promise<readonly QuickOpenDirectoryEntry[]>;
   /** vault 内打开（唯一打开链路 + 行跳转编排）；返回这次打开是否成功。 */
   openVaultPath(path: string, line?: number): Promise<boolean>;
   /** vault 外只读打开（含行跳转）；`missing` 表示这一级候选不成立。 */
@@ -491,20 +525,23 @@ const ITEM_ID_PREFIX = "lumir-qo-opt-";
  */
 const PROBE_DEBOUNCE_MS = 120;
 
-/** 结果区的一行：直接打开行（至多一条，恒在最前）或候选。 */
-type QuickOpenRow =
-  | { kind: "direct"; path: string; line?: number; external: boolean }
-  | { kind: "candidate"; path: string };
+/** 结果区的一行：只承载真实文件或目录候选；精确路径的 Enter 直接打开不占列表空间。 */
+interface QuickOpenRow {
+  path: string;
+  entryKind: QuickOpenEntryKind;
+  external: boolean;
+}
 
 /** 行身份（异步补帧后按它把游标留在同一行上）。 */
 function rowKey(row: QuickOpenRow | undefined): string | undefined {
-  if (row === undefined) return undefined;
-  return row.kind === "direct" ? `direct:${row.path}:${row.line ?? ""}` : `candidate:${row.path}`;
+  return row === undefined
+    ? undefined
+    : `candidate:${row.external}:${row.entryKind}:${row.path}`;
 }
 
 /** 一行路径文本的展示拆分（M702，change overlay-width-contract-oct24 的 W5 / design §4）。 */
 export interface PathRowText {
-  /** 路径之前的固定文本（直接打开行的动作前缀；候选行为空）。 */
+  /** 路径之前的固定文本（候选行为空）。 */
   prefix: string;
   /** 目录前缀（含末尾 `/`；根目录文件为空串）。 */
   dirs: string;
@@ -524,19 +561,20 @@ export interface PathRowText {
  * 这里只做「目录 / 文件名」的切分，中间的折叠由 CSS 的省略号在**放不下时**才发生，
  * 文件名因此不会被先裁。目录部分没有第二份折叠算法——MUST NOT 在本模块再写一份。
  *
- * 用 `lastIndexOf` 定位路径而不是按模板切：直接打开行的文案由 deck 模板（D589/D590）拼出，
- * 前缀随语言变化；路径逐字出现在模板里（`quickOpenDirectText` 的插值就是原文），找不到时
+ * 用 `lastIndexOf` 定位路径而不是按模板切：调用方不需要知道行文案的模板形状；找不到时
  * 退回「整段 prefix」而不是抛错或猜位置。纯函数、零 DOM，单测直接钉边界。
  */
 export function splitPathRowText(text: string, path: string): PathRowText {
   const at = path === "" ? -1 : text.lastIndexOf(path);
   if (at < 0) return { prefix: text, dirs: "", name: "", suffix: "" };
-  const slash = path.lastIndexOf("/");
+  const directory = path.length > 1 && path.endsWith("/");
+  const identity = directory ? path.slice(0, -1) : path;
+  const slash = identity.lastIndexOf("/");
   return {
     prefix: text.slice(0, at),
-    dirs: path.slice(0, slash + 1),
-    name: path.slice(slash + 1),
-    suffix: text.slice(at + path.length),
+    dirs: identity.slice(0, slash + 1),
+    name: identity.slice(slash + 1),
+    suffix: `${directory ? "/" : ""}${text.slice(at + path.length)}`,
   };
 }
 
@@ -564,8 +602,7 @@ function fillPathText(element: HTMLElement, text: string, path: string): void {
 
 export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
   const popover = document.createElement("div");
-  // 几何/配色/滚动全部来自 `src/style.css` 里与 `.lumir-toc` 共用的那一组选择器（见文件头）；
-  // 本模块只用 `.lumir-qo*` 的 class——两块浮层各查各的，互不命中对方的断言。
+  // 配色与行几何复用 `.lumir-toc` 的 token；稳定网格与响应式宽度只落在 `.lumir-qo*`。
   popover.className = "lumir-qo";
   popover.hidden = true;
   // 真输入框是输入法的 composition 目标（中文查询串唯一能打进来的宿主）；ARIA 组合框语义：
@@ -593,17 +630,17 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
   const hint = document.createElement("p");
   hint.className = "lumir-qo-hint";
   hint.textContent = QUICK_OPEN_USAGE();
-  popover.append(input, list, empty, hint);
+  popover.append(list, empty, hint, input);
   options.mount.append(popover);
 
   let opened = false;
-  /** 结果区的行：第 0 行可能是「直接打开」行，其后是候选（共用一个键盘 / ARIA / 点击游标）。 */
+  /** 结果区的真实候选（共用一个键盘 / ARIA / 点击游标）。 */
   let rows: QuickOpenRow[] = [];
   /** 行 DOM（下标空间 = `rows`）。 */
   let items: HTMLElement[] = [];
   /** 键盘游标（`items` 的下标；-1 = 没有游标）。 */
   let activeIndex = -1;
-  /** 用户动过游标：没动过时 Enter 走**默认行**（有直接行即直接行，否则首条候选）。 */
+  /** 用户动过游标：没动过时 Enter 优先直接打开精确路径，否则接受首条候选。 */
   let userMoved = false;
   /** 两段式的「已揭示」输入值：折叠多命中 / 目录的第一次 Enter 只揭示、第二次才打开游标行。 */
   let revealedFor: string | null = null;
@@ -633,6 +670,7 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
     files: () => options.files(),
     isDir: (path) => options.isDir(path),
     probe: (paths) => options.probe(paths),
+    scanDirectory: (path, external) => options.scanDirectory(path, external),
   });
 
   function setHint(text: string): void {
@@ -709,8 +747,8 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
   }
 
   /**
-   * 按当前输入重建结果区：同步判决 → 直接打开行 + 候选（空态只在两者都没有、且没有在途探测
-   * 时出现）。异步探测只做**补帧**：先画一版同步能判的，去抖后再补一版完整的。
+   * 按当前输入重建结果区：同步判决 → 真实候选（空态只在候选为空、且没有在途探测时出现）。
+   * 异步探测只做**补帧**：先画一版同步能判的，去抖后再补一版完整的。
    */
   function render(): void {
     const seq = ++renderSeq;
@@ -724,7 +762,8 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
       userMoved = false;
       list.replaceChildren();
       list.hidden = true;
-      empty.hidden = true;
+      empty.textContent = "";
+      empty.hidden = false;
       setHint(QUICK_OPEN_USAGE());
       input.removeAttribute("aria-activedescendant");
       return;
@@ -734,64 +773,60 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
         ? settled.resolution
         : resolveQuickOpenSync(raw, options.root(), lookupEnv());
     const files = options.files();
-    const hits = candidateHits(res, files);
-    const probe = (settled === null || settled.raw !== raw) && shouldProbe(res, hits);
-    probing = probe;
-    apply(res, files, hits, { preserveCursor: false });
-    if (probe) scheduleProbe(raw, seq);
+    const hits = candidateEntries(res, files);
+    const unsettled = settled === null || settled.raw !== raw;
+    const probe = unsettled && shouldProbe(res, hits);
+    const scan = unsettled && res.directory?.status === "pending";
+    probing = probe || scan;
+    apply(res, hits, { preserveCursor: false });
+    if (probing) scheduleProbe(raw, seq);
   }
 
-  /**
-   * 这一版判决的候选下标：目录语境走直接子级（`directChildIndices`），其余仍走既有的
-   * `filterIndices` 子串匹配。候选来源与顺序都不变——只是目录语境换了一把更窄的尺子。
-   */
-  function candidateHits(res: QuickOpenResolution, files: readonly string[]): number[] {
-    if (res.directory !== undefined) return directChildIndices(files, res.directory);
-    return res.plan.kind === "ok" ? filterIndices(files, res.plan.query) : [];
+  /** 普通候选保持内存索引顺序；目录候选只取当前一层扫描结果。 */
+  function candidateEntries(
+    res: QuickOpenResolution,
+    files: readonly string[],
+  ): QuickOpenDirectoryEntry[] {
+    if (res.directory !== undefined) return [...(res.directory.entries ?? [])];
+    return res.plan.kind === "ok"
+      ? filterIndices(files, res.plan.query).map((source) => ({
+          path: files[source] as string,
+          kind: "file",
+        }))
+      : [];
   }
 
   /** 是否要为这一版结果补一次存在探测（见 `PROBE_DEBOUNCE_MS` 的理由）。 */
-  function shouldProbe(res: QuickOpenResolution, hits: readonly number[]): boolean {
+  function shouldProbe(res: QuickOpenResolution, hits: readonly QuickOpenDirectoryEntry[]): boolean {
     if (res.verdict.kind !== "undecided") return false;
     // 候选为空：空态的判据只能等探测落地（I4：异步不抢先落终态）。
     if (hits.length === 0) return true;
-    // 带合法行号后缀：`path:行` 是完整的粘贴形态，直接行要标明落点行。普通路径前缀不探，
-    // 否则每敲一个字符就是一次 IPC。
+    // 带合法行号后缀：`path:行` 是完整的粘贴形态，需要探测出 Enter 的精确落点。普通路径
+    // 前缀不探，否则每敲一个字符就是一次 IPC。
     return res.plan.kind === "ok" && res.plan.attempts.length > 1;
   }
 
-  /** 把一份判决画成结果区（直接行恒在最前；候选按索引序、至多 `CANDIDATE_LIMIT` 条）。 */
+  /** 把一份判决画成结果区（真实候选按索引序、至多 `CANDIDATE_LIMIT` 条）。 */
   function apply(
     res: QuickOpenResolution,
-    files: readonly string[],
-    hits: readonly number[],
+    hits: readonly QuickOpenDirectoryEntry[],
     opts: { preserveCursor: boolean },
   ): void {
-    // 异步补帧：用户**主动移动过**游标时按行身份保留位置（直接行插到最前时下标会平移）；
-    // 没动过时直接行一出现就要成为默认位（spec「游标默认停在直接打开行」）。
+    // 异步补帧：用户**主动移动过**游标时按真实候选身份保留位置；没动过时游标回首条候选。
     const activeKey = opts.preserveCursor && userMoved ? rowKey(rows[activeIndex]) : undefined;
-    rows = [];
-    if (res.verdict.kind === "open") {
-      rows.push({
-        kind: "direct",
-        path: res.verdict.path,
-        line: res.verdict.line,
-        external: res.verdict.external,
-      });
-    }
-    for (const source of hits.slice(0, CANDIDATE_LIMIT)) {
-      rows.push({ kind: "candidate", path: files[source] as string });
-    }
+    rows = hits.slice(0, CANDIDATE_LIMIT).map((entry) => ({
+      path: entry.path,
+      entryKind: entry.kind,
+      external: res.directory?.external ?? false,
+    }));
     fillRows();
     list.hidden = rows.length === 0;
-    // 「没有匹配的条目」只表示**候选列表为空**，且只在没有直接行、也没有在途探测时出现——
-    // 它 MUST NOT 用来否认一条可打开的直接行（D117 的原话是「没有匹配」，不是「打不开」）。
-    empty.textContent = NO_MATCH_TEXT();
-    empty.hidden = rows.length !== 0 || probing;
+    empty.textContent = res.directory === undefined ? NO_MATCH_TEXT() : quickOpenDirectoryStatusText(res.directory);
+    empty.hidden =
+      rows.length !== 0 ||
+      (res.directory === undefined && (probing || res.verdict.kind === "open"));
     if (res.directory !== undefined) {
-      // 目录语境的提示行说明「这是目录 + 列表是直接子级文件」；数量口径与普通候选相同
-      // （同一份 hits，MUST NOT 另算一遍）。
-      setHint(quickOpenDirectoryHint(res.directory, hits.length));
+      setHint(rows.length === 0 ? QUICK_OPEN_USAGE() : quickOpenDirectoryStatusText(res.directory));
     } else if (hits.length === 0) {
       setHint(QUICK_OPEN_USAGE());
     } else {
@@ -806,53 +841,31 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
       return;
     }
     if (activeKey !== undefined) {
-      // 异步补帧：把游标留在原来那一行上（直接行插到最前时下标会平移）。
+      // 异步补帧：把游标留在原来那条真实候选上。
       const at = rows.findIndex((row) => rowKey(row) === activeKey);
       setActive(at >= 0 ? at : 0);
       return;
     }
-    // 游标默认停在直接行（没有直接行时就是首条候选）。
     setActive(0);
     userMoved = false;
   }
 
-  /** 行 DOM：直接行与候选共用一套 role / id / mousedown / click（同一个游标空间）。 */
+  /** 行 DOM：只有真实候选拥有 option、鼠标入口与游标位置。 */
   function fillRows(): void {
     list.replaceChildren();
     items = [];
     rows.forEach((row, index) => {
       const element = document.createElement("div");
-      element.id = `${ITEM_ID_PREFIX}${row.kind === "direct" ? "direct" : index}`;
+      element.id = `${ITEM_ID_PREFIX}${index}`;
       element.setAttribute("role", "option");
       element.setAttribute("aria-selected", "false");
       // 全路径落 title（W5 的全文通道）：行放不下时目录前缀出省略号，文件名只在极端窄的
       // 宿主里才截——两种情形的全文都在这里可达。
       element.title = row.path;
-      if (row.kind === "direct") {
-        // 直接行用独立 class：既有视觉断言钉的是 `.lumir-qo-item` 的逐条文本，直接行复用
-        // 会把「候选集合」的判据混进一条动作提示（M700）。
-        element.className = "lumir-qo-direct";
-        const primary = document.createElement("span");
-        primary.className = "lumir-qo-direct-path";
-        fillPathText(
-          primary,
-          row.external ? quickOpenDirectExternalText(row.path) : quickOpenDirectText(row.path),
-          row.path,
-        );
-        element.append(primary);
-        if (row.line !== undefined) {
-          const line = document.createElement("span");
-          line.className = "lumir-qo-direct-line";
-          line.textContent = quickOpenDirectLineText(row.line);
-          element.append(line);
-        }
-      } else {
-        element.className = "lumir-qo-item";
-        // 匹配对象是完整相对路径（spec「候选列表与匹配语义」），展示也逐字用它——
-        // 「只显示文件名」会让同名文件在同一条列表里不可分辨。两段结构只改**收缩次序**
-        // （目录先让宽、文件名后让），拼接后的文本仍是完整路径。
-        fillPathText(element, row.path, row.path);
-      }
+      element.className = "lumir-qo-item";
+      element.dataset.entryKind = row.entryKind;
+      const displayPath = row.entryKind === "dir" ? `${row.path}/` : row.path;
+      fillPathText(element, displayPath, displayPath);
       // 点击路径与键盘路径落同一个动作上；mousedown 不夺焦（照 TOC：否则先 blur 关闭、
       // 再重开，点击落空）。
       element.addEventListener("mousedown", (event) => event.preventDefault());
@@ -883,44 +896,61 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
         probing = false;
         settled = { raw, resolution: res };
         const files = options.files();
-        const hits = candidateHits(res, files);
-        apply(res, files, hits, { preserveCursor: true });
+        const hits = candidateEntries(res, files);
+        apply(res, hits, { preserveCursor: true });
       })();
     }, PROBE_DEBOUNCE_MS);
   }
 
-  /** 打开结果区的第 `index` 行（键盘 Enter 与鼠标点击共用）。 */
+  /** 接受结果区的第 `index` 条真实候选（键盘 Enter 与鼠标点击共用）。 */
   async function openRow(index: number): Promise<void> {
     const row = rows[index];
     if (row === undefined) return;
-    if (row.kind === "candidate") {
-      await openCandidate(row.path);
-      return;
+    if (row.entryKind === "dir") {
+      enterDirectory(row.path);
+    } else {
+      await openCandidate(row);
     }
-    await openDirect(row);
   }
 
-  /** 选中一条候选打开：**不过路径解析**（候选的路径已由索引校验）。 */
-  async function openCandidate(path: string): Promise<void> {
+  function enterDirectory(path: string): void {
+    ++request;
+    settled = null;
+    revealedFor = null;
+    input.value = `${path}/`;
+    render();
+    list.scrollTop = 0;
+    input.focus();
+  }
+
+  /** 文件候选按来源走既有 vault 或外部只读打开链，不再次解析路径。 */
+  async function openCandidate(row: QuickOpenRow): Promise<void> {
     const seq = ++request;
-    let success = false;
     try {
-      success = await options.openVaultPath(path);
+      if (row.external) {
+        const outcome = await options.openExternalPath(row.path);
+        if (seq !== request) return;
+        if (outcome.kind === "opened") {
+          close();
+        } else {
+          setHint(outcome.kind === "missing" ? quickOpenMissingText(row.path) : outcome.kind === "dir" ? quickOpenDirText(row.path) : outcome.message);
+        }
+        return;
+      }
+      const success = await options.openVaultPath(row.path);
+      if (seq !== request) return;
+      if (success) {
+        close();
+        return;
+      }
+      setHint(QUICK_OPEN_FAILED());
     } catch {
-      success = false;
+      if (seq === request) setHint(QUICK_OPEN_FAILED());
     }
-    if (seq !== request) return;
-    if (success) {
-      // 成功打开时前台会话通常已经换过（`syncActiveDocument` 会经 close() 收起本浮层）；
-      // 这里兜一次「打开成功但会话没换」的形态（例如目标已是前台），行为一致。
-      close();
-      return;
-    }
-    setHint(QUICK_OPEN_FAILED());
   }
 
   /**
-   * 打开一条「直接打开」行：vault 内走唯一打开链路；vault 外走只读通道。
+   * Enter 直接打开精确路径：vault 内走唯一打开链路；vault 外走只读通道，不占结果区候选行。
    *
    * vault 外读取之前判不了存在性：`missing` 时才回退到同一阶梯里的另一形态（`path:行` 的
    * 字面整串 / 剥后缀那一级），这一步保住「文件名本身以 `:行` 结尾」这个角落在改动前也能
@@ -1000,8 +1030,8 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
   /**
    * Enter：消费与结果区**同一份**判决（`resolveQuickOpen`）。
    *
-   *   1. `open`：打开直接行；用户已用 ↑↓ / 点击把游标移到候选上时打开**游标行**
-   *      （spec「选中候选即打开」——直接行与候选共用一个游标空间）。
+   *   1. `open`：默认直接打开精确路径；用户已用 ↑↓ / 点击主动移到其他真实候选时，
+   *      打开**游标候选**（spec「选中候选即打开」）。direct action 不进入列表或游标空间。
    *   2. `ambiguous` / `dir`：两段式——第一次只揭示原因 / 候选，第二次才打开游标行；
    *      MUST NOT 在同一次按键里猜一个目标。
    *   3. `missing` / `invalid`：游标行是候选就打开它，否则给「找不到」；尾斜杠目录语境在
@@ -1031,7 +1061,7 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
     // 候选。尾斜杠目录断言（verdict = invalid）**不进入这一段**——它只改结果区的筛选与提示，
     // Enter 的既有行为不回归（见 `invalid` 分支）。
     if (verdict.kind === "dir") {
-      const directory = res.directory ?? verdict.path;
+      const directory = res.directory?.path ?? verdict.path;
       if (revealedFor !== raw) {
         reveal({ kind: "dir", path: directory });
         return;
@@ -1047,10 +1077,10 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
       case "empty":
         return;
       case "open":
-        // 游标在候选上且用户**主动**移过去 ⇒ 打开候选；否则按结果区的默认位打开直接行
-        //（异步补帧尚未画上直接行时，游标只是默认停在首条候选，不算「移过去」）。
-        if (activeRow?.kind === "candidate" && userMoved) {
-          await openCandidate(activeRow.path);
+        // 用户**主动**移到真实候选 ⇒ 打开该候选；否则 Enter 直接打开精确路径。
+        // 默认停在首条候选不算「移过去」，因此精确路径能力不依赖任何动作行。
+        if (activeRow !== undefined && userMoved) {
+          await openRow(activeIndex);
           return;
         }
         await openDirect(verdict);
@@ -1070,13 +1100,13 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
       case "invalid":
         // 输入非法（反斜杠 / `..` / 不成立的尾斜杠目录断言）与「找不到」在这里同权：候选列表
         // 照常按原文筛过，游标行是候选就打开它（spec「选中候选即打开」），否则给「找不到」。
-        if (activeRow?.kind === "candidate") {
-          await openCandidate(activeRow.path);
+        if (activeRow !== undefined) {
+          await openRow(activeIndex);
           return;
         }
-        // 尾斜杠目录语境：没有游标候选时给「是目录」的原因（仍然 MUST NOT 打开目录本身）。
         if (res.directory !== undefined) {
-          reveal({ kind: "dir", path: res.directory });
+          render();
+          setHint(QUICK_OPEN_USAGE());
           return;
         }
         render();

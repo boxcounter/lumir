@@ -1873,14 +1873,9 @@ const COPY_TABLE = {
     zh: "无法解码这张图片：{reason}",
     en: "Couldn't decode this image: {reason}",
   },
-  // D589–D592：quick-open 的结果区与 Enter 同源（M700，change quick-open-file-oct23 的
-  // 「结果区与 Enter 的判决同源」requirement）。D589 = vault 内的直接打开行；D590 = vault 外
-  // （读取前判不了存在性，这一行是**尝试入口**，措辞因此把「只读」写在动作里）；D591 = 直接行
-  // 的落点行标记（第二个 span，不拼进 D589 / D590 的模板）；D592 = 折叠等值多命中的两段式
-  // 第一段（只揭示、不猜，第二次 Enter 才打开游标行）。
-  D589: { zh: "按 Enter 打开 {path}", en: "Press Enter to open {path}" },
-  D590: { zh: "按 Enter 只读打开 {path}", en: "Press Enter to open {path} read-only" },
-  D591: { zh: "第 {line} 行", en: "Line {line}" },
+  // D592：quick-open 折叠等值多命中的两段式揭示（只揭示、不猜，第二次 Enter 才打开游标行）。
+  // D589–D591 原 direct action 伪候选文案已退场：精确路径仍可由 Enter 直接打开，但不再占用
+  // 结果区、AX 或游标空间。
   D592: {
     zh: "匹配到多个文件，用 ↑↓ 选择后按 Enter 打开",
     en: "This matches several files — use ↑↓ to pick one, then press Enter",
@@ -2798,21 +2793,21 @@ const COPY_TABLE = {
   },
   // D943–D945：快速打开的**目录语境**提示（change fix-quick-open-select-all-directory-children-nov21）。
   // 与 D574 的分工：D574 是 Enter 揭示「不能打开目录」的终态原因；这三条是输入期间说明
-  // 「列表已收窄为这个目录的直接子级文件」，让用户看懂候选为什么变少。数量与截断口径与
+  // 「列表已收窄为这个目录的直接子项」，让用户看懂候选为什么变少。数量与截断口径与
   // D575 / D576 同源，只是把「这是目录」写进同一句。
   D943: {
-    zh: "{path} 是目录 · 直接子级文件 {count} 条",
-    en: "{path} is a folder · {count} direct child files",
-    enOne: "{path} is a folder · {count} direct child file",
+    zh: "{path} 是目录 · 直接子项 {count} 条",
+    en: "{path} is a folder · {count} direct children",
+    enOne: "{path} is a folder · {count} direct child",
   },
   D944: {
-    zh: "{path} 是目录 · 直接子级文件 {count} 条，只显示前 {limit} 条",
-    en: "{path} is a folder · {count} direct child files, showing the first {limit}",
-    enOne: "{path} is a folder · {count} direct child file, showing the first {limit}",
+    zh: "{path} 是目录 · 直接子项 {count} 条，只显示前 {limit} 条",
+    en: "{path} is a folder · {count} direct children, showing the first {limit}",
+    enOne: "{path} is a folder · {count} direct child, showing the first {limit}",
   },
   D945: {
-    zh: "{path} 是目录 · 没有直接子级文件",
-    en: "{path} is a folder · no direct child files",
+    zh: "目录为空：{path}",
+    en: "Empty folder: {path}",
   },
   // D946：标签右键菜单的「关闭全部标签」（change close-all-tabs-nov21）。与 D149–D151 三条
   // 关闭项同一口径——**上屏列锁定 en**（M257 的「菜单内语言统一」，中文列只作沿革备查）：
@@ -2911,6 +2906,18 @@ const COPY_TABLE = {
   D988: {
     zh: "未命名笔记",
     en: "Untitled note",
+  },
+  D989: {
+    zh: "正在读取目录：{path}",
+    en: "Reading folder: {path}",
+  },
+  D990: {
+    zh: "目录不存在或不是目录：{path}",
+    en: "Folder missing or not a folder: {path}",
+  },
+  D991: {
+    zh: "目录不可读：{path}",
+    en: "Folder unreadable: {path}",
   },
 } satisfies Record<string, CopyEntry>;
 

@@ -22,7 +22,7 @@ const PROVIDERS = {
 // chromium 里跑真实装配链（真实 CSS + 真实配置通道），断言**计算后的几何**：
 //
 //   1. ⌘P 长路径：行内文件名节点完整、目录前缀出省略号、title 是全路径、行不横向溢出；
-//      浮层宽 = min(26em, 100vw − 28px)，不随输入抖动。
+//      Quick Open 浮层宽 = clamp(26em,50vw,56em) + viewport 夹取，不随输入抖动。
 //   2. Context 气泡：1× 下长读数把宽度撑到 236px 以上（旧定值 224 必红）；2.13× 下
 //      宽 pane 装下 482px 的长句（旧定值 224 会折成 3 行）；窄 pane 下不越出 pane。
 //   3. 合并选择器：2.13× + 320px pane 时包围盒完整落在 pane 内（旧形态越出 85px 被裁）。
@@ -43,27 +43,16 @@ const DEEP_DOC = "# Kickoff\n\nDEEP-702-MARKER\n";
 const NOTE_DOC = "# 宽度笔记\n\n第一段，给上下文 chip 一个视口口径。\n";
 const LONG_SESSION = "帮我整理这份笔记的第二章并核对全部引用来源";
 
-/** 直接打开行的中文深路径（M702 r1）：文件名比候选 fixture 更长，正常窗口下动作前缀必须让宽。 */
-const CN_PATH = "笔记/2026/项目/会议/2026-10-24-启动会纪要与行动项确认.md";
-const CN_NAME = "2026-10-24-启动会纪要与行动项确认.md";
-/** vault 外英文长路径：D590 的动作前缀（含「只读」）同样必须先于文件名收缩。 */
-const EXT_PATH = "/tmp/lumir-verify/2026-10-24-kickoff-notes-final-v2.md";
-const EXT_NAME = "2026-10-24-kickoff-notes-final-v2.md";
-
 const VAULT: VaultFixture = {
   entries: [
     { path: "harness-note.md", kind: "file", size: NOTE_DOC.length, mtime_ms: 0 },
     { path: "areas", kind: "dir", size: 0, mtime_ms: 0 },
     { path: DEEP_PATH, kind: "file", size: DEEP_DOC.length, mtime_ms: 0 },
-    { path: "笔记", kind: "dir", size: 0, mtime_ms: 0 },
-    { path: CN_PATH, kind: "file", size: DEEP_DOC.length, mtime_ms: 0 },
   ],
   files: {
     "harness-note.md": NOTE_DOC,
     [DEEP_PATH]: DEEP_DOC,
-    [CN_PATH]: DEEP_DOC,
   },
-  externalFiles: { [EXT_PATH]: DEEP_DOC },
   links: {},
 };
 
@@ -209,7 +198,7 @@ async function fireLongUsage(page: Page): Promise<void> {
 // 1) ⌘P：长路径
 // ---------------------------------------------------------------------------
 
-test("⌘P 长路径：浮层宽 26em、目录前缀中段省略、文件名完整、title 全路径", async ({ page }) => {
+test("⌘P 长路径：浮层宽 50vw、目录前缀中段省略、文件名完整、title 全路径", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
   // 就绪门：文件树渲染出第一条行 = vault 装载完成。⌘P 的绑定在启动装配末尾才接好，
@@ -244,16 +233,26 @@ test("⌘P 长路径：浮层宽 26em、目录前缀中段省略、文件名完�
       nameOverflow: name.scrollWidth - name.clientWidth,
     };
   });
-  // 宽 = min(26em, 100vw − 28px)；em 基准是行文本字号 12.5px ⇒ 325px。
+  // Quick Open 独立档：1200px 视口下 clamp(26em,50vw,56em) = 600px。
   expect(metrics.fontSize).toBeCloseTo(12.5, 1);
-  expect(metrics.popWidth).toBeGreaterThanOrEqual(320);
-  expect(metrics.popWidth).toBeLessThanOrEqual(330);
+  expect(metrics.popWidth).toBeCloseTo(600, 0);
   // 行不横向溢出（溢出即被浮层的 overflow:hidden 裁掉，属于缺陷形态）。
   expect(metrics.rowOverflow).toBeLessThanOrEqual(1);
-  // 目录前缀真的被中段省略（深路径 60+ 字符）——这是「折叠」发生的正观测。
-  expect(metrics.dirsClipped).toBe(true);
-  // 文件名不先被裁（放得下时为 0；极端窄的宿主才允许 > 0，本 fixture 到不了那一档）。
   expect(metrics.nameOverflow).toBeLessThanOrEqual(1);
+
+  // 同一深路径在 480px 窄窗必须让目录前缀先出省略号，文件名仍完整（收缩优先级正控制）。
+  await page.setViewportSize({ width: 480, height: 800 });
+  const narrow = await page.evaluate(() => {
+    const row = document.querySelector(".lumir-qo-item") as HTMLElement;
+    const dirs = row.querySelector(".lumir-qo-dirs") as HTMLElement;
+    const name = row.querySelector(".lumir-qo-name") as HTMLElement;
+    return {
+      dirsClipped: dirs.scrollWidth > dirs.clientWidth,
+      nameOverflow: name.scrollWidth - name.clientWidth,
+    };
+  });
+  expect(narrow.dirsClipped).toBe(true);
+  expect(narrow.nameOverflow).toBeLessThanOrEqual(1);
 
   // 反向观测：短路径行不出省略号（区分度——不是所有行都折）。
   await page.keyboard.press("Meta+a");
@@ -263,68 +262,6 @@ test("⌘P 长路径：浮层宽 26em、目录前缀中段省略、文件名完�
   await expect(shortRow).toHaveText("harness-note.md");
   const shortDirs = shortRow.locator(".lumir-qo-dirs");
   await expect(shortDirs).toHaveCount(0); // 根目录文件没有目录前缀
-});
-
-/** 直接打开行（`.lumir-qo-direct`）的几何读数：文件名是否完整、谁先让了宽。 */
-function directRowMetrics(page: Page): Promise<{
-  rowOverflow: number;
-  pathOverflow: number;
-  prefixClipped: boolean;
-  dirsClipped: boolean;
-  nameOverflow: number;
-}> {
-  return page.evaluate(() => {
-    const row = document.querySelector(".lumir-qo-direct") as HTMLElement;
-    const path = row.querySelector(".lumir-qo-direct-path") as HTMLElement;
-    const prefix = row.querySelector(".lumir-qo-prefix") as HTMLElement;
-    const dirs = row.querySelector(".lumir-qo-dirs") as HTMLElement;
-    const name = row.querySelector(".lumir-qo-name") as HTMLElement;
-    return {
-      rowOverflow: row.scrollWidth - row.clientWidth,
-      pathOverflow: path.scrollWidth - path.clientWidth,
-      prefixClipped: prefix !== null && prefix.scrollWidth > prefix.clientWidth,
-      dirsClipped: dirs !== null && dirs.scrollWidth > dirs.clientWidth,
-      nameOverflow: name.scrollWidth - name.clientWidth,
-    };
-  });
-}
-
-/** 直接行的共同判据：文件名完整、行不溢出；动作前缀与目录先被牺牲（正观测）。 */
-async function expectDirectNameIntact(page: Page, name: string): Promise<void> {
-  const direct = page.locator(".lumir-qo-direct");
-  await expect(direct).toBeVisible();
-  await expect(direct.locator(".lumir-qo-name")).toHaveText(name);
-  const metrics = await directRowMetrics(page);
-  expect(metrics.nameOverflow, "直接打开行的文件名被裁——收缩优先级没有把动作前缀排到前面").toBeLessThanOrEqual(1);
-  expect(metrics.rowOverflow).toBeLessThanOrEqual(1);
-  expect(metrics.pathOverflow).toBeLessThanOrEqual(1);
-  expect(metrics.dirsClipped, "目录前缀应先于文件名收缩（本 fixture 的路径足够深）").toBe(true);
-  expect(metrics.prefixClipped, "动作前缀应先于文件名收缩（本 fixture 的正常窗口宽度下应已被牺牲）").toBe(true);
-}
-
-test("⌘P 直接打开行：vault 内中文深路径 + 行号后缀，文件名完整（动作前缀先让宽）", async ({ page }) => {
-  await stubTauri(page, VAULT);
-  await page.goto("/");
-  await expect(page.locator(".ft-row").first()).toBeVisible();
-  await page.keyboard.press("Meta+p");
-  await expect(page.locator(".lumir-qo")).toBeVisible();
-  // fill 处理中文（keyboard.type 对 CJK 依赖插入事件序列，这里只要一次完整输入）。
-  // `:12` 让直接行带落点标记（`.lumir-qo-direct-line`，flex:none 的第三个占位者）。
-  await page.locator(".lumir-qo-input").fill(`${CN_PATH}:12`);
-  await expect(page.locator(".lumir-qo-direct-line")).toHaveText("第 12 行");
-  await expectDirectNameIntact(page, CN_NAME);
-});
-
-test("⌘P 直接打开行：vault 外英文长路径，只读动作先让宽、文件名完整", async ({ page }) => {
-  await stubTauri(page, VAULT);
-  await page.goto("/");
-  await expect(page.locator(".ft-row").first()).toBeVisible();
-  await page.keyboard.press("Meta+p");
-  await expect(page.locator(".lumir-qo")).toBeVisible();
-  await page.locator(".lumir-qo-input").fill(EXT_PATH);
-  // 外部路径的直接行文案 = D590（动作前缀把「只读」写进动作里；英文文件名是身份主体）。
-  await expect(page.locator(".lumir-qo-direct")).toContainText("只读打开");
-  await expectDirectNameIntact(page, EXT_NAME);
 });
 
 // ---------------------------------------------------------------------------

@@ -37,7 +37,7 @@ const LONG_TOTAL_LINES = LONG_LINES.length + 1;
 const EXTERNAL_PATH = "/tmp/lumir-verify/draft.md";
 const EXTERNAL_DOC = "# Draft\n\nEXTERNAL-655-MARKER\n";
 
-/** 20 行的 vault 外文档：第 12 行有标记（`path:12` 的直接行与落点判据用它）。 */
+/** 20 行的 vault 外文档：第 12 行有标记（`path:12` 的 Enter 直接打开与落点判据用它）。 */
 const EXTERNAL_LONG_PATH = "/tmp/lumir-verify/long-draft.md";
 const EXTERNAL_LONG_LINES: string[] = ["# Long draft", ""];
 while (EXTERNAL_LONG_LINES.length < 20) {
@@ -83,7 +83,7 @@ const VAULT: VaultFixture = {
   links: {},
 };
 
-/** 候选上限的现场：一个名为 `bulk` 的文件（直接行）+ 300 条路径含 `bulk` 的候选。 */
+/** 候选上限的现场：一个名为 `bulk` 的精确路径文件 + 300 条路径含 `bulk` 的真实候选。 */
 const BULK_DOC = "# Bulk\n\nBULK-700-MARKER\n";
 const BULK_ENTRIES: unknown[] = [
   { path: "bulk", kind: "file", size: BULK_DOC.length, mtime_ms: 0 },
@@ -289,10 +289,17 @@ test("粘贴 path:行 一次落行；越界钳制到末行；Esc 收起后阅读
   await page.keyboard.type("long.md:120");
   // 候选按**剥掉合法后缀**后的路径筛（`:120` 不参与匹配）
   await expect(page.locator(".lumir-qo-item")).toHaveText(["long.md"]);
-  // 直接行由探测补帧给出（同步层先探整串）；没动过游标时它必须成为默认游标位
-  await expect(page.locator(".lumir-qo-direct-path")).toHaveText("按 Enter 打开 long.md");
-  await expect(page.locator(".lumir-qo-direct-line")).toHaveText("第 120 行");
-  await expect(page.locator(".lumir-qo-direct")).toHaveClass(/is-active/);
+  // 等异步探测补帧后，精确路径也不生成 direct action 伪候选；唯一 option 是真实文件。
+  await page.waitForTimeout(200);
+  const longCandidate = page.locator(".lumir-qo-item");
+  await expect(page.locator(".lumir-qo-direct")).toHaveCount(0);
+  await expect(longCandidate).toHaveClass(/is-active/);
+  await expect(longCandidate).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".lumir-qo-input")).toHaveAttribute(
+    "aria-activedescendant",
+    await longCandidate.getAttribute("id") ?? "",
+  );
+  await expect(page.getByText("第 120 行", { exact: true })).toHaveCount(0);
   await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-qo")).toBeHidden();
   await expect.poll(() => editorFacts(page).then((facts) => facts.line)).toBe(120);
@@ -387,19 +394,18 @@ test("vault 外绝对路径只读打开：标签与 modeline 的只读标记、�
 // 4）失败面与无 vault
 // ---------------------------------------------------------------------------
 
-test("vault 外路径不存在：Enter 前是尝试行（不断言不存在），Enter 后按找不到处置、浮层保持打开", async ({ page }) => {
+test("vault 外路径不存在：不显示 direct action，Enter 后按找不到处置、浮层保持打开", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
   await expandDir(page, "notes", "notes/plan.md");
 
   await openQuickOpen(page);
   await page.keyboard.type("/tmp/lumir-verify/nope.md");
-  // Enter 之前：vault 外路径在读取前判不了存在性 ⇒ 给一条**尝试行**，MUST NOT 先声称
-  // 「没有匹配的条目」（M697 的缺陷面：结果区否认了 Enter 能做的事）。
-  await expect(page.locator(".lumir-qo-direct-path")).toHaveText(
-    "按 Enter 只读打开 /tmp/lumir-verify/nope.md",
-  );
+  // 可打开判决只保留通用帮助；Enter 的直接打开能力不再需要一条伪候选来提示。
+  await expect(page.locator(".lumir-qo-direct")).toHaveCount(0);
+  await expect(page.getByText("按 Enter 只读打开 /tmp/lumir-verify/nope.md", { exact: true })).toHaveCount(0);
   await expect(page.locator(".lumir-qo-empty")).toBeHidden();
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("输入路径或文件名；可加 :12 这样的行号后缀");
   await page.keyboard.press("Enter");
   const popover = page.locator(".lumir-qo");
   await expect(popover).toBeVisible();
@@ -422,32 +428,25 @@ test("未装载 vault：⌘P 只给一句人话提示，不打开空浮层", asy
 });
 
 // ---------------------------------------------------------------------------
-// 5）结果区与 Enter 同源（M700，change quick-open-file-oct23 的「判决同源」requirement）
+// 5）结果区与 Enter 同源：direct action 不是列表候选
 //
-// 判据纪律：直接行用**独立 class** `.lumir-qo-direct` 逐段断言（动作文本 + 落点行标记），
-// 「没有匹配的条目」用 `.lumir-qo-empty` 的可见性判——这两条就是 M697 的缺陷面。
+// 判据纪律：所有 option 必须逐条对应真实文件或目录；`.lumir-qo-direct`、动作文案与独立落点
+// 标记均不得出现。相同输入仍必须经 Enter 打开精确路径，避免把「删行」误实现成「删能力」。
 // ---------------------------------------------------------------------------
 
-test("vault 外绝对路径：Enter 前就有直接行、不落空态、游标在直接行，Enter 只读打开", async ({ page }) => {
+test("vault 外绝对路径：无 direct action、无伪游标，Enter 仍只读打开", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
   await expandDir(page, "notes", "notes/plan.md");
 
   await openQuickOpen(page);
   await page.keyboard.type(EXTERNAL_PATH);
-  const direct = page.locator(".lumir-qo-direct");
-  await expect(direct).toHaveCount(1);
-  await expect(direct.locator(".lumir-qo-direct-path")).toHaveText(
-    `按 Enter 只读打开 ${EXTERNAL_PATH}`,
-  );
+  await expect(page.locator(".lumir-qo-direct")).toHaveCount(0);
+  await expect(page.getByText(`按 Enter 只读打开 ${EXTERNAL_PATH}`, { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("option")).toHaveCount(0);
+  await expect(page.locator(".lumir-qo-list")).toBeHidden();
   await expect(page.locator(".lumir-qo-empty")).toBeHidden();
-  // 直接行与候选同一个游标空间：默认游标停在直接行，aria-activedescendant 指向它
-  const directId = await direct.getAttribute("id");
-  await expect(direct).toHaveClass(/is-active/);
-  await expect(page.locator(".lumir-qo-input")).toHaveAttribute(
-    "aria-activedescendant",
-    directId as string,
-  );
+  await expect(page.locator(".lumir-qo-input")).not.toHaveAttribute("aria-activedescendant", /.+/);
 
   await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-qo")).toBeHidden();
@@ -456,17 +455,16 @@ test("vault 外绝对路径：Enter 前就有直接行、不落空态、游标�
   expect(await editorFacts(page).then((facts) => facts.readOnly)).toBe(true);
 });
 
-test("vault 外路径带行号：直接行标明落点行，Enter 落到第 12 行（只读语义不变）", async ({ page }) => {
+test("vault 外路径带行号：不显示动作行或伪候选落点标记，Enter 仍落到第 12 行", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
   await openQuickOpen(page);
   await page.keyboard.type(`${EXTERNAL_LONG_PATH}:12`);
 
-  await expect(page.locator(".lumir-qo-direct-path")).toHaveText(
-    `按 Enter 只读打开 ${EXTERNAL_LONG_PATH}`,
-  );
-  await expect(page.locator(".lumir-qo-direct-line")).toHaveText("第 12 行");
-  await expect(page.locator(".lumir-qo-empty")).toBeHidden();
+  await expect(page.locator(".lumir-qo-direct")).toHaveCount(0);
+  await expect(page.getByText(`按 Enter 只读打开 ${EXTERNAL_LONG_PATH}`, { exact: true })).toHaveCount(0);
+  await expect(page.getByText("第 12 行", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("option")).toHaveCount(0);
 
   await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-qo")).toBeHidden();
@@ -476,33 +474,63 @@ test("vault 外路径带行号：直接行标明落点行，Enter 落到第 12 �
   expect(facts.readOnly).toBe(true);
 });
 
-test("索引内相对路径：直接行与候选并存（互不抑制），Enter 打开直接行", async ({ page }) => {
+test("索引内相对路径：唯一 option 是真实文件且默认持游标，Enter 直接打开精确路径", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
   await openQuickOpen(page);
   await page.keyboard.type("notes/plan.md");
 
-  await expect(page.locator(".lumir-qo-direct-path")).toHaveText("按 Enter 打开 notes/plan.md");
-  await expect(page.locator(".lumir-qo-item")).toHaveText(["notes/plan.md"]);
+  await expect(page.locator(".lumir-qo-direct")).toHaveCount(0);
+  await expect(page.getByRole("option")).toHaveText(["notes/plan.md"]);
+  const candidate = page.locator(".lumir-qo-item");
+  await expect(candidate).toHaveClass(/is-active/);
+  await expect(candidate).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".lumir-qo-input")).toHaveAttribute(
+    "aria-activedescendant",
+    await candidate.getAttribute("id") ?? "",
+  );
   await expect(page.locator(".lumir-qo-empty")).toBeHidden();
   await expect(page.locator(".lumir-qo-hint")).toHaveText("命中 1 条");
 
+  // 已默认在真实候选上；向上钳制时不得再进入 direct action 伪候选。
+  await page.keyboard.press("ArrowUp");
+  await expect(candidate).toHaveClass(/is-active/);
+  await expect(page.getByRole("option")).toHaveText(["notes/plan.md"]);
   await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-qo")).toBeHidden();
   await expect(page.locator(".tab-open")).toHaveText(["plan.md"]);
 });
 
-test("折叠等值唯一命中：直接行显示索引里的路径（不是输入串），Enter 打开该文件", async ({ page }) => {
+test("折叠等值唯一命中：不显示 direct action，Enter 仍打开索引里的规范路径", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
   await openQuickOpen(page);
   await page.keyboard.type("NOTES/PLAN.md");
 
-  await expect(page.locator(".lumir-qo-direct-path")).toHaveText("按 Enter 打开 notes/plan.md");
+  await expect(page.locator(".lumir-qo-direct")).toHaveCount(0);
+  await expect(page.getByText("按 Enter 打开 notes/plan.md", { exact: true })).toHaveCount(0);
+  await expect(page.locator(".lumir-qo-item")).toHaveText(["notes/plan.md"]);
   await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-qo")).toBeHidden();
   await expect(page.locator(".tab-open")).toHaveText(["plan.md"]);
   await expect(page.locator(".cm-content")).toContainText("PLAN-MARKER");
+});
+
+test("精确路径有多条真实候选：第一次 ↓ 直接到第二条，Enter 打开游标候选", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await page.goto("/");
+  await openQuickOpen(page);
+  await page.keyboard.type("A.md");
+
+  await expect(page.locator(".lumir-qo-direct")).toHaveCount(0);
+  await expect(page.getByRole("option")).toHaveText(["A.md", "a.md"]);
+  await expect(page.locator(".lumir-qo-item.is-active")).toHaveText("A.md");
+  await page.keyboard.press("ArrowDown");
+  await expect(page.locator(".lumir-qo-item.is-active")).toHaveText("a.md");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".lumir-qo")).toBeHidden();
+  await expect(page.locator(".tab-open")).toHaveText(["a.md"]);
+  await expect(page.locator(".cm-content")).toContainText("A-LOWER-MARKER");
 });
 
 test("折叠多命中：第一次 Enter 只揭示候选（不猜），↑↓ 后第二次 Enter 打开游标行", async ({ page }) => {
@@ -527,7 +555,7 @@ test("折叠多命中：第一次 Enter 只揭示候选（不猜），↑↓ 后
   await expect(page.locator(".cm-content")).toContainText("A-LOWER-MARKER");
 });
 
-test("目录输入：无直接行，第一次 Enter 只给「是目录」原因，第二次打开游标候选", async ({ page }) => {
+test("目录输入：无 direct action，第一次 Enter 只给「是目录」原因，第二次打开游标候选", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
   await openQuickOpen(page);
@@ -544,25 +572,30 @@ test("目录输入：无直接行，第一次 Enter 只给「是目录」原因�
   await expect(page.locator(".tab-open")).toHaveText(["plan.md"]);
 });
 
-test("索引外的惰性文件：探测命中后给直接行（相对 / vault 内绝对同形），Enter 打开", async ({ page }) => {
+test("索引外的惰性文件：探测命中不生成 direct action，Enter 仍直接打开", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
   await stubPathsExist(page, [LAZY_PATH]);
   await openQuickOpen(page);
   await page.keyboard.type(LAZY_PATH);
 
-  // 探测在途期间 MUST NOT 先落空态；补帧之后直接行出现
-  await expect(page.locator(".lumir-qo-direct-path")).toHaveText(`按 Enter 打开 ${LAZY_PATH}`);
+  // 等探测补帧完成后仍不插入伪候选；可打开判决只保留通用帮助，不抢先否认直接打开能力。
+  await page.waitForTimeout(200);
+  await expect(page.locator(".lumir-qo-direct")).toHaveCount(0);
+  await expect(page.getByText(`按 Enter 打开 ${LAZY_PATH}`, { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("option")).toHaveCount(0);
   await expect(page.locator(".lumir-qo-empty")).toBeHidden();
   await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-qo")).toBeHidden();
   await expect(page.locator(".tab-open")).toHaveText(["notes.md"]);
   await expect(page.locator(".cm-content")).toContainText("LAZY-700-MARKER");
 
-  // vault 内绝对路径收敛成同一个相对路径（与相对路径同一份解析）
+  // vault 内绝对路径收敛成同一个相对路径（与相对路径同一份解析），同样不产生动作行。
   await openQuickOpen(page);
   await page.keyboard.type(`/v/${LAZY_PATH}`);
-  await expect(page.locator(".lumir-qo-direct-path")).toHaveText(`按 Enter 打开 ${LAZY_PATH}`);
+  await page.waitForTimeout(200);
+  await expect(page.locator(".lumir-qo-direct")).toHaveCount(0);
+  await expect(page.getByRole("option")).toHaveCount(0);
 });
 
 test("探测迟到：旧结果不得覆盖新输入（去抖 + 请求序号）", async ({ page }) => {
@@ -585,7 +618,7 @@ test("探测迟到：旧结果不得覆盖新输入（去抖 + 请求序号）",
   await expect(page.locator(".lumir-qo-item")).toHaveText(["notes/plan.md", "notes/spec.md"]);
 });
 
-test("真负例：没有匹配的条目在场、没有直接行；Enter 后仍「找不到」且不打开", async ({ page }) => {
+test("真负例：没有匹配的条目在场、没有 direct action；Enter 后仍「找不到」且不打开", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
   await openQuickOpen(page);
@@ -605,17 +638,18 @@ test("真负例：没有匹配的条目在场、没有直接行；Enter 后仍�
   await expect(page.locator(".lumir-qo-hint")).toHaveText("找不到：notes/nope.md");
 });
 
-test("候选上限：直接行不占候选名额，候选只渲染 100 条并显示总数，游标不越第 100 条", async ({ page }) => {
+test("候选上限：只渲染 100 条真实候选并显示总数，游标从首条起不越第 100 条", async ({ page }) => {
   await stubTauri(page, BULK);
   await page.goto("/");
   await openQuickOpen(page);
   await page.keyboard.type("bulk");
 
-  await expect(page.locator(".lumir-qo-direct-path")).toHaveText("按 Enter 打开 bulk");
+  await expect(page.locator(".lumir-qo-direct")).toHaveCount(0);
   await expect(page.locator(".lumir-qo-item")).toHaveCount(100);
+  await expect(page.locator(".lumir-qo-item").first()).toHaveClass(/is-active/);
   await expect(page.locator(".lumir-qo-hint")).toHaveText("命中 301 条，只显示前 100 条");
 
-  // 游标从直接行一路往下压到底：夹在最后一条候选上，MUST NOT 越过第 100 条
+  // 游标从首条真实候选一路往下压到底：夹在最后一条候选上，MUST NOT 越过第 100 条
   await page.evaluate(() => {
     const input = document.querySelector(".lumir-qo-input") as HTMLInputElement;
     for (let i = 0; i < 120; i += 1) {
@@ -627,17 +661,6 @@ test("候选上限：直接行不占候选名额，候选只渲染 100 条并显
   // 候选从 `bulk` 自己开始（它也是路径子串命中），第 100 条因此是 entry-098：
   // 游标夹在渲染出的最后一条上，MUST NOT 越过第 100 条。
   await expect(last).toHaveText("bulk-index/entry-098.md");
-});
-
-test("直接行点击：与 Enter 同一目标（mousedown 不夺焦，点击后浮层收起并打开）", async ({ page }) => {
-  await stubTauri(page, VAULT);
-  await page.goto("/");
-  await openQuickOpen(page);
-  await page.keyboard.type(EXTERNAL_PATH);
-
-  await page.locator(".lumir-qo-direct").click();
-  await expect(page.locator(".lumir-qo")).toBeHidden();
-  await expect(page.locator(".tab-open")).toHaveText(["draft.md"]);
 });
 
 // ---------------------------------------------------------------------------
@@ -840,15 +863,15 @@ const DEEP_VAULT: VaultFixture = {
   links: {},
 };
 
-test("目录输入：候选只列直接子级文件，深层后代与同前缀兄弟目录不混入", async ({ page }) => {
+test("目录输入：候选只列一层文件与子目录，深层后代与同前缀兄弟目录不混入", async ({ page }) => {
   await stubTauri(page, DEEP_VAULT);
   await page.goto("/");
   await openQuickOpen(page);
   await page.keyboard.type("notes");
 
   // 逐条文本断言（不是计数）：深层后代与 `notes-extra` 都是全路径子串匹配会混进来的形态
-  await expect(page.locator(".lumir-qo-item")).toHaveText(["notes/plan.md", "notes/spec.md"]);
-  await expect(page.locator(".lumir-qo-hint")).toHaveText("notes 是目录 · 直接子级文件 2 条");
+  await expect(page.locator(".lumir-qo-item")).toHaveText(["notes/plan.md", "notes/spec.md", "notes/sub/"]);
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("notes 是目录 · 直接子项 3 条");
   await expect(page.locator(".lumir-qo-direct")).toHaveCount(0);
   await expect(page.locator(".lumir-qo-empty")).toBeHidden();
 });
@@ -859,8 +882,8 @@ test("尾斜杠目录：与裸目录同一份直接子级筛选；Enter 的既�
   await openQuickOpen(page);
   await page.keyboard.type("notes/");
 
-  await expect(page.locator(".lumir-qo-item")).toHaveText(["notes/plan.md", "notes/spec.md"]);
-  await expect(page.locator(".lumir-qo-hint")).toHaveText("notes 是目录 · 直接子级文件 2 条");
+  await expect(page.locator(".lumir-qo-item")).toHaveText(["notes/plan.md", "notes/spec.md", "notes/sub/"]);
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("notes 是目录 · 直接子项 3 条");
   await expect(page.locator(".lumir-qo-direct")).toHaveCount(0);
 
   // 尾斜杠只改筛选与提示，不改 Enter：游标候选一次打开（与改动前 `notes/` 的既有行为一致）
@@ -877,18 +900,18 @@ test("中文长路径目录：直接子级只列一层，深层与同前缀兄�
   const dir = "项目资料/2026 年度/会议记录";
   await page.keyboard.type(dir);
 
-  await expect(page.locator(".lumir-qo-item")).toHaveText([`${dir}/第一次会议.md`]);
-  await expect(page.locator(".lumir-qo-hint")).toHaveText(`${dir} 是目录 · 直接子级文件 1 条`);
+  await expect(page.locator(".lumir-qo-item")).toHaveText([`${dir}/第一次会议.md`, `${dir}/归档/`]);
+  await expect(page.locator(".lumir-qo-hint")).toHaveText(`${dir} 是目录 · 直接子项 2 条`);
   await expect(page.locator(".lumir-qo-empty")).toBeHidden();
 
   // 尾斜杠同一语义（目录断言的另一种输入形态）
   await page.keyboard.press("Meta+a");
   await page.keyboard.type(`${dir}/`);
-  await expect(page.locator(".lumir-qo-item")).toHaveText([`${dir}/第一次会议.md`]);
-  await expect(page.locator(".lumir-qo-hint")).toHaveText(`${dir} 是目录 · 直接子级文件 1 条`);
+  await expect(page.locator(".lumir-qo-item")).toHaveText([`${dir}/第一次会议.md`, `${dir}/归档/`]);
+  await expect(page.locator(".lumir-qo-hint")).toHaveText(`${dir} 是目录 · 直接子项 2 条`);
 });
 
-test("不存在的目录尾斜杠：不进入目录语境（空态 + 找不到），不凭空造目录提示", async ({ page }) => {
+test("不存在的目录尾斜杠：目录缺失分态，不与普通搜索空态混淆", async ({ page }) => {
   await stubTauri(page, DEEP_VAULT);
   await page.goto("/");
   await openQuickOpen(page);
@@ -896,34 +919,35 @@ test("不存在的目录尾斜杠：不进入目录语境（空态 + 找不到�
 
   await expect(page.locator(".lumir-qo-item")).toHaveCount(0);
   await expect(page.locator(".lumir-qo-empty")).toBeVisible();
-  await expect(page.locator(".lumir-qo-empty")).toHaveText("没有匹配的条目");
+  await expect(page.locator(".lumir-qo-empty")).toHaveText("目录不存在或不是目录：ghost");
   await expect(page.locator(".lumir-qo-hint")).toHaveText("输入路径或文件名；可加 :12 这样的行号后缀");
+  await expect(page.getByText("目录不存在或不是目录：ghost", { exact: true })).toHaveCount(1);
 
   await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-qo")).toBeVisible();
-  await expect(page.locator(".lumir-qo-hint")).toHaveText("找不到：ghost/");
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("输入路径或文件名；可加 :12 这样的行号后缀");
+  await expect(page.getByText("目录不存在或不是目录：ghost", { exact: true })).toHaveCount(1);
   await expect(page.locator(".tab-open")).toHaveCount(0);
 });
 
-test("目录没有直接子级文件：候选为空、提示如实说明，深层文件不混入", async ({ page }) => {
+test("目录只有直接子目录：深层文件不混入，接受子目录后才显示下一层", async ({ page }) => {
   await stubTauri(page, DEEP_VAULT);
   await page.goto("/");
   await openQuickOpen(page);
   await page.keyboard.type("empty-dir");
 
-  await expect(page.locator(".lumir-qo-item")).toHaveCount(0);
-  await expect(page.locator(".lumir-qo-empty")).toBeVisible();
-  await expect(page.locator(".lumir-qo-empty")).toHaveText("没有匹配的条目");
-  await expect(page.locator(".lumir-qo-hint")).toHaveText("empty-dir 是目录 · 没有直接子级文件");
-  // 深层文件 `empty-dir/child/grand.md` 不得被当成直接子级混进来
+  await expect(page.locator(".lumir-qo-item")).toHaveText(["empty-dir/child/"]);
+  await expect(page.locator(".lumir-qo-empty")).toBeHidden();
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("empty-dir 是目录 · 直接子项 1 条");
   await expect(page.locator(".lumir-qo-direct")).toHaveCount(0);
+  await expect(page.locator('.lumir-qo-item[title="empty-dir/child/grand.md"]')).toHaveCount(0);
 
-  // 尾斜杠 + 没有候选：Enter 不打开任何目标，给「是目录」的原因（不是「找不到」）
   await page.keyboard.press("Meta+a");
   await page.keyboard.type("empty-dir/");
-  await expect(page.locator(".lumir-qo-hint")).toHaveText("empty-dir 是目录 · 没有直接子级文件");
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("empty-dir 是目录 · 直接子项 1 条");
   await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-qo")).toBeVisible();
-  await expect(page.locator(".lumir-qo-hint")).toHaveText("empty-dir 是目录，不能打开");
+  await expect(page.locator(".lumir-qo-input")).toHaveValue("empty-dir/child/");
+  await expect(page.locator(".lumir-qo-item")).toHaveText(["empty-dir/child/grand.md"]);
   await expect(page.locator(".tab-open")).toHaveCount(0);
 });

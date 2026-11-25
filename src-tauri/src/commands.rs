@@ -956,6 +956,12 @@ pub fn fs_read_external(path: &str) -> Result<ExternalTextSnapshot, CommandError
     })
 }
 
+/// Quick Open 显式尾斜杠外部目录的一层只读枚举；与单文件读取接口完全分开。
+#[tauri::command(async, rename_all = "snake_case")]
+pub fn fs_list_external_dir(path: &str) -> Result<Vec<fs_io::ExternalDirEntry>, CommandError> {
+    fs_io::list_external_dir(path)
+}
+
 /// 单文件元数据（M218 doc-title/doc-meta 块的数据源）：mtime 取不到为 null，
 /// 与 `FsEntry.mtime_ms` 同口径。
 #[derive(Debug, Clone, Serialize, TS)]

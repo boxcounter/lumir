@@ -555,7 +555,8 @@ export async function typeInEditor(cu, pid, text, { clear = false } = {}) {
  *      因此本原语**第 1 次不带 index，重试起带当次重解析的节点 index**（代价 = 一次 bbox 中心
  *      点击，语义本就是追加，可接受）。
  *
- * 因此本原语的语义 = **「把 text 追加到 composer 末尾」**，不是「在 caret 处键入」。
+ * 因此本原语的缺省语义 = **「把 text 追加到 composer 末尾」**，不是「在 caret 处键入」。
+ * `replace: true` 是原生输入框改查询的例外：焦点守卫之后先全选，再注入，回读要求整个值等于 text。
  * 迁移适用面：注入时 composer 的 caret 本就在内容末尾的场景（空 composer 首问、发送后复问、
  * ⇧Enter 新行、卡片/贴图后的承接段落）——与旧 `do: keys` 逐字等价。**caret 由键盘导航定位、
  * 落点即判据**的步骤（141 的 ⌃B 后落字、154 的 ⌃B/⌃A 往返）不能用本原语（会改变被测行为），
@@ -703,7 +704,7 @@ export function injectChordCGEvent(spec, { run = runKeySwiftOnce } = {}) {
   return raw.stdout;
 }
 
-export async function typeInNode(cu, pid, { resolve, text, retries = 3, label = "" } = {}) {
+export async function typeInNode(cu, pid, { resolve, text, retries = 3, label = "", replace = false } = {}) {
   if (typeof resolve !== "function") throw new StepError("typeInNode：缺少 resolve(ax) 目标解析函数");
   const countOf = (v) => (text ? v.split(text).length - 1 : 0);
 
@@ -729,6 +730,11 @@ export async function typeInNode(cu, pid, { resolve, text, retries = 3, label = 
       await sleep(500);
     }
     const nativeInput = targetNow && (targetNow.role === "AXTextField" || targetNow.role === "AXComboBox");
+    if (replace) {
+      if (nativeInput) injectChordCGEvent("cmd+a");
+      else await pressKey(cu, pid, "cmd+a");
+      await sleep(250);
+    }
     if (nativeInput) {
       injectTextCGEvent(text);
     } else if (attempt === 1 || !targetNow) {
@@ -745,7 +751,19 @@ export async function typeInNode(cu, pid, { resolve, text, retries = 3, label = 
     }
     lastValue = again.value ?? "";
     const c = countOf(lastValue);
-    verdict = c === baseline + 1 ? "landed" : c > baseline + 1 ? "duplicated" : lastValue === baselineValue ? "unchanged" : "partial";
+    verdict = replace
+      ? lastValue === text
+        ? "landed"
+        : lastValue === baselineValue
+          ? "unchanged"
+          : "partial"
+      : c === baseline + 1
+        ? "landed"
+        : c > baseline + 1
+          ? "duplicated"
+          : lastValue === baselineValue
+            ? "unchanged"
+            : "partial";
     if (verdict === "landed") break;
     // 再等一拍复读：DOM 落地与 AX 快照之间有时序，不能拿一次过早的读当结论。
     await sleep(700);
@@ -757,7 +775,19 @@ export async function typeInNode(cu, pid, { resolve, text, retries = 3, label = 
     }
     lastValue = again2.value ?? "";
     const c2 = countOf(lastValue);
-    verdict = c2 === baseline + 1 ? "landed" : c2 > baseline + 1 ? "duplicated" : lastValue === baselineValue ? "unchanged" : "partial";
+    verdict = replace
+      ? lastValue === text
+        ? "landed"
+        : lastValue === baselineValue
+          ? "unchanged"
+          : "partial"
+      : c2 === baseline + 1
+        ? "landed"
+        : c2 > baseline + 1
+          ? "duplicated"
+          : lastValue === baselineValue
+            ? "unchanged"
+            : "partial";
     if (verdict !== "unchanged") break;
   }
   return { attempts: used, verdict, baselineValue, lastValue, focused, baseline, focusClicked };

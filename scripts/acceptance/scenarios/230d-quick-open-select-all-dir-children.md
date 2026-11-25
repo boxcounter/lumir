@@ -13,7 +13,7 @@
 id: "230d-quick-open-select-all-dir-children"
 item: 655
 tier: full
-title: 按路径快速打开（⌘P）之四：输入框内 ⌘A 全选输入串 / 目录语境只列直接子级文件、深层后代不混入
+title: 按路径快速打开（⌘P）之四：输入框内 ⌘A 全选输入串 / 目录语境只列一层文件与子目录、深层后代不混入
 open: goto-line-long.md
 marker: "JUMP-TARGET-39"
 config:
@@ -47,10 +47,12 @@ steps:
   - name: 目录语境的结果区
     do: settle
     expect:
-      - label: 提示行说明这是目录、只列直接子级文件
-        ax: { has: "/qo-dir 是目录 · 直接子级文件 1 条/" }
+      - label: 提示行说明这是目录、直接子项含文件与子目录
+        ax: { has: "/qo-dir 是目录 · 直接子项 2 条/" }
       - label: 直接子级文件出现在候选里
         ax: { has: "qo-dir/直接子项.md" }
+      - label: 直接子目录以尾斜杠出现在候选里
+        ax: { has: "qo-dir/深层/" }
       - label: 深层后代 MUST NOT 混入直接子级结果
         ax: { not: "qo-dir/深层/后代.md" }
       - shot: 01-目录语境直接子级
@@ -65,7 +67,10 @@ steps:
         ax: { has: "/qo-dir 是目录，不能打开/" }
       - label: 直接子级文件尚未打开（标记不在正文里）
         ax: { not: "DIRECT-CHILD-655-MARKER" }
-  - name: 第二次 Enter 打开当前游标所在的直接子级候选
+  - name: 游标移到直接子级文件（目录排序在文件之前时不得误进入子目录）
+    do: key
+    key: down
+  - name: 第二次 Enter 打开当前游标所在的直接子级文件候选
     do: key
     key: enter
   - name: 等直接子级文件装载

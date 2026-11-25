@@ -1,6 +1,7 @@
 ---
 # change quick-open-file-oct23（M655）真机判据的第 3 组（M747 拆分）：**重启与焦点作用域**。
-# 背景与拆分口径见 230a 的头注释（每组自带启动状态与 fixture、断言逐条保留、判据一条不放宽）。
+# 背景与拆分口径见 230a 的头注释（每组自带启动状态与 fixture；原始能力覆盖不减少，
+# direct action 删除后按新 UI 合同改准前置观测，Enter 后结果断言不放宽）。
 # 其余两组：230a（路径形态）/ 230b（惰性文件与外部只读）。`run.mjs 230` 按 id 前缀选中三组。
 #
 # 为什么这条判据只能在真机层：
@@ -58,10 +59,14 @@ steps:
     expect:
       - label: 路径落进输入框（逐键注入的正观测；AX 的 Value 是回读面）
         ax: { has: "/AXComboBox \\(按路径快速打开文件\\) Value: /etc/hosts/" }
-      - label: 直接打开行把「只读」写进动作里，且目标就是 /etc/hosts（vault 外、读取前判不了存在性；锚定整行，段边界 `\s*` 容错，见 230a 同名注释）
-        node: { name: "^按 Enter 只读打开\\s*/etc/\\s*hosts$", present: true }
-      - label: 该行的全路径通道（`title` → AX `help`）逐字是 /etc/hosts（零容差：属性不受分段空格影响）
-        ax: { has: '/help="\/etc\/hosts"/' }
+      - label: 外部精确路径没有真实候选时保留通用帮助
+        ax: { has: "输入路径或文件名；可加 :12 这样的行号后缀" }
+      - label: 不生成 vault 内 direct action 伪候选
+        ax: { not: "按 Enter 打开" }
+      - label: 不生成外部 direct action 伪候选
+        ax: { not: "按 Enter 只读打开" }
+      - label: 外部文件尚未读取时不得抢先落普通空态
+        ax: { not: "没有匹配的条目" }
   - name: Enter
     do: key
     key: enter
@@ -139,7 +144,8 @@ steps:
 3. **⌘P 的焦点作用域**（design §6 第 ③ 条的待验项）：文件树焦点与 harness composer 焦点下各按
    一次 ⌘P，输入面都出现；Esc 收起后输入面不在场（且没有因此跳转）。编辑器焦点那一位在 230a。
 
-拆分口径（M747）：断言逐条保留、判据一条不放宽；本组自带启动状态与 fixture，独立诊断。
+拆分口径（M747）：原始能力覆盖不减少；direct action 删除后，Enter 前改判真实候选 / 通用帮助，
+Enter 后结果断言不放宽；本组自带启动状态与 fixture，独立诊断。
 同族其余两组：`230a-path-forms`（路径形态）/ `230b-lazy-and-external-readonly`（惰性文件与外部
 只读）。三组同属 item 655，`run.mjs 230` 按 id 前缀选中全部。
 
@@ -160,11 +166,9 @@ steps:
   composer 的聚焦用 `clickInNode`（AXPress 不建 DOM 焦点，M497 的硬知识）。
 - **`v1:2.md` 用 ⌘P 打开**：它是本组的对照标签；打开方式与路径形态一致（`notes/v1:2.md`），
   顺带让「vault 内标签恢复」的现场自带一条真实路径（含冒号的文件名在 APFS 上合法）。
-- **直接打开行的断言形态与 230a 同一条**（M755）：`/etc/hosts` 那一步判「只读」动作文本 +
-  目标路径时，改用段边界 `\s*` 容错的正则 + 锚定整行的 `node` 断言 + 全路径 `help` 属性零容差
-  判据；理由与现场见 230a 正文的同名条目。动作措辞 `只读` 本身仍是判据——vault 内路径的
-  直接行 MUST NOT 带这两个字（`按 Enter 打开` 与 `按 Enter 只读打开` 是两条不同的判决措辞，
-  D589 / D590）。
+- **外部精确路径的 Enter 前判据与 230b 同源**：`/etc/hosts` 没有真实候选时只保留通用帮助，
+  vault 内 / 外部 direct action 均不得出现，也不得在真实读取之前抢落普通空态。Enter 后的只读标签与
+  modeline 是正向前置；重启后外部标签消失、vault 内标签恢复才是本组的结果判据。
 
 ## 覆盖边界（如实登记；三组共用的边界见 230a）
 

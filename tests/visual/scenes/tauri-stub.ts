@@ -104,6 +104,12 @@ export interface VaultFixture {
    * 侧（桩不复制形状校验），那几类用通用 `failures` 通道注入。
    */
   externalFiles?: Record<string, string>;
+  /** Quick Open 显式目录语境的一层桩；未收录时从 entries 过滤直接子项。 */
+  directoryEntries?: Record<string, unknown[]>;
+  /** `fs_list_external_dir` 桩：绝对目录 → 直接子项（path + kind）。 */
+  externalDirectories?: Record<string, Array<{ path: string; kind: "file" | "dir" }>>;
+  /** 目录读取延迟，键为 vault 相对目录或外部绝对目录。 */
+  directoryDelayMs?: Record<string, number>;
   /** **内部字段，场景 MUST NOT 写**：`stubTauri` 把 {@link SYNTHETIC_PNG_BASE64} 挂在这里
    *  过桥进 init script（函数体序列化，模块常量在页面里不可见）。 */
   syntheticPng?: string;
@@ -735,6 +741,39 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
           (e) => (e as { path?: string }).path === (args.path ?? ""),
         ) as { mtime_ms?: number } | undefined;
         return { mtime_ms: entry?.mtime_ms ?? null };
+      },
+      // Quick Open 显式目录语境：只返回一层，不写回 entries，因此 lazy 不会进入普通索引。
+      fs_scan_dir: async (args) => {
+        const dir = String((args as Record<string, unknown>).dir ?? "");
+        const delay = current?.directoryDelayMs?.[dir] ?? 0;
+        if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+        const custom = current?.directoryEntries?.[dir];
+        if (custom !== undefined) return custom;
+        const all = (current?.entries ?? []) as Array<Record<string, unknown>>;
+        const exact = all.find((entry) => entry.path === dir);
+        if (dir !== "" && exact === undefined) {
+          throw { code: "fs_not_found", message: `目录不存在：${dir}`, params: { rel: dir } };
+        }
+        if (exact !== undefined && exact.kind !== "dir") {
+          throw { code: "fs_path_invalid", message: `${dir} 不是目录`, params: { rel: dir } };
+        }
+        const prefix = dir === "" ? "" : `${dir}/`;
+        return all.filter((entry) => {
+          const path = String(entry.path ?? "");
+          if (!path.startsWith(prefix) || path === dir) return false;
+          const rest = path.slice(prefix.length);
+          return rest !== "" && !rest.includes("/");
+        });
+      },
+      fs_list_external_dir: async (args) => {
+        const path = String(args.path ?? "");
+        const delay = current?.directoryDelayMs?.[path] ?? 0;
+        if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+        const entries = current?.externalDirectories?.[path];
+        if (entries === undefined) {
+          throw { code: "fs_not_found", message: `目录不存在：${path}`, params: { rel: path } };
+        }
+        return entries;
       },
       // vault 外只读读取（M655，change quick-open-file-oct23 的 5.1）：真后端的形状校验 /
       // 常规文件 / 50MB / UTF-8 全在 Rust 侧（归 cargo test），桩只回答「这份绝对路径的内容是
