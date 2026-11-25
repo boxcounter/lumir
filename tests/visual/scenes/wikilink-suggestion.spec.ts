@@ -272,7 +272,7 @@ test("光标位于视口下缘时浮层向上翻转且不越界", async ({ page 
     view.scrollDOM.scrollTop = view.scrollDOM.scrollHeight;
     const caret = view.coordsAtPos(head)!;
     view.scrollDOM.scrollTop += caret.bottom - (view.scrollDOM.clientHeight - 24);
-    view.contentDOM.dispatchEvent(new Event("input"));
+    view.scrollDOM.dispatchEvent(new Event("scroll"));
   });
   await expect(page.locator(OVERLAY)).toBeVisible();
   const geometry = await page.locator(".cm-content").evaluate((content) => {
@@ -296,7 +296,7 @@ test("三主题壳完全不透明，长路径和同名可辨，边缘与 resize 
       document.documentElement.style.setProperty("--editor-font-size", value === "dark" ? "32px" : "16px");
     }, theme);
     await expect(page.locator(OVERLAY)).toBeVisible();
-    const reading = await page.locator(OVERLAY).evaluate((overlay) => {
+    const readGeometry = () => page.locator(OVERLAY).evaluate((overlay) => {
       const rect = overlay.getBoundingClientRect();
       const canvas = document.createElement("canvas");
       canvas.width = canvas.height = 1;
@@ -305,6 +305,8 @@ test("三主题壳完全不透明，长路径和同名可辨，边缘与 resize 
       context.fillRect(0, 0, 1, 1);
       return { alpha: context.getImageData(0, 0, 1, 1).data[3], left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: innerWidth, height: innerHeight };
     });
+    await expect.poll(async () => (await readGeometry()).bottom).toBeLessThanOrEqual(800);
+    const reading = await readGeometry();
     expect(reading.alpha).toBe(255);
     expect(reading.left).toBeGreaterThanOrEqual(0);
     expect(reading.right).toBeLessThanOrEqual(reading.width);
@@ -372,6 +374,40 @@ test("上下文矩阵：代码 / frontmatter / Link / Image / 完整链接 / 只
   await openExperiment(page, "[[alp", ["notes/Alpha.md"], true);
   await expect(page.locator(OVERLAY)).toHaveCount(0);
   expect(await readDocument(page)).toBe("[[alp");
+});
+
+test("原生输入事务矩阵：opener 即开、query 逐拍同步、opener 不完整即关且插件不崩溃", async ({ page }) => {
+  const consoleErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  const paths = ["Alpha.md", "Beta.md", "sigma.md", "source.md"];
+  const cases = [
+    { name: "普通正文", prefix: "" },
+    { name: "列表正文", prefix: "- " },
+    { name: "CJK 前缀", prefix: "笔记 " },
+    { name: "多行第二行", prefix: "first\n" },
+  ];
+  for (const { name, prefix } of cases) {
+    await openExperiment(page, prefix, paths);
+    await page.keyboard.type("[[");
+    await expect(page.locator(OVERLAY), `${name}：完整 opener 后打开`).toBeVisible();
+    await expect.poll(() => rows(page), { message: `${name}：空 query 使用当前未过滤候选` }).toEqual(paths);
+
+    await page.keyboard.type("s");
+    await expect.poll(() => rows(page), { message: `${name}：query=s 不得展示上一代 items` }).toEqual(["sigma.md", "source.md"]);
+    await page.keyboard.type("i");
+    await expect.poll(() => rows(page), { message: `${name}：query=si 同步收窄` }).toEqual(["sigma.md"]);
+
+    await page.keyboard.press("Backspace");
+    await expect.poll(() => rows(page), { message: `${name}：删除 i 后恢复 query=s` }).toEqual(["sigma.md", "source.md"]);
+    await page.keyboard.press("Backspace");
+    await expect.poll(() => rows(page), { message: `${name}：删除 s 后恢复空 query` }).toEqual(paths);
+    await page.keyboard.press("Backspace");
+    await expect(page.locator(OVERLAY), `${name}：opener 不完整后关闭`).toHaveCount(0);
+    expect(await readDocument(page)).toBe(`${prefix}[`);
+  }
+  expect(consoleErrors).toEqual([]);
 });
 
 test("compositionend：DOM 已是最终候选而 state 仍旧，pending flush 前零刷新，flush 后仅刷新一次", async ({ page }) => {

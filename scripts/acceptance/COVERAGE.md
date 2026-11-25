@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：288
-- 验收项（不同 item 编号）：257
-- 分档：core 32 / full 246 / bundle 5 / evidence 5（full 批 = 全部 288 个，含其余各档）
+- 场景：289
+- 验收项（不同 item 编号）：258
+- 分档：core 32 / full 247 / bundle 5 / evidence 5（full 批 = 全部 289 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -275,3 +275,4 @@
 | 734 | `734-default-note-name` | 新建文件默认名：始终预填并全选、键入替换、Enter 接受、Escape 取消、撞名递增、焦点落正文 | full |
 | 865 | `865-wikilink-caret-reveal-nov24` | wikilink 键盘 / 指针进入源码、修饰键旧语义与精确 undo / save | full |
 | 866 | `866-wikilink-suggestion-nov24` | 行内 [[ 候选：过滤 / 键鼠接受 / Escape / 空态 / 特殊扩展名与零隐式写入 | full |
+| 867 | `867-wikilink-suggestion-native-refresh-nov25` | 行内 [[ 候选：原生逐字输入立即打开、query 逐拍同步、逐字删除关闭 | full |

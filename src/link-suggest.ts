@@ -180,6 +180,16 @@ interface OpenState {
   readonly active: number;
 }
 
+function sameOpenState(left: OpenState, right: OpenState): boolean {
+  return left.active === right.active &&
+    left.trigger.openerFrom === right.trigger.openerFrom &&
+    left.trigger.queryFrom === right.trigger.queryFrom &&
+    left.trigger.head === right.trigger.head &&
+    left.trigger.query === right.trigger.query &&
+    left.items.length === right.items.length &&
+    left.items.every((item, index) => item.path === right.items[index]?.path && item.target === right.items[index]?.target);
+}
+
 class LinkSuggestView {
   readonly view: EditorView;
   private readonly files: () => readonly string[];
@@ -209,7 +219,6 @@ class LinkSuggestView {
     this.empty.textContent = NO_MATCH_TEXT();
     this.root.append(this.list, this.empty);
     view.contentDOM.addEventListener("keydown", this.onKeyDown, true);
-    view.contentDOM.addEventListener("input", this.onInput);
     view.contentDOM.addEventListener("compositionstart", this.onCompositionStart);
     view.contentDOM.addEventListener("compositionend", this.onCompositionEnd);
     view.contentDOM.addEventListener("blur", this.onBlur);
@@ -238,7 +247,6 @@ class LinkSuggestView {
     cancelCompositionSettle(this.view, "link-suggest");
     this.close();
     this.view.contentDOM.removeEventListener("keydown", this.onKeyDown, true);
-    this.view.contentDOM.removeEventListener("input", this.onInput);
     this.view.contentDOM.removeEventListener("compositionstart", this.onCompositionStart);
     this.view.contentDOM.removeEventListener("compositionend", this.onCompositionEnd);
     this.view.contentDOM.removeEventListener("blur", this.onBlur);
@@ -340,8 +348,18 @@ class LinkSuggestView {
     const previousPath = this.state?.items[this.state.active]?.path;
     let active = previousPath === undefined ? -1 : items.findIndex((item) => item.path === previousPath && item.target !== null);
     if (active < 0) active = items.findIndex((item) => item.target !== null);
-    this.state = { trigger, items, active };
+    const next = { trigger, items, active };
+    const previous = this.state;
+    this.state = next;
+    if (previous !== null && sameOpenState(previous, next)) {
+      this.schedulePlace();
+      return;
+    }
     this.render();
+  }
+
+  private schedulePlace(): void {
+    this.view.requestMeasure({ read: () => this.place(), key: this });
   }
 
   private render(): void {
@@ -382,7 +400,7 @@ class LinkSuggestView {
     else this.view.contentDOM.removeAttribute("aria-activedescendant");
     const active = this.list.children[state.active] as HTMLElement | undefined;
     active?.scrollIntoView({ block: "nearest" });
-    this.place();
+    this.schedulePlace();
   }
 
   private place(): void {
@@ -422,7 +440,6 @@ class LinkSuggestView {
     keyboardEvents.set(this.view, event);
   };
 
-  private onInput = (): void => this.refresh();
   private onCompositionStart = (): void => this.compositionStart();
   private onCompositionEnd = (): void => this.compositionEnd();
   private onBlur = (): void => this.close();
