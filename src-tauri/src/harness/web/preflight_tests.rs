@@ -4,7 +4,7 @@ use crate::config::HarnessPermissions;
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -48,6 +48,26 @@ fn transport() -> ReqwestWebTransport {
     ReqwestWebTransport::with_test_mapping(|addr| {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), addr.port())
     })
+}
+
+struct SyntheticTransport;
+
+impl WebTransport for SyntheticTransport {
+    fn send(
+        &self,
+        _method: TransportMethod,
+        _url: reqwest::Url,
+        _addrs: &[SocketAddr],
+        _timeout: Duration,
+        _aborted: Arc<dyn Fn() -> bool + Send + Sync>,
+    ) -> Result<TransportResponse, PreflightError> {
+        Ok(TransportResponse {
+            status: reqwest::StatusCode::OK,
+            content_type: Some("text/html; charset=utf-8".to_string()),
+            location: None,
+            body_bytes_read: 0,
+        })
+    }
 }
 
 fn tls_transport() -> ReqwestWebTransport {
@@ -706,6 +726,43 @@ fn cancel_and_deadline_return_without_joining_blocked_work() {
 }
 
 #[test]
+fn cancellation_after_worker_success_precedes_result_delivery() {
+    let abort_calls = Arc::new(AtomicUsize::new(0));
+    let calls = abort_calls.clone();
+    let aborted = move || calls.fetch_add(1, Ordering::SeqCst) != 0;
+    let worker_calls = Arc::new(AtomicUsize::new(0));
+    let calls = worker_calls.clone();
+    let result = run_bounded(Duration::from_secs(1), Arc::new(aborted), move || {
+        calls.fetch_add(1, Ordering::SeqCst);
+        Ok(7_u8)
+    });
+    let error = result.expect_err("结果返回前已取消必须统一为 web_cancelled");
+    assert_eq!(error.code, WebErrorCode::WebCancelled);
+    assert_eq!(abort_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(worker_calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn cancellation_after_worker_error_precedes_result_delivery() {
+    let abort_calls = Arc::new(AtomicUsize::new(0));
+    let calls = abort_calls.clone();
+    let aborted = move || calls.fetch_add(1, Ordering::SeqCst) != 0;
+    let worker_calls = Arc::new(AtomicUsize::new(0));
+    let calls = worker_calls.clone();
+    let result = run_bounded(Duration::from_secs(1), Arc::new(aborted), move || {
+        calls.fetch_add(1, Ordering::SeqCst);
+        Err::<u8, _>(PreflightError {
+            code: WebErrorCode::WebDnsFailed,
+            message: "synthetic worker failure".to_string(),
+        })
+    });
+    let error = result.expect_err("worker 错误也不得越过结果返回前的取消");
+    assert_eq!(error.code, WebErrorCode::WebCancelled);
+    assert_eq!(abort_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(worker_calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn range_body_read_cancellation_closes_wait_without_another_request() {
     let server = TestServer::start_with_get(
         "/body",
@@ -871,6 +928,46 @@ fn localhost_local_dns_failure_and_ip_variants_fail_before_network() {
             WebErrorCode::WebUrlBlocked | WebErrorCode::WebDnsBlocked | WebErrorCode::WebDnsFailed
         ));
     }
+}
+
+fn assert_special_host_trailing_dot_blocked_without_dns(host: &str) {
+    let resolver = ScriptedDns::public(host, 80);
+    let result = check(
+        &format!("http://{host}/a"),
+        &permissions(&[]),
+        resolver.clone(),
+        SyntheticTransport,
+        || false,
+        PreflightLimits::default(),
+    );
+    assert!(resolver.calls.lock().unwrap().is_empty(), "{host}");
+    let error = result.expect_err("特殊主机名的 DNS 尾点形式必须前置拒绝");
+    assert_eq!(error.code, WebErrorCode::WebUrlBlocked);
+}
+
+#[test]
+fn localhost_trailing_dot_is_blocked_without_dns() {
+    assert_special_host_trailing_dot_blocked_without_dns("localhost.");
+}
+
+#[test]
+fn local_trailing_dot_is_blocked_without_dns() {
+    assert_special_host_trailing_dot_blocked_without_dns("printer.local.");
+}
+
+#[test]
+fn ordinary_trailing_dot_keeps_origin_and_dns_resolution_rules() {
+    let resolver = ScriptedDns::public("example.com.", 80);
+    check(
+        "http://example.com./a",
+        &permissions(&[]),
+        resolver.clone(),
+        SyntheticTransport,
+        || false,
+        PreflightLimits::default(),
+    )
+    .expect("普通 DNS 尾点仍按原主机名解析");
+    assert_eq!(resolver.calls.lock().unwrap().as_slice(), ["example.com."]);
 }
 
 struct DelayedDns {

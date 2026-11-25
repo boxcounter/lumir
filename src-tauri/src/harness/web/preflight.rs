@@ -406,7 +406,7 @@ fn execute_bounded(
     })
 }
 
-fn run_bounded<T: Send + 'static>(
+pub(super) fn run_bounded<T: Send + 'static>(
     timeout: Duration,
     aborted: Arc<dyn Fn() -> bool + Send + Sync>,
     work: impl FnOnce() -> Result<T, PreflightError> + Send + 'static,
@@ -428,7 +428,12 @@ fn run_bounded<T: Send + 'static>(
             ));
         }
         match receiver.recv_timeout(remaining.min(CANCEL_POLL)) {
-            Ok(result) => return result,
+            Ok(result) => {
+                if aborted() {
+                    return Err(cancelled());
+                }
+                return result;
+            }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 return Err(PreflightError::new(
@@ -470,7 +475,8 @@ fn resolution_host(url: &Url) -> Result<String, PreflightError> {
         .host_str()
         .ok_or_else(|| PreflightError::new(WebErrorCode::WebUrlBlocked, "URL 缺少 host"))?;
     let host = host.trim_start_matches('[').trim_end_matches(']');
-    if host.eq_ignore_ascii_case("localhost") || host.ends_with(".local") {
+    let special_host = host.strip_suffix('.').unwrap_or(host);
+    if special_host.eq_ignore_ascii_case("localhost") || special_host.ends_with(".local") {
         return Err(PreflightError::new(
             WebErrorCode::WebUrlBlocked,
             "localhost / .local 目标被禁止",
