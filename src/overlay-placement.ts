@@ -53,6 +53,8 @@ export interface OverlayWidthInput {
   fontSize: number;
   /** 组件级下限覆盖（px）；缺省取档位下限。 */
   minWidth?: number;
+  /** 组件级可读宽上限覆盖（em）；缺省取档位上限。 */
+  maxEm?: number;
   /** 宿主两侧留白（px）；缺省取档位值（8）。 */
   inset?: number;
 }
@@ -83,7 +85,7 @@ export function resolveOverlayWidth(input: OverlayWidthInput): OverlayWidth {
   const natural = Math.max(0, finite(input.natural));
   const host = Math.max(0, finite(input.host));
   const fontSize = finite(input.fontSize) > 0 ? finite(input.fontSize) : 12;
-  const cap = spec.maxEm * fontSize;
+  const cap = finite(input.maxEm ?? spec.maxEm) * fontSize;
   const avail = Math.max(0, host - 2 * inset);
   const max = Math.min(cap, avail);
   const floor = Math.min(finite(input.minWidth ?? spec.minWidth), max);

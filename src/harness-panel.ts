@@ -139,7 +139,7 @@ import {
 } from "./harness-context";
 import type { HarnessContextBlock, HarnessContextSource } from "./harness-context";
 import { createHarnessDraftStore } from "./harness-draft";
-import { moveSkillHighlight, openSkillMenu, skillSelectionSpec, skillTokenAt } from "./skill-menu";
+import { moveSkillHighlight, openSkillMenu, skillMenuNavigationDelta, skillSelectionSpec, skillTokenAt } from "./skill-menu";
 import type { SkillMenuState } from "./skill-menu";
 import { skillCatalogRefreshEffect, skillChips } from "./skill-chips";
 import type { SkillSummary } from "./bindings/SkillSummary";
@@ -4432,6 +4432,37 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     skillCatalogEpoch += 1;
   }
 
+  function updateSkillMenuHighlight(): void {
+    const state = skillMenuState;
+    if (state === null) return;
+    const highlighted = state.highlighted;
+    Array.from(skillMenuEl.children).forEach((option, index) => {
+      const selected = highlighted === index;
+      option.classList.toggle("is-selected", selected);
+      option.setAttribute("aria-selected", String(selected));
+    });
+    if (highlighted === null) composerView.contentDOM.removeAttribute("aria-activedescendant");
+    else composerView.contentDOM.setAttribute("aria-activedescendant", `lumir-hp-skill-option-${highlighted}`);
+    placeSkillMenu();
+    if (highlighted !== null) {
+      const option = skillMenuEl.children[highlighted] as HTMLElement | undefined;
+      if (option !== undefined) {
+        const menuRect = skillMenuEl.getBoundingClientRect();
+        const optionRect = option.getBoundingClientRect();
+        const viewportTop = menuRect.top + skillMenuEl.clientTop;
+        const viewportBottom = viewportTop + skillMenuEl.clientHeight;
+        if (optionRect.top < viewportTop) skillMenuEl.scrollTop += optionRect.top - viewportTop;
+        else if (optionRect.bottom > viewportBottom) skillMenuEl.scrollTop += optionRect.bottom - viewportBottom;
+      }
+    }
+  }
+
+  function highlightSkillMenuItem(index: number): void {
+    if (skillMenuState === null || skillMenuState.highlighted === index) return;
+    skillMenuState = { ...skillMenuState, highlighted: index };
+    updateSkillMenuHighlight();
+  }
+
   function renderSkillMenu(): void {
     const state = skillMenuState;
     if (state === null) {
@@ -4446,8 +4477,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       option.className = "lumir-hp-skill-option";
       option.id = `lumir-hp-skill-option-${index}`;
       option.setAttribute("role", "option");
-      option.setAttribute("aria-selected", String(state.highlighted === index));
-      if (state.highlighted === index) option.classList.add("is-selected");
       const name = document.createElement("span");
       name.className = "lumir-hp-skill-name";
       name.textContent = item.name;
@@ -4456,18 +4485,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       description.textContent = item.description;
       option.append(name, description);
       option.addEventListener("mousedown", (event) => event.preventDefault());
-      option.addEventListener("mouseenter", () => {
-        if (skillMenuState === null) return;
-        skillMenuState = { ...skillMenuState, highlighted: index };
-        renderSkillMenu();
-      });
+      option.addEventListener("mouseenter", () => highlightSkillMenuItem(index));
       option.addEventListener("click", () => selectSkillMenuItem());
       skillMenuEl.append(option);
     });
-    const highlighted = state.highlighted;
-    if (highlighted === null) composerView.contentDOM.removeAttribute("aria-activedescendant");
-    else composerView.contentDOM.setAttribute("aria-activedescendant", `lumir-hp-skill-option-${highlighted}`);
-    placeSkillMenu();
+    updateSkillMenuHighlight();
+  }
+
+  function moveSkillMenu(delta: number): void {
+    if (skillMenuState === null) return;
+    skillMenuState = moveSkillHighlight(skillMenuState, delta);
+    updateSkillMenuHighlight();
   }
 
   function placeSkillMenu(): void {
@@ -4475,12 +4503,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const caret = composerView.coordsAtPos(composerView.state.selection.main.head);
     const host = composerArea.getBoundingClientRect();
     if (caret === null) return;
+    const fontSize = overlayFontSize(skillMenuEl);
+    const avail = Math.max(0, host.width - 16);
     const width = placeOverlay({
       tier: "list",
       natural: measureOverlayNaturalWidth(skillMenuEl),
       host: host.width,
       hostLeft: host.left,
-      fontSize: overlayFontSize(skillMenuEl),
+      fontSize,
+      maxEm: 48,
+      minWidth: Math.max(200, 0.85 * avail),
       anchor: { left: caret.left, right: caret.right },
       preferred: "left",
     });
@@ -10330,19 +10362,20 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       dispatchComposerCommand("editor.redo");
       return;
     }
+    if (skillMenuState !== null) {
+      const delta = skillMenuNavigationDelta(event);
+      if (delta !== null) {
+        event.preventDefault();
+        moveSkillMenu(delta);
+        return;
+      }
+    }
     if (event.ctrlKey && !event.metaKey && !event.altKey &&
         (event.key.toLowerCase() === "n" || event.key.toLowerCase() === "p")) {
       closeSkillMenu();
       return;
     }
     if (mod) return;
-    if (skillMenuState !== null && !event.altKey &&
-        (event.key === "ArrowDown" || event.key === "ArrowUp")) {
-      event.preventDefault();
-      skillMenuState = moveSkillHighlight(skillMenuState, event.key === "ArrowDown" ? 1 : -1);
-      renderSkillMenu();
-      return;
-    }
     if (skillMenuState !== null && skillMenuState.highlighted !== null &&
         (event.key === "Enter" || event.key === "Tab")) {
       event.preventDefault();

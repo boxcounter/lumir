@@ -2982,6 +2982,17 @@ test("cgevent chord 事件形态：⌃A / ⌘A / ⌃B 的 keycode+flags 与别�
   assert.deepEqual(parseChordSpec("escape"), { keycode: 53, flags: 0 });
 });
 
+test("cgevent chord 字母键表覆盖 a–z，Alt+N 使用 maskAlternate", () => {
+  const keycodes = {
+    a: 0, b: 11, c: 8, d: 2, e: 14, f: 3, g: 5, h: 4, i: 34, j: 38, k: 40, l: 37, m: 46,
+    n: 45, o: 31, p: 35, q: 12, r: 15, s: 1, t: 17, u: 32, v: 9, w: 13, x: 7, y: 16, z: 6,
+  };
+  for (const [letter, keycode] of Object.entries(keycodes)) {
+    assert.deepEqual(parseChordSpec(`ctrl+${letter}`), { keycode, flags: 0x00040000 }, letter);
+  }
+  assert.deepEqual(parseChordSpec("alt+n"), { keycode: 45, flags: 0x00080000 });
+});
+
 test("cgevent chord 错误路径：未知主键 / 未知修饰键 / 空段都抛 StepError，且在 spawn 之前判掉", () => {
   const bad = [
     ["ctrl+f13", /主键「f13」不在真键盘通道的键表里/],

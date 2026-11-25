@@ -66,6 +66,27 @@ export function moveSkillHighlight(state: SkillMenuState, delta: number): SkillM
   };
 }
 
+export interface SkillMenuNavigationKey {
+  key: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+  shiftKey?: boolean;
+}
+
+export function skillMenuNavigationDelta(event: SkillMenuNavigationKey): number | null {
+  if (event.metaKey || event.altKey || event.shiftKey) return null;
+  const key = event.key.toLowerCase();
+  if (event.ctrlKey) {
+    if (key === "n") return 1;
+    if (key === "p") return -1;
+    return null;
+  }
+  if (event.key === "ArrowDown") return 1;
+  if (event.key === "ArrowUp") return -1;
+  return null;
+}
+
 export interface SkillSelectionSpec extends TransactionSpec {
   skill: ComposerSkillRef;
 }
