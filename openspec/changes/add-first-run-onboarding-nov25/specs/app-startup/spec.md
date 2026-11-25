@@ -18,7 +18,7 @@
 
 真正首次启动（启动快照 `last_vault === null`）SHALL 进入启动态的**首启模式**：首启模式 MUST NOT 因 `no_vault` 终态或安全阀超时撤下；其撤下条件收窄为「首个 vault 的树装载完成」与「启动层 / 主模块失败降级」两条，且 MUST NOT 先露出既有树空态。非首启的三种撤下情形与顺序逐字不变。安全阀在首启模式下不生效——首启没有「正在恢复上次打开的 vault」这件事可说，启动面内的唯一主操作始终可用。
 
-启动态 MUST NOT 抢键盘焦点、MUST NOT 注册或改写既有键位、MUST NOT 拦截不属于它的输入事件。启动态 SHALL 保留标题栏拖拽区（`data-tauri-drag-region`，与真实壳同口径），窗口在启动态期间 MUST 可拖动；启动面容器 MUST NOT 挂 `mousedown` + `preventDefault`（该写法会静默打断窗口拖拽，见 REVIEW.md『标题栏 mousedown preventDefault 打断拖拽』条）。启动面的承载 MUST NOT 落在会被壳的建立动作整体替换的容器里：主模块建壳 MUST NOT 使启动态消失，撤下只由前述条件触发。启动态期间系统 SHALL 提供「打开 vault」入口（与既有空态入口同一命令、同一 dirty 守卫路径）；首启模式的入口文案 SHALL 为「添加 vault」，命令与守卫路径不变。用户在此间成功打开的 vault SHALL 优先于进行中的启动恢复（既有让位规则逐字不变），启动态 SHALL 随该 vault 的树装载完成撤下。首启模式在场期间工作区尚未进入：shell 的标题栏、文件树、编辑器与 modeline SHALL 对辅助技术隐藏且不可交互，唯一可交互的是启动面内的「添加 vault」入口。
+启动态 MUST NOT 抢键盘焦点、MUST NOT 注册或改写既有键位；除首启模式的命令闸门（见下）外，MUST NOT 拦截不属于它的输入事件。启动态 SHALL 保留标题栏拖拽区（`data-tauri-drag-region`，与真实壳同口径），窗口在启动态期间 MUST 可拖动；启动面容器 MUST NOT 挂 `mousedown` + `preventDefault`（该写法会静默打断窗口拖拽，见 REVIEW.md『标题栏 mousedown preventDefault 打断拖拽』条）。启动面的承载 MUST NOT 落在会被壳的建立动作整体替换的容器里：主模块建壳 MUST NOT 使启动态消失，撤下只由前述条件触发。启动态期间系统 SHALL 提供「打开 vault」入口（与既有空态入口同一命令、同一 dirty 守卫路径）；首启模式的入口文案 SHALL 为「添加 vault」，命令与守卫路径不变。用户在此间成功打开的 vault SHALL 优先于进行中的启动恢复（既有让位规则逐字不变），启动态 SHALL 随该 vault 的树装载完成撤下。首启模式在场期间工作区尚未进入：工作区（`#app`）的标题栏、文件树、编辑器与 modeline SHALL 对辅助技术隐藏且不可交互，唯一可交互的是启动面内的「添加 vault」入口。首启模式在场期间，系统 SHALL 在工作区命令分发层统一阻断命令：默认键位、配置重绑后的分发器与原生菜单命令三条来源 MUST 走同一个闸门；唯一例外是启动面内的添加 vault 入口。闸门 MUST NOT 产生工作区 DOM / IPC / 布局副作用，也 MUST NOT 拦截非绑定键或启动面按钮的可达性。
 
 启动层自身失败（脚本异常、样式缺失）或主模块装载失败时，系统 SHALL 撤下启动态并继续既有启动路径，MUST NOT 阻断启动、MUST NOT 上屏报错。
 
@@ -46,6 +46,11 @@
 
 - **WHEN** 用户在首启模式中成功打开首个 vault，文件树就绪
 - **THEN** 启动态在同一帧内撤下，工作区出现；MUST NOT 出现淡出、滑动或延时消失
+
+#### Scenario: 首启模式阻断工作区命令
+
+- **WHEN** 首启模式在场，依次按 `Cmd-,` / `Cmd-Shift-A` / `Cmd-/`（含一次经 `[keys]` 重绑后重装的现场）
+- **THEN** 设置面板、harness pane、键位面板都不出现；没有 settings / config IPC、没有 pane / 布局变化；「添加 vault」仍是唯一可执行动作；首启模式撤下后同一组键在非首启下行为不变，且 `#app` 不带 `inert` / aria-hidden（设置面板不会留下背景隔离）
 
 #### Scenario: 安全阀不让用户被困
 
@@ -101,8 +106,8 @@
 
 #### Scenario: 阶段行只在恢复进行中
 
-- **WHEN** 分别在「非首启、有 `last_vault` 的恢复进行中」与「非首启、无 `last_vault`」两种情形下观察启动态
-- **THEN** 前者显示既有恢复中提示文案，后者不显示任何阶段文案；首启模式不建阶段行
+- **WHEN** 分别在「非首启、有 `last_vault` 的恢复进行中」与「首启模式（启动快照 `last_vault === null`）」两种情形下观察启动态
+- **THEN** 前者显示既有恢复中提示文案；后者不建阶段行、不显示任何阶段文案
 
 #### Scenario: 三主题首帧主题正确
 

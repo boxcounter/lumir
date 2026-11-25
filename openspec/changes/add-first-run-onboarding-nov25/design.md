@@ -95,8 +95,12 @@
 - `firstRunTipsPending` / `firstRunTipsConsumed`：本次启动内的一次性状态；不落盘。
 - 打开首个 vault 后，`firstRunPending` 仍为真（不因 `last_vault` 写回而变），所以本次启动内
   仍可按首启规则处理首个空 vault 的 tips / harness。
-- tips 在首个 vault 装载完成时被消费：若恢复出标签，tips 不出现且不补到后续空态；若无标签，
-  tips 出现一次，打开首个文档即消失，本会话不再出现。
+- tips 资格在首个 `applyVault` **入口**一次性领取：模块级 claim 记录本次 `vaultId`，并把全局
+  资格置为已领取；后续 `applyVault` MUST NOT 覆盖已有 claim（它只能看到资格已领取，因此不写
+  新 claim）。`onEmptyVault` 只认「claim.vaultId === 当前 loadedVaultId 且未消费」的一次；首个
+  applyVault 的恢复收尾无论是否恢复出标签都清空 claim。若首个 vault 恢复出标签，tips 不出现且
+  不补到后续空态；若无标签，tips 出现一次，打开首个文档即消失，本会话不再出现。后续 vault
+  （即使先完成空态恢复）不能继承资格。
 - 首启模式只出现一次：树就绪即移除；用户取消目录选择器或打开失败时保持在场，可重试。
 
 ### 3.4 已知误判面
@@ -175,16 +179,47 @@ const reason = startupDismissReason({ ...state, elapsedMs: ... });
 - `startup?.setOpenHandler(() => requestAddVault())` 保持既有接线；首启模式的「添加 vault」与
   非首启的 D6 共用同一条命令、同一条 dirty 守卫路径。
 
-### 4.4 工作区隔离
+### 4.4 工作区隔离与命令闸门
 
-首启模式在场期间工作区尚未进入：
+首启模式在场期间工作区尚未进入。隔离必须同时满足两条，只靠 `inert` 不够。
 
-- shell 建出后，若 `firstRunPending && startup?.visible`，设 `shell.root.inert = true` 与
-  `aria-hidden="true"`；首启模式撤下时在 `onDismiss` 回调里恢复。
-- 启动面在 `document.body` 下、shell 之外，`inert` 不影响它；它的唯一按钮仍可点。
+**① 可交互面隔离：inert 根取 `#app`，不是 `shell.root`。**
+
+- shell 建出后，若 `firstRunPending && startup?.visible`，把 `#app`（`index.html:9` 的
+  `<main id="app">`，也是设置面板 `inertRoot` 的同一个根）置 `inert = true` 与
+  `aria-hidden="true"`。
+- 首启模式撤下时在 `startup?.onDismiss` 回调里统一清 `#app.inert` / aria-hidden，并断言
+  `.lumir-set-overlay` / 键位面板 / harness pane 均不在场。**不要只 inert `shell.root`**：
+  设置面板的 `inertRoot` 是 `#app`（`src/main.ts:4034`、`src/settings-panel.ts:1647`），只恢复
+  `shell.root.inert` 收不掉 `#app.inert` 的泄漏。
+- 启动面 `#startup` 在 `document.body` 下、`#app` 之外，`#app.inert` 不影响它；它的唯一按钮
+  仍可点。
 - 不在首启模式挂载时抢焦点：既有启动态「MUST NOT 抢键盘焦点」条款不变；按钮是屏上唯一可聚焦
   元素，用户点击 / Tab 即可到达。首启模式撤下时不抢焦点，工作区装载路径自己决定焦点。
-- 不注册新键位、不拦截不属于启动面的输入事件；shell inert 期间工作区快捷键不会穿透。
+
+**② 命令分发闸门：`inert` 只挡指针 / 焦点，不挡 `window` 上的键盘分发与原生菜单。**
+
+- 键位分发挂在 `window` 上：`src/keys.ts:1104` 的 `Keymap.attach(window, ...)`，装配在
+  `src/main.ts:3974`；配置 `[keys]` 覆盖时 `applyKeyConfig` 会 `detach` 后重新
+  `new Keymap(bindings).attach(window, commands, keymapContext)`——这是第二条重装路径，必须
+  同样受闸门约束。
+- 原生菜单事件独立调命令：`src/main.ts:4088` 的 `onMenuCommand` 回调直接查 `MENU_COMMANDS`，
+  包含 `settings` / `describe-bindings` / `close` / `undo` / `redo` / `selectAll`。
+- 定义一个单一谓词：`workspaceCommandsBlocked = () => firstRunPending && startup?.visible === true`。
+- `KeymapContext` 增加可选 `workspaceCommandsBlocked?: () => boolean`。`Keymap.handle` 在
+  **binding 已解析、作用域 / `when` / `commandGate` 都通过之后**、`preventDefault` 与
+  `runtime[binding.command]` 之前判一次：被阻断则 `event.preventDefault(); this.reset();
+  return;`。非绑定键（Tab、IME 组合、未绑定字符）照常透传，不牺牲可达性。默认表与
+  `applyKeyConfig` 重装后的表都走同一个 `Keymap` 类与同一个 `keymapContext`，因此两条路径
+  天然同门。
+- `onMenuCommand` 的回调在查 `MENU_COMMANDS` 之前用同一谓词早退；菜单事件没有 DOM 事件可
+  `preventDefault`，早退即不执行命令。
+- 首启模式的「添加 vault」入口不在 `#app` 内，也不走命令分发层，因此不受闸门影响；它是首启
+  模式唯一可执行的动作。
+- 闸门 MUST NOT 产生工作区 DOM / IPC / 布局副作用。设置面板挂在 `document.body`、`z-index:30`
+  且 DOM 顺序晚于 `#startup`（`src/settings-panel.css:12`），一旦被命令打开就会盖住首启屏并可能
+  把 `#app.inert` 留在 true；因此 `Cmd-,` / `Cmd-Shift-A` / `Cmd-/` 必须在闸门处被挡住，测试
+  同时断言 overlay 隐藏、无 settings / config IPC、无 pane / 布局变化。
 
 ### 4.5 不是 pane / 不是新表面
 
@@ -216,7 +251,8 @@ const reason = startupDismissReason({ ...state, elapsedMs: ... });
 单一入口 `onEmptyVault` 的首启分支：
 
 ```ts
-if (firstRunTipsPending && !firstRunTipsConsumed) {
+if (firstRunTipsClaim?.vaultId === loadedVaultId && !firstRunTipsConsumed) {
+  firstRunTipsConsumed = true;
   showFirstRunTips();       // 建 DOM、置 flag、隐藏 widthDrag、登记 relabel
   openHarnessPane(false);   // 默认展开 harness，不抢焦点
   renderAllTabStrips();     // 让 guideEl 的门读到最后状态
@@ -225,6 +261,9 @@ if (firstRunTipsPending && !firstRunTipsConsumed) {
 }
 ```
 
+- 资格在 `applyVault` 入口领取，不在 `onEmptyVault` 里现判；`onEmptyVault` 只消费 claim。第一个
+  applyVault 的恢复收尾（无论有无标签）清 claim，因此第二个 vault 即使先完成空态恢复也拿不到
+  资格，不存在「第一个 restore 未收尾、第二个空态先到」的竞态。
 - 顺序有意：先置 `firstRunTipsVisible`，再 `openHarnessPane(false)`，让 `openHarnessPane` 内部的
   `syncActiveDocument()` → `renderAllTabStrips()` 已经看到 tips 门，不会先点亮 D369 再撤下。
   末尾再 `renderAllTabStrips()` 一次，幂等收口。
@@ -378,6 +417,18 @@ change 占号），中英双列必填：
 - 首启谓词：`last_vault === null` → true；字符串 / 读失败 → false；写回后不复算。
 - 启动面首启模式：`firstRun` 为真时不建侧栏 / 产品标记 / 阶段行；`no_vault` 与超时不撤下；
   `tree_ready` / `degraded` 撤下。
+- 命令闸门：`workspaceCommandsBlocked` 为真时，默认 Keymap、`applyKeyConfig` 重装后的 Keymap、
+  `onMenuCommand` 三条来源都不得执行命令；`Cmd-,` / `Cmd-Shift-A` / `Cmd-/` 各造一次现场，
+  断言 settings / harness / bindings 的 overlay 不存在、无 `settings_get` / `config_set` IPC、
+  pane / 布局零变化；同一组键在非首启下行为不变。至少一条用例在 `[keys]` 重绑后（例如把
+  `Cmd-,` 改绑到另一个命令）复跑，证明重装路径也被闸门覆盖。另用一次原生菜单事件
+  （`settings` / `describe-bindings`，经桩的事件通道或 `onMenuCommand` 注入）验证菜单来源同样
+  不执行命令。
+- 一次性资格：在 `applyVault` **入口**用模块级 claim 令牌领取（记录本次 `vaultId`，并把全局
+  资格置为已领取；后续 applyVault 不得覆盖已有 claim）；`onEmptyVault` 只认「令牌 vaultId ===
+  当前 loadedVaultId 且未消费」的一次；首个 applyVault 的恢复收尾无论是否恢复出标签都清空令牌。
+  补两条用例：① 首个 vault 恢复出标签 → 切到空 vault 不出 tips / 不默认 harness；② 第一个
+  restore 未收尾时切第二个空 vault，第二个不得继承资格（用可控延迟造竞态）。
 - tips 键位对账：1–6 行的 keycap 由 `KEY_BINDINGS` 派生；每条 command id 都在默认表里有绑定；
   不出现硬编码的 `⌘` 字面量（AST / 字符串扫描）。
 - D369 并列门：`firstRunTipsVisible` 为真时 guide 必隐；为假时按 `emptyPaneGuideVisible`。
@@ -391,8 +442,15 @@ change 占号），中英双列必填：
 场景、以及 `m645-startup-surface` 的恢复态都会落入首启模式：
 
 - `VaultFixture` / `stubTauri` 支持 `lastVault`（含无 fixture 的非首启空态，例如
-  `stubTauri(page, null, { lastVault: "/mock/missing-vault" })`）；缺省：有 fixture 时取
-  `current.root`（老用户），`stubTauri(page, null)` 仍为 `null`（真首启）。
+  `stubTauri(page, null, { lastVault: "/mock/missing-vault" })`）；**缺省值必须复用
+  `vault_current` 的同一份 root 派生与 fallback**：`current === null ? null : (current.lastVault !== undefined ? current.lastVault :
+  (current.root ?? "/Users/alex/demo-vault"))`；`stubTauri(page, null)` 仍为 `null`（真首启）。不能只写 `current.root ?? null`——`root` 是可选字段，大量 fixture
+  （例如 `m831` 的 `VAULT`）不写 root，桩的实际 vault 根回落到 `/Users/alex/demo-vault`
+  （`tests/visual/scenes/tauri-stub.ts:428`、`:720`），只取 `root` 会把这些老用户 fixture
+  误判成首启。
+- 新增桩测试：**fixture 省略 `root` ⇒ 非首启**（`last_vault` 取同一 fallback）；显式
+  `lastVault: null` ⇒ 首启；`stubTauri(page, null)` ⇒ 首启。反向验证一次：改回
+  `current.root ?? null` 时该测试必红。
 - 审计所有 `stubTauri(page, null)` 场景：`app-main`、`toc-outline`、`quick-open`、
   `m293-eink-literal-tokens`、`m149-tabs`、`first-run-empty-state`、`startup-restore`、
   `m831-harness-composer-codemirror`。它们若要旧的无 vault 工作区，必须显式给非 null 的
@@ -413,12 +471,20 @@ change 占号），中英双列必填：
 **场景号**：现场查 `scripts/acceptance/COVERAGE.md` 末位 876，下一个空号为 **877**；
 876 已被 `876-harness-web-production-no-injection` 占用，不得照抄调研里的 876。
 
-**原生目录选择器缺口**：套件不驱动 rfd 的 `NSOpenPanel`（README 已知边界）。首启模式的
-「添加 vault」按钮只判可见可达；「用户选中首个 vault」的终态需要一条**仅验收环境生效**的
-`vaultOpenPath` 动作（dev server 注入 / 既有验收隔离通道，production 不暴露）。该动作调用与
-原生选择器相同的 `vault_open_path`，只用于把「选中目录」这一步表达成可断言终态；它不是产品
-行为，也不改变 `firstRunPending`（启动快照已经取过）。若 Alex 不接受这条测试通道，877 的
-tips / 默认 harness 段退回视觉结构断言 + Alex 手工人肉一步，并在证据里如实登记缺口。
+**验收动作契约（P2-1）**：`vaultOpenPath` 动作 MUST NOT 只调 `vault_open_path` IPC——那只会让
+后端切换、前端仍停在首启模式。它 SHALL 复用完整前端链路 `switchToVault(path)`（内部
+`loadUserVault → vaultOpenPath → applyVault`），不重启、不 reload、不另写装载逻辑；链路保留
+本次启动的 `firstRunPending`。桥接只在 `import.meta.env.DEV` **且** Vite 验收注入标记同时成立
+时安装（沿用 `vite.config.ts:32` 的 `LUMIR_ACCEPTANCE_PORT` + `apply:"serve"` 隔离模式）；普通
+dev（1420）无桥、无端点，production build 不含可用桥接。机器反证三条，不能只在任务里写
+「production 不暴露」：
+
+1. 普通 dev 启动后 `typeof window.__lumirAcceptanceVaultOpen === "undefined"`，且验收端点 404；
+2. `pnpm build` 后对 `dist/assets/*.js` grep 桥接标记 / 端点串为 0；
+3. 验收实例里动作可用，且只经 `switchToVault` 装载（不断言「后端已切换」就完事）。
+
+若 Alex 不接受这条测试通道，877 的 tips / 默认 harness 段退回视觉结构断言 + Alex 手工人肉
+一步，并在证据里如实登记缺口。
 
 **877 建议步骤**：
 
@@ -426,18 +492,29 @@ tips / 默认 harness 段退回视觉结构断言 + Alex 手工人肉一步，�
    最小 config；`restart` 进入首启模式。
 2. 断言：`#startup` / 「添加 vault」按钮可见；AX 里没有 D5「打开一个目录作为 vault」、没有
    `.startup-sidebar` / `.startup-mark` / `.startup-phase`；截图。
-3. `vaultOpenPath` 打开预置 vault（等价于用户在原生选择器里选中它）。
-4. 断言：`#startup` 已撤下；tips 可见（标题 / 9 条中的关键行 / 脚注）；harness pane 在场
+3. 命令闸门：分别按 `Cmd-,` / `Cmd-Shift-A` / `Cmd-/`（可用 `channel: cgevent`），断言
+   `.lumir-set-overlay` / harness pane / 键位面板都不在 AX、`vault-sessions` 与 `config` 无
+   新写、pane 数与布局不变；「添加 vault」仍是唯一动作。至少一条用 `[keys]` 重绑后的实例
+   复跑（证明重装路径也被闸门覆盖）。
+4. `vaultOpenPath` 动作打开预置 vault（等价于用户在原生选择器里选中它）；动作走
+   `switchToVault` 完整链路，不重启、不 reload。
+5. 断言：`#startup` 已撤下；tips 可见（标题 / 9 条中的关键行 / 脚注）；harness pane 在场
    （1:1）；D107 / New note / D369 都不在 AX；截图。
-5. 等 `vault-sessions/<id>.json` 防抖落盘：`harness_pane: true`；断言
-   `harness/sessions/<vaultId>/` 下没有新增 JSONL（`file` 负向 / `count: 0`）。
-6. 点击树里的文件打开：tips 消失、编辑器可编辑、文件正文可见。
-7. 老用户回归：`configWrite lastVault: <vault>` + `restart` → D107 + New note 在场，tips 与
-   默认 harness 都不出现（与 263 的第二段同口径）。
+6. 等 `vault-sessions/<id>.json` 防抖落盘：`harness_pane: true`；用**目录级**
+   `glob: { dir: "env:harness/sessions/<vaultId>", pattern: "\\.jsonl$", exact: 0 }` 断言
+   没有新增 JSONL，并以 harness pane 在场 + 布局位 `true` 作正观测。MUST NOT 写
+   `file.count: 0`：`count` 会读文件内容，文件不存在时直接 FAIL（`execute.mjs:2816`）。
+7. 点击树里的文件打开：tips 消失、编辑器可编辑、文件正文可见。
+8. 老用户回归：先关闭该标签（⌘W）与 harness（⌘⇧A），等 `vault-sessions/<id>.json` 落盘到
+   `harness_pane: false` 且 panes 无标签（防抖 ≥1.5s，或用 `waitForFile`）；再 `restart`
+   构造老用户空态，断言 D107 + New note 在场、tips 与默认 harness 都不出现。该步同时验证
+   「用户收起 harness 后，后续启动不自动展开」。`configWrite` **自带 restart**，若改用它写
+   `lastVault`，不得再叠加一次 `restart` 步（`execute.mjs:4645`）；也可以换一个无会话的独立
+   空 vault 做对照，但主判据取关闭 + 落盘 + 重启这一条。
 
 **263 更新**：第一段（无 `last_vault` 的空配置）从「左栏 D5 + D6」改为「启动态首启模式 + 添加
-vault」；第二段（`configWrite lastVault` 后重启）保留 D107 + New note，作为老用户回归。263 的
-截图基线随更新重截。
+vault」；第二段 `configWrite lastVault` **自带重启**（不得再叠加一次 `restart`），保留 D107 +
+New note，作为老用户回归。263 的截图基线随更新重截。
 
 ### 9.4 门禁
 
@@ -473,13 +550,23 @@ vault」；第二段（`configWrite lastVault` 后重启）保留 D107 + New not
 10. **视觉基线**：`app-main` / 首启模式 / tips 会变或新增；基线更新须 Alex 过目。
 11. **视觉桩误判面**：`config_get` 恒 `last_vault: null` 会让所有 fixture 场景和 m645 恢复态
     落入首启模式；必须先修桩并审计全部 `stubTauri(page, null)` 场景。
-12. **验收选择器缺口**：原生 `NSOpenPanel` 不驱动；`vaultOpenPath` 是验收通道，不是产品能力。
-    若不做，877 的 tips 段只能人工验，证据里必须如实写「未自动化」。
-13. **shell inert 与 toast**：首启模式期间工作区 inert；打开失败的 toast 可能在 inert 子树内。
-    首启模式保持在场可重试，错误仍按既有路径尝试上屏；若视觉上被遮，按已知边界登记，不为此
-    新增第二条错误通道。
+12. **验收选择器缺口与桥接**：原生 `NSOpenPanel` 不驱动；`vaultOpenPath` 必须走
+    `switchToVault` 完整链路，不能只调 `vault_open_path`。桥接只允许 DEV + 验收注入双开；
+    普通 dev 无桥 / 端点 404、production build grep 为 0 是硬判据。若不做，877 的 tips 段只能
+    人工验，证据里必须如实写「未自动化」。
+13. **inert 根与设置面板**：首启模式 inert 必须落在 `#app`（与设置面板 `inertRoot` 同一个根），
+    不能只 inert `shell.root`；设置面板挂 `document.body`、`z-index:30` 且 DOM 顺序晚于
+    `#startup`，一旦被命令打开就会盖住首启屏并可能留下 `#app.inert`。防线是命令闸门 +
+    撤下时统一清 `#app.inert` / aria-hidden，测试断言 overlay 不在场。打开失败的 toast 可能在
+    inert 子树内；首启模式保持在场可重试，错误仍按既有路径尝试上屏，不新增第二条错误通道。
 14. **矮窗**：tips 不做滚动容器，极矮窗口可能裁切；正常窗口高度下不触发。若后续要支持矮窗，
     另立 overflow 归档 change，不在本 change 夹带。
+15. **老用户回归被会话污染**：打开过文档 / 默认 harness 已落盘后直接重启，会恢复标签 /
+    `harness_pane:true`，不再是老用户空态。877 必须先关标签与 harness、等布局落盘，再重启；
+    `configWrite` 自带 restart，不得叠加第二次 restart。
+16. **首启 tips 资格竞态**：资格必须在 `applyVault` 入口一次性领取并记录本次 vaultId，首个
+    applyVault 的恢复收尾无论有无标签都清空；否则快速切到第二个空 vault 时，第二个可能在第
+    一个 restore 收尾前错误取得 tips / 默认 harness。单测要造这个竞态。
 
 ## 11. 已否决的替代方案
 
@@ -505,10 +592,18 @@ vault」；第二段（`configWrite lastVault` 后重启）保留 D107 + New not
   提供身份。否决。
 - **用 `display:none` 藏编辑器 DOM**：恢复时 CM 要重新测量，容易出首帧抖动；改为不透明覆盖 +
   结构性只读。否决。
+- **只 inert `shell.root`、不挡 window 键位 / 原生菜单**：键位分发挂 `window`、原生菜单独立调
+  命令，设置面板还挂 `document.body`；inert 挡不住这些路径，且只恢复 shell 收不掉 `#app.inert`。
+  否决，改为 `#app` inert + 统一命令闸门。
+- **验收桥只调 `vault_open_path` IPC**：后端切换而前端不 `applyVault`，会停在首启模式；reload
+  又会丢 `firstRunPending`。否决，改为 `switchToVault` 完整链路。
+- **视觉桩缺省 `lastVault` 写 `current.root ?? null`**：`root` 可选，大量 fixture 会回落到
+  桩的 `/Users/alex/demo-vault` 却被判成首启。否决，改为复用 `vault_current` 的同一 fallback。
+- **「无 JSONL」写 `file.count: 0`**：`count` 读文件内容，文件不存在直接 FAIL。否决，改为目录级
+  `glob exact: 0` + harness 在场 / 布局位 `true` 的正观测。
 
-## 12. 待 Alex 裁决
+## 12. 已批准口径
 
-- 节点 1 批准。
-- 唯一行为分叉：tips 在场时空白草稿结构性只读（推荐）vs 首键撤下 tips。
-- 低风险文案 / 内容口径（可点名覆盖，不阻塞）：首启模式按钮「添加 vault」vs D6「打开 vault」；
-  tips 9 条清单是否按 §5.5。
+2026-11-25 Alex 原话「采纳推荐的只读」：tips 在场时空白草稿**结构性只读**，打开首个文档后恢复
+可编辑；其余按推荐执行（首启模式按钮「添加 vault」、tips 9 条清单）。实现期若发现需要改变本
+提案的意图 / 行为边界，仍按流程更新 proposal 并重新过节点 1，不得以「已批准」为由夹带新行为。

@@ -37,8 +37,9 @@ content pane 显示真实功能与快捷键 tips，去掉当前的新建文件�
      harness pane（不抢焦点、不建会话 / JSONL、不发 preflight，既有 `harness_pane` 布局位照常落盘）。
 2. **`app-startup` MODIFIED「启动态的上屏与撤下」**：真正首次启动进入启动态的**首启模式**——
    只保留唯一「添加 vault」入口；不因 `no_vault` 终态或安全阀超时撤下，只在首个 vault 树就绪或
-   启动层 / 主模块降级时撤下；首启模式期间工作区对辅助技术隐藏且不可交互。非首启的三种撤下情形
-   逐字不变。
+   启动层 / 主模块降级时撤下；首启模式期间工作区（`#app`）对辅助技术隐藏且不可交互。工作区命令
+   分发 SHALL 走同一闸门：默认键位、配置重绑后的分发器与原生菜单命令都阻断（设置 / harness /
+   键位面板不可穿透），闸门不产生 DOM / IPC / 布局副作用。非首启的三种撤下情形逐字不变。
 3. **`app-startup` MODIFIED「启动态的内容与视觉口径」**：首启模式只由唯一「添加 vault」主操作
    构成，整窗水平 / 垂直居中；不建骨架、产品标记或阶段行。非首启的骨架 / 产品标记 / 阶段行条款
    与三主题、token、零动画口径逐字保留。
@@ -73,7 +74,8 @@ content pane 显示真实功能与快捷键 tips，去掉当前的新建文件�
 - 影响的代码 / 系统（实现期）：
   - `src/boot.ts` 从启动时的配置快照算出 `firstRun` 并交给启动面；`src/startup-surface.ts` /
     `src/startup-surface.css` 增加首启模式的 DOM、居中布局、撤下规则与文案；`src/main.ts` 读取
-    首启模式、跳过首启的树空态、在首启模式期间把 shell 置为不可交互、`onEmptyVault` 的 tips
+    首启模式、跳过首启的树空态、在首启模式期间把工作区（`#app`）置为不可交互并阻断命令分发、
+    `onEmptyVault` 的 tips
     分支、`showEditor` / `renderAllTabStrips` 的引导门；新增 tips 模块；`src/copy-data.ts` 与
     `文案-Copy.md`。
   - 视觉测试桩需能表达 `last_vault` 的真值（当前桩恒写 `null`）；`app-main` 与
@@ -81,8 +83,9 @@ content pane 显示真实功能与快捷键 tips，去掉当前的新建文件�
     `stubTauri(page, null)` 场景，避免它们被误判成首启。
   - 验收套件：更新 263；新增下一个空号场景（现场核对为 877，876 已被
     `876-harness-web-production-no-injection` 占用）。原生目录选择器仍不驱动；为表达「用户选中
-    首个 vault」的终态，需给套件补一个 **仅验收环境生效** 的打开路径动作（见 design §9.3），
-    产品运行时不暴露该通道。
+    首个 vault」的终态，需给套件补一个 **仅验收环境生效** 的打开路径动作（见 design §9.3）。
+    该动作必须复用 `switchToVault` 完整前端链路（`loadUserVault → vaultOpenPath → applyVault`），
+    不是只调 `vault_open_path`；桥接仅 DEV + 验收注入，普通 dev 无桥、production 反证。
 - 关联约束：ADR 0002 性能合同（首启不得新增同步 IO / IPC；启动面首启模式与 tips 均为前端 DOM）、
   ADR 0003（不改写源文件）、ADR 0004（AI-only 开发）、ADR 0006（Emacs keybinding PKM 定位）。
 - 视觉基线：`app-main` / 首启模式 / tips 会变或新增；按 AGENTS.md 硬规则，`--update` 前截图须
@@ -127,7 +130,7 @@ content pane 显示真实功能与快捷键 tips，去掉当前的新建文件�
   `src/main.ts:902` `switcher.sessionChanged()`；无会话的 `harness_state` 返回空快照
   （`src-tauri/src/harness.rs:593`）；preflight 只在发送 / cron 路径
   （`src-tauri/src/harness.rs:1787`、`:2046`）。
-- 配置快照：`src/boot.ts:73` 首帧前读一次；`ConfigSnapshot.config.last_vault` 在
-  `src/bindings/AppConfig.ts`。
+- 配置快照：`src/boot.ts:50` 首帧前读一次、`:56` 交接给主模块；`ConfigSnapshot.config.last_vault`
+  在 `src/bindings/AppConfig.ts`。
 - 文案 deck 当前末位 D1028（`src/copy-data.ts:2985`、`文案-Copy.md:1006`），不是调研时的 D991。
 - 验收覆盖表末位 876；下一个空号为 877（`scripts/acceptance/COVERAGE.md` 末行）。
