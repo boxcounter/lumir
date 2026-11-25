@@ -2,6 +2,7 @@ import { syntaxTree, syntaxTreeAvailable } from "@codemirror/language";
 import { StateEffect, type EditorState, type Extension } from "@codemirror/state";
 import { EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import { cancelCompositionSettle, scheduleCompositionSettle } from "./composition-settle";
+import { onRelabel } from "./copy";
 import { registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import { FILTER_LABEL, NO_MATCH_TEXT, foldCase, isFoldedMatch } from "./list-filter";
 import {
@@ -220,11 +221,13 @@ class LinkSuggestView {
     this.list = view.dom.ownerDocument.createElement("div");
     this.list.className = "lumir-link-suggest-list";
     this.list.setAttribute("role", "listbox");
-    this.list.setAttribute("aria-label", FILTER_LABEL());
     this.empty = view.dom.ownerDocument.createElement("div");
     this.empty.className = "lumir-link-suggest-empty";
-    this.empty.textContent = NO_MATCH_TEXT();
     this.root.append(this.list, this.empty);
+    this.relabel();
+    onRelabel(() => {
+      if (!this.destroyed) this.relabel();
+    });
     view.contentDOM.addEventListener("keydown", this.onKeyDown, true);
     view.contentDOM.addEventListener("compositionstart", this.onCompositionStart);
     view.contentDOM.addEventListener("compositionend", this.onCompositionEnd);
@@ -380,12 +383,17 @@ class LinkSuggestView {
     this.root.style.maxHeight = "";
   }
 
+  private relabel(): void {
+    this.list.setAttribute("aria-label", FILTER_LABEL());
+    this.empty.textContent = NO_MATCH_TEXT();
+  }
+
   private render(): void {
     const state = this.state;
     if (state === null) return;
     if (!this.root.isConnected) this.view.dom.ownerDocument.body.append(this.root);
     registerEscapeLayer("link-suggest", () => this.close());
-    this.list.setAttribute("aria-label", FILTER_LABEL());
+    this.relabel();
     this.list.replaceChildren();
     this.empty.hidden = state.items.length !== 0;
     this.list.hidden = state.items.length === 0;

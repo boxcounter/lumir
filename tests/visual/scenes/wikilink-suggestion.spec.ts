@@ -135,13 +135,51 @@ test("无匹配只显示既有空态，Enter 委派编辑器且不创建笔记",
   const doc = "[[missing";
   await openDoc(page, doc);
   await expect(page.locator(OVERLAY)).toBeVisible();
-  await expect(page.locator(".lumir-link-suggest-empty")).toHaveText(/没有匹配的条目|No matching items/);
+  await expect(page.locator(".lumir-link-suggest-empty")).toHaveText("没有匹配的条目");
   await expect(page.locator(ROW)).toHaveCount(0);
   await page.keyboard.press("Enter");
   expect(await readDocument(page)).toBe(`${doc}\n`);
   expect(await fileText(page, "source.md")).toBe(doc);
   expect(await fileText(page, "missing.md")).toBeUndefined();
 });
+
+for (const { shape, doc } of [
+  { shape: "有候选", doc: "[[al" },
+  { shape: "空态", doc: "[[missing" },
+] as const) {
+  test(`${shape}已打开时 zh → en → zh 即时 relabel，候选状态与磁盘不变`, async ({ page }) => {
+    await openDoc(page, doc);
+    const list = page.locator(`${OVERLAY}-list`);
+    const empty = page.locator(".lumir-link-suggest-empty");
+    await expect(page.locator(OVERLAY)).toBeVisible();
+    await expect(list).toHaveAttribute("aria-label", "筛选");
+
+    for (const target of [
+      { lang: "en", label: "Filter", noMatch: "No matching items" },
+      { lang: "zh-Hans", label: "筛选", noMatch: "没有匹配的条目" },
+    ] as const) {
+      const before = {
+        doc: await readDocument(page),
+        disk: await fileText(page, "source.md"),
+        caret: await caret(page),
+        focused: await focused(page),
+        rows: await rows(page),
+        active: await page.locator(`${ROW}.is-active`).allTextContents(),
+      };
+      await page.keyboard.press("Meta+Shift+L");
+      await expect(page.locator("html")).toHaveAttribute("lang", target.lang);
+      await expect(list).toHaveAttribute("aria-label", target.label);
+      await expect(empty).toHaveText(target.noMatch);
+      await expect(page.locator(OVERLAY)).toBeVisible();
+      expect(await readDocument(page)).toBe(before.doc);
+      expect(await fileText(page, "source.md")).toBe(before.disk);
+      expect(await caret(page)).toBe(before.caret);
+      expect(await focused(page)).toBe(before.focused);
+      expect(await rows(page)).toEqual(before.rows);
+      expect(await page.locator(`${ROW}.is-active`).allTextContents()).toEqual(before.active);
+    }
+  });
+}
 
 test("接受前索引失效：零候选写入，Enter 走原逻辑", async ({ page }) => {
   const doc = "[[al";
