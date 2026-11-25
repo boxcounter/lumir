@@ -117,10 +117,10 @@ composer（输入区）与控制行 SHALL 收进同一个圆角卡片容器（�
 
 ### Requirement: Skill 支持
 
-系统 SHALL 自动发现 user-wide（`~/.agents/skills/`）与 vault-wide（`<vault>/.agents/skills/`）两处的 Skill（SKILL.md 约定），vault-wide 同名覆盖 user-wide。Skill 索引（name + description）SHALL 注入系统上下文；`skill_load(name)` 工具 SHALL 按名加载 SKILL.md 全文，路径解析 MUST 限定在两个 Skill 根内（只读、防逃逸）。外部能力（如 Tavily）SHALL 以「Skill + 对应 CLI」形态接入，系统 SHALL NOT 为特定外部服务内置专用工具。
+系统 SHALL 自动发现 user-wide（`~/.agents/skills/`）与 vault-wide（`<vault>/.agents/skills/`）两处的 Skill（SKILL.md 约定），vault-wide 同名覆盖 user-wide。Skill 索引（name + description）SHALL 注入系统上下文；`skill_load(name)` 工具 SHALL 按名加载 SKILL.md 全文，路径解析 MUST 限定在两个 Skill 根内（只读、防逃逸）。与网页无关的外部能力 SHALL 以「Skill + 对应 CLI」形态接入；统一 `web_search` / `web_fetch` 是本条明确列入工具集的外部网页阅读合同，首个 provider 为 DeepSeek。后续搜索 / 抓取 provider MUST 并入同一工具合同，MUST NOT 为特定服务另造专用工具名、别名或第二套结果形状。
 
 除模型自主判断外，用户 SHALL 可经输入区显式选择点名 Skill，由后端确定性加载；两条入口的缺省、分控、
-权限与留存见「Skill 的混合调用与入口策略」。文本里的 `/名字` 字样 MUST NOT 被当作显式调用依据。
+权限与留存见「Skill 的混合调用、入口策略与候选交互」。文本里的 `/名字` 字样 MUST NOT 被当作显式调用依据。
 该新增入口 MUST NOT 改变默认 Skill 的索引注入与模型自主 `skill_load` 能力；索引仍是会话建立 / 新会话 /
 压缩时装配一次的会话快照。
 
@@ -160,9 +160,15 @@ Skill 可在当回合按新发现结果执行，但索引不因它重装配；�
 - **THEN** 禁手动不进候选但仍进索引并可自动加载；禁自动不进模型自动执行但仍可显式选择；grammar 之外
   的名字不进候选，其现有索引与 `skill_load` 口径逐条不变
 
+#### Scenario: 统一 Web 工具是明确例外而非服务别名
+
+- **WHEN** `harness.web_access.enabled=true` 且交互主会话需要搜索或读取网页
+- **THEN** 模型使用统一的 `web_search` / `web_fetch` 合同，首 provider 为 DeepSeek；系统不得再要求该链路
+  必须经 Skill + CLI，也不得提供 DeepSeek 专用搜索别名
+
 ### Requirement: 工具循环
 
-对话运行时 SHALL 支持工具循环：模型返回工具调用时，系统执行对应工具并将结果回送，直至模型不再调用工具或达到循环上限（默认 50，`[harness].loop_max` 可调；出厂值 M367 由 8 上调至 50，上界仍为 64）。达到上限 SHALL 终止循环并在面板给出明确提示。运行时 SHALL 维护会话状态于 Rust core，webview 重载 MUST NOT 丢失会话。工具集 SHALL 为 9 件 vault 操作工具：`vault_read`、`vault_search`、`vault_list`、`vault_patch`、`vault_create`、`vault_move`、`vault_delete`、`skill_load`、`cli_run`；另加 2 类不操作 vault 的工具——1 件编排工具 `task`（change `add-harness-subagents`）与 3 件调度工具 `cron_task_create` / `cron_task_list` / `cron_task_remove`（change `add-cron-conversational-registration`）。`task` 属编排工具，是模型按名字委派子代理的入口，其入参与结果契约见 `harness-subagents` capability；子运行的运行上下文 MUST NOT 获得 `task`（派生深度恰好 1 层，实现口径为工具白名单）。3 件调度工具是交互会话注册定时任务的入口，其入参、校验与回执契约见 `cron` capability；它们 SHALL 只在**交互发送路径**注册——无人值守运行（cron 交接的工具白名单只含 9 件 vault 操作工具）与子运行（定义白名单的元素必须是 vault 操作工具）MUST NOT 获得它们。清单外能力扩张须经 Alex 裁决（ADR 0007；`vault_move` / `vault_delete` 的扩张、`vault_list` 的加入、`task` 与 3 件调度工具的分类均以该 ADR 的修订为口径）。
+对话运行时 SHALL 支持工具循环：模型返回工具调用时，系统执行对应工具并将结果回送，直至模型不再调用工具或达到循环上限（默认 50，`[harness].loop_max` 可调；出厂值 M367 由 8 上调至 50，上界仍为 64）。达到上限 SHALL 终止循环并在面板给出明确提示。运行时 SHALL 维护会话状态于 Rust core，webview 重载 MUST NOT 丢失会话。工具集 SHALL 为 9 件 vault 操作工具：`vault_read`、`vault_search`、`vault_list`、`vault_patch`、`vault_create`、`vault_move`、`vault_delete`、`skill_load`、`cli_run`；另有不操作 vault 的编排工具 `task`、调度工具 `cron_task_create` / `cron_task_list` / `cron_task_remove`，以及交互主会话的 2 件 Web 阅读工具 `web_search` / `web_fetch`。`task` 属编排工具，是模型按名字委派子代理的入口，其入参与结果契约见 `harness-subagents` capability；子运行的运行上下文 MUST NOT 获得 `task`（派生深度恰好 1 层，实现口径为工具白名单）。3 件调度工具是交互会话注册定时任务的入口，其入参、校验与回执契约见 `cron` capability；它们 SHALL 只在**交互发送路径**注册——无人值守运行（cron 交接的工具白名单只含 9 件 vault 操作工具）与子运行（定义白名单的元素必须是 vault 操作工具）MUST NOT 获得它们。2 件 Web 阅读工具 SHALL 只在 `harness.web_access.enabled=true` 时于交互主会话注册，该键缺省为 `true`，因此默认注册；显式 false 不注册且幻觉调用回送 `tool_unknown`。cron 与子运行 MUST NOT 获得它们，本 change 不扩大既有 9 件白名单或内建 `general`。清单外能力扩张须经 Alex 裁决（ADR 0007；`vault_move` / `vault_delete` 的扩张、`vault_list` 的加入、`task` 与 3 件调度工具的分类均以该 ADR 的修订为口径）。
 
 同一条助手消息里的多个 `task` 调用 SHALL 并行执行，非 `task` 调用 SHALL 维持既有逐个执行口径；
 工具结果 SHALL 按原调用顺序回填（并行只影响执行时刻，不改变结果的排列），父请求的 `tool_calls`
@@ -201,9 +207,24 @@ capability。
 - **THEN** 只有交互发送路径的请求含 `cron_task_create` / `cron_task_list` / `cron_task_remove`；
   另外两条路径 MUST NOT 含它们（定时运行不能给自己排任务，子代理不能排任务）
 
+#### Scenario: Web 工具只在交互主会话注册
+
+- **WHEN** `harness.web_access.enabled=true` 时分别取交互主会话、cron 交接与子运行的模型工具定义
+- **THEN** 只有交互主会话含 `web_search` / `web_fetch`；另外两条路径不含它们，既有 9 件 vault 工具
+  白名单与内建 `general` 不因此扩权
+- **AND** `harness.web_access.enabled` 缺省为 true 时交互主会话默认注册；显式 false 时三条路径都不含
+  这两件工具，幻觉调用回送 `tool_unknown`，不解析 provider 且不产生网络请求
+
 ### Requirement: 权限机制
 
 系统 SHALL 实现两层权限规则：allow / deny（不存在 `ask` 规则表——需要「必须问」的语义由危险黑名单与模式默认分层承担），判定顺序 deny > allow > 默认分层。规则语法 SHALL 支持 tool 级与 tool+模式级（如 `cli(tavily *)` 的命令前缀匹配）；匹配语义 SHALL 为：模式以 `*` 结尾时按**主体串前缀**匹配，星号前是空格时（生成规则的标准形态，如 `cli(git push *)`）另 SHALL 命中「去掉该尾随空格后逐字相等」的主体串——无参数的 `git push` 与带参数的 `git push origin main` 同样命中，词边界 MUST NOT 因此放宽（`git pushx` 不命中）。allow 规则 SHALL 既可手写于配置，也可由批准卡沉淀（生成、去重与作用域口径见「权限规则的持久化与治理」），并 SHALL 在权限浮层中逐条可见、可删。权限规则之外，系统 SHALL 提供**三档权限模式**作为默认分层的档位：`read_only` / `vault_write`（默认）/ `full_access`，逐档语义如下——读类工具（`vault_read` / `vault_search` / `vault_list` / `skill_load` / `cron_task_list`）三档均直接放行；`vault_patch` / `vault_create` / `vault_move` 在 `read_only` 档 SHALL 逐个问（Always Ask，2026-10-09 Alex 裁决：该档语义为「读自动放行、一切写逐个问」，模式层 MUST NOT 直接拒绝），在 `vault_write` 与 `full_access` 档 SHALL 自动放行；`vault_delete` 在 `read_only` 与 `vault_write` 档 SHALL 逐个问（Vault Write 档的分界以 Alex 裁决点 1 为口径），在 `full_access` 档 SHALL 自动放行；`cli_run` 只读白名单命令三档均直接放行；`cli_run` 写命令在 `read_only` 与 `vault_write` 档 SHALL 逐个问，在 `full_access` 档 SHALL 自动放行（写目标在 vault 内者除外，见「cli_run 命令分类与 vault 写重定向」）；`cron_task_create` / `cron_task_remove` 在 `read_only` 与 `vault_write` 档 SHALL 逐个问、在 `full_access` 档 SHALL 自动放行（定时任务是持续性开销，批准的一刻是用户唯一能看见「它以后会自己跑」的时机）；危险黑名单命令（rm / shutdown·reboot·halt·poweroff / mkfs 系 / dd / git reset --hard / git clean / shell 包装器类，首版清单；shell 包装器中「受限解包」成立的只读形态除外，口径见「cli_run 命令分类与 vault 写重定向」）**任何档都 SHALL 逐个问**，MUST NOT 自动放行。模式层 SHALL 只在「直接放行」与「逐个问」之间切换，SHALL NOT 产出「拒绝」——拒绝只来自用户 deny 规则。
+
+`web_search` / `web_fetch` SHALL 属于独立的 `web_read` 权限类，MUST NOT 加入上述读类工具白名单。
+`harness.web_access.approval` 缺省为 `allow_all`，两件工具在 `read_only` / `vault_write` /
+`full_access` 三档均 SHALL 默认直接执行；只有用户显式改为 `ask` 才进入批准闸。Web 判定顺序为
+deny > 既有硬层 > `web_access.approval`，deny 永远优先；Web 不使用 allow 规则或会话缓存派生授权。
+任何 approval 值都 MUST NOT 跳过执行期的 URL、DNS、重定向、内容类型、预算或密钥检查。
+`web_read` 是权限分类，MUST NOT 被实现成第三件工具或第四档权限模式。
 
 判定总序 SHALL 为：deny 规则 > vault 内写重定向 > 危险黑名单 > allow 规则 > 模式默认分层——前四层模式无关，allow 规则 SHALL 在任何档生效（含 `read_only` 档），模式只替换最底层默认分层。deny 命中 SHALL 直接拒绝并回送模型：拒绝对话 MUST NOT 进入批准闸（不产批准卡、不等待用户决定），且回送的错误 SHALL 带上**命中的规则原文**（如「命中 deny 规则 cli(npm run deploy*)」），使「是哪条规则拦的」不必回配置文件核对；规则原文拼入后若超出工具行摘要的展示长度上限，SHALL 退回不带规则原文的既有文案，MUST NOT 呈现被截断的规则名。ask 档 SHALL 以批准闸呈现：执行前挂起循环，面板显示待批准项（写文档显示 diff 预览，CLI 显示完整命令），Alex 采纳后才执行，拒绝（及可选原因）回送模型；未决批准项 MUST NOT 自动超时通过。`cron_task_create` / `cron_task_remove` 的批准卡 SHALL 呈现该次动作的任务要素——`create`：`at`、`days`、`delivery`、`session`、目标 vault、`prompt` 全文，以及「注册当日是否补触发」；`remove`：任务 `id` 与 `at`。会话内批准缓存（「采纳且本会话不再问」）对这两件工具的主体串 SHALL 由 `id` / `at` / `days` 组成，MUST NOT 包含 `prompt`（主体串会进缓存键与诊断，`prompt` 的私密内容只出现在批准卡与会话留存里）。
 
@@ -278,6 +299,13 @@ capability。
 - **AND** 用户对本条点「采纳且本会话不再问」后，同一 `id` + `at` + `days` 的再次创建不再进闸，
   改 `prompt` 但时间不变的创建同样不再进闸（主体串不含 `prompt`）
 
+#### Scenario: Web 默认 Allow 与 deny 硬边界
+
+- **WHEN** `harness.web_access.approval` 缺省为 `allow_all`，模型在三种权限模式中的任一种调用
+  `web_search` 或 `web_fetch`
+- **THEN** 调用不进入批准闸而直接执行，工具行 / 结果保留完整 query / URL、provider、费用与
+  untrusted 审计；若目标命中 `web_fetch(origin)` deny 或其它硬边界，仍按对应错误拒绝且不产生请求
+
 ### Requirement: 批准闸呈现与决策后收敛
 
 批准闸的 diff 预览中，以 `+` / `-` 起首的增删行底色 MUST 覆盖该行文本的完整宽度，与卡片可视宽度
@@ -297,16 +325,31 @@ capability。
 出现）。判定依据 SHALL 由后端判定管线产出并随批准请求事件与 `harness_state` 快照两条通道同源到达
 前端，前端 MUST NOT 自行推导层级；依据 SHALL 覆盖产批准卡的两层，并如实区分：**危险黑名单**命中
 （shell 包装器类点名包装器命令名并说明其内容不可知；其余危险命令类说明命中安全黑名单）与**模式
-默认分层**（带当时判定的档位名与该档释义）。判定依据 MISSING（旧后端 / 旧快照载荷）时该行 SHALL NOT
-渲染，MUST NOT 以猜测或默认文案填充。该行 SHALL 随界面语言重取文案，MUST NOT 残留旧语言串。
+默认分层**（带当时判定的档位名与该档释义），以及 **Web access 策略**（独立
+`DecisionReason::WebAccessPolicy { approval: "ask" }`，明确实际 `harness.web_access.approval=ask`）。
+Web access 依据 MUST NOT 使用 `ModeDefault`，也 MUST NOT 显示 `read_only` / `vault_write` /
+`full_access` 的档释义作为进闸原因；`allow_all` 自动放行不产依据，origin deny 沿用 `DenyRule`
+且不产批准卡。判定依据 MISSING（旧后端 / 旧快照载荷）时该行 SHALL NOT 渲染，MUST NOT 以猜测或
+默认文案填充。该行 SHALL 随界面语言重取文案，MUST NOT 残留旧语言串。
 
 批准卡的次级动作 SHALL 由后端随批准请求下发（事件与快照两条通道同源），前端 MUST NOT 按判定依据
-或其它字段自行推断可见性。模式默认分层进闸的卡 SHALL 显示「采纳且本会话不再问（记住 `<粒度>`）」；
+或其它字段自行推断可见性。非 Web 工具因模式默认分层进闸的卡 SHALL 显示
+「采纳且本会话不再问（记住 `<粒度>`）」；
 可持久化规则的工具（非危险层进闸的 `cli_run`、`vault_patch` / `vault_create` / `vault_move`）另
 SHALL 显示「以后都允许 `<规则原文>`」，规则原文由后端单一真源生成、按钮逐字显示。**危险黑名单
 命中的卡 MUST NOT 显示这两枚次级动作**：该层先于 allow 规则与会话缓存判定，这两枚按钮在那类卡上
 是死按钮（点了也不生效），显示即误导。次级动作字段缺省（旧后端 / 旧快照载荷）时两枚按钮 MUST NOT
 渲染。
+
+`harness.web_access.approval` 缺省为 `allow_all`，Web 工具 SHALL NOT 默认产生批准卡；只有显式
+`approval=ask` 时，Web 批准卡的预览载荷才 SHALL 与批准请求事件 / `harness_state` 快照同源：
+Search 显示完整 query、实际 provider id、query 发往 DeepSeek 的外发与计费说明；Fetch 显示完整 URL、
+规范化 origin、实际 provider id，以及「Lumir 先做本地 HEAD / Range GET 预检、再把 URL 发给
+DeepSeek 抓取」的双路外发与计费说明。provider 尚未解析成功时预览中的 provider / provider id 为 null，
+不伪造 `"deepseek"` 为配置 id。Web 卡不生成专用持久 allow / 免问动作；origin deny 只在设置与
+权限规则中管理。批准或拒绝后，待决字段、说明与动作 SHALL 按本条统一终态折叠，只保留工具名 +
+决策结果 + 相对时间；完整 query / URL 与决策摘要 SHALL 可在展开详情中回看，不以待决按钮或置灰
+动作残留。默认 Allow 的工具行 / 结果 SHALL 保留同样的输入、provider、费用与 untrusted 审计。
 
 #### Scenario: diff 行高亮覆盖整行文本
 
@@ -338,6 +381,12 @@ SHALL 显示「以后都允许 `<规则原文>`」，规则原文由后端单一
 - **WHEN** 默认 `vault_write` 档下模型调用库外写命令（如 `cli_run("npm", ["install"])`）进入批准闸
 - **THEN** 批准卡的判定依据行带出当时档位（`保险库写入` / `Vault Write`）与该档释义（库内写自动放行、库外命令先问），使「已是 Write 档为何还问」在卡上自洽可读
 
+#### Scenario: full_access 下 Web Ask 依据独立于权限模式
+
+- **WHEN** 权限模式为 `full_access` 且 `harness.web_access.approval=ask`，模型调用 Web 工具
+- **THEN** 判定依据为 `WebAccessPolicy{approval:"ask"}`，明确网页访问策略是 Ask，不出现
+  `ModeDefault` 或 full_access 档释义；approval=allow_all 时不产卡，origin deny 时不产卡
+
 #### Scenario: 判定依据随决策退场
 
 - **WHEN** Alex 对带判定依据行的批准项点击采纳或拒绝
@@ -352,6 +401,20 @@ SHALL 显示「以后都允许 `<规则原文>`」，规则原文由后端单一
 
 - **WHEN** 任意档下 shell 包装器命令（脚本不可解包）或危险黑名单命令进入批准闸
 - **THEN** 卡上 MUST NOT 出现「采纳且本会话不再问」与「以后都允许」两枚按钮（MUST NOT 以置灰形态出现）；只保留采纳 / 拒绝
+
+#### Scenario: 可选 Ask 的 Fetch 预览与终态折叠
+
+- **WHEN** `harness.web_access.approval=ask`，`web_fetch("https://example.com/a?q=1")` 进入批准闸且
+  provider 已解析成功，随后用户采纳或拒绝
+- **THEN** 卡片显示完整 URL、origin `https://example.com`、实际 provider id，以及 Lumir 预检 +
+  DeepSeek 抓取的双路外发与计费说明；不出现 Web 专用持久 allow / 免问动作。决策后预览与按钮退场，
+  卡片折叠为工具名 + 决策结果 + 相对时间，展开详情仍可回看完整 URL 与决策摘要
+
+#### Scenario: 默认 Allow 不产生批准卡且审计仍在
+
+- **WHEN** `harness.web_access.approval` 缺省为 `allow_all`，模型连续调用 Search / Fetch
+- **THEN** 不产生逐次批准卡或 Web 专用持久 allow 动作，调用直接执行；工具行 / 结果仍保留完整
+  query / URL、provider、费用与 `trust:"untrusted"`
 
 ### Requirement: 上下文用量显示与触顶处理
 
@@ -455,8 +518,21 @@ composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip �
 并给一条人话 warning；`model`——可选模型 id，缺省 `null` = 选定 provider 的生效模型，非空须在
 选定 provider 的 `models` 清单内声明，未声明 SHALL 回落 `null` 并给一条人话 warning；mock
 provider 无模型清单，`model` 只能为 `null`）、`attachment_naming` 表（与会话命名同形，另有
-`vision` 资格闸，见 change `add-semantic-image-naming`）、`subagents` 表。命名调用的
-provider / 模型 / wire 方言 / `api_key` / `base_url` SHALL 同出一个 provider 条目。
+`vision` 资格闸，见 change `add-semantic-image-naming`）、`subagents` 表、`web_access` 表
+（`enabled` 缺省 `true`，显式 `false` 才不注册 Web 工具；`approval` 缺省 `allow_all`，可选 `ask`；
+关闭不删除 provider、origin deny 或历史）。命名调用的 provider / 模型 / wire 方言 / `api_key` /
+`base_url` SHALL 同出一个 provider 条目。
+
+`web_access.enabled` 缺省为 `true`，因此两件 Web 工具默认注册；显式 false 时不注册且不解析 Web
+provider。`web_access.approval` 缺省为 `allow_all`，因此默认直接执行；`ask` 才进入批准闸。
+设置快照 / patch / revision SHALL 覆盖两键，恢复默认 = 删键；provider 增删 / 切换 MUST NOT 重置它们。
+origin deny 仍归 `permissions.deny`，MUST NOT 复制进 `web_access`。
+
+只有 `web_access` 表 / 键缺失才使用上述批准默认值。整表错形状、`enabled` 非布尔、`approval`
+非字符串或未知枚举 SHALL 进入局部 Invalid 状态：安全读数为 `enabled=false, approval=ask`，并产生
+稳定 `web_access_config_invalid`。Invalid SHALL NOT 注册工具，直接调用也返回该错误且不解析 provider、
+零网络请求。该校验 MUST NOT 触发整文件回落，provider、permissions.allow / deny 与其它配置原样保留；
+设置修复写不得顺手清空 origin deny。
 
 `providers` 表 SHALL 是动态映射：provider id 由用户定义（`mock` 为验收专用保留 id），任何满足
 `^[a-z0-9][a-z0-9_-]{0,31}$` 的 id 都可出现；条目数量 MUST NOT 被限制为固定值。每个条目的行为
@@ -574,8 +650,24 @@ MUST NOT 因编辑面而改变；开关关闭时这两个键 MUST NOT 被自动�
 #### Scenario: 悬空命名目标回落到当前使用项
 
 - **WHEN** `attachment_naming.provider = "deleted-one"`，而 `providers` 表里已没有该 id
-- **THEN** 启动不失败；图片命名的目标回落当前使用项并给一条人话 warning；自动化设置页显示
+- **THEN** 启动不失败，图片命名的目标回落当前使用项并给一条人话 warning；自动化设置页显示
   「已回落到当前 provider」；不会因此阻断开机或发送
+
+#### Scenario: 网页访问默认启用且配置键受 revision 保护
+
+- **WHEN** `harness.web_access.enabled` 与 `.approval` 缺省，随后用户关闭 Web、改为 Ask、切 provider
+  并恢复默认
+- **THEN** 缺省为 `enabled=true, approval=allow_all`，两件工具默认注册并直接执行；关闭后不注册，
+  Ask 时进批准闸；切 provider 不重置两键；恢复默认删除两键且不复制或清空 `permissions.deny`
+  中的 origin 例外
+
+#### Scenario: 显式非法 Web 配置 fail closed 且不清 deny
+
+- **WHEN** 文件已有合法 provider 与 `web_fetch(https://example.com)` deny，随后分别出现
+  `web_access: "on"`、`enabled: "yes"`、`approval: true`、`approval: "always"`
+- **THEN** 每种都产生 `web_access_config_invalid`，安全读数为 enabled=false / ask，不注册、零网络请求；
+  不得变成 enabled=true / allow_all，provider、origin deny 与其它配置保持不变；用显式合法值修复后
+  才按新配置恢复
 
 ### Requirement: 会话边界
 
@@ -4519,9 +4611,11 @@ Skill 内容引发的 `cli_run`；invocation policy MUST NOT 替代或放宽权�
 
 #### Scenario: 自动入口默认行为不削弱
 
-- **WHEN** Skill 根下存在某外部搜索技能且 Alex 提问需要联网搜索，该 Skill 未禁自动
-- **THEN** 模型可见技能索引条目，经 `skill_load` 取得用法后经 `cli_run` 调用对应 CLI；
-  工具结果与既有留存形态不变
+- **WHEN** `harness.web_access.enabled=true` 且 Alex 提问需要联网搜索；随后另一个问题明确要求使用某外部
+  Skill、访问特殊站点或读取非 HTML 内容
+- **THEN** 一般网页搜索默认使用统一 `web_search` / `web_fetch`，不再要求经 `skill_load` 后调用 `cli_run`；
+  只有用户显式选择 Skill、特殊站点或非 HTML 场景才经对应 CLI，工具结果与既有留存形态不变；
+  `harness.web_access.enabled=false` 时 Web 工具不注册，不得以幻觉调用代替显式 CLI 选择
 
 #### Scenario: 权限判定对两个入口一致
 
@@ -4576,6 +4670,7 @@ Skill 内容引发的 `cli_run`；invocation policy MUST NOT 替代或放宽权�
 - **WHEN** 发起新会话并读取装配后的系统提示，Skill 清单含默认、禁自动、禁手动与非法元数据条目
 - **THEN** 身份段含显式段头、斜杠路径与混合调用约定；默认条目不增加策略标记，其他条目分别标注；
   固定段字节指纹与装配清单同步
+
 ### Requirement: Harness Markdown strong 的流式渲染一致性
 
 凡项目既有 `@lezer/markdown` GFM 配置认定为 `StrongEmphasis` 的 strong，Harness SHALL 在普通段落、
@@ -4616,3 +4711,371 @@ MUST NOT 被切成顶层缩进代码块。确认列表已被后续顶层块关�
 - **WHEN** 普通段落后出现空行，或列表/闭合代码围栏之后已经出现后续顶层块
 - **THEN** 已结束块按既有增量路径定稿，进行中的尾块继续重渲；不得为了修复列表上下文而
   退化为每个 chunk 都冻结全部正文或取消全部增量定稿
+
+### Requirement: 统一 Web 搜索与抓取工具
+
+`harness.web_access.enabled` 缺省为 `true`，交互主会话 SHALL 默认提供 `web_search` 与 `web_fetch`，
+两者 SHALL 使用同一结果信封与 `WebSource` 来源结构；显式 false 不注册这两件工具。`web_search` 输入 SHALL 仅含 `query` / `count` / `need_content`：query trim 后为 1–128 个
+Unicode 字符且不全为空白；count 缺省 5、本地允许 1–10，越界 SHALL 返回 `web_args_invalid` 而非静默
+clamp；`need_content` 缺省 `false`。`web_fetch` 输入 SHALL 仅含 1–8192 字符的 `url`。工具 schema
+MUST NOT 暴露 API Key、provider、base URL、超时、重试、响应上限或任意 HTTP header。
+
+统一信封 SHALL 含 `ok` / `provider` / `provider_id` / `operation` / `attempts` / `local_precheck` /
+`trust` / `truncated` / `truncated_fields`。`local_precheck` SHALL 记录 Fetch 是否**实际执行过**
+本地预检：未配置、配置非法、参数非法、权限拒绝等未进入 executor 的路径为 `false`；进入 executor
+后无论预检成功、失败还是取消均为 `true`。审计 MUST NOT 仅按 `operation=fetch` 推断该值。`provider` / `provider_id` SHALL 为 `string | null`：只有 provider
+解析成功才填 `"deepseek"` 与实际配置映射键；未配置、配置歧义、自定义 base URL 及解析前的参数 /
+权限 / URL 拒绝均填 null 且 `attempts=0`，MUST NOT 伪造 `"deepseek"` 为配置 id 或在多候选时暗选。
+基础参数形状与 URL 静态安全校验（scheme / userinfo / 控制字符 / 反斜杠 / 缺失 host，以及
+`localhost`、`.local`、非全局单播 IP 字面量）SHALL 在 provider 解析与可选批准预览之前完成：
+任一 provider 配置状态（未配置、配置歧义、自定义 base URL）都 MUST NOT 掩盖 URL 安全拒绝，
+被拒调用 MUST NOT 变成 `web_provider_unconfigured`，也 MUST NOT 产生批准卡；这些路径的
+`local_precheck` 为 `false`（预检未执行），`attempts` 为 `0`，可解析出 origin 的拒绝仍带
+`source.url`，带凭据的输入 MUST NOT 被抄进 `source`。
+成功 Search SHALL 另带完整 query 与 `results: WebSource[]`，成功 Fetch SHALL 另带
+`source: WebSource`。`WebSource` SHALL 固定包含 `url` / `title` / `snippet` / `summary` /
+`content` / `content_format` / `site` / `date` / `authority`。title SHALL 始终为 string，
+Fetch 空标题固定 `""`；其它可空字段的无信息值才用 null，MUST NOT 混用空串与 null。
+Search SHALL 原样保留 date 与 -1–4 的 authority（含 -1 = 未知）；Fetch 无这两项信息时填 null。
+`site_icon` MUST NOT 进入结果，避免派生未审计的图片请求。
+
+Search 的 `need_content=false` SHALL 作为默认工作流：先返回来源与摘要，再由模型按需调用 Fetch 获取
+Markdown。Search 空数组 SHALL 是成功的空结果；Fetch 空 Markdown SHALL 返回 `web_empty_content`，
+不得冒充有正文的成功。Fetch 的 `source.url` SHALL 是本地预检后实际提交给 DeepSeek 的 URL，
+MUST NOT 伪造 provider 未返回的 final URL。
+
+系统 SHALL 同时限制 API 响应字节与进入模型上下文的字符：Search title / snippet / summary 每项上限
+300 / 500 / 1,200 Unicode 字符，Search content 每项 4,000 字符且全部 results 文本合计 24,000 字符，
+Fetch Markdown 24,000 字符，Lumir message / provider_message / request_id / provider_code 各 1,000
+字符；Search / Fetch API 响应
+分别不得超过 2 / 4 MiB。聚合裁剪 SHALL 按 content → summary → snippet 顺序，结果只能整条移除；
+URL / date / authority / provider MUST NOT 被裁剪。任何字段或数组被裁剪时 SHALL 同时置
+`truncated:true` 并在 `truncated_fields` 列出稳定路径；未截断时该数组为 `[]`。只在文本末尾加省略号
+而缺少这些字段 SHALL 视为违约。API 字节超限 SHALL 返回 `web_response_too_large`，不解析半截 JSON。
+
+#### Scenario: 默认搜索后再抓取
+
+- **WHEN** 模型以默认参数调用 `web_search`，随后选择一个来源调用 `web_fetch`
+- **THEN** Search 请求携带 `count=5, need_content=false`，返回结构化来源但无需返回正文；Fetch 第二跳
+  返回同一 `WebSource` 形状的 Markdown 内容，最终回答可引用 URL / title / date / authority / provider
+
+#### Scenario: 空结果与空正文不同
+
+- **WHEN** DeepSeek Search 返回空 results，或 Fetch 返回空 Markdown
+- **THEN** 前者为 `ok:true, results:[]` 且不自动重试；后者为 `web_empty_content`，不得返回伪造正文
+
+#### Scenario: 可空 provider 与空标题形状一致
+
+- **WHEN** 分别发生无配置、配置歧义、解析前参数错误，以及 Fetch 无标题
+- **THEN** 前三者的 `provider` / `provider_id` 均为 null 且 `attempts=0`，不暗选或伪造 id；
+  最后一者的 `source.title` 为 `""` 而非 null
+
+#### Scenario: URL 安全拒绝先于 provider 解析
+
+- **WHEN** `web_fetch` 收到 `localhost`、`.local`、非全局单播 IP 字面量、非 HTTP(S) scheme 或带凭据的
+  URL，且 provider 处于未配置 / 配置歧义 / 自定义 base URL 任一状态（`approval` 为任意值）
+- **THEN** 结果恒为 `web_url_blocked`（参数形状非法则为 `web_args_invalid`），MUST NOT 被配置状态
+  改写成 `web_provider_unconfigured`；`provider` / `provider_id` 为 null、`attempts=0`、
+  `local_precheck=false`，不产生批准卡，可解析出 origin 的路径仍带 `source.url`
+
+#### Scenario: 截断显式且 JSON 完整
+
+- **WHEN** 搜索摘要、正文、结果数组或 provider 错误文案超过预算
+- **THEN** 输出仍为完整 JSON，顶层 `truncated:true`，`truncated_fields` 精确指出被裁路径；未裁的
+  URL / date / authority / provider 保持完整，不出现只加省略号的无标记截断
+
+#### Scenario: 响应字节与上下文预算独立
+
+- **WHEN** DeepSeek 响应超过对应 2 / 4 MiB 上限，或合法响应的正文超过模型字符预算
+- **THEN** 前者返回 `web_response_too_large` 且不解析半截 JSON；后者可返回有界结果但必须显式标记截断
+
+#### Scenario: 错误元数据同样有界
+
+- **WHEN** provider 的错误响应带超长 `message` / `provider_message` / `request_id` / `provider_code`，
+  或本地预检失败的错误串包含完整 8,192 字符 URL
+- **THEN** 四个字段各自不超过 1,000 字符，且被裁字段逐一进入 `truncated_fields`；URL 本身的
+  `source.url` 不被裁剪
+
+#### Scenario: 审计按实际发生记录预检与外发
+
+- **WHEN** 分别发生 allow_all 正常执行、ask 批准后执行、deny、未配置
+- **THEN** 只有进入 executor 的 Fetch 审计 `local_precheck=true`；`provider_fetch` 只在
+  `attempts>0` 时为 true；deny / 未配置的审计两个布尔均为 false，MUST NOT 按 operation 恒猜
+
+### Requirement: Web 访问策略与 origin 例外
+
+`harness.web_access.approval` 缺省为 `allow_all`，`web_search` / `web_fetch` SHALL 在所有权限模式中
+默认直接执行；只有显式 `approval=ask` 才进入批准闸。Web 判定顺序 SHALL 为 deny > 既有硬层 >
+`web_access.approval`，deny 永远优先。Web MUST NOT 使用 allow 规则或会话缓存派生授权，也 MUST NOT
+生成 Web 专用持久 allow / 免问动作；其它工具的 allow / 缓存语义不变。
+
+Search 的 permission subject SHALL 为完整 query；Fetch 的 subject SHALL 为规范化 origin
+（scheme + host + 有效 port），origin 规范化 SHALL 小写 scheme / host、省略默认 port、保留非默认 port，
+且不含 userinfo / path / query / fragment。默认无批准卡时，工具行与结果 SHALL 仍完整展示 query / URL、
+provider id、费用、双路外发与 `trust:"untrusted"`，MUST NOT 只靠 80 字摘要满足可见性。
+`harness.permissions.deny` 中的 `web_fetch(origin)` SHALL 在初始调用与每跳重定向重新判定。
+
+跨 origin 重定向不是新工具调用，MUST NOT 另开批准。预检 SHALL 先校验 Location 的 scheme / 凭据 /
+host，再检查目标 origin deny；未封禁才继续 DNS / 连接 / 内容类型校验，全部通过后可执行。
+被封禁目标在任何 approval 值下都 SHALL 返回 `permission_denied`，且不连接该 origin、不调用 DeepSeek。
+基础参数形状与 URL scheme / userinfo 校验 SHALL 在可选批准预览之前完成，非法调用不得产生携带凭据
+或无效目标的批准卡。任何 approval 值都不得跳过 DNS、重定向、内容类型、预算或密钥检查。
+
+#### Scenario: 默认 Allow 不逐次弹卡且审计完整
+
+- **WHEN** approval 缺省为 `allow_all`，模型以不同 query 连续搜索并抓取多个页面
+- **THEN** 所有调用默认直接执行，没有会话范围限制或逐次批准卡；每次工具行 / 结果仍保留完整
+  query / URL、provider、attempts、费用与 untrusted 说明
+
+#### Scenario: origin deny 恢复默认策略
+
+- **WHEN** 权限 deny 含 `web_fetch(https://example.com)`，用户单独移除或清空该 deny
+- **THEN** 写入复用既有权限规则与 revision；默认 `allow_all` 下该 origin 恢复直接执行，`ask` 下恢复
+  批准闸，approval 不被暗改，其它规则不变
+
+#### Scenario: 跨 origin 重定向只做硬校验与 deny
+
+- **WHEN** Fetch 收到指向另一 origin 的 Location，目标未封禁；另一序列的目标命中 origin deny
+- **THEN** 未封禁目标经 scheme / 凭据 / DNS / no_proxy / 内容类型校验后可继续，不另开批准；
+  封禁目标返回 `permission_denied`，未连接新 origin、未请求 DeepSeek
+- **AND** A → B 全部通过后，提交给 DeepSeek 的 url 与 `source.url` 都是最后一个通过校验的 B URL，
+  不得拒绝跨源或继续提交 A URL
+
+### Requirement: DeepSeek Web provider 与隐私
+
+Web provider SHALL 只从既有 `HarnessConfig` 快照中的 DeepSeek 条目解析。active 条目为 DeepSeek 时，
+系统 SHALL 只考察该条目；active 不是 DeepSeek 时，仅在全部条目中**恰好一条**满足「DeepSeek +
+非空 Key + 官方 base URL」时复用该完整条目，零条或多条均返回 `web_provider_unconfigured`。
+Key 与 base URL MUST 同出一条目，MUST NOT 混用。Web tools 不需要模型清单，因此 MUST NOT 复用要求
+`models` 非空的 LLM configured 判据。
+
+官方地址 SHALL 只认 `base_url=None` 或规范化后等于 `https://api.deepseek.com`（允许末尾 `/`）。
+自定义 DeepSeek-compatible base URL MUST NOT 被探测或假定支持 tools；不可用时 MUST NOT 拿同一 Key
+改投官方地址。active DeepSeek 不可用时 MUST NOT 暗选其它条目。无配置、配置歧义或自定义 base URL
+SHALL 返回 `web_provider_unconfigured`，DeepSeek 请求数与 curl 子进程数均为 0。
+
+Search SHALL 只向 `POST https://api.deepseek.com/v1/tools/search` 发送 `query` / `count` /
+`need_content`，Fetch SHALL 只向 `POST https://api.deepseek.com/v1/tools/fetch` 发送 `url`；
+MUST NOT 发送 `ori_question` / `localization`。API Key SHALL 只进入 `Authorization: Bearer …`，
+MUST NOT 进入 URL、请求 JSON、批准卡、日志、panel、会话 JSONL、wire、错误或测试输出。来自 provider /
+目标站的错误文本 SHALL 先脱敏再限长；恶意回显 Key 时只能留下 `[REDACTED]`。
+
+Search query 会发给 DeepSeek；Fetch URL 会发给 DeepSeek，并会由 Lumir 预检与 DeepSeek 抓取发往
+目标站。默认无批准卡时该事实与费用 SHALL 仍在设置区、工具行与结果可见；`approval=ask` 时还须在
+批准卡可见。目标预检与 DeepSeek client SHALL 都显式 `no_proxy`，不得继承系统或手动代理。
+tools API 的 3xx MUST NOT 跟随并统一归 `web_provider_protocol_error`；目标预检 MUST NOT 携带
+DeepSeek Key、Cookie、vault 内容或浏览器登录态。
+
+#### Scenario: active 非 DeepSeek 时唯一候选可用
+
+- **WHEN** active 为其它 provider，且现有条目中恰好一条 DeepSeek 具有非空 Key 与官方 base URL
+- **THEN** Web 请求复用该完整条目；若候选为零或多条则返回 `web_provider_unconfigured`，不按字典序暗选
+
+#### Scenario: 自定义 base URL fail closed
+
+- **WHEN** active DeepSeek 条目使用自定义 DeepSeek-compatible base URL
+- **THEN** 返回 `web_provider_unconfigured`，不探测 tools、不把 Key 改投官方地址、不选择其它条目，
+  且不产生 HTTP 或 curl 请求
+
+#### Scenario: 恶意错误回显不泄露 Key
+
+- **WHEN** mock provider 或目标站在错误 body / URL 中回显 canary API Key
+- **THEN** 日志、批准卡、panel、JSONL、wire、错误事件与测试输出均无 canary；query / URL 与 provider
+  等审计字段仍按合同可见
+
+### Requirement: Web 目标网络安全
+
+每次 Fetch 与每次重定向 SHALL 重新执行完整 URL / DNS 校验。URL SHALL 为 1–8192 字符的
+HTTP / HTTPS、含 host、无 userinfo；其它 scheme、控制字符、反斜杠混淆与解析失败 SHALL 拒绝，
+MUST NOT 修复成另一个 URL。IP 字面量与 DNS 的全部 A / AAAA 结果 SHALL 都是全局可路由单播；
+任一结果为 loopback、private、link-local、unspecified、multicast、reserved、documentation、CGNAT、
+IPv4-mapped / 兼容映射的非全局地址时整条拒绝，MUST NOT 只挑一个公网地址放行。`localhost`、
+`.local` 与 DNS 解析失败 SHALL fail closed。初始 URL 的 scheme / 凭据与主机类判定（`localhost`、
+`.local`、IP 字面量是否全局可路由）只依赖 URL 字面量，SHALL 在 provider 解析之前完成；重定向的
+每一跳仍 SHALL 重新执行同一套主机类判定，两处共用同一判定实现（同一语义 MUST NOT 两处真源）。
+
+连接 SHALL 只使用已验证地址集，并保留原 host 的 Host 与 TLS SNI；连接前 MUST NOT 再次由系统 resolver
+自由选择地址。目标预检与 DeepSeek client SHALL 都显式 `no_proxy`，每个 hop MUST NOT 重新继承
+HTTP(S)_PROXY / ALL_PROXY / NO_PROXY 或手动 Proxy。`no_proxy + 已验证地址集 + 原 Host / SNI +
+手动逐跳 redirect` SHALL 是同一客户端构造不变量，不能只靠 resolver override 防代理绕路。
+校验与连接 SHALL 共用同一地址集，下一跳 SHALL 重新执行全集校验，以防 check-then-connect 与
+DNS rebinding 绕过。错误 MUST NOT 回显完整 DNS 答案或内部网络拓扑。
+
+本地预检 SHALL 每个 hop 先发 HEAD，无法判定时用 `Range: bytes=0-4095` GET 复核；即使目标忽略 Range，
+读取 SHALL 以响应头和最多 4 KiB 为界并随即关闭，预检正文 MUST NOT 进入模型。单 hop 不得超过 10 秒、
+整链不得超过 30 秒、最多 5 次重定向；预检 MUST NOT 自动重试。相对 Location SHALL 按当前 URL 解析并
+逐跳重验 scheme / 凭据 / host 与 origin deny；跨 origin 不是新工具调用，未封禁才继续 DNS 与连接，
+不另开批准。
+
+预检 SHALL 只接受 `text/html` 与 `application/xhtml+xml`（可带参数）。明确非 HTML 返回
+`web_unsupported_content`，Content-Type 缺失或冲突且 Range GET 仍无法判定返回
+`web_content_type_unknown`；两者只可提示另行选择 curl，MUST NOT 自动调用。预检通过后才可调用
+DeepSeek Fetch，且只发送最后一个通过全部校验的 URL（允许跨 origin）。Search MUST NOT 主动访问结果 URL。
+
+Lumir SHALL 如实区分本地保证与 provider 信任边界：本地预检可验证自己的 DNS / redirect / 内容类型，
+但 DeepSeek 不返回远端 final URL、连接 IP 或 redirect chain，系统 MUST NOT 声称验证 provider 内部
+DNS / redirect，也不得把预检 URL 当作远端 final URL。若不能维持「校验地址与连接地址同一」，
+实现 MUST NOT 退化为普通 HTTP client 的自动 DNS 解析。
+
+#### Scenario: 公私混合 DNS 与 rebinding 均拒绝
+
+- **WHEN** 目标 DNS 同时返回公网与私网地址，或第一次校验为公网、后续解析出现私网
+- **THEN** 整条 Fetch 被拒绝；连接只可使用已验证地址集且 Host / SNI 不变，不得因存在一个公网答案而放行
+
+#### Scenario: 系统代理不得绕过固定 IP
+
+- **WHEN** HTTP(S)_PROXY / ALL_PROXY 指向本地代理，预检目标与 DeepSeek 各自有独立 HTTP 服务
+- **THEN** 预检只连接已验证目标地址，代理零请求；DeepSeek 同样不经过代理，且 3xx 不跟随、
+  Bearer 不泄漏。恢复系统代理的错误实现必须能被该反例判红
+
+#### Scenario: 有界预检与逐跳重验
+
+- **WHEN** 目标页面先对 HEAD 返回不明确 Content-Type，再对忽略 Range 的 GET 返回超大 HTML，随后跨 origin 跳转
+- **THEN** GET 最多读取 4 KiB 即关闭，正文不进入模型；下一跳重新做 URL / DNS 校验，整链超过时限或
+  5 跳即失败且不调用 DeepSeek
+
+#### Scenario: 整次 deadline 覆盖预检
+
+- **WHEN** Fetch 的本地预检耗时超过整次工具调用预算（150 秒；测试注入更短值）
+- **THEN** 在共享 deadline 用尽时返回 `web_timeout`、`attempts=0`，且不再向 DeepSeek 发送任何请求
+
+#### Scenario: 非 HTML 不自动回落 curl
+
+- **WHEN** 预检确认目标为 PDF / 二进制，或无法确认其为 HTML
+- **THEN** 分别返回 `web_unsupported_content` / `web_content_type_unknown`，DeepSeek attempts=0；
+  模型可另行选择 curl，但该调用仍走既有 CLI 权限与批准
+
+#### Scenario: 不伪称 provider 侧 SSRF 证据
+
+- **WHEN** DeepSeek 对预检后的 URL 返回 Markdown，但未返回远端 final URL / IP / redirect chain
+- **THEN** `source.url` 只表示本地预检并提交的 URL；审计不得写成「已验证 DeepSeek 最终连接地址」
+
+### Requirement: Web 请求可靠性与计费边界
+
+DeepSeek 每次 attempt SHALL 连接超时 5 秒；Search / Fetch attempt 总超时分别 30 / 45 秒，含退避与
+本地预检的整次工具调用分别不超过 100 / 150 秒。Fetch 的本地预检与 DeepSeek 阶段 SHALL 共享同一
+deadline：预检只使用剩余时间，整次 deadline 用尽后 MUST NOT 再发 provider 请求，返回 `web_timeout`
+且 `attempts=0`。响应头与 body 读取 SHALL 计入 deadline。取消 SHALL 复用
+`ctx.aborted()` 的同一事实源，在发起前、退避、响应等待与 body 分块读取时检查，且 MUST NOT 持会话锁。
+取消后 SHALL 关闭响应、不再发新 attempt、返回 `web_cancelled`，部分 JSON 不得当成功解析；
+已在 OS / provider 处理的请求无法撤销，系统 MUST NOT 承诺取消可撤销潜在费用。
+
+自动重试 SHALL 只针对 DeepSeek tools API 的 HTTP 408 / 429 / 5xx，最多初次 + 2 次重试；退避优先使用
+上限 2 秒的 `Retry-After`（delta-seconds 或 RFC 2822 / IMF-fixdate 的 HTTP-date；obsolete RFC 850 /
+asctime 形态按缺失处理），缺失时使用 250ms、1s。重试耗尽后的 `message` SHALL 如实写明「已尝试
+初次 + 重试」；单次不可重试的失败才使用「未自动重试」。其它 4xx（含 425）、本地 DNS / connect / TLS /
+timeout、取消、200 后响应过大 / 非 JSON / 坏 JSON / 形状不符 / 空正文 MUST NOT 自动重试。
+本地预检 MUST NOT 自动重试。Search 空 results 不视为错误，Fetch 空 Markdown 即使官方不计费也不重试。
+200 已到达后的本地解析失败 MUST NOT 为追求成功而重复请求。
+
+错误 SHALL 使用稳定内部分类：`web_args_invalid` / `web_access_config_invalid` /
+`web_provider_unconfigured` / `web_url_blocked` / `web_dns_failed` / `web_dns_blocked` /
+`web_redirect_limit` / `web_unsupported_content` / `web_content_type_unknown` / `web_network_failed` /
+`web_timeout` / `web_cancelled` / `web_response_too_large` / `web_provider_protocol_error` /
+`web_http_error` / `web_empty_content`。4xx / 5xx SHALL 归 `web_http_error` 并保留真实 status、
+attempts 与可得的 provider code / request id；3xx SHALL 不跟随并统一归
+`web_provider_protocol_error`，不得双重映射。DeepSeek 404 MUST NOT 被伪造为更精确的目标原因。
+`web_access_config_invalid` 的结果 SHALL 为 `provider:null, provider_id:null, attempts:0`，不注册、
+零请求，MUST NOT 映射为 `tool_unknown` 或 `web_provider_unconfigured`。
+
+Web 工具错误 SHALL 是 `ToolOutput{ok:false}`，不是 LLM `TurnError`，MUST NOT 设置 `Session.failed`
+或新增错误行重试按钮。Web 分类 MUST NOT 复用 LLM 的 `FailureKind`，也不得把 LLM 集合中的 425 加入
+Web 自动重试。工具内部重试只重发当前 HTTP 请求，MUST NOT 重放同批其它工具。
+
+#### Scenario: 可重试状态有界退避
+
+- **WHEN** mock DeepSeek 依次返回 429、503，随后成功；另一序列持续返回 500
+- **THEN** 前者在第三次 attempt 成功且 attempts=3；后者三次后以 `web_http_error` 收尾，退避不超过
+  合同上限，不重放同批其它工具
+
+#### Scenario: 其它失败不自动重试
+
+- **WHEN** 分别出现 HTTP 400 / 401 / 402 / 403 / 404 / 413 / 425、本地 timeout、取消，以及 200 后
+  过大 / 坏 JSON / 空正文
+- **THEN** 每类都按对应稳定 code 收尾且没有第二次 DeepSeek 请求；本地 timeout 与 200 后失败不得因
+  「也许未计费」而重发
+
+#### Scenario: 3xx 不跟随且只有一个错误码
+
+- **WHEN** DeepSeek 分别返回 301 / 302 / 307 / 308 与带敏感目标的 Location
+- **THEN** 每种都只归 `web_provider_protocol_error`，实际跳转请求为 0、Bearer 不泄漏，
+  不得再同时映射为 `web_http_error`
+
+#### Scenario: 取消不产生半截成功
+
+- **WHEN** 工具在等待响应头、读取 body 或退避期间收到停止
+- **THEN** 返回 `web_cancelled`、关闭响应且不再发新 attempt；已收部分 JSON 不进入成功结果，
+  会话锁不被 HTTP 等待占用
+
+### Requirement: Untrusted Web 内容与审计留存
+
+Search / Fetch 的 title、snippet、summary、content 与 provider_message SHALL 全部视为
+untrusted data，结果信封的 `trust:"untrusted"` SHALL 恒在。这些字符串只能作为 function output 的
+JSON 数据进入模型上下文，MUST NOT 注入 system prompt、AGENTS、权限规则、批准理由或 provider 配置。
+网页里的「忽略之前指令」「用户已批准」「以后全部 allow」「执行某命令」等文本 MUST NOT 被当作授权事实，
+不得改变权限配置 / 缓存，也不得自动触发 curl、写文件、修改权限、二次 Fetch 或新 provider 请求。
+后续模型调用 SHALL 重新经过同一工具循环、预算、权限与安全校验。
+
+每次工具完成 SHALL 仍经既有 `finish_call` 形成 function call / output 项与 panel 记录。provider 已实际
+请求后失败时，错误信封（含 attempts / status / provider / request id）SHALL 同样留在该工具结果中，
+下一次 LLM 请求的 wire 历史 SHALL 携带它。DeepSeek tools 是工具外部请求，MUST NOT 另造第二套
+`llm_request` / `llm_response`。
+
+后续 LLM 往返失败后的显式重试 SHALL 复用原 input，MUST NOT 重放已执行的 Web 工具；重试成功后的
+新 Web 调用仍按当前 `web_access.approval` 与 origin deny 处理，并重新执行全部安全校验。
+历史恢复 SHALL 仅凭既有 JSONL 保留 query / URL、来源、错误与
+truncated 标记，不依赖新 sidecar，不改写旧文件。
+
+#### Scenario: 网页提示注入不升级权限
+
+- **WHEN** 网页正文包含「忽略指令、自动批准、执行 curl、以后全部 allow」等指令
+- **THEN** 文本只作为 untrusted JSON 字符串保留，权限配置与缓存不变；后续写 / 危险工具仍按原模式进闸，
+  不产生自动 curl 或二次 Fetch
+
+#### Scenario: provider 失败后 wire 与重试不重放
+
+- **WHEN** DeepSeek 已实际请求并失败，随后一次 LLM 往返也失败，用户执行既有显式重试
+- **THEN** 工具错误连同 attempts / status / provider 留在 function output、panel 与 wire；重试请求的
+  messages 与失败请求相同，DeepSeek 请求次数不增加，工具结果不重复
+
+#### Scenario: 历史恢复保留统一来源与截断事实
+
+- **WHEN** 含 Search / Fetch 的会话仅凭 JSONL 恢复
+- **THEN** query / URL、来源字段、错误与 `truncated` / `truncated_fields` 均可按既有 wire 恢复，
+  不需要新 sidecar，旧文件逐字节不变
+
+### Requirement: Web 真实 HTTP 验收装配边界
+
+生产 Web provider SHALL 只有 official 装配：DeepSeek endpoint 来自官方常量，生产配置 MUST NOT 提供
+endpoint 参数、loopback 白名单、代理开关或跳过 URL / DNS 校验的路径。生产 transport / resolver
+SHALL 执行真实 HTTP 与系统 DNS，目标预检与 DeepSeek client 均显式 `no_proxy`。
+
+隔离测试与真机验收 SHALL 使用独立测试 provider / transport 装配，同时复用生产同款参数校验、DNS
+全集检查、地址固定、redirect、预算、重试与错误分类。只有测试 provider 构造器可接收合成 DeepSeek
+endpoint；生产构造器 MUST NOT 接收该参数。合成 resolver SHALL 给 `target.test` 返回脚本化公网身份，
+测试 connector SHALL 再把已验证公网 IP + 原 host 映射到本地监听地址，不得为验收全局放行 loopback。
+HTTPS SHALL 使用只含 `target.test` 的测试 CA / 证书与隔离 trust store，不得关闭证书校验或挂载真实
+浏览器凭据。
+
+注入 SHALL 只能由隔离验收专用 build / 装配显式激活；普通 `config.json`、环境变量、真实 vault、
+生产 `pnpm tauri dev` 与发布构建 MUST NOT 有激活入口。验收 SHALL 记录真实 HTTP method / path / body /
+状态序列 / 请求次数 / 读取字节数；LLM mock 只驱动确定的工具调用，MUST NOT 用 fixture 声明的错误
+替代这些 Web HTTP 证据。
+
+#### Scenario: 合成公网身份映射本地服务
+
+- **WHEN** 隔离验收以 `target.test` 跑 search → fetch、redirect / DNS 与超时取消
+- **THEN** 生产同款全集校验与地址固定先执行，测试 connector 才把已验证公网身份映射到本地监听；
+  记录包含真实 HTTP 请求形状与次数，不是仅断言 mock fixture 被调用
+
+#### Scenario: HTTPS 保留 Host / SNI 与证书校验
+
+- **WHEN** 隔离验收以 HTTPS 访问 `target.test`
+- **THEN** 仅信任测试 CA / 证书与隔离 trust store，原 Host / SNI 与证书链均被验证；不得关闭证书
+  校验或以 HTTP 用例冒充 SNI 证据
+
+#### Scenario: 生产不能激活测试旁路
+
+- **WHEN** 普通配置 / 环境变量 / 真实 vault / 生产构建尝试提供合成 endpoint 或 loopback 映射
+- **THEN** 没有激活入口，生产仍只使用官方 DeepSeek endpoint，URL / DNS 拒绝规则不变；
+  测试装配不出现在发布构建里

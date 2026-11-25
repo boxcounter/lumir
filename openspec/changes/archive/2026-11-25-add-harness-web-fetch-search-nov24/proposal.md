@@ -148,6 +148,24 @@ D1 / D2 已批准，不再列默认批准策略裁决点。以下 fail-closed �
 - 真机只用隔离测试装配与本地合成 DeepSeek / 目标 HTTP 服务；真实 DeepSeek 计费 API 不属于验收依赖。
   证据落主仓 `.local/`，不落 worktree；覆盖声明必须附场景名与 PASS 计数。
 
+## 节点 2：归档放行（五要件）
+
+机器 + 独立评审放行，按 `docs/process/openspec-workflow.md` 的节点 2 口径记录；不命中必须找 Alex 的例外类别。
+
+1. **方案已批准**：节点 1 于 2026-11-24 通过，Alex 对 D1 回复「默认允许所有」、对 D2 回复「好」；实现期按阶段 1–5 落地，无静默扩 scope。批准口径见本文「节点 1 已批准口径」。
+2. **独立 reviewer clean / merge**：阶段5 tower verdict `clean`，绑定 tip `9ed11c19`，P1 / P2 / P3 均无。评审文件：`/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/harness-web-tools-nov25/stage5-tower-verdict.md`；阶段 1–4 的独立结论同目录 `stage1-k3-verdict.md` / `stage2-k3-verdict.md` / `stage3-k3-verdict.md` / `stage4-tower-verdict.md`。
+3. **tasks 完成**：`tasks.md` 88/88 全部勾选；2.10 / 8.5 / 8.6 / 8.7 的最终证据见各任务行。725/726 的预存在失败不计入 Web 通过，归因见第 4 条。
+4. **门禁与真机证据**：
+   - quick：`GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0，`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-stage5-web/stage5-gate-quick-final.log`。
+   - 完整 visual：`GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0，`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-stage5-web/stage5-gate-visual-final-r3.log`；基线零改动，无待 Alex 批准的候选。
+   - acceptance-web：14/14 PASS，`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-stage5-web/stage5-web-acceptance-final.log`。
+   - 生产反向：debug / release 产物与生产 dev 运行态均不激活注入，`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-stage5-web/stage5-production-check-final.log`、`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-stage5-web/stage5-production-runtime-final.log`。
+   - 真机 869–876：6/6 PASS、50 条断言，`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-stage5-web/final-869-876-r2/summary.md`。
+   - 权限 / 批准闸回扫：17 个既有场景已全部补钉 `web_access.enabled=false`，最终 15/17 PASS，`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-stage5-web/approval-sweep/summary.md`；725/726 在无 Web 实现的分支同步骤失败，属预存在，另立修复，不记为 Web 通过。
+5. **规格对账（归档前）**：`scripts/openspec-archive-check.mjs` 门禁模式 PASS（16 MODIFIED / 359 段 / 0 静默丢段）；`validate --all --strict` 38/38；`docs/backlog.md` 归档队列恰一条 `add-harness-web-fetch-search-nov24`。读数取自 2026-11-25 归档前工作区。
+
+**归档后记录**：待归档提交后补录归档 commit、`openspec-archive.mjs` 输出、修链读数与 `--archived add-harness-web-fetch-search-nov24` 的 PASS 原文与时间。
+
 ## 关联材料
 
 - 详细合同、URL / 代理信任边界、测试装配、错误 / 重试表、测试矩阵：同目录 `design.md`。
