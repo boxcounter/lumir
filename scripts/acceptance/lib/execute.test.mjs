@@ -142,7 +142,11 @@ test("$vault2 步骤级解析：874 的 text/target/ax/record/file 不残留字�
   const type = scenario.steps.find((step) => step.do === "typeInNode" && step.text === external);
   assert.ok(type, "874 应继续覆盖外部目录一层扫描");
   assert.ok(type.target.name.includes(secondVaultDir()));
-  assert.ok(JSON.stringify(type.expect).includes(`${external}sub/`));
+  const rootReady = scenario.steps.find((step) => step.do === "waitFor" && step.waitFor?.has?.includes("直接子项 3 条"));
+  assert.ok(rootReady, "874 应等固有 beta.md + root.md + sub/ 三项扫描落定");
+  assert.ok(rootReady.waitFor.has.includes(`${external}sub/`));
+  const rootState = scenario.steps.find((step) => step.do === "settle" && JSON.stringify(step.expect).includes("直接子项 3 条"));
+  assert.ok(rootState, "874 应在扫描落定后断言三项真实候选");
   const record = scenario.steps.find((step) => step.do === "record");
   assert.equal(record.file, `${external}sub/child.md`);
 });

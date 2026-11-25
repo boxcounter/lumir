@@ -60,7 +60,7 @@ steps:
     do: settle
     expect:
       - label: 唯一结果行是真实文件候选（目录与文件名之间的段边界允许 AX 插空格）
-        node: { name: "^notes/deep/\\s*plan\\.md$", present: true }
+        node: { role: AXStaticText, name: "^notes/deep/\\s*plan\\.md$", present: true }
       - label: 真实候选的全路径通道（`title` → AX `help`）逐字是目标路径
         ax: { has: '/help="notes\/deep\/plan\.md"/' }
       - label: 提示行给出真实候选计数
@@ -171,7 +171,7 @@ steps:
     do: settle
     expect:
       - label: 唯一结果行是剥掉 `:39` 后的真实文件候选
-        node: { name: "^goto-line-long\\.md$", present: true }
+        node: { role: AXStaticText, name: "^goto-line-long\\.md$", present: true }
       - label: 真实候选的 `title` 不含行号后缀
         ax: { has: '/help="goto-line-long\.md"/' }
       - label: 提示行给出真实候选计数
