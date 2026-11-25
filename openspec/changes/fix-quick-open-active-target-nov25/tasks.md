@@ -91,7 +91,8 @@
 - [ ] 5.2 完整 `gate quick` / `gate visual` 与真机复验由主会话串行执行（本 worker 不启动真机）
 - [x] 5.3 证据落 `.local/missions/quick-open-active-target/`；提交本分支，不 push / merge / archive
 - [x] 5.4 230d 真机复跑（隔离端口 1431，runner 自带 XDG / 合成 vault / 锁）：**1/1 PASS**，
-      证据 `.local/acceptance/2026-11-25/230d-quick-open-select-all-dir-children/`；AX 读数为
+      证据 `.local/acceptance/2026-11-25-quick-open-active-target-final-r2/230d-quick-open-select-all-dir-children/`
+      （主仓 `.local`，worktree 清理后仍可开）；AX 读数为
       `[312] AXStaticText (qo-dir/深层/)`（修复前 `(qo-dir/ 深层 /)`），
       `qo-dir/直接子项.md` 与「深层后代不混入」两条同时有区分度；失败首跑证据留在
       `.local/acceptance/2026-11-25-quick-open-active-target-final/230d-...`
