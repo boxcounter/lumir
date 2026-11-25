@@ -62,16 +62,45 @@
 
 ## 5. 验证
 
-- [x] 5.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过。
+- [x] 5.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（39 passed / 0 failed）。
 - [x] 5.2 `bash scripts/docs-check.sh` 通过（含归档对账、验收场景契约与覆盖表）。
-- [x] 5.3 目标测试：`bash scripts/visual/run.sh scenes/selector-aria-ime-nov25.spec.ts` 全绿（10 条：
-      原 8 条 + 纯键盘删除 + 失效当前项）；`pnpm test` / `pnpm exec tsc --noEmit` 与 `tests/visual`
-      的 tsc 通过；单测补 `onVaultLoaded` 身份标记同步与 `Delete` / `Backspace` 状态机。
+- [x] 5.3 目标测试：`bash scripts/visual/run.sh scenes/selector-aria-ime-nov25.spec.ts` 全绿（12 条：
+      原 10 条 + 焦点矩阵 + Esc / 游标移动取消）；回归 `list-filter` / `mv-vault-switcher` /
+      `m668-vault-remove-focus` / `toc-outline` 24 条全绿；`pnpm test` 2001 pass / 0 fail；
+      `tsc --noEmit` 与 `tests/visual` 的 tsc 均 exit 0。
 - [ ] 5.4 真机复跑（主会话串行）：`node scripts/acceptance/run.mjs 13`、`17` 通过；另按真机清单
       手工复核组合期行为（真实中文 IME 下组合期 `↓` / `Enter` 不导航、不接受，组合结束后列表
       按最终串刷新一次）。
 - [ ] 5.5 完整门禁由主会话执行：`bash scripts/gate.sh quick` 与 `bash scripts/gate.sh visual`
       （动过 `src/style.css`，像素层必跑）。
+
+## 6. 第三轮（机械复核第二轮剩余边界）
+
+> 依据：`.local/reviews/selector-ime-aria-nov25/mechanical.md` §4 的 1–4 / 7 / 11 六项。
+
+- [x] 6.1 `src/vault-switcher.ts`：失效行进入**键盘游标空间**（`rows` = 本次渲染的全部行）。
+      理由：把「清理失效项」留给指针等于把主用例关在键盘之外，而「筛出失效行再按 Delete」这条
+      替代路径被「查询非空不消费」封死（筛出它必须输入查询）。`aria-disabled` 保留（只表示
+      「不能切换过去」，与原生 `disabled` 不同）；`Enter` 落在失效行上走既有的重定位分支（此前
+      是不可达的死代码）。**行为变更**：`↑↓` 现在会停在失效行上，master 的
+      `tests/visual/scenes/mv-vault-switcher.spec.ts` 与 `list-filter.spec.ts` 的相应断言随之更新
+      （合并前须 Alex 过目）。delta 的「失效行 MUST NOT 进入游标空间」整句改写为「同样在游标
+      空间里」。
+- [x] 6.2 `src/vault-switcher.ts`：`Delete` / `Backspace` 只在 `document.activeElement === input`
+      时接管（keydown 挂在浮层容器上，Tab 到「新增 vault…」后按键照样冒泡）。焦点矩阵有单测与
+      chromium 用例。
+- [x] 6.3 确认态改为 `{ rowId, commit, cancel }`：游标移动（`move` 先取消再移动）、查询变化
+      （`render` 重建）都取消确认；`resumeRow` / `suspendRow` 记录「原本是不是游标行」，取消时
+      游标在别处就**不**把它搬过去。
+- [x] 6.4 `Esc` 第一次只撤确认、第二次才关层：撤确认走浮层就地处理器 + 同一份 `escapeDisposition`
+      准入（组合期 / 带修饰键口径与窗口兜底一致），层栈不注销——不能下沉到 `escapeRouter`，它
+      关层后会无条件把该层移出栈。取消钮加 `aria-keyshortcuts="Escape"`。
+- [x] 6.5 `onVaultLoaded` 重建行 DOM 时按 id 保游标（确认态在场时按确认行 id）：装载不再把用户
+      挪开的游标抢回当前项，重建丢掉确认态后下一次 `Delete` 仍指向同一行。
+- [x] 6.6 组合期 `Delete` / `Backspace` 反例：单测两条（`isComposing` 与 `keyCode === 229`，含
+      确认态在场时不提交）+ chromium 组合矩阵扩到 9 键。
+- [x] 6.7 验收场景 17 补「Esc 第一次只撤确认 → 再按 Delete 重新武装 → 第二次提交」三步（真机
+      复跑归主会话）。
 
 ## 备注（合并时由主会话统一）
 
@@ -82,3 +111,11 @@
 - 证据口径（机械核验 §8 的要求）：最终矩阵的红跑是**回退源码重跑**，归档说明不要引用
   `red-before-fix.log`（`ERR_CONNECTION_REFUSED`，无效红）；「32 回归」实为 32 passed（24 条既有
   + 8 条新增）。
+- 第三轮的区分度：把 `src/vault-switcher.ts` 临时回退到 `37cebd2c` 后，本轮新增的 6 条单测全部
+  判红（焦点矩阵、失效行清理、游标移动 / 查询变化取消、Esc 两次、组合期 Delete / Backspace、
+  按 id 保位），恢复后全绿——新用例对旧代码有区分度。回退期间未提交、未改其它文件。
+- **合并前须 Alex 过目的一项行为变更**：失效行进入键盘游标空间后，`↑↓` 会停在失效行上（此前
+  跳过）。这改写了 master 既有产品行为，`tests/visual/scenes/mv-vault-switcher.spec.ts` 与
+  `list-filter.spec.ts` 的相应断言已同步更新。若 Alex 不接受该变更，需要退回的是
+  `renderRow` 的 `this.rows.push(el)`（恢复 `if (row.available)` 门）连同本 delta 与上述三处
+  测试的对应段落；其余五项（焦点矩阵 / 取消语义 / Esc / 组合期反例 / 按 id 保位）不依赖它。

@@ -1384,6 +1384,8 @@ interface FakeEvent {
   relatedTarget?: unknown;
   /** input 事件的组合期标记（筛选的组合期不刷新判据读它）。 */
   isComposing?: boolean;
+  /** 旧 WebKit 的组合期信号（`keyCode === 229`）：IME 守卫的第二条判据。 */
+  keyCode?: number;
   defaultPrevented?: boolean;
   preventDefault?(): void;
   /** 行内确认 / 删除钮的点击处理会挡住冒泡（与 M406 会话删除同款），替身给个空实现。 */
@@ -1867,9 +1869,11 @@ test("浮层：onVaultLoaded 换当前项时 ✓ / is-current / aria-current 与
   assert.equal(rowOf("work").find("vault-row-flag").length, 1);
   assert.equal(rowOf("work").find("vault-dot")[0]?.textContent, "✓");
   assert.equal(delOf("work"), undefined, "新当前行没有移除钮");
-  // 游标按打开态口径重摆：查询为空时落在当前项，aria-selected 跟着它
-  assert.equal(rig.activeRowId(), "work");
-  assert.equal(rowOf("work").getAttribute("aria-selected"), "true");
+  // 游标按 id 保位（change fix-selector-ime-aria-nov25 的第三轮）：程序化装载不把用户挪开的
+  // 游标抢回当前项——重建会丢弃确认态，若游标同时被重置，下一次 Delete 就会删另一行。
+  assert.equal(rig.activeRowId(), "notes", "游标留在用户原来那一行（notes 仍在游标空间里）");
+  assert.equal(rowOf("notes").getAttribute("aria-selected"), "true");
+  assert.equal(rowOf("work").getAttribute("aria-selected"), "false");
 });
 
 test("浮层：未装载 vault（入口不存在）时打开是无操作", () => {
@@ -1935,7 +1939,7 @@ test("浮层：点击可用行发起切换，点击失效行只发起重定位�
   assert.equal(rig.added, 1);
 });
 
-test("浮层：↑↓ / ⌃N⌃P 只走可选中行，Enter 切换，当前项上 Enter 只关闭，Esc 关闭交还焦点", async () => {
+test("浮层：↑↓ / ⌃N⌃P 走全部列表行（含失效行），Enter 切换 / 重定位，当前项上 Enter 只关闭，Esc 关闭交还焦点", async () => {
   const rows = [
     listRow({ id: "notes", path: "/Users/alex/notes" }),
     listRow({ id: "archive", path: "/Volumes/gone", available: false, name: "archive" }),
@@ -1953,7 +1957,12 @@ test("浮层：↑↓ / ⌃N⌃P 只走可选中行，Enter 切换，当前项�
   };
   assert.equal(active().dataset.vault, "notes", "默认游标落在当前项");
 
-  // ↓ 跳过失效行，落到下一个可切换的行
+  // ↓ 落在失效行上：它同样可被指向（Enter = 重新定位，Delete = 清理；change
+  // fix-selector-ime-aria-nov25 第三轮）。语义仍是「不能切换过去」：aria-disabled 保留。
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
+  assert.equal(active().dataset.vault, "archive");
+  assert.equal(active().getAttribute("aria-disabled"), "true");
+  assert.equal(active().getAttribute("aria-selected"), "true", "游标与可用性是两个维度");
   rig.popover().fire("keydown", keydownEvent("ArrowDown"));
   assert.equal(active().dataset.vault, "work");
   // 末项再按不动（钳制，不回卷）
@@ -1961,15 +1970,27 @@ test("浮层：↑↓ / ⌃N⌃P 只走可选中行，Enter 切换，当前项�
   assert.equal(active().dataset.vault, "work");
   // ⌃P 与 ↑ 等价
   rig.popover().fire("keydown", keydownEvent("p", { ctrlKey: true }));
+  assert.equal(active().dataset.vault, "archive");
+  rig.popover().fire("keydown", keydownEvent("p", { ctrlKey: true }));
   assert.equal(active().dataset.vault, "notes");
   rig.popover().fire("keydown", keydownEvent("p", { ctrlKey: true }));
   assert.equal(active().dataset.vault, "notes", "首项钳制");
 
-  // Enter 切换当前游标行
+  // Enter 切到可用行
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
   rig.popover().fire("keydown", keydownEvent("ArrowDown"));
   rig.popover().fire("keydown", keydownEvent("Enter"));
   assert.deepEqual(rig.switched.map((row) => row.id), ["work"]);
   assert.equal(rig.popover().hidden, true, "发起切换后浮层收起");
+
+  // Enter 落在失效行上：走重定位（不是切换，也不是「当前项」那条关闭路径）
+  rig.switcher.toggle();
+  await flush();
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
+  rig.popover().fire("keydown", keydownEvent("Enter"));
+  assert.deepEqual(rig.relocated.map((entry) => entry.row.id), ["archive"]);
+  assert.deepEqual(rig.switched.map((row) => row.id), ["work"], "失效行 MUST NOT 发起打开");
+  assert.equal(rig.popover().hidden, true);
 
   // 当前项上按 Enter：只关闭，不做一次无谓的重载
   rig.switcher.toggle();
@@ -2034,6 +2055,245 @@ test("浮层：Delete / Backspace 是纯键盘删除入口（同一套两步确�
     rig.popover().find("vault-row").map((row) => row.dataset.vault),
     ["notes", "sandbox"],
   );
+});
+
+test("浮层：Delete / Backspace 只在筛选输入框持焦时接管（焦点矩阵）", async () => {
+  const rig = createSwitcherRig([
+    listRow({ id: "notes", path: "/Users/alex/notes" }),
+    listRow({ id: "work", path: "/Users/alex/work" }),
+    listRow({ id: "sandbox", path: "/Users/alex/sandbox" }),
+  ]);
+  await rig.switcher.onVaultLoaded("notes", []);
+  await openSwitcher(rig);
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
+  assert.equal(rig.activeRowId(), "work");
+
+  // 焦点在「新增 vault…」上：keydown 照样冒泡到浮层容器，但那两个键是那个控件的原生键——
+  // 浮层 MUST NOT 把它们读成「删掉某一行」。
+  const add = rig.popover().find("vault-add")[0];
+  add.focus();
+  for (const key of ["Delete", "Backspace"]) {
+    const press = keyPress(key);
+    rig.popover().fire("keydown", press.event);
+    assert.equal(press.consumed(), false, `${key}：焦点不在筛选框时不得消费`);
+    assert.equal(rig.popover().find("vault-row-confirm").length, 0);
+    assert.deepEqual(rig.removed, []);
+  }
+
+  // 确认态在场、焦点移到新增入口：按键既不提交也不撤确认（没指着输入框就不是删除意图）
+  rig.input().focus();
+  const enter = keyPress("Delete");
+  rig.popover().fire("keydown", enter.event);
+  assert.equal(enter.consumed(), true);
+  assert.equal(rig.popover().find("vault-row-confirm").length, 1);
+  add.focus();
+  const offInput = keyPress("Backspace");
+  rig.popover().fire("keydown", offInput.event);
+  await flush();
+  assert.equal(offInput.consumed(), false);
+  assert.deepEqual(rig.removed, [], "焦点不在筛选框时 MUST NOT 提交移除");
+  assert.equal(rig.popover().find("vault-row-confirm").length, 1, "确认态仍在场");
+
+  // 焦点回到筛选框：同一个键照旧提交
+  rig.input().focus();
+  const submit = keyPress("Backspace");
+  rig.popover().fire("keydown", submit.event);
+  await flush();
+  assert.equal(submit.consumed(), true);
+  assert.deepEqual(rig.removed.map((row) => row.id), ["work"]);
+});
+
+test("浮层：失效行能纯键盘清理（游标可落在它上面，Delete 走同一套两步确认）", async () => {
+  const rig = await openRemoveRig(); // notes 当前、gone-vault 失效、sandbox 可用
+
+  // 游标停在当前项：MUST NOT 猜一个「旁边的」行当目标
+  assert.equal(rig.activeRowId(), "notes");
+  const onCurrent = keyPress("Delete");
+  rig.popover().fire("keydown", onCurrent.event);
+  assert.equal(onCurrent.consumed(), false);
+  assert.equal(rig.popover().find("vault-row-confirm").length, 0);
+  assert.deepEqual(rig.removed, []);
+
+  // ↓ 落到失效行：它同样在游标空间里（change fix-selector-ime-aria-nov25 第三轮）
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
+  assert.equal(rig.activeRowId(), "gone-vault");
+  assert.equal(
+    rig.list().find("vault-row").find((row) => row.dataset.vault === "gone-vault")?.getAttribute("aria-disabled"),
+    "true",
+    "可达不等于可切换：aria-disabled 保留",
+  );
+
+  // 第一次 Delete：进入与指针同一套两步确认，确认句点名失效行
+  const first = keyPress("Delete");
+  rig.popover().fire("keydown", first.event);
+  assert.equal(first.consumed(), true);
+  assert.deepEqual(
+    rig.popover().find("vault-row-confirm").map((el) => el.textContent),
+    ["从列表移除「gone-vault」？磁盘上的目录与文件不受影响。"],
+  );
+  assert.deepEqual(rig.removed, [], "确认前 MUST NOT 发起移除");
+
+  // 第二次 Backspace：提交同一个动作，只发一次；列表按后端结果重拉
+  const second = keyPress("Backspace");
+  rig.popover().fire("keydown", second.event);
+  await flush();
+  assert.equal(second.consumed(), true);
+  assert.deepEqual(rig.removed.map((row) => row.id), ["gone-vault"]);
+  assert.equal(rig.popover().hidden, false, "移除后浮层保持打开");
+});
+
+test("浮层：当前项两个方向都不可删（键盘不消费、指针没有移除钮）", async () => {
+  const rig = await openRemoveRig();
+  for (const key of ["Delete", "Backspace"]) {
+    const press = keyPress(key);
+    rig.popover().fire("keydown", press.event);
+    assert.equal(press.consumed(), false, `${key}：当前项没有移除入口`);
+    assert.equal(rig.popover().find("vault-row-confirm").length, 0);
+  }
+  // 指针反例：当前行不渲染移除钮（后端 `vault_remove` 另有按稳定 id 的拒绝，见
+  // src-tauri/src/vault_registry.rs 的 remove_entry_at）
+  assert.equal(rowWrap(rig, "notes").find("vault-row-del").length, 0);
+  assert.deepEqual(rig.removed, []);
+});
+
+test("浮层：游标移动与查询变化都取消确认态（第二次按键不会删原确认行）", async () => {
+  const rig = await openRemoveRig();
+  // 游标移到 sandbox（↓↓：notes → gone-vault → sandbox）→ 键盘进入确认
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
+  assert.equal(rig.activeRowId(), "sandbox");
+  rig.popover().fire("keydown", keyPress("Delete").event);
+  assert.equal(rig.popover().find("vault-row-confirm").length, 1);
+
+  // ↑：先取消确认（sandbox 回到游标空间），再移动一格 → gone-vault；下一次 Delete 的确认句
+  // 必须点名 gone-vault，而不是「刚才确认过的」sandbox
+  rig.popover().fire("keydown", keydownEvent("ArrowUp"));
+  assert.equal(rig.popover().find("vault-row-confirm").length, 0, "游标移动取消确认");
+  assert.equal(rig.activeRowId(), "gone-vault");
+  rig.popover().fire("keydown", keyPress("Delete").event);
+  assert.deepEqual(
+    rig.popover().find("vault-row-confirm").map((el) => el.textContent),
+    ["从列表移除「gone-vault」？磁盘上的目录与文件不受影响。"],
+    "取消后重新武装的是眼下这一行",
+  );
+  assert.deepEqual(rig.removed, []);
+  rig.popover().fire("keydown", keyPress("Escape").event); // 撤确认，浮层保持打开
+
+  // 指针打开确认（游标在 gone-vault）→ ↓：只取消 + 移动，不删 sandbox
+  rowWrap(rig, "sandbox").find("vault-row-del")[0].fire("click", { stopPropagation: () => {} });
+  assert.equal(rig.popover().find("vault-row-confirm").length, 1);
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
+  assert.equal(rig.popover().find("vault-row-confirm").length, 0);
+  assert.equal(rig.activeRowId(), "sandbox", "取消后照常移动一格（gone-vault → sandbox）");
+  assert.deepEqual(rig.removed, []);
+
+  // 查询变化（输入即筛）同样丢弃确认态：render 重建行，确认只属于当前这份 DOM
+  rowWrap(rig, "sandbox").find("vault-row-del")[0].fire("click", { stopPropagation: () => {} });
+  assert.equal(rig.popover().find("vault-row-confirm").length, 1);
+  typeQuery(rig, "s");
+  assert.equal(rig.popover().find("vault-row-confirm").length, 0, "查询变化取消确认");
+  assert.deepEqual(rig.removed, []);
+});
+
+test("浮层：Esc 第一次只撤确认、第二次才关浮层；取消钮有 aria-keyshortcuts", async () => {
+  const rig = await openRemoveRig();
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
+  rig.popover().fire("keydown", keyPress("Delete").event);
+  assert.equal(rig.popover().find("vault-row-confirm").length, 1);
+
+  // 可发现性：取消钮在 Tab 序列之外，但它的键盘快捷键写在 ARIA 上（读屏读「取消，Escape」）
+  const cancel = confirmWrap(rig).find("vault-row-confirm-no")[0];
+  assert.equal(cancel.getAttribute("aria-keyshortcuts"), "Escape");
+  assert.equal(cancel.tabIndex, -1);
+
+  // 第一次 Esc：只撤确认，浮层保持打开、焦点不交还编辑器
+  const first = keyPress("Escape");
+  rig.popover().fire("keydown", first.event);
+  assert.equal(first.consumed(), true);
+  assert.equal(rig.popover().find("vault-row-confirm").length, 0, "第一次 Esc 只撤确认");
+  assert.equal(rig.popover().hidden, false, "浮层保持打开");
+  assert.equal(rig.focusedEditor, 0, "撤确认不交还编辑器焦点");
+  assert.equal(rig.activeRowId(), "gone-vault", "确认行回到游标（它原来就是游标行）");
+
+  // 第二次 Esc：既有规则——关层并交还焦点
+  rig.popover().fire("keydown", keyPress("Escape").event);
+  assert.equal(rig.popover().hidden, true);
+  assert.equal(rig.focusedEditor, 1);
+});
+
+test("浮层：组合期与带修饰键的 Esc 不撤确认", async () => {
+  const rig = await openRemoveRig();
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
+  rig.popover().fire("keydown", keyPress("Delete").event);
+  const confirmCount = () => rig.popover().find("vault-row-confirm").length;
+  assert.equal(confirmCount(), 1);
+
+  // 组合期（isComposing / keyCode 229）：归输入法，不撤确认、不消费
+  for (const over of [{ isComposing: true }, { keyCode: 229 }]) {
+    const press = keyPress("Escape", over);
+    rig.popover().fire("keydown", press.event);
+    assert.equal(press.consumed(), false);
+    assert.equal(confirmCount(), 1);
+  }
+  // ⇧Esc：只消费默认行为（不关层），同样不撤确认
+  const shifted = keyPress("Escape", { shiftKey: true });
+  rig.popover().fire("keydown", shifted.event);
+  assert.equal(shifted.consumed(), true);
+  assert.equal(confirmCount(), 1);
+  assert.equal(rig.popover().hidden, false);
+});
+
+test("浮层：组合期的 Delete / Backspace 不进入确认、也不提交（IME 守卫覆盖这两个键）", async () => {
+  const rig = await openRemoveRig();
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
+  assert.equal(rig.activeRowId(), "gone-vault");
+
+  for (const over of [{ isComposing: true }, { keyCode: 229 }]) {
+    for (const key of ["Delete", "Backspace"]) {
+      const press = keyPress(key, over);
+      rig.popover().fire("keydown", press.event);
+      assert.equal(press.consumed(), false, `${key} 组合期不得消费`);
+      assert.equal(rig.popover().find("vault-row-confirm").length, 0);
+    }
+  }
+  assert.deepEqual(rig.removed, []);
+
+  // 确认态在场时同样让路：组合期的第二次按键不提交
+  rig.popover().fire("keydown", keyPress("Delete").event);
+  assert.equal(rig.popover().find("vault-row-confirm").length, 1);
+  const composing = keyPress("Backspace", { isComposing: true });
+  rig.popover().fire("keydown", composing.event);
+  await flush();
+  assert.equal(composing.consumed(), false);
+  assert.deepEqual(rig.removed, []);
+  assert.equal(rig.popover().find("vault-row-confirm").length, 1);
+});
+
+test("浮层：onVaultLoaded 重建行时按 id 保游标（不把游标抢回当前项、不换删除目标）", async () => {
+  const rig = await openRemoveRig(); // notes 当前
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
+  assert.equal(rig.activeRowId(), "gone-vault", "失效行也在游标空间里");
+
+  // 同一 vault 的重新装载：游标留在 gone-vault（不回到当前项）
+  await rig.switcher.onVaultLoaded("notes", []);
+  assert.equal(rig.activeRowId(), "gone-vault", "重新装载不重置游标");
+
+  // 确认态在场时重建：确认随旧 DOM 丢弃，但游标按 id 回到同一行——下一次 Delete 进入确认的
+  // 仍是 gone-vault，不是重建后的策略起点那一行
+  rig.popover().fire("keydown", keyPress("Delete").event);
+  assert.equal(rig.popover().find("vault-row-confirm").length, 1);
+  await rig.switcher.onVaultLoaded("notes", []);
+  assert.equal(rig.popover().find("vault-row-confirm").length, 0, "重建丢弃确认态");
+  assert.equal(rig.activeRowId(), "gone-vault");
+  rig.popover().fire("keydown", keyPress("Delete").event);
+  assert.deepEqual(
+    rig.popover().find("vault-row-confirm").map((el) => el.textContent),
+    ["从列表移除「gone-vault」？磁盘上的目录与文件不受影响。"],
+    "第二次按键仍指向用户刚才那一行",
+  );
+  rig.popover().fire("keydown", keyPress("Delete").event);
+  await flush();
+  assert.deepEqual(rig.removed.map((row) => row.id), ["gone-vault"]);
 });
 
 // ---------------------------------------------------------------------------
@@ -2179,7 +2439,7 @@ test("浮层筛选：显示名子串命中（非前缀）、失效行参与、�
     ["notes", "sandbox"],
     "结果集顺序与后端给出的顺序一致（前端不重排）",
   );
-  assert.equal(rig.activeRowId(), "notes", "游标落在首条可选中命中");
+  assert.equal(rig.activeRowId(), "notes", "游标落在首条命中");
 
   // 摘要与路径不参与匹配：输入「没有打开过文件」（D101 的摘要文案）不命中任何行
   typeQuery(rig, "还没有打开过文件");
@@ -2188,7 +2448,11 @@ test("浮层筛选：显示名子串命中（非前缀）、失效行参与、�
   // 失效行参与筛选（它是「重新定位…」的唯一入口，MUST NOT 被筛掉）
   typeQuery(rig, "gone");
   assert.deepEqual(rig.popover().find("vault-row").map((row) => row.dataset.vault), ["gone-vault"]);
-  assert.equal(rig.activeRowId(), undefined, "失效行不在键盘游标空间里（与筛选前同一口径）");
+  assert.equal(
+    rig.activeRowId(),
+    "gone-vault",
+    "只剩失效行时游标在它上面（可用性不阻断可达性：Enter = 重新定位，Delete = 清理）",
+  );
 
   // 多次输入只过滤本地数组：list() 仍只调过一次
   typeQuery(rig, "note");
@@ -2316,6 +2580,16 @@ function rowWrap(rig: { list(): FakeEl }, id: string): FakeEl {
   return rig.list().find("vault-row-wrap")[index];
 }
 
+/** 当前处于确认态的那一行行壳：确认态把切换钮换成了确认句 + 两个钮，按切换钮找不到它。 */
+function confirmWrap(rig: { list(): FakeEl }): FakeEl {
+  const wrap = rig
+    .list()
+    .find("vault-row-wrap")
+    .find((el) => el.find("vault-row-confirm").length > 0);
+  assert.ok(wrap !== undefined, "没有处于确认态的行");
+  return wrap;
+}
+
 test("移除钮：每行一枚、当前项没有（spec「当前项没有移除入口」），失效行同样有", async () => {
   const rig = await openRemoveRig();
   const wraps = rig.list().find("vault-row-wrap");
@@ -2403,16 +2677,17 @@ test("确认失败：行还原、不重拉列表（提示由装配层给）", as
 
 test("刷新后的游标：落在原下标那一行（被移除行下方的行上移到该位置）", async () => {
   const rig = await openRemoveRig();
-  // 游标先移到 sandbox（下标 2：available 行是 notes / sandbox，失效行不在游标空间里）
+  // 游标先移到 sandbox（↓↓：notes → gone-vault → sandbox）
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
   rig.popover().fire("keydown", keydownEvent("ArrowDown"));
   assert.equal(rig.activeRowId(), "sandbox");
 
-  // 移除 gone-vault（失效行、不在游标空间里）：游标仍应是 sandbox
+  // 指针移除 gone-vault（游标在它下面）：游标仍应是 sandbox
   const wrap = rowWrap(rig, "gone-vault");
   wrap.find("vault-row-del")[0].fire("click", { stopPropagation: () => {} });
   wrap.find("vault-row-confirm-yes")[0].fire("click", { stopPropagation: () => {} });
   await flush();
-  assert.equal(rig.activeRowId(), "sandbox", "移除失效行不挪动游标");
+  assert.equal(rig.activeRowId(), "sandbox", "移除上面的行不挪动游标");
 });
 
 test("刷新后的游标：移除游标那一行时落在上移进来的那一行（不回到当前项）", async () => {
@@ -2445,6 +2720,7 @@ test("确认态：Enter 既不触发移除也不切走确认行（该行已移�
   //（用户以为在确认，却整窗换了一个 vault）。`suspendRow` 就是这条不变量本身——把这里的
   // 断言当回归钉子：去掉 suspend 后本用例必须红。
   const rig = await openRemoveRig();
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
   rig.popover().fire("keydown", keydownEvent("ArrowDown"));
   assert.equal(rig.activeRowId(), "sandbox", "游标先落在 sandbox 这一行");
 

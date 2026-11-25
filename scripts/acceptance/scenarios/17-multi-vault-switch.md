@@ -200,7 +200,25 @@ steps:
       - label: 确认句点名 B，浮层未收起（还没发起移除）
         ax: { has: '/从列表移除「lumir-m102-acceptance-b」/' }
 
-  - name: 第二次 Delete 提交移除
+  # change fix-selector-ime-aria-nov25（第三轮）：Esc 第一次只撤确认——不关层、不交还焦点；
+  # 第二次 Esc 才按既有规则关闭。这条同时验「确认态有自己的键盘取消出口」。
+  - name: Esc 第一次只撤确认（浮层不收起）
+    do: key
+    key: "escape"
+    expect:
+      - label: 确认句撤下
+        ax: { not: "从列表移除「lumir-m102-acceptance-b」" }
+      - label: 浮层仍在（第一次 Esc MUST NOT 关层）
+        ax: { has: "选择一个目录作为新 vault" }
+
+  - name: 再按一次 Delete 重新进入确认（目标仍是 B，不是重建后的策略起点）
+    do: key
+    key: "delete"
+    expect:
+      - label: 确认句重新点名 B
+        ax: { has: '/从列表移除「lumir-m102-acceptance-b」/' }
+
+  - name: 第二次按下 Delete 提交移除
     do: key
     key: "delete"
 

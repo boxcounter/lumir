@@ -173,17 +173,23 @@ test("浮层：当前项 / 摘要 / 失效行 / 新增入口，且不占常驻�
   expect(await headerGeometry(page)).toEqual(before);
 });
 
-test("键盘：↓ 只在可用行之间走，Enter 撞当前项只收起浮层", async ({ page }) => {
+test("键盘：游标走全部列表行（失效行可重新定位 / 清理），Enter 撞当前项只收起浮层", async ({ page }) => {
   await stubTauri(page, { ...DEMO_VAULT, vaults: REGISTRY });
   await page.goto("/");
   await openSwitcher(page);
 
   // 游标默认落在当前项
   await expect(page.locator(".vault-row.is-active .vault-row-name")).toHaveText("demo-vault");
-  // ↓ 跳过失效行（它不是候选）：demo-vault → notes-vault
+  // ↑ 落到失效行：它同样可被指向（Enter = 重新定位，Delete = 清理）；语义仍是「不能切换过去」
+  await page.keyboard.press("ArrowUp");
+  await expect(page.locator(".vault-row.is-active .vault-row-name")).toHaveText("gone");
+  await expect(page.locator(".vault-row.is-active")).toHaveAttribute("aria-disabled", "true");
+  // 回到当前项，再下到可用行：demo-vault → notes-vault
+  await page.keyboard.press("ArrowDown");
+  await expect(page.locator(".vault-row.is-active .vault-row-name")).toHaveText("demo-vault");
   await page.keyboard.press("ArrowDown");
   await expect(page.locator(".vault-row.is-active .vault-row-name")).toHaveText("notes-vault");
-  // 到底钳制（不回到失效行，也不回卷）
+  // 到底钳制（末项停住，不回卷）
   await page.keyboard.press("ArrowDown");
   await expect(page.locator(".vault-row.is-active .vault-row-name")).toHaveText("notes-vault");
   // ⌃P 与 ↑ 等价（同一 move 实现）

@@ -18,11 +18,12 @@
 //     进行中忽略新请求」这些判定能直接单测（tests/unit/vault-switcher.test.ts），不必靠浏览器
 //     场景间接兜底（M153 的教训：判定落不到可复现的断言上就等于没有）。
 //
-// 浮层内的 ↑↓ / ⌃N⌃P / Enter / Esc 就地消费、**不进** keys.ts 的统一表：表的不变量是「一个
-// token 一条绑定」，而 ↑↓ 与 ⌃N⌃P 已归 editor.cursor-*、Esc 已归 editor.widget-escape（带
-// when 条件）。浮层打开期间持有焦点，editor 作用域因「事件目标不在 contentDOM 内」不命中；
-// 就地消费后 preventDefault，window 上的分发器对已消费事件让路——与 M148 大纲浮层、M133 键位
-// 面板、M139 搜索 panel 同一套口径（D86）。
+// 浮层内的 ↑↓ / ⌃N⌃P / Enter / Esc / Delete / Backspace 就地消费、**不进** keys.ts 的统一表：
+// 表的不变量是「一个 token 一条绑定」，而 ↑↓ 与 ⌃N⌃P 已归 editor.cursor-*、Esc 已归
+// editor.widget-escape（带 when 条件）。浮层打开期间持有焦点，editor 作用域因「事件目标不在
+// contentDOM 内」不命中；就地消费后 preventDefault，window 上的分发器对已消费事件让路——与
+// M148 大纲浮层、M133 键位面板、M139 搜索 panel 同一套口径（D86）。Delete / Backspace 另受
+// 「焦点在筛选输入框 + 查询为空」两道门约束（见 removeFromKeyboard），否则它们仍是输入框的编辑键。
 //
 // 输入筛选（change list-filter，M199）：浮层第一行是真输入框（`role=combobox`），焦点打开即落到
 // 它上面，打字即筛。匹配语义与交互口径**引用** toc-outline 的两条 ADDED requirement（
@@ -38,7 +39,12 @@ import type { EditorSession, ScrollSnapshot } from "./editor";
 // 键位 token 走 keys.ts 的同一份归一化实现：浮层就地消费 ↑↓ / ⌃N⌃P / Enter / Esc 时也要用
 // 统一口径判断按键（自写一份解析是 REVIEW.md 「同一语义两处真源」条那类漂移的温床）。
 import { keyToken } from "./keys";
-import { escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
+import {
+  escapeDisposition,
+  escapeRouter,
+  registerEscapeLayer,
+  unregisterEscapeLayer,
+} from "./escape-router";
 import { FILTER_LABEL, FILTER_PLACEHOLDER, NO_MATCH_TEXT, createListFilter } from "./list-filter";
 import { errorText, formatRelative, onRelabel, t, tPlural } from "./copy";
 import { activityKind, activityStatusKey } from "./harness-activity";
@@ -865,6 +871,13 @@ export function createVaultSwitcher(deps: VaultSwitcherDeps): VaultSwitcherHandl
   return new VaultSwitcher(deps);
 }
 
+/** 一行在确认态期间的「暂时移出游标空间」记录（`suspendRow` → `resumeRow` / `commitRemove`
+ *  共用同一份形状）：原下标与「它原本是不是游标行」。 */
+interface SuspendedRow {
+  index: number;
+  wasActive: boolean;
+}
+
 class VaultSwitcher implements VaultSwitcherHandle {
   private readonly deps: VaultSwitcherDeps;
   private readonly store: VaultSessionStore;
@@ -883,6 +896,7 @@ class VaultSwitcher implements VaultSwitcherHandle {
   private open = false;
   /** 结果集：本次拉取到的条目数组的下标（升序）——筛选后**唯一**的「哪些行可见」真源。 */
   private visible: readonly number[] = [];
+  /** 键盘游标空间（本次渲染的全部行，含失效行，顺序 = DOM 序）：`↑↓` 走它、`Delete` 取它。 */
   private rows: HTMLButtonElement[] = [];
   private rowEntries: VaultListEntry[] = [];
   private activeIndex = -1;
@@ -914,10 +928,12 @@ class VaultSwitcher implements VaultSwitcherHandle {
     }
   >();
 
-  /** 行内确认态在场时的键盘提交入口（Delete / Backspace 第二次按下，见 `enterConfirm`）。
-   *  确认态把切换钮移出了游标空间，没有「游标行」可按——提交动作只存在于当前这份 DOM 里，
-   *  随任何重建（`render` / `close` / 取消 / 提交）一起作废。 */
-  private pendingConfirm: (() => void) | null = null;
+  /** 行内确认态在场时的键盘出口（见 `enterConfirm`）：`commit` 是 Delete / Backspace 第二次按下，
+   *  `cancel` 是取消（Esc 第一次按下 / 游标移动 / 点取消钮）。确认态把切换钮移出了游标空间，
+   *  没有「游标行」可按——两个动作只存在于当前这份 DOM 里，随任何重建（`render` / `close` /
+   *  取消 / 提交）一起作废。`rowId` 是确认行的身份：浮层被外部事件重建行 DOM 时按它把游标放回
+   *  原行（`render` 的 keepId），MUST NOT 让第二次按下落到重建后策略起点那一行。 */
+  private pendingConfirm: { rowId: string; commit(): void; cancel(): void } | null = null;
 
   constructor(deps: VaultSwitcherDeps) {
     this.deps = deps;
@@ -1045,8 +1061,14 @@ class VaultSwitcher implements VaultSwitcherHandle {
     // 当前项一变，**身份标记**必须立即按新身份重算（独立评审 P1-4a）：`ensureCronVault` 这类
     // 程序化切 vault 不关浮层。✓ / 「当前」flag / `is-current` / `aria-current` 与移除钮的有无
     // 全部由 currentId 派生（`renderRow`），只刷活动标记会让这四处停在旧行——整份行 DOM 按新
-    // 身份重建（查询与游标起点仍走 `render` 的既有口径）。浮层关闭时零 DOM 工作：下次打开会重拉。
-    if (this.open) this.render(this.rowEntries);
+    // 身份重建。查询与游标起点仍走 `render` 的既有口径，**但游标按 id 保位**：装载（含同一 vault
+    // 的重新装载）MUST NOT 把用户挪开的游标抢回当前项——否则确认态刚被这次重建丢弃、下一次
+    // Delete 落在新落点那一行，用户按的是「刚才那一行」而删掉的却是另一行。确认态在场时按确认行
+    // 保位（它才是用户此刻指着的那一行）。浮层关闭时零 DOM 工作：下次打开会重拉。
+    if (this.open) {
+      const keepId = this.pendingConfirm?.rowId ?? this.activeRow()?.id;
+      this.render(this.rowEntries, keepId);
+    }
     await this.store.onVaultLoaded(vaultId, entries);
   }
 
@@ -1166,10 +1188,16 @@ class VaultSwitcher implements VaultSwitcherHandle {
    * 第二个消费者：「重新定位…」把它当 `siblings` 传给占用判定（`requestRelocate`），收窄成结果集
    * 会让被筛掉的 vault 不再参与判定（design §2.4 的静默身份合并）。
    *
-   * `rows` 仍是「可选中行」（可用行）的下标空间：失效行进 DOM、参与筛选，但不在键盘游标空间里
-   * （与筛选前的口径逐条一致，`tests/visual/scenes/mv-vault-switcher.spec.ts` 钉着它）。
+   * `rows` 是**键盘游标空间**：本次渲染的全部行（顺序 = DOM 顺序），失效行也在其中——它有两件
+   * 事可做（`Enter` = 重新定位，`Delete` / `Backspace` = 清理），把它关在键盘之外等于让「清理
+   * 失效项」这个主用例只剩指针一条路（change fix-selector-ime-aria-nov25 第三轮）。可用性只
+   * 影响 `is-missing` / `aria-disabled` 与 `Enter` 的分支，不影响可达性。
+   *
+   * `keepId` 是**按身份保位**的入口（`onVaultLoaded` 用）：该行仍在游标空间里时游标回到它，
+   * 否则回落到策略起点（当前项 / 首条命中）。重建本身丢弃确认态，所以「保位」是让下一次
+   * Delete / Backspace 仍指向用户刚才那一行的唯一办法。
    */
-  private render(list: readonly VaultListEntry[]): void {
+  private render(list: readonly VaultListEntry[], keepId?: string): void {
     const now = Date.now();
     this.rowEntries = [...list];
     this.rows = [];
@@ -1196,13 +1224,20 @@ class VaultSwitcher implements VaultSwitcherHandle {
     // 新增入口是浮层内**唯一**的新增入口（形态 A），列表为空时也照常给出。
     this.separator.hidden = this.rowEntries.length === 0;
     // 默认游标落在当前项（列表按最近打开倒序，当前项本来就在首位；这里不假定位置）。
-    // 游标下标是**可选中行**的下标（this.rows 不含失效行），因此按元素回查，不用整份列表
-    // 的下标。
+    // 游标下标是 `this.rows` 的下标（全部行，含失效行）。
     const currentIndex = this.rows.findIndex((el) => el.dataset.vault === this.currentId);
-    // 查询非空时游标落在**首条可选中命中**（与 toc-outline 的「首条命中为起点」同一条规则，
-    // 只是这里的可选中集合不含失效行）；查询为空时回到全量态起点（当前项，无则首条）。
+    // 查询非空时游标落在**首条命中**（与 toc-outline 的「首条命中为起点」同一条规则）；查询为空
+    // 时回到全量态起点（当前项，无则首条）。给了 keepId 且那一行还在游标空间里时优先保位
+    // （见 render 的说明）。
+    const kept = keepId === undefined ? -1 : this.rows.findIndex((el) => el.dataset.vault === keepId);
     const start =
-      this.rows.length === 0 ? -1 : this.filter.query === "" ? Math.max(0, currentIndex) : 0;
+      this.rows.length === 0
+        ? -1
+        : kept >= 0
+          ? kept
+          : this.filter.query === ""
+            ? Math.max(0, currentIndex)
+            : 0;
     this.setActive(start);
   }
 
@@ -1229,20 +1264,23 @@ class VaultSwitcher implements VaultSwitcherHandle {
     // 行与删除钮一律不进 Tab 序列，指针点击与键盘 Enter 的语义不变。
     el.tabIndex = -1;
     el.dataset.vault = row.id;
-    // 每个 option 都要有唯一 id（含失效行）：`aria-activedescendant` 只能指向 option，失效行
-    // 虽不在游标空间里，仍要被 ARIA 关系闭合覆盖，便于读屏逐项浏览。
+    // 每个 option 都要有唯一 id（含失效行）：`aria-activedescendant` 只能指向 option，失效行同样
+    // 可以被游标指向（见下），它的 id 因此是两个用途共用的一份（游标与读屏逐项浏览）。
     el.id = `${ITEM_ID_PREFIX}${source}`;
-    if (row.available) {
-      this.rows.push(el);
-    } else {
-      // 不可用：仍是列表里的一行（指针可点、读屏可逐项浏览），语义是「不可选中」，点击不发起
-      // 打开（spec「失效 vault 的处置与清理」）。它不在键盘游标空间里（`rows` 只收可用行），
-      // 行本身 `tabindex=-1` 不进 Tab 序列——「重新定位…」的入口是指针 / 读屏的 AXPress。
+    // 键盘游标空间 = **全部行**（change fix-selector-ime-aria-nov25 第三轮）：失效行同样可被
+    // 指向——它有两件事可做（Enter = 重新定位，Delete / Backspace = 清理），把唯一能清理它的
+    // 入口留给指针等于把「清理失效项」这个主用例关在键盘之外。`aria-disabled` 只表示「不能切换
+    // 过去」，不表示「不可聚焦」（与原生 `disabled` 不同）：行的可用性仍由 `is-missing` /
+    // `aria-disabled` 与可见的成因行表达，是否可切换由 Enter 的分支表达。
+    this.rows.push(el);
+    if (!row.available) {
+      // 不可用：仍是列表里的一行（指针可点、读屏可逐项浏览），语义是「不能切换到它」，点击 /
+      // Enter 走重定位（spec「失效 vault 的处置与清理」）。
       el.classList.add("is-missing");
       el.setAttribute("aria-disabled", "true");
     }
     // 「当前」是**身份**维度，与可用性无关：当前 vault 的目录被移走时该行仍是当前项（✓ /「当前」/
-    // is-current / aria-current 都在），只是同时 `aria-disabled` 且不进游标空间。
+    // is-current / aria-current 都在），同时带 `aria-disabled`（不能切换过去）。
     if (current) el.classList.add("is-current");
 
     const top = document.createElement("span");
@@ -1356,10 +1394,15 @@ class VaultSwitcher implements VaultSwitcherHandle {
   /** 行内两步确认（M646，与 M406 会话删除同一套语汇）：把行壳的两个子元素换成「确认句 +
    *  移除 + 取消」三个兄弟。
    *
-   *  确认态**不参与键盘游标**：任何 `render()`（↑↓ 移动、输入筛选、列表刷新）都重建行，
-   *  确认态随之丢弃——它只存在于当前这份 DOM，不引入「确认中的行」这个要跨渲染维护的状态。
-   *  进入时把切换钮移出 `rows`：它已不在 DOM 里，留着的话 Enter 会照旧请求切换（用户以为
-   *  自己在确认，却整窗换了一个 vault）。 */
+   *  确认态**不参与键盘游标**：任何 `render()`（输入筛选、列表刷新、`onVaultLoaded` 重建）都
+   *  重建行，确认态随之丢弃——它只存在于当前这份 DOM，不引入「确认中的行」这个要跨渲染维护的
+   *  状态。进入时把切换钮移出 `rows`：它已不在 DOM 里，留着的话 Enter 会照旧请求切换（用户以为
+   *  自己在确认，却整窗换了一个 vault）。
+   *
+   *  确认态的键盘出口有三个，都必须可发现（change fix-selector-ime-aria-nov25）：第二次
+   *  `Delete` / `Backspace` 提交；`Esc` 第一次取消（`aria-keyshortcuts` 写在取消钮上）；取消钮
+   *  本身可点（`tabindex=-1`，指针可达，且不再是纯键盘的唯一出口）。游标移动同样取消确认
+   *  （见 `move`）——确认属于**那一行**，光标挪走就是放弃。 */
   private enterConfirm(
     wrap: HTMLDivElement,
     row: VaultListEntry,
@@ -1379,6 +1422,9 @@ class VaultSwitcher implements VaultSwitcherHandle {
     no.type = "button";
     no.className = "vault-row-confirm-no";
     no.tabIndex = -1;
+    // 可发现性：取消钮在 Tab 序列之外，读屏把它读成「取消，Escape」——Esc 撤确认这条键盘出口
+    // 因此不是只能从文档得知的口径（aria-keyshortcuts 是声明式提示，真实按键由 onKeydown 处理）。
+    no.setAttribute("aria-keyshortcuts", "Escape");
     no.textContent = CANCEL_TEXT();
     const restoreRow = (): void => {
       this.pendingConfirm = null;
@@ -1408,16 +1454,16 @@ class VaultSwitcher implements VaultSwitcherHandle {
       confirmYes();
     });
     this.rebuild(() => wrap.replaceChildren(prompt, yes, no));
-    // 键盘的第二次 Delete / Backspace 提交同一个动作：确认态的按钮都在 Tab 序列之外，
-    // 纯键盘没有别的确认路径（见 removeFromKeyboard）。
-    this.pendingConfirm = confirmYes;
+    // 键盘的第二次 Delete / Backspace 提交同一个动作、Esc 第一次取消同一个确认：确认态的
+    // 按钮都在 Tab 序列之外，纯键盘没有别的出口（见 removeFromKeyboard / onKeydown）。
+    this.pendingConfirm = { rowId: row.id, commit: confirmYes, cancel: restoreRow };
   }
 
   /** 确认后的收口：调装配层移除 → 成功按同一份口径重拉列表；失败把该行还原（人话提示由
    *  装配层给，浮层只恢复行——本模块不写第二份文案）。 */
   private async commitRemove(
     row: VaultListEntry,
-    position: number,
+    position: SuspendedRow,
     restoreRow: () => void,
   ): Promise<void> {
     try {
@@ -1428,16 +1474,17 @@ class VaultSwitcher implements VaultSwitcherHandle {
     }
     // 游标锚点：suspendRow 把确认行移出游标空间后 activeIndex 可能是 -1（确认行原本在游标上）
     // ——那时用它的原下标，被移除行下方的行上移到该位置，正好是「原下标位置那一行」。
-    await this.reload(this.activeIndex >= 0 ? this.activeIndex : position);
+    await this.reload(this.activeIndex >= 0 ? this.activeIndex : position.index);
   }
 
-  /** 把一行暂时移出键盘游标空间（确认态期间），返回它在 `rows` 里的原下标；不在游标空间里
-   *  （失效行）返回 -1。 */
-  private suspendRow(row: HTMLButtonElement): number {
+  /** 把一行暂时移出键盘游标空间（确认态期间），返回它在 `rows` 里的原下标与「它原本是不是
+   *  游标行」。 */
+  private suspendRow(row: HTMLButtonElement): SuspendedRow {
     const index = this.rows.indexOf(row);
-    if (index < 0) return -1;
+    if (index < 0) return { index: -1, wasActive: false };
+    const wasActive = this.activeIndex === index;
     this.rows.splice(index, 1);
-    if (this.activeIndex === index) {
+    if (wasActive) {
       this.activeIndex = -1;
       row.classList.remove("is-active");
       row.setAttribute("aria-selected", "false");
@@ -1445,19 +1492,21 @@ class VaultSwitcher implements VaultSwitcherHandle {
     } else if (this.activeIndex > index) {
       this.activeIndex -= 1;
     }
-    return index;
+    return { index, wasActive };
   }
 
-  /** 取消确认：把该行按原下标放回游标空间（原来在游标上就重新成为游标）。 */
-  private resumeRow(row: HTMLButtonElement, index: number): void {
-    if (index < 0) return;
-    const at = Math.min(index, this.rows.length);
+  /** 取消确认：把该行按原下标放回游标空间。原来就是游标行时重新成为游标；游标在别处时
+   *  MUST NOT 把视觉游标搬到这一行——取消只撤确认，不改变「现在在哪」（随后可能还有一次
+   *  游标移动，见 `move`）。 */
+  private resumeRow(row: HTMLButtonElement, position: SuspendedRow): void {
+    if (position.index < 0) return;
+    const at = Math.min(position.index, this.rows.length);
     this.rows.splice(at, 0, row);
-    if (this.activeIndex >= at) {
-      this.activeIndex += 1;
+    if (position.wasActive) {
+      this.setActive(at);
       return;
     }
-    this.setActive(at);
+    if (this.activeIndex >= at) this.activeIndex += 1;
   }
 
   /** 重拉列表并按原下标摆放游标（M646 §3.3）：MUST NOT 就地改 `rowEntries`——注册表是唯一
@@ -1548,6 +1597,11 @@ class VaultSwitcher implements VaultSwitcherHandle {
   }
 
   private move(delta: number): void {
+    // 游标移动取消确认态（change fix-selector-ime-aria-nov25）：确认属于**那一行**，用户把游标
+    // 挪走就是放弃；留着它的话下一次 Delete / Backspace 删的是「刚才确认过的行」，而不是眼下
+    // 游标指着的这一行——屏幕上的游标与实际会删的行不一致，是最贵的一类误删。
+    // 先取消再移动：取消把该行按原位放回（原来就是游标行时游标回到它），位移从那里算起。
+    if (this.pendingConfirm !== null) this.pendingConfirm.cancel();
     if (this.rows.length === 0) return;
     const next = Math.min(this.rows.length - 1, Math.max(0, this.activeIndex + delta));
     if (next !== this.activeIndex) this.setActive(next);
@@ -1564,16 +1618,22 @@ class VaultSwitcher implements VaultSwitcherHandle {
    *
    *  行切换钮、行尾删除钮与确认态的两个按钮都不进 Tab 序列（见 renderRow / enterConfirm），
    *  纯键盘因此没有指针那条「行 → × → 移除」的路径；这条就地键补上同一套两步确认：
-   *   - 查询为空、游标行可移除（非当前 vault 的可用行）⇒ 第一次按下进入确认态；
-   *   - 确认态在场 ⇒ 第二次按下就是点「移除」（`pendingConfirm`）；
-   *   - 其余情形 MUST NOT 消费：查询非空时这两个键是输入框的编辑键（退格删字），当前 vault
-   *     没有移除入口（行上不渲染删除钮，后端 `vault_remove` 同样拒绝）。
+   *   - **焦点必须在筛选输入框上**（`document.activeElement`）：keydown 挂在浮层容器上，Tab 到
+   *     「新增 vault…」后按键照样冒泡到这里——那时 Delete / Backspace 是那个控件的原生键，
+   *     浮层 MUST NOT 把它读成「删掉某一行的请求」（用户没指着任何一行）；
+   *   - 查询为空（非空时这两个键是输入框的编辑键）；
+   *   - 确认态在场 ⇒ 第二次按下就是点「移除」（`pendingConfirm.commit`）；
+   *   - 其余情形取游标行：**任何非当前行**都可删，可用与失效一样（失效行同样在游标空间里，
+   *     见 renderRow）。当前 vault 没有移除入口（行上不渲染删除钮，后端 `vault_remove` 同样按
+   *     稳定 id 拒绝），游标停在它上面时 MUST NOT 猜一个「旁边的」行当目标。
    */
   private removeFromKeyboard(): boolean {
+    // 焦点不在筛选输入框上时不接管（见上）。
+    if (document.activeElement !== this.input) return false;
     // 查询非空 = 用户在编辑筛选串：Delete / Backspace 归输入框，浮层 MUST NOT 抢。
     if (this.input.value !== "") return false;
     if (this.pendingConfirm !== null) {
-      this.pendingConfirm();
+      this.pendingConfirm.commit();
       return true;
     }
     const el = this.rows[this.activeIndex];
@@ -1584,10 +1644,20 @@ class VaultSwitcher implements VaultSwitcherHandle {
   }
 
   private onKeydown(event: KeyboardEvent): void {
-    // 输入法组合期归输入法：`↑↓` / `Enter` 在组合期是被输入法用来选候选的，浮层 MUST NOT 移动
-    // 游标、MUST NOT 发起切换 / 重定位，也不消费该键。与 Quick Open 的同一行守卫同源；
-    // `escapeRouter` 的组合期让路只覆盖 Escape，本守卫覆盖全部就地键。
+    // 输入法组合期归输入法：`↑↓` / `Enter` / `Delete` / `Backspace` 在组合期是被输入法用来
+    // 选候选 / 编辑组合串的，浮层 MUST NOT 移动游标、MUST NOT 发起切换 / 重定位 / 删除确认，
+    // 也不消费该键。与 Quick Open 的同一行守卫同源；`escapeRouter` 的组合期让路只覆盖 Escape，
+    // 本守卫覆盖全部就地键。
     if (event.isComposing || event.keyCode === 229) return;
+    // 确认态在场时 Esc **只撤确认**（第一次按下）：准入仍走 `escapeDisposition` 这一份（组合期
+    // 与带修饰键的口径与窗口兜底逐字一致），只是这次「关闭」落在确认态这一层上。层栈不注销
+    // ——第二次 Esc 照旧经 `escapeRouter.handle` 关掉整个浮层（既有规则）。这一步不能下沉到
+    // `escapeRouter`：它关层后无条件把该层移出栈，撤确认与关层必须是两次独立的按键。
+    if (this.pendingConfirm !== null && escapeDisposition(event) === "close") {
+      event.preventDefault();
+      this.pendingConfirm.cancel();
+      return;
+    }
     // Escape 归**窗口级兜底同一个** `escapeRouter.handle`（change fix-escape-overlay-close-oct24）：
     // 按层的打开序关**栈顶**（不持焦的 hover 提示可以后开在下层之上），关闭实现是该层登记时的
     // 既有 close；准入（无修饰才关、组合期让路、已消费让路）也只有那一份。无修饰才关层；带修饰键只消费

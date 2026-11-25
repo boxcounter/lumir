@@ -352,17 +352,30 @@ test("vault：组合期的 ↑↓ / ⌃N⌃P / Enter 不移动游标、不切换
   const switchesBefore = (await invokes(page)).filter((cmd) => cmd === "vault_open_path").length;
   const sent = await composeKeys(page, ".vault-filter", {
     mid: "not",
-    keys: ["ArrowDown", "Enter", { key: "n", ctrlKey: true }, { key: "p", ctrlKey: true }],
-    keyCode229: ["ArrowDown", "Enter"],
+    keys: ["ArrowDown", "Enter", { key: "n", ctrlKey: true }, { key: "p", ctrlKey: true }, "Delete", "Backspace"],
+    keyCode229: ["ArrowDown", "Enter", "Delete"],
   });
 
-  // 组合期六次按键都不被浮层消费（MUST NOT preventDefault），游标不动、没有发起切换
-  expect(sent.map((entry) => entry.prevented)).toEqual([false, false, false, false, false, false]);
+  // 组合期九次按键都不被浮层消费（MUST NOT preventDefault），游标不动、没有发起切换、没有进入
+  // 删除确认（Delete / Backspace 的组合期反例）。
+  expect(sent.map((entry) => entry.prevented)).toEqual([
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+  ]);
+  await expect(page.locator(".vault-row-confirm")).toHaveCount(0);
   await expect(active.locator(".vault-row-name")).toHaveText("demo-vault");
   await expect(popover).toBeVisible();
   expect(await activeElement(page)).toBe("input.vault-filter");
   await expect(page.locator(".ft-vault-name")).toHaveText("demo-vault");
   expect((await invokes(page)).filter((cmd) => cmd === "vault_open_path").length).toBe(switchesBefore);
+  expect((await invokes(page)).filter((cmd) => cmd === "vault_remove")).toEqual([]);
 
   // 组合结束才按最终串刷新
   await composeEnd(page, ".vault-filter", { final: "notes", trailingInput: false });
@@ -407,7 +420,7 @@ test("vault：组合结束按最终串只刷新一次列表", async ({ page }) =
   expect(await rebuilds(page)).toBe(1);
 });
 
-test("vault：aria-selected 只表示键盘游标，当前 vault 用 aria-current，失效行有 id 但不进游标空间", async ({ page }) => {
+test("vault：aria-selected 只表示键盘游标，当前 vault 用 aria-current；失效行可被指向且仍是 aria-disabled", async ({ page }) => {
   await openSwitcher(page);
   const input = page.locator(".vault-filter");
   const rows = page.locator(".vault-row");
@@ -423,14 +436,12 @@ test("vault：aria-selected 只表示键盘游标，当前 vault 用 aria-curren
   await expect(current.locator(".vault-row-flag")).toHaveText("当前");
   await expect(current.locator(".vault-dot")).toHaveText("✓");
 
-  // 每个 option（含失效行）都有唯一 id；activedescendant 只指向可用行
+  // 每个 option（含失效行）都有唯一 id
   const ids = await rows.evaluateAll((els) => els.map((el) => el.id));
   expect(ids.every((id) => id.length > 0), "每个 option 都要有 id").toBe(true);
   expect(new Set(ids).size).toBe(ids.length);
-  const missingId = await page.locator(".vault-row.is-missing").getAttribute("id");
   const activeId = await selected.getAttribute("id");
   await expect(input).toHaveAttribute("aria-activedescendant", activeId as string);
-  expect(activeId).not.toBe(missingId);
 
   // 游标下移：aria-selected 跟着游标走，当前 vault 只留 aria-current
   await page.keyboard.press("ArrowDown");
@@ -442,23 +453,23 @@ test("vault：aria-selected 只表示键盘游标，当前 vault 用 aria-curren
   await expect(current).toHaveAttribute("aria-selected", "false");
   await expect(selected).toHaveAttribute("aria-current", "false");
 
-  // 当前项被筛掉：游标落在首条命中，aria-selected 跟着它，而不是「没有游标」
-  await page.keyboard.press("Meta+a");
-  await page.keyboard.press("Backspace");
-  await page.keyboard.type("notes");
-  await expect(rows).toHaveCount(1);
-  await expect(selected).toHaveCount(1);
-  await expect(selected.locator(".vault-row-name")).toHaveText("notes-vault");
+  // ↑ 越过当前项落到失效行：它同样可被指向（Enter = 重新定位，Delete = 清理），但语义仍是
+  // 「不能切换过去」——aria-disabled 保留，aria-selected 表示的是游标而不是可用性。
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
+  await expect(page.locator(".vault-row.is-active .vault-row-name")).toHaveText("gone-vault");
+  const missing = page.locator(".vault-row.is-missing");
+  await expect(missing).toHaveAttribute("aria-disabled", "true");
+  await expect(missing).toHaveAttribute("aria-selected", "true");
+  await expect(input).toHaveAttribute("aria-activedescendant", (await missing.getAttribute("id")) as string);
 
-  // 只剩失效行：没有可用游标，aria-selected 一条都不剩；失效行仍有 id 且不进游标空间
+  // 只剩失效行：游标落在它上面（不是「没有游标」）
   await page.keyboard.press("Meta+a");
   await page.keyboard.press("Backspace");
   await page.keyboard.type("gone");
   await expect(rows).toHaveCount(1);
-  await expect(rows.locator(".vault-row-name")).toHaveText(["gone-vault"]);
-  await expect(selected).toHaveCount(0);
-  await expect(input).not.toHaveAttribute("aria-activedescendant", /.+/);
-  await expect(page.locator(".vault-row.is-missing")).toHaveAttribute("id", /.+/);
+  await expect(selected).toHaveCount(1);
+  await expect(selected.locator(".vault-row-name")).toHaveText("gone-vault");
 });
 
 test("vault：当前 vault 失效时保留 aria-current=true 与 ✓ /「当前」，同时 aria-disabled=true", async ({ page }) => {
@@ -475,11 +486,17 @@ test("vault：当前 vault 失效时保留 aria-current=true 与 ✓ /「当前�
   // 可用性维度：同时是 aria-disabled
   await expect(currentMissing).toHaveAttribute("aria-disabled", "true");
 
-  // 它不在游标空间里：游标落首条可用行，activedescendant 不指向失效行
-  await expect(page.locator('.vault-row[aria-selected="true"] .vault-row-name')).toHaveText("notes-vault");
+  // 策略起点是当前项——它失效也一样；游标因此落在它上面，activedescendant 指向同一条
+  await expect(page.locator('.vault-row[aria-selected="true"] .vault-row-name')).toHaveText("demo-vault");
   const missingId = await currentMissing.getAttribute("id");
   expect(missingId, "失效行也要有 option id").toBeTruthy();
-  await expect(page.locator(".vault-filter")).not.toHaveAttribute("aria-activedescendant", missingId as string);
+  await expect(page.locator(".vault-filter")).toHaveAttribute("aria-activedescendant", missingId as string);
+
+  // ↓ 离开后当前身份不动（游标与身份是两个维度）
+  await page.keyboard.press("ArrowDown");
+  await expect(page.locator(".vault-row.is-active .vault-row-name")).toHaveText("notes-vault");
+  await expect(currentMissing).toHaveCount(1);
+  await expect(currentMissing).toHaveAttribute("aria-selected", "false");
 });
 
 test("vault：Delete / Backspace 在游标行上走同一套两步确认，查询编辑与当前项不被接管", async ({ page }) => {
@@ -523,6 +540,69 @@ test("vault：Delete / Backspace 在游标行上走同一套两步确认，查�
   await expect(page.locator(".vault-row-name")).toHaveText(["gone-vault", "demo-vault", "sandbox-vault"]);
   await expect(popover).toBeVisible();
   expect((await invokes(page)).filter((cmd) => cmd === "vault_remove")).toEqual(["vault_remove"]);
+});
+
+test("vault：Delete / Backspace 只在筛选输入框持焦时接管（Tab 到新增入口后不触发）", async ({ page }) => {
+  await openSwitcher(page);
+  const input = page.locator(".vault-filter");
+  const popover = page.locator(".vault-pop");
+  const confirm = page.locator(".vault-row-confirm");
+  const removes = async (): Promise<string[]> => (await invokes(page)).filter((cmd) => cmd === "vault_remove");
+
+  // 游标到一条非当前行
+  await page.keyboard.press("ArrowDown");
+  await expect(page.locator(".vault-row.is-active .vault-row-name")).toHaveText("notes-vault");
+
+  // Tab 到「新增 vault…」：按键仍冒泡到浮层容器，但那两个键是它的原生键，浮层 MUST NOT 接管
+  await page.keyboard.press("Tab");
+  await expect(page.locator(".vault-add")).toBeFocused();
+  await page.keyboard.press("Delete");
+  await page.keyboard.press("Backspace");
+  await expect(confirm).toHaveCount(0);
+  await expect(popover).toBeVisible();
+  expect(await removes()).toEqual([]);
+
+  // 焦点回到筛选框：同一个键进入确认态（同一行，未换目标）
+  await input.click();
+  await page.keyboard.press("Delete");
+  await expect(confirm).toHaveText(/notes-vault/);
+  // 确认态的行离开游标空间（Enter 不会误切到它）
+  await expect(page.locator(".vault-row.is-active")).toHaveCount(0);
+});
+
+test("vault：Esc 第一次只撤确认、第二次关浮层；游标移动取消确认", async ({ page }) => {
+  await openSwitcher(page);
+  const input = page.locator(".vault-filter");
+  const popover = page.locator(".vault-pop");
+  const confirm = page.locator(".vault-row-confirm");
+  const removes = async (): Promise<string[]> => (await invokes(page)).filter((cmd) => cmd === "vault_remove");
+
+  await page.keyboard.press("ArrowDown"); // demo-vault → notes-vault
+  await page.keyboard.press("Delete");
+  await expect(confirm).toHaveCount(1);
+  // 取消钮在 Tab 序列之外，但它读得出 Esc 这条出口
+  await expect(page.locator(".vault-row-confirm-no")).toHaveAttribute("aria-keyshortcuts", "Escape");
+  await expect(page.locator(".vault-row-confirm-no")).toHaveAttribute("tabindex", "-1");
+
+  // 第一次 Esc：只撤确认——浮层还在、焦点仍在筛选框、确认行回到游标
+  await page.keyboard.press("Escape");
+  await expect(confirm).toHaveCount(0);
+  await expect(popover).toBeVisible();
+  await expect(input).toBeFocused();
+  await expect(page.locator(".vault-row.is-active .vault-row-name")).toHaveText("notes-vault");
+
+  // 再进确认后按 ↓：游标移动取消确认，且不删原确认行
+  await page.keyboard.press("Delete");
+  await expect(confirm).toHaveCount(1);
+  await page.keyboard.press("ArrowDown");
+  await expect(confirm).toHaveCount(0);
+  await expect(page.locator(".vault-row.is-active .vault-row-name")).toHaveText("sandbox-vault");
+  expect(await removes()).toEqual([]);
+
+  // 第二次 Esc（没有确认态）：既有规则——关层并交还编辑器焦点
+  await page.keyboard.press("Escape");
+  await expect(popover).toBeHidden();
+  await expect(page.locator(".cm-content")).toBeFocused();
 });
 
 test("vault：行与删除钮不进 Tab 遍历、Tab 不被消费；hover 不清掉游标；关闭的焦点口径", async ({ page }) => {
