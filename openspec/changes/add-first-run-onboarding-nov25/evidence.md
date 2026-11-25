@@ -181,7 +181,8 @@ editorPane、`openHarnessPane(false)` 无 JSONL / preflight、877 未被占用�
     设置仍开且 `#app.inert` 仍 true；关闭后才 false；修复前该断言红）；
   - `app-main` 6/6 + `m645-startup-surface` 4/4 PASS；
   - `toc-outline` + `quick-open` + `m149-tabs` + `m293-eink-literal-tokens` +
-    `m831-harness-composer-codemirror` 69/69 PASS。
+    `m831-harness-composer-codemirror`：79 passed / 1 skipped（chromium + webkit；跳过项是
+    CDP-only 分支，非产品断言）。
 - `bash scripts/acceptance/check-suite.sh`：PASS（877 静态契约 + COVERAGE 生成一致）。
 - `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`：`38 passed / 0 failed`。
 - `bash scripts/docs-check.sh`：PASS。
