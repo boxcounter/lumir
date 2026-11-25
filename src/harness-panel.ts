@@ -139,7 +139,7 @@ import {
 } from "./harness-context";
 import type { HarnessContextBlock, HarnessContextSource } from "./harness-context";
 import { createHarnessDraftStore } from "./harness-draft";
-import { moveSkillHighlight, openSkillMenu, skillSelectionSpec, skillTokenAt } from "./skill-menu";
+import { moveSkillHighlight, openSkillMenu, skillMenuNavigationDelta, skillSelectionSpec, skillTokenAt } from "./skill-menu";
 import type { SkillMenuState } from "./skill-menu";
 import { skillCatalogRefreshEffect, skillChips } from "./skill-chips";
 import type { SkillSummary } from "./bindings/SkillSummary";
@@ -4468,6 +4468,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (highlighted === null) composerView.contentDOM.removeAttribute("aria-activedescendant");
     else composerView.contentDOM.setAttribute("aria-activedescendant", `lumir-hp-skill-option-${highlighted}`);
     placeSkillMenu();
+    if (highlighted !== null) {
+      (skillMenuEl.children[highlighted] as HTMLElement | undefined)?.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  function moveSkillMenu(delta: number): void {
+    if (skillMenuState === null) return;
+    skillMenuState = moveSkillHighlight(skillMenuState, delta);
+    renderSkillMenu();
   }
 
   function placeSkillMenu(): void {
@@ -4475,12 +4484,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const caret = composerView.coordsAtPos(composerView.state.selection.main.head);
     const host = composerArea.getBoundingClientRect();
     if (caret === null) return;
+    const fontSize = overlayFontSize(skillMenuEl);
+    const avail = Math.max(0, host.width - 16);
     const width = placeOverlay({
       tier: "list",
       natural: measureOverlayNaturalWidth(skillMenuEl),
       host: host.width,
       hostLeft: host.left,
-      fontSize: overlayFontSize(skillMenuEl),
+      fontSize,
+      maxEm: 48,
+      minWidth: Math.max(200, 0.85 * avail),
       anchor: { left: caret.left, right: caret.right },
       preferred: "left",
     });
@@ -10330,19 +10343,20 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       dispatchComposerCommand("editor.redo");
       return;
     }
+    if (skillMenuState !== null) {
+      const delta = skillMenuNavigationDelta(event);
+      if (delta !== null) {
+        event.preventDefault();
+        moveSkillMenu(delta);
+        return;
+      }
+    }
     if (event.ctrlKey && !event.metaKey && !event.altKey &&
         (event.key.toLowerCase() === "n" || event.key.toLowerCase() === "p")) {
       closeSkillMenu();
       return;
     }
     if (mod) return;
-    if (skillMenuState !== null && !event.altKey &&
-        (event.key === "ArrowDown" || event.key === "ArrowUp")) {
-      event.preventDefault();
-      skillMenuState = moveSkillHighlight(skillMenuState, event.key === "ArrowDown" ? 1 : -1);
-      renderSkillMenu();
-      return;
-    }
     if (skillMenuState !== null && skillMenuState.highlighted !== null &&
         (event.key === "Enter" || event.key === "Tab")) {
       event.preventDefault();

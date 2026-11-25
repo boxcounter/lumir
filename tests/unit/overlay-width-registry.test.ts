@@ -98,10 +98,19 @@ const REGISTRY: RegistryEntry[] = [
     tier: "list",
     shape: "em-capped",
     scaledText: true,
-    selectors: [".lumir-hp-selpop", ".lumir-hp-sesspop", ".lumir-hp-skill-menu"],
+    selectors: [".lumir-hp-selpop", ".lumir-hp-sesspop"],
     note:
       "合并选择器 / 会话历史：内容驱动 + 26em 上限 + 既有下限（selpop 188px、sesspop 200px）。" +
       "两处此前的形态是「无夹取」与「定值 200px」——2.13 档 + 320px pane 实测越界 85px / 名字裁 81%。",
+  },
+  {
+    tier: "list",
+    shape: "em-capped",
+    scaledText: true,
+    selectors: [".lumir-hp-skill-menu"],
+    note:
+      "Skill 候选：48em 上限 + 宿主可用宽驱动的响应式目标下限（change fix-skill-menu-ux-nov25）。" +
+      "通用 list 档仍保持 26em；placeOverlay 的 maxEm 组件覆盖与 pane 夹取共同生效。",
   },
   {
     tier: "list",

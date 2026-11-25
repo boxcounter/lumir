@@ -5,6 +5,7 @@ import {
   isSkillName,
   moveSkillHighlight,
   openSkillMenu,
+  skillMenuNavigationDelta,
   skillSelectionSpec,
   skillTokenAt,
 } from "../../src/skill-menu.ts";
@@ -57,6 +58,44 @@ test("被动 Enter/Tab 不选中，方向键进入选择态且到端停住", () 
   const up = moveSkillHighlight(opened, -1);
   assert.equal(up.highlighted, 1);
   assert.equal(moveSkillHighlight(up, 1).highlighted, 1);
+});
+
+test("键盘类型 × 列表长度 × 高亮位置：Ctrl+N/P 与方向键逐步同态且到端停住", () => {
+  for (const length of [1, 2, 6, 17]) {
+    const items = Array.from({ length }, (_, index) => skill(`skill-${index}`));
+    for (const family of ["arrows", "ctrl"] as const) {
+      const down = family === "arrows" ? "ArrowDown" : "n";
+      const up = family === "arrows" ? "ArrowUp" : "p";
+      const downKey = { key: down, ctrlKey: family === "ctrl", metaKey: false, altKey: false };
+      const upKey = { key: up, ctrlKey: family === "ctrl", metaKey: false, altKey: false };
+      assert.equal(skillMenuNavigationDelta(downKey), 1);
+      assert.equal(skillMenuNavigationDelta(upKey), -1);
+      let state = openSkillMenu("/skill", 6, items)!;
+      const forward = [state.highlighted];
+      for (let step = 0; step < length + 2; step += 1) {
+        state = moveSkillHighlight(state, skillMenuNavigationDelta(downKey)!);
+        forward.push(state.highlighted);
+      }
+      assert.deepEqual(forward, [null, ...Array.from({ length }, (_, index) => index), length - 1, length - 1], `${family} length=${length} 正向`);
+      const backward = [state.highlighted];
+      for (let step = 0; step < length + 2; step += 1) {
+        state = moveSkillHighlight(state, skillMenuNavigationDelta(upKey)!);
+        backward.push(state.highlighted);
+      }
+      assert.deepEqual(backward, [length - 1, ...Array.from({ length }, (_, index) => Math.max(0, length - 2 - index)), 0, 0], `${family} length=${length} 反向`);
+    }
+  }
+});
+
+test("候选导航不接管 Meta/Alt 组合；大小写 N/P 与方向键走各自既有条件", () => {
+  for (const key of ["n", "N", "p", "P"]) {
+    assert.equal(skillMenuNavigationDelta({ key, ctrlKey: true, metaKey: true, altKey: false }), null);
+    assert.equal(skillMenuNavigationDelta({ key, ctrlKey: true, metaKey: false, altKey: true }), null);
+    assert.equal(skillMenuNavigationDelta({ key, ctrlKey: true, metaKey: false, altKey: false, shiftKey: true }), null);
+  }
+  assert.equal(skillMenuNavigationDelta({ key: "ArrowDown", ctrlKey: true, metaKey: false, altKey: false }), null);
+  assert.equal(skillMenuNavigationDelta({ key: "ArrowUp", ctrlKey: false, metaKey: true, altKey: false }), null);
+  assert.equal(skillMenuNavigationDelta({ key: "ArrowDown", ctrlKey: false, metaKey: false, altKey: true }), null);
 });
 
 test("选中只替换当前 token，复用既有尾随空格并产出 ref", () => {
