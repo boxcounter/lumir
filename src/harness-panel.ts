@@ -4570,8 +4570,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     skillMenuEl.style.maxHeight = capacity < SKILL_MENU_MAX_HEIGHT ? `${capacity}px` : "";
     // 行高随 --lumir-hp-scale 变，用实测高度而不是 32px 的估算（同一语义不留第二处真源）。
     const height = skillMenuEl.getBoundingClientRect().height;
+    // 下方放置仍以 composer 区为界（不压住控制行）；放不下才上翻，上翻允许覆盖 transcript。
     const below = caret.bottom + 4;
-    const top = below + height <= limitBottom ? below : caret.top - height - 4;
+    const belowLimit = Math.min(limitBottom, host.bottom - SKILL_MENU_PANEL_MARGIN);
+    const top = below + height <= belowLimit ? below : caret.top - height - 4;
     const clamped = Math.min(Math.max(top, limitTop), Math.max(limitTop, limitBottom - height));
     skillMenuEl.style.top = `${clamped - host.top}px`;
     return skillMenuClip(skillMenuEl.getBoundingClientRect(), panelRect);
