@@ -1781,6 +1781,15 @@ const keydownEvent = (key: string, over: FakeEvent = {}): FakeEvent => ({
   ...over,
 });
 
+/** 按键 + 「浮层有没有消费它」的读数（preventDefault 的替身；组合期与未接管的键必须为 false）。 */
+function keyPress(key: string, over: FakeEvent = {}): { event: FakeEvent; consumed: () => boolean } {
+  let prevented = false;
+  return {
+    event: keydownEvent(key, { preventDefault: () => void (prevented = true), ...over }),
+    consumed: () => prevented,
+  };
+}
+
 test("浮层：打开后渲染全部行（含当前项与失效行）与底部新增入口；未装载时无操作", async () => {
   const rig = createSwitcherRig([
     listRow({ id: "notes", path: "/Users/alex/notes", tab_count: 2, last_opened_at: Date.now() }),
@@ -1814,6 +1823,53 @@ test("浮层：打开后渲染全部行（含当前项与失效行）与底部�
   rig.switcher.toggle();
   assert.equal(popover.hidden, true);
   assert.deepEqual(rig.expandedFlags, [true, false]);
+});
+
+test("浮层：onVaultLoaded 换当前项时 ✓ / is-current / aria-current 与移除钮立刻跟上（浮层保持打开）", async () => {
+  const rig = createSwitcherRig([
+    listRow({ id: "notes", path: "/Users/alex/notes" }),
+    listRow({ id: "work", path: "/Users/alex/work" }),
+  ]);
+  await rig.switcher.onVaultLoaded("notes", []);
+  rig.switcher.toggle();
+  await flush();
+
+  const rowOf = (id: string): FakeEl => {
+    const row = rig.list().find("vault-row").find((el) => el.dataset.vault === id);
+    assert.ok(row !== undefined, `没有 ${id} 行`);
+    return row;
+  };
+  /** 该行行壳里的移除钮（当前项没有）。 */
+  const delOf = (id: string): FakeEl | undefined =>
+    rig
+      .list()
+      .find("vault-row-wrap")
+      .find((wrap) => wrap.find("vault-row")[0]?.dataset.vault === id)
+      ?.find("vault-row-del")[0];
+
+  assert.equal(rowOf("notes").getAttribute("aria-current"), "true");
+  assert.ok(rowOf("notes").classes.has("is-current"));
+  assert.equal(rowOf("notes").find("vault-row-flag").length, 1);
+  assert.equal(delOf("notes"), undefined, "当前项没有移除钮");
+  assert.ok(delOf("work") !== undefined, "非当前可用行有移除钮");
+
+  // 程序化切 vault（ensureCronVault 那条路径）：浮层不关，身份标记必须同一拍跟上
+  await rig.switcher.onVaultLoaded("work", []);
+
+  assert.equal(rig.popover().hidden, false, "浮层保持打开");
+  assert.equal(rowOf("notes").getAttribute("aria-current"), "false");
+  assert.ok(!rowOf("notes").classes.has("is-current"));
+  assert.equal(rowOf("notes").find("vault-row-flag").length, 0);
+  assert.equal(rowOf("notes").find("vault-dot")[0]?.textContent, "");
+  assert.ok(delOf("notes") !== undefined, "旧当前行拿回移除钮");
+  assert.equal(rowOf("work").getAttribute("aria-current"), "true");
+  assert.ok(rowOf("work").classes.has("is-current"));
+  assert.equal(rowOf("work").find("vault-row-flag").length, 1);
+  assert.equal(rowOf("work").find("vault-dot")[0]?.textContent, "✓");
+  assert.equal(delOf("work"), undefined, "新当前行没有移除钮");
+  // 游标按打开态口径重摆：查询为空时落在当前项，aria-selected 跟着它
+  assert.equal(rig.activeRowId(), "work");
+  assert.equal(rowOf("work").getAttribute("aria-selected"), "true");
 });
 
 test("浮层：未装载 vault（入口不存在）时打开是无操作", () => {
@@ -1931,6 +1987,53 @@ test("浮层：↑↓ / ⌃N⌃P 只走可选中行，Enter 切换，当前项�
   assert.equal(rig.focusedEditor, 2);
   // 列表读取失败：只给一条人话提示，不弹空浮层
   assert.deepEqual(rig.warns, []);
+});
+
+test("浮层：Delete / Backspace 是纯键盘删除入口（同一套两步确认），不接管查询编辑与当前项", async () => {
+  const rig = createSwitcherRig([
+    listRow({ id: "notes", path: "/Users/alex/notes" }),
+    listRow({ id: "work", path: "/Users/alex/work" }),
+    listRow({ id: "sandbox", path: "/Users/alex/sandbox" }),
+  ]);
+  await rig.switcher.onVaultLoaded("notes", []);
+  await openSwitcher(rig);
+
+  // 查询非空：Backspace 归输入框（不消费、不进入确认态）
+  typeQuery(rig, "work");
+  const editing = keyPress("Backspace");
+  rig.popover().fire("keydown", editing.event);
+  assert.equal(editing.consumed(), false);
+  assert.equal(rig.popover().find("vault-row-confirm").length, 0);
+
+  // 清空查询：游标回当前项——当前项没有移除入口，不消费
+  typeQuery(rig, "");
+  assert.equal(rig.activeRowId(), "notes");
+  const onCurrent = keyPress("Delete");
+  rig.popover().fire("keydown", onCurrent.event);
+  assert.equal(onCurrent.consumed(), false);
+  assert.equal(rig.popover().find("vault-row-confirm").length, 0);
+  assert.equal(rig.removed.length, 0);
+
+  // 移到可移除行：第一次 Delete 进入与指针同一套两步确认，不发起移除
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
+  assert.equal(rig.activeRowId(), "work");
+  const first = keyPress("Delete");
+  rig.popover().fire("keydown", first.event);
+  assert.equal(first.consumed(), true);
+  assert.equal(rig.popover().find("vault-row-confirm").length, 1);
+  assert.equal(rig.removed.length, 0, "确认前 MUST NOT 发起移除");
+
+  // 第二次 Backspace：提交同一个动作，只发一次；列表按后端结果重拉
+  const second = keyPress("Backspace");
+  rig.popover().fire("keydown", second.event);
+  await flush();
+  assert.equal(second.consumed(), true);
+  assert.deepEqual(rig.removed.map((row) => row.id), ["work"]);
+  assert.equal(rig.popover().hidden, false, "移除后浮层保持打开");
+  assert.deepEqual(
+    rig.popover().find("vault-row").map((row) => row.dataset.vault),
+    ["notes", "sandbox"],
+  );
 });
 
 // ---------------------------------------------------------------------------

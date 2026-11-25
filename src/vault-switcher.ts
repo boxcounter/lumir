@@ -899,12 +899,25 @@ class VaultSwitcher implements VaultSwitcherHandle {
   private currentId: string | undefined;
   /** 浮层自身改行 DOM 的进行度（见 `rebuild`）：这期间收到的 `focusout` 不是用户意图。 */
   private rebuilding = 0;
-  /** 每行活动标记的视图（行标记就地更新用）：切换钮 → { 行数据, 顶行容器, 标记节点 }。
-   *  只服务**当前这份行 DOM**（随 `render` 重建），不是注册表镜像——活动的唯一真源仍是 store。 */
+  /** 每行活动标记的视图（行标记就地更新用）：切换钮 → { 行数据, 行壳, 顶行容器, 标记节点,
+   *  移除钮 }。只服务**当前这份行 DOM**（随 `render` 重建），不是注册表镜像——活动的唯一真源
+   *  仍是 store。`wrap` / `del` 供键盘删除入口（Delete / Backspace）就地进入同一套两步确认
+   *  （见 `removeFromKeyboard`）。 */
   private rowViews = new Map<
     HTMLButtonElement,
-    { row: VaultListEntry; top: HTMLElement; marker: HTMLElement | null }
+    {
+      row: VaultListEntry;
+      wrap: HTMLDivElement;
+      top: HTMLElement;
+      marker: HTMLElement | null;
+      del: HTMLButtonElement | null;
+    }
   >();
+
+  /** 行内确认态在场时的键盘提交入口（Delete / Backspace 第二次按下，见 `enterConfirm`）。
+   *  确认态把切换钮移出了游标空间，没有「游标行」可按——提交动作只存在于当前这份 DOM 里，
+   *  随任何重建（`render` / `close` / 取消 / 提交）一起作废。 */
+  private pendingConfirm: (() => void) | null = null;
 
   constructor(deps: VaultSwitcherDeps) {
     this.deps = deps;
@@ -1029,9 +1042,11 @@ class VaultSwitcher implements VaultSwitcherHandle {
 
   async onVaultLoaded(vaultId: string, entries: readonly FsEntry[]): Promise<void> {
     this.currentId = vaultId;
-    // 当前项一变，行标记与 `title` 必须立即按新身份重算（独立评审 P1-4a）：`ensureCronVault`
-    // 这类程序化切 vault 不关浮层，原非当前行的标记会留在新当前行上（违反 D4「当前行不显示」）。
-    this.refreshActivity();
+    // 当前项一变，**身份标记**必须立即按新身份重算（独立评审 P1-4a）：`ensureCronVault` 这类
+    // 程序化切 vault 不关浮层。✓ / 「当前」flag / `is-current` / `aria-current` 与移除钮的有无
+    // 全部由 currentId 派生（`renderRow`），只刷活动标记会让这四处停在旧行——整份行 DOM 按新
+    // 身份重建（查询与游标起点仍走 `render` 的既有口径）。浮层关闭时零 DOM 工作：下次打开会重拉。
+    if (this.open) this.render(this.rowEntries);
     await this.store.onVaultLoaded(vaultId, entries);
   }
 
@@ -1089,6 +1104,7 @@ class VaultSwitcher implements VaultSwitcherHandle {
     this.input.value = "";
     this.filter.reset();
     this.lastRenderedQuery = null;
+    this.pendingConfirm = null;
     // 关闭态不保留「游标指向谁」的 ARIA 关系（下次打开会重建）。
     this.input.removeAttribute("aria-activedescendant");
     if (restoreFocus) this.handOffFocus();
@@ -1159,6 +1175,8 @@ class VaultSwitcher implements VaultSwitcherHandle {
     this.rows = [];
     this.rowViews.clear();
     this.activeIndex = -1;
+    // 确认态只存在于当前这份 DOM（见 enterConfirm）：任何重建都丢弃它。
+    this.pendingConfirm = null;
     this.visible = this.filter.setQuery(
       this.input.value,
       this.rowEntries.map((row) => row.name),
@@ -1215,7 +1233,6 @@ class VaultSwitcher implements VaultSwitcherHandle {
     // 虽不在游标空间里，仍要被 ARIA 关系闭合覆盖，便于读屏逐项浏览。
     el.id = `${ITEM_ID_PREFIX}${source}`;
     if (row.available) {
-      if (current) el.classList.add("is-current");
       this.rows.push(el);
     } else {
       // 不可用：仍是列表里的一行（指针可点、读屏可逐项浏览），语义是「不可选中」，点击不发起
@@ -1224,6 +1241,9 @@ class VaultSwitcher implements VaultSwitcherHandle {
       el.classList.add("is-missing");
       el.setAttribute("aria-disabled", "true");
     }
+    // 「当前」是**身份**维度，与可用性无关：当前 vault 的目录被移走时该行仍是当前项（✓ /「当前」/
+    // is-current / aria-current 都在），只是同时 `aria-disabled` 且不进游标空间。
+    if (current) el.classList.add("is-current");
 
     const top = document.createElement("span");
     top.className = "vault-row-top";
@@ -1247,9 +1267,6 @@ class VaultSwitcher implements VaultSwitcherHandle {
     // 可用行、且有状态时出现；当前行由标题栏钮承载（同一状态 MUST NOT 两处出现）。
     // 标记本身无文本、`aria-hidden`（不进入可访问名）；状态词只写进该行切换钮的 `title`
     // （AX 的 `help=` 是真机可达的判据通道）。空闲 / 当前行不建节点、不设 title。
-    const view = { row, top, marker: null as HTMLElement | null };
-    this.rowViews.set(el, view);
-    this.applyRowActivity(el, view);
 
     if (row.available) {
       // 路径次行按 Alex 裁决裁掉（M217，gap 表 #12）：单行制收敛后路径不再上屏；
@@ -1274,20 +1291,26 @@ class VaultSwitcher implements VaultSwitcherHandle {
     // 当前 vault 那一行**不渲染**移除钮（spec「当前项没有移除入口」）：隐藏只是呈现，后端
     // `vault_remove` 按稳定 id 拒绝才是防线（IPC 可被任意调用）。失效行同样有——它是清理
     // 失效项这个主用例的落点。
+    let del: HTMLButtonElement | null = null;
     if (!current) {
-      const del = document.createElement("button");
-      del.type = "button";
-      del.className = "vault-row-del";
-      del.setAttribute("aria-label", REMOVE_LABEL(row.name));
-      del.title = REMOVE_LABEL(row.name);
-      del.tabIndex = -1;
-      del.textContent = "×"; // i18n-exempt: glyph（乘号图形，非文案）
-      del.addEventListener("click", (event) => {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "vault-row-del";
+      remove.setAttribute("aria-label", REMOVE_LABEL(row.name));
+      remove.title = REMOVE_LABEL(row.name);
+      remove.tabIndex = -1;
+      remove.textContent = "×"; // i18n-exempt: glyph（乘号图形，非文案）
+      remove.addEventListener("click", (event) => {
         event.stopPropagation();
-        this.enterConfirm(wrap, row, el, del);
+        this.enterConfirm(wrap, row, el, remove);
       });
-      wrap.append(del);
+      wrap.append(remove);
+      del = remove;
     }
+    // 视图登记放在移除钮建好之后：键盘删除入口要用同一对 wrap / del 进入确认态。
+    const view = { row, wrap, top, marker: null as HTMLElement | null, del };
+    this.rowViews.set(el, view);
+    this.applyRowActivity(el, view);
     return wrap;
   }
 
@@ -1358,8 +1381,22 @@ class VaultSwitcher implements VaultSwitcherHandle {
     no.tabIndex = -1;
     no.textContent = CANCEL_TEXT();
     const restoreRow = (): void => {
+      this.pendingConfirm = null;
       this.rebuild(() => wrap.replaceChildren(switchButton, del));
       this.resumeRow(switchButton, position);
+    };
+    /** 确认移除（点击「移除」与键盘第二次 Delete / Backspace 共用这一个动作）。 */
+    const confirmYes = (): void => {
+      // 一次确认只发一次请求：双击 / 连点不该排出第二个移除。`disabled` 在真实 DOM 上就
+      // 不再派发 click，这一行是让「只一次」成为处理函数自己的不变量（不依赖浏览器）。
+      if (yes.disabled) return;
+      this.pendingConfirm = null;
+      // 禁用是**浮层自己的 DOM 改动**：持焦钮被禁用时浏览器同样把焦点送回 body 并派发
+      // focusout（chromium 实测），走同一条收口（见 rebuild）。
+      this.rebuild(() => {
+        yes.disabled = true;
+      });
+      void this.commitRemove(row, position, restoreRow);
     };
     no.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -1368,17 +1405,12 @@ class VaultSwitcher implements VaultSwitcherHandle {
     });
     yes.addEventListener("click", (event) => {
       event.stopPropagation();
-      // 一次确认只发一次请求：双击 / 连点不该排出第二个移除。`disabled` 在真实 DOM 上就
-      // 不再派发 click，这一行是让「只一次」成为处理函数自己的不变量（不依赖浏览器）。
-      if (yes.disabled) return;
-      // 禁用是**浮层自己的 DOM 改动**：持焦钮被禁用时浏览器同样把焦点送回 body 并派发
-      // focusout（chromium 实测），走同一条收口（见 rebuild）。
-      this.rebuild(() => {
-        yes.disabled = true;
-      });
-      void this.commitRemove(row, position, restoreRow);
+      confirmYes();
     });
     this.rebuild(() => wrap.replaceChildren(prompt, yes, no));
+    // 键盘的第二次 Delete / Backspace 提交同一个动作：确认态的按钮都在 Tab 序列之外，
+    // 纯键盘没有别的确认路径（见 removeFromKeyboard）。
+    this.pendingConfirm = confirmYes;
   }
 
   /** 确认后的收口：调装配层移除 → 成功按同一份口径重拉列表；失败把该行还原（人话提示由
@@ -1528,6 +1560,29 @@ class VaultSwitcher implements VaultSwitcherHandle {
     return this.rowEntries.find((row) => row.id === el.dataset.vault);
   }
 
+  /** Delete / Backspace 的删除语义（纯键盘删除 vault 的唯一入口）。返回是否接管该键。
+   *
+   *  行切换钮、行尾删除钮与确认态的两个按钮都不进 Tab 序列（见 renderRow / enterConfirm），
+   *  纯键盘因此没有指针那条「行 → × → 移除」的路径；这条就地键补上同一套两步确认：
+   *   - 查询为空、游标行可移除（非当前 vault 的可用行）⇒ 第一次按下进入确认态；
+   *   - 确认态在场 ⇒ 第二次按下就是点「移除」（`pendingConfirm`）；
+   *   - 其余情形 MUST NOT 消费：查询非空时这两个键是输入框的编辑键（退格删字），当前 vault
+   *     没有移除入口（行上不渲染删除钮，后端 `vault_remove` 同样拒绝）。
+   */
+  private removeFromKeyboard(): boolean {
+    // 查询非空 = 用户在编辑筛选串：Delete / Backspace 归输入框，浮层 MUST NOT 抢。
+    if (this.input.value !== "") return false;
+    if (this.pendingConfirm !== null) {
+      this.pendingConfirm();
+      return true;
+    }
+    const el = this.rows[this.activeIndex];
+    const view = el === undefined ? undefined : this.rowViews.get(el);
+    if (el === undefined || view === undefined || view.del === null) return false;
+    this.enterConfirm(view.wrap, view.row, el, view.del);
+    return true;
+  }
+
   private onKeydown(event: KeyboardEvent): void {
     // 输入法组合期归输入法：`↑↓` / `Enter` 在组合期是被输入法用来选候选的，浮层 MUST NOT 移动
     // 游标、MUST NOT 发起切换 / 重定位，也不消费该键。与 Quick Open 的同一行守卫同源；
@@ -1565,6 +1620,11 @@ class VaultSwitcher implements VaultSwitcherHandle {
         }
         break;
       }
+      case "Delete":
+      case "Backspace":
+        // 纯键盘删除入口（见 removeFromKeyboard）。未接管时不消费：退格仍是输入框的编辑键。
+        if (!this.removeFromKeyboard()) return;
+        break;
       default:
         return; // 其余键不消费：浮层不是模态，Tab 等照常走原生焦点路径
     }

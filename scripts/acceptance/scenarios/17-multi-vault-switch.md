@@ -178,6 +178,41 @@ steps:
         editor: { has: "BPIN" }
       - label: 第一个标签的正文没有上屏（激活项退化的反证）
         editor: { not: "标签场景 A" }
+
+  # change fix-selector-ime-aria-nov25：行与删除钮都不进 Tab 序列（上面两步已经验过），纯键盘
+  # 删除由 Delete / Backspace 承担——查询为空 + 非当前游标行，两次按下 = 同一套两步确认。
+  - name: ⌘O 打开切换器（当前项是 A，游标默认落在当前项）
+    do: key
+    key: "cmd+o"
+    expect:
+      - label: 浮层已展开
+        ax: { has: "选择一个目录作为新 vault" }
+
+  - name: ↓ 把游标移到非当前行 B
+    do: key
+    key: "down"
+
+  - name: 第一次 Delete 进入两步确认（与点行尾 × 同一套确认句）
+    do: key
+    key: "delete"
+    expect:
+      - shot: 键盘删除的确认态
+      - label: 确认句点名 B，浮层未收起（还没发起移除）
+        ax: { has: '/从列表移除「lumir-m102-acceptance-b」/' }
+
+  - name: 第二次 Delete 提交移除
+    do: key
+    key: "delete"
+
+  - name: 等移除完成（撤销提示出现是移除成功的终端信号）
+    do: waitFor
+    waitFor:
+      has: ["已从列表移除"]
+    expect:
+      - label: 撤销提示点名被移除的 B
+        ax: { has: '/已从列表移除「lumir-m102-acceptance-b」/' }
+      - label: B 的行已从列表消失（它独有的「还没有打开过文件」摘要不再在浮层里）
+        ax: { not: "还没有打开过文件" }
 ---
 
 说明：本条对应 change `multi-vault-workspaces` 的任务 6.1 ①，覆盖四条会互相牵连的行为：
@@ -211,3 +246,8 @@ steps:
 **Tab 遍历与 ARIA 属性**（change fix-selector-ime-aria-nov25）：本场景只判终端事实「两次 Tab 后
 浮层收起」；行 / 删除钮的 `tabindex`、`aria-selected` / `aria-current` 与 option id 归 chromium
 矩阵（`tests/visual/scenes/selector-aria-ime-nov25.spec.ts`），AX 读不到这些属性。
+
+**纯键盘删除**（同一 change）：文末用「`↓` 到 B → `Delete` 进入确认句 → 再按一次 → 撤销提示点名
+B」判这条键真的走通。`Delete` 经 KimiCU 注入的是 keycode 51（WKWebView 读作 Backspace；浮层把
+`Delete` / `Backspace` 当同一个入口）。移除后**行消失**用 B 独有的摘要「还没有打开过文件」的反证
+来判——撤销提示本身也含 B 的名字，不能用「AX 里没有 B 的名字」当判据。

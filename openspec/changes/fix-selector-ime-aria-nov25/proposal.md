@@ -48,9 +48,12 @@ hover 规则用 `--hover` 覆盖了游标行的 `--sel` 底色（`src/style.css:
 2. **Vault 的 IME、ARIA 与 Tab 口径（`vault-workspace`）**
    - 同一条组合期守卫与「组合结束只刷新一次」。
    - `aria-selected` 改为只表示游标；当前 vault 用 `aria-current="true"` + 既有 ✓ / 「当前」flag；
-     失效行有唯一 option `id`、`aria-current="false"`，但不进游标空间。
-   - 行切换钮与删除钮 `tabindex="-1"`，Tab 不被消费；指针点击、键盘 `Enter`（切换 / 重定位）与
-     删除两步确认语义不变。
+     失效行有唯一 option `id`、`aria-disabled="true"`，但不进游标空间；当前 vault 失效时保留
+     `aria-current="true"`（当前身份不因不可用而丢失）；程序化切 vault（`onVaultLoaded`）时
+     ✓ / `is-current` / `aria-current` 与移除钮在同一拍跟上，不留视觉与 ARIA 滞后。
+   - 行切换钮与删除钮 `tabindex="-1"`，Tab 不被消费；纯键盘删除由 `Delete` / `Backspace` 就地键
+     承担（查询为空 + 非当前游标行），沿用既有两步确认、未接管时不消费按键。指针点击、键盘
+     `Enter`（切换 / 重定位）与删除的两步确认语义不变。
    - hover 不清掉游标标记；主动关闭交还焦点并保持阅读位置，被动关闭不抢焦点。
 3. **测试与验收**：先落一份在旧实现上判红的 chromium 矩阵（IME / ARIA / Tab / 焦点 / hover），
    再实现；验收场景 13（大纲）与 17（vault 切换）补组合期与 Tab / 焦点步骤，真机复跑由主会话

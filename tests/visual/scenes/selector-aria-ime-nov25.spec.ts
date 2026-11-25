@@ -1,10 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
-import { stubTauri, type VaultFixture, type VaultListRow } from "./tauri-stub";
+import { invokes, stubTauri, type VaultFixture, type VaultListRow } from "./tauri-stub";
 
 // 选择器浮层（大纲 / vault）的键盘、ARIA 与焦点口径（change fix-selector-ime-aria-nov25）。
 //
 // 判据分层：本文件跑 chromium 的真实 DOM，钉「组合期事件序 / ARIA 归属 / Tab 可达性 / 关闭后的
-// 焦点去向」；真机 WKWebView 层由验收场景 13 / 17 复跑（IME 组合期与 AX 可发现性只有真机能终审）。
+// 焦点去向」；真机 WKWebView 层由验收场景 13 / 17 复跑关闭与 Tab，IME 组合期与 AX 可发现性只
+// 有真机能终审（手工复核）。
 // 合同居所是 docs/specs/selector-contract.md（并行 change 拥有；本 change 只引用、不复制条款）。
 //
 // 先红后绿：本文件先于实现落地，在旧实现上逐条判红后留证（.local/probes/selector-ime-aria-nov25/），
@@ -42,6 +43,16 @@ const VAULT: VaultFixture = {
   vaults: REGISTRY,
 };
 
+/** 当前 vault 恰好失效：注册表把当前 vault 行标成不可用（外置盘拔出 / 目录改名）。
+ *  「失效」是可用性，「当前」是身份——两者同时为真，是 aria-current + aria-disabled 的组合现场。 */
+const MISSING_CURRENT: VaultFixture = {
+  ...VAULT,
+  vaults: [
+    { id: "fixture-vault", path: "/Volumes/ext/demo-vault", name: "demo-vault", available: false, last_opened_at: 1757000002000, tab_count: 2 },
+    { id: "fv-notes", path: "/Users/alex/notes-vault", name: "notes-vault", available: true, last_opened_at: 1757000001000, tab_count: 0 },
+  ],
+};
+
 async function openToc(page: Page): Promise<void> {
   await stubTauri(page, VAULT);
   await page.goto("/");
@@ -51,11 +62,15 @@ async function openToc(page: Page): Promise<void> {
   await expect(page.locator(".lumir-toc")).toBeVisible();
 }
 
-async function openSwitcher(page: Page): Promise<void> {
-  await stubTauri(page, VAULT);
+async function openSwitcherWith(page: Page, fixture: VaultFixture): Promise<void> {
+  await stubTauri(page, fixture);
   await page.goto("/");
   await page.locator(".ft-vault").click();
   await expect(page.locator(".vault-row").first()).toBeVisible();
+}
+
+async function openSwitcher(page: Page): Promise<void> {
+  await openSwitcherWith(page, VAULT);
 }
 
 /** 持焦元素的可读标识（真实 DOM 焦点，不用自报状态）。 */
@@ -91,29 +106,52 @@ async function focusLog(page: Page): Promise<string[]> {
   return page.evaluate(() => (window as unknown as { __focusLog: string[] }).__focusLog);
 }
 
-/** 组合开始 + 中间串 + 组合期按键（不结束组合）。 */
+/** 组合期可派发的按键：裸 key，或带 ctrlKey 的 chord（`⌃N` / `⌃P` 与 `↑` / `↓` 共用一条守卫）。 */
+type ComposeKey = string | { key: string; ctrlKey: boolean };
+
+/** 组合开始 + 中间串 + 组合期按键（不结束组合）。返回每个按键的 `defaultPrevented`——组合期
+ *  MUST NOT 消费就地键：只看「游标没动」分不出「浮层让路」与「浮层接了但没生效」，这个读数与它
+ *  成对才构成区分度（同一条键在组合期外必须为 true，见各用例的后半段）。 */
 async function composeKeys(
   page: Page,
   selector: string,
-  options: { mid: string; keys?: string[]; keyCode229?: string[] },
-): Promise<void> {
-  await page.locator(selector).evaluate((el, opts) => {
+  options: { mid: string; keys?: ComposeKey[]; keyCode229?: ComposeKey[] },
+): Promise<Array<{ key: string; prevented: boolean }>> {
+  return page.locator(selector).evaluate((el, opts) => {
     const input = el as HTMLInputElement;
+    const sent: Array<{ key: string; prevented: boolean }> = [];
+    const norm = (raw: string | { key: string; ctrlKey: boolean }): { key: string; ctrlKey: boolean } =>
+      typeof raw === "string" ? { key: raw, ctrlKey: false } : raw;
     input.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
     input.value = opts.mid;
     input.dispatchEvent(new InputEvent("input", { bubbles: true, data: opts.mid, isComposing: true }));
-    for (const key of opts.keys ?? []) {
-      input.dispatchEvent(
-        new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, isComposing: true }),
-      );
+    for (const raw of opts.keys ?? []) {
+      const key = norm(raw);
+      const event = new KeyboardEvent("keydown", {
+        key: key.key,
+        bubbles: true,
+        cancelable: true,
+        isComposing: true,
+        ctrlKey: key.ctrlKey,
+      });
+      input.dispatchEvent(event);
+      sent.push({ key: event.key, prevented: event.defaultPrevented });
     }
-    for (const key of opts.keyCode229 ?? []) {
+    for (const raw of opts.keyCode229 ?? []) {
+      const key = norm(raw);
       // Safari / 旧 WebKit 的旧口径：keyCode 229 表示「输入法正在处理」。KeyboardEventInit
       // 不保证接受 keyCode，直接在实例上覆盖以复现该分支。
-      const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+      const event = new KeyboardEvent("keydown", {
+        key: key.key,
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: key.ctrlKey,
+      });
       Object.defineProperty(event, "keyCode", { value: 229 });
       input.dispatchEvent(event);
+      sent.push({ key: event.key, prevented: event.defaultPrevented });
     }
+    return sent;
   }, options);
 }
 
@@ -172,20 +210,23 @@ async function rebuilds(page: Page): Promise<number> {
 // 大纲浮层
 // ---------------------------------------------------------------------------
 
-test("大纲：组合期的 ↑↓ / Enter 不移动游标、不接受（isComposing 与 keyCode 229 两条守卫）", async ({ page }) => {
+test("大纲：组合期的 ↑↓ / ⌃N⌃P / Enter 不移动游标、不接受、不消费（isComposing 与 keyCode 229 两条守卫）", async ({ page }) => {
   await openToc(page);
   const popover = page.locator(".lumir-toc");
   const active = page.locator(".lumir-toc-item.is-active");
   // 打开时游标 = 当前段（文档首 → 第一部分）
   await expect(active).toHaveText("第一部分");
 
-  await composeKeys(page, ".lumir-toc-input", {
+  const sent = await composeKeys(page, ".lumir-toc-input", {
     mid: "甲",
-    keys: ["ArrowDown", "Enter"],
-    keyCode229: ["ArrowDown"],
+    keys: ["ArrowDown", "Enter", { key: "n", ctrlKey: true }, { key: "p", ctrlKey: true }],
+    keyCode229: ["ArrowDown", "Enter"],
   });
 
-  // 组合期：游标不动（旧实现会被两条 ArrowDown 各推一步）
+  // 组合期六次按键都不被浮层消费（MUST NOT preventDefault）——与「游标没动」成对，
+  // 才分得出「浮层让路」和「浮层接了但没生效」。
+  expect(sent.map((entry) => entry.prevented)).toEqual([false, false, false, false, false, false]);
+  // 组合期：游标不动（旧实现会被两条 ArrowDown / ⌃N 推走）
   await expect(active).toHaveText("第一部分");
   // 组合期 Enter 不跳转：浮层仍开着、焦点仍在输入框
   await expect(popover).toBeVisible();
@@ -195,6 +236,28 @@ test("大纲：组合期的 ↑↓ / Enter 不移动游标、不接受（isCompo
   await composeEnd(page, ".lumir-toc-input", { final: "乙", trailingInput: false });
   await expect(popover).toBeVisible();
   await expect(active).toHaveText("乙小节");
+
+  // 同一批键在组合期之外会被就地消费（defaultPrevented 为真）——上一条全 false 的矩阵
+  // 因此有区分度，不是恒假断言。
+  await page.evaluate(() => {
+    const w = window as unknown as { __consumed: Array<{ key: string; prevented: boolean }> };
+    w.__consumed = [];
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown" || event.key === "n") {
+        w.__consumed.push({ key: event.key, prevented: event.defaultPrevented });
+      }
+    });
+  });
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Control+n");
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __consumed: Array<{ key: string; prevented: boolean }> }).__consumed,
+    ),
+  ).toEqual([
+    { key: "ArrowDown", prevented: true },
+    { key: "n", prevented: true },
+  ]);
 });
 
 test("大纲：组合结束按最终串只刷新一次列表", async ({ page }) => {
@@ -280,29 +343,57 @@ test("大纲：点浮层外是被动关闭（不抢焦点）、Esc 是主动关�
 // vault 切换器浮层
 // ---------------------------------------------------------------------------
 
-test("vault：组合期的 ↑↓ / Enter 不移动游标、不切换（isComposing 与 keyCode 229 两条守卫）", async ({ page }) => {
+test("vault：组合期的 ↑↓ / ⌃N⌃P / Enter 不移动游标、不切换、不消费（isComposing 与 keyCode 229 两条守卫）", async ({ page }) => {
   await openSwitcher(page);
   const popover = page.locator(".vault-pop");
   const active = page.locator(".vault-row.is-active");
 
   await expect(active.locator(".vault-row-name")).toHaveText("demo-vault");
-  await composeKeys(page, ".vault-filter", {
+  const switchesBefore = (await invokes(page)).filter((cmd) => cmd === "vault_open_path").length;
+  const sent = await composeKeys(page, ".vault-filter", {
     mid: "not",
-    keys: ["ArrowDown", "Enter"],
-    keyCode229: ["ArrowDown"],
+    keys: ["ArrowDown", "Enter", { key: "n", ctrlKey: true }, { key: "p", ctrlKey: true }],
+    keyCode229: ["ArrowDown", "Enter"],
   });
 
-  // 组合期：游标不动、没有发起切换
+  // 组合期六次按键都不被浮层消费（MUST NOT preventDefault），游标不动、没有发起切换
+  expect(sent.map((entry) => entry.prevented)).toEqual([false, false, false, false, false, false]);
   await expect(active.locator(".vault-row-name")).toHaveText("demo-vault");
   await expect(popover).toBeVisible();
   expect(await activeElement(page)).toBe("input.vault-filter");
   await expect(page.locator(".ft-vault-name")).toHaveText("demo-vault");
+  expect((await invokes(page)).filter((cmd) => cmd === "vault_open_path").length).toBe(switchesBefore);
 
   // 组合结束才按最终串刷新
   await composeEnd(page, ".vault-filter", { final: "notes", trailingInput: false });
   await expect(popover).toBeVisible();
   await expect(page.locator(".vault-row")).toHaveCount(1);
   await expect(active.locator(".vault-row-name")).toHaveText("notes-vault");
+
+  // 同一批键在组合期之外会被就地消费且真的移动游标——上一条全 false 的矩阵因此有区分度。
+  await page.keyboard.press("Meta+a");
+  await page.keyboard.press("Backspace");
+  await expect(page.locator(".vault-row")).toHaveCount(4);
+  await page.evaluate(() => {
+    const w = window as unknown as { __consumed: Array<{ key: string; prevented: boolean }> };
+    w.__consumed = [];
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown" || event.key === "n") {
+        w.__consumed.push({ key: event.key, prevented: event.defaultPrevented });
+      }
+    });
+  });
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Control+n");
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __consumed: Array<{ key: string; prevented: boolean }> }).__consumed,
+    ),
+  ).toEqual([
+    { key: "ArrowDown", prevented: true },
+    { key: "n", prevented: true },
+  ]);
+  await expect(active.locator(".vault-row-name")).toHaveText("sandbox-vault");
 });
 
 test("vault：组合结束按最终串只刷新一次列表", async ({ page }) => {
@@ -368,6 +459,70 @@ test("vault：aria-selected 只表示键盘游标，当前 vault 用 aria-curren
   await expect(selected).toHaveCount(0);
   await expect(input).not.toHaveAttribute("aria-activedescendant", /.+/);
   await expect(page.locator(".vault-row.is-missing")).toHaveAttribute("id", /.+/);
+});
+
+test("vault：当前 vault 失效时保留 aria-current=true 与 ✓ /「当前」，同时 aria-disabled=true", async ({ page }) => {
+  await openSwitcherWith(page, MISSING_CURRENT);
+  const currentMissing = page.locator('.vault-row[aria-current="true"]');
+
+  // 身份维度：仍是当前项（aria-current + ✓ + 「当前」+ is-current），MUST NOT 因失效被写成非当前
+  await expect(currentMissing).toHaveCount(1);
+  await expect(currentMissing.locator(".vault-row-name")).toHaveText("demo-vault");
+  await expect(currentMissing).toHaveClass(/is-missing/);
+  await expect(currentMissing).toHaveClass(/is-current/);
+  await expect(currentMissing.locator(".vault-dot")).toHaveText("✓");
+  await expect(currentMissing.locator(".vault-row-flag")).toHaveText("当前");
+  // 可用性维度：同时是 aria-disabled
+  await expect(currentMissing).toHaveAttribute("aria-disabled", "true");
+
+  // 它不在游标空间里：游标落首条可用行，activedescendant 不指向失效行
+  await expect(page.locator('.vault-row[aria-selected="true"] .vault-row-name')).toHaveText("notes-vault");
+  const missingId = await currentMissing.getAttribute("id");
+  expect(missingId, "失效行也要有 option id").toBeTruthy();
+  await expect(page.locator(".vault-filter")).not.toHaveAttribute("aria-activedescendant", missingId as string);
+});
+
+test("vault：Delete / Backspace 在游标行上走同一套两步确认，查询编辑与当前项不被接管", async ({ page }) => {
+  await openSwitcher(page);
+  const popover = page.locator(".vault-pop");
+  const input = page.locator(".vault-filter");
+  const confirm = page.locator(".vault-row-confirm");
+  const wraps = page.locator(".vault-row-wrap");
+
+  // 当前项没有移除入口：Delete 不进入确认态、不消费按键（后端 vault_remove 同样拒绝）
+  await page.keyboard.press("Delete");
+  await expect(confirm).toHaveCount(0);
+  await expect(popover).toBeVisible();
+  await expect(page.locator(".vault-row.is-active .vault-row-name")).toHaveText("demo-vault");
+
+  // 查询编辑中：Backspace 归输入框（删字），MUST NOT 被读成「删除行」
+  await page.keyboard.type("notes");
+  await expect(input).toHaveValue("notes");
+  await page.keyboard.press("Backspace");
+  await expect(input).toHaveValue("note");
+  await expect(confirm).toHaveCount(0);
+
+  // 清空查询 → 游标移到 notes-vault（非当前、可移除）
+  await page.keyboard.press("Meta+a");
+  await page.keyboard.press("Backspace");
+  await expect(input).toHaveValue("");
+  await expect(page.locator(".vault-row")).toHaveCount(4);
+  await page.keyboard.press("ArrowDown");
+  await expect(page.locator(".vault-row.is-active .vault-row-name")).toHaveText("notes-vault");
+
+  // 第一次按下 Delete：进入与点行尾 × 相同的两步确认（确认句点名该行），不发起移除
+  await page.keyboard.press("Delete");
+  await expect(confirm).toHaveText(/notes-vault/);
+  await expect(popover).toBeVisible();
+  expect((await invokes(page)).filter((cmd) => cmd === "vault_remove")).toEqual([]);
+  await expect(input).toBeFocused();
+
+  // 第二次按下 Backspace：提交移除——只发一次请求，列表按后端结果重拉
+  await page.keyboard.press("Backspace");
+  await expect(wraps).toHaveCount(3);
+  await expect(page.locator(".vault-row-name")).toHaveText(["gone-vault", "demo-vault", "sandbox-vault"]);
+  await expect(popover).toBeVisible();
+  expect((await invokes(page)).filter((cmd) => cmd === "vault_remove")).toEqual(["vault_remove"]);
 });
 
 test("vault：行与删除钮不进 Tab 遍历、Tab 不被消费；hover 不清掉游标；关闭的焦点口径", async ({ page }) => {
