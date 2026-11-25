@@ -34,3 +34,22 @@
 - 影响的 specs：`wikilink-suggestion`。
 - 影响的代码/系统：候选插件刷新与渲染生命周期、浏览器交互回归、真机验收场景。
 - 关联约束：渲染 / 交互缺陷合同先行；除有效接受外不改写文档或磁盘；真实配置与真实 vault 不访问。
+
+## 节点 2：归档放行记录
+
+机器 + 独立评审放行（本节五要件）；未命中价值 / 行为裁决、审美手感、影响面升级、评审异常或证据缺口例外。
+
+1. **方案已批准**：节点 1 以 Alex 2026-11-25 的 0.16.0 实测报告为依据，目标是恢复既有候选合同；实现未扩展排名、创建文件、接受键或视觉基线范围。
+2. **独立 reviewer 结论 clean**：K3 二次复核绑定当前产品 / 测试 tip `b38ba261cc85ca4ac8c826b4cd9edc84b22426a1`，结论 clean，无新增代码级阻塞项。报告中的 merge / archive BLOCKED 仅指当时完整 visual 与真机 867 尚未在该 tip 复跑；两项证据现已按同一 tip 补齐。评审原文：`/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/wikilink-suggestion-refresh-nov25/k3-recheck-2.md`。
+3. **tasks 全部完成**：`tasks.md` 10/10 已勾选；3.2 由主会话完成真实 WKWebView 验收并归档证据，无放弃项。
+4. **门禁与真机证据通过**：
+   - 最终完整门禁：`GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0；日志 `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/wikilink-suggestion-ux-nov25/gate-visual-final-tip.log`。
+   - 真机 867：1/1 PASS、31 断言、17.6s；证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-25-wikilink-suggestion-refresh-final/`。
+   - 未更新视觉基线，未在本归档阶段重跑真机或完整门禁。
+5. **规格对账与记录齐备**：
+   - `node scripts/openspec-archive-check.mjs --change fix-wikilink-suggestion-refresh-nov25`：`openspec-archive-check: PASS`（1 份 delta、1 条 MODIFIED、对比 8 段，无静默丢段；本 change 队列条目唯一），exit 0；日志 `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/wikilink-suggestion-ux-nov25/archive-pre-archive-check.log`。
+   - `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`：`Totals: 39 passed, 0 failed (39 items)`，exit 0；日志 `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/wikilink-suggestion-ux-nov25/archive-pre-validate.log`。
+   - `bash scripts/docs-check.sh`：`docs-check: PASS`，exit 0；日志 `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/wikilink-suggestion-ux-nov25/archive-pre-docs-check.log`。
+   - `docs/backlog.md` 的归档跟踪队列有且仅有本 change 一条记录。
+
+0.16.0 visual CI 的 Escape 失败是否由本 change 修复，尚未经合并后的 CI 证实；本地 Escape 用例与完整门禁通过不能证明该因果。合并推送后须观察对应 visual workflow，不在本次归档记录中写成已证明。

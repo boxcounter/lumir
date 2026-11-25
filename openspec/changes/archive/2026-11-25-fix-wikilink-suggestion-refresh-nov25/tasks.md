@@ -16,7 +16,7 @@
 ## 3. 验收场景
 
 - [x] 3.1 新增未使用编号的 WKWebView 原生输入 / 删除场景，运行 `--check` 静态校验；本 worker 不启动真机。
-- [ ] 3.2 主会话串行执行新场景并归档真实 WKWebView 结果（本 worker 明确不执行、不宣称真机通过）。
+- [x] 3.2 主会话串行执行新场景并归档真实 WKWebView 结果；867 最终 1/1 PASS、31 断言、17.6s，证据 `.local/acceptance/2026-11-25-wikilink-suggestion-refresh-final/`。
 
 ## 4. 验证
 
