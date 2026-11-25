@@ -173,6 +173,9 @@ mac-notification-sys = "=0.6.15"
 [dev-dependencies]
 # 命令运行时回归使用 Tauri mock runtime，避免 macOS Wry EventLoop 的主线程限制。
 tauri = { version = "2", features = ["test"] }
+# 阶段3隔离 HTTPS 预检测试：只在 test target 中启动 target.test 合成服务。
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2"
 
 [features]
 # 生产构建开关（Tauri 2 官方模板约定，名称必须恰为 custom-protocol）：

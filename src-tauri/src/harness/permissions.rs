@@ -1893,7 +1893,7 @@ fn normalize(path: &Path) -> std::path::PathBuf {
 
 /// 首个命中的规则原文（无命中为 `None`）——M459 起 `decide` 用它的带值形态（deny 规则原文要
 /// 随依据回送）；匹配语义完全共用 [`rule_matches`]，不存在第二份匹配实现（REVIEW.md 「同一语义两处真源」条）。
-fn matching_rule<'a>(rules: &'a [String], tool: &str, subject: &str) -> Option<&'a str> {
+pub(crate) fn matching_rule<'a>(rules: &'a [String], tool: &str, subject: &str) -> Option<&'a str> {
     rules
         .iter()
         .find(|rule| rule_matches(rule, tool, subject))

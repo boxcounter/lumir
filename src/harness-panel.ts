@@ -935,9 +935,9 @@ export function parseWebApprovalPreview(value: unknown): WebApprovalPayload | un
   if (raw.cost_per_1000_success_cny !== 5) return undefined;
   return {
     operation,
-    query: operation === "search" ? (raw.query as string) : null,
-    url: operation === "fetch" ? (raw.url as string) : null,
-    origin: operation === "fetch" ? (raw.origin as string) : null,
+    query: operation === "search" ? (raw.query as string) : undefined,
+    url: operation === "fetch" ? (raw.url as string) : undefined,
+    origin: operation === "fetch" ? (raw.origin as string) : undefined,
     provider: raw.provider === null ? null : (raw.provider as string),
     provider_id: raw.provider_id === null ? null : (raw.provider_id as string),
     provider_status: raw.provider_status as WebProviderStatus,

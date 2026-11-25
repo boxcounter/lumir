@@ -1,6 +1,10 @@
 pub mod config;
 pub mod output;
+pub mod preflight;
 pub mod url;
+
+#[cfg(test)]
+mod preflight_tests;
 
 use serde_json::Value;
 

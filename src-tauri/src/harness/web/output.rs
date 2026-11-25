@@ -41,6 +41,7 @@ pub enum WebOperation {
 #[serde(rename_all = "snake_case")]
 #[ts(export, export_to = "../../src/bindings/")]
 pub enum WebErrorCode {
+    PermissionDenied,
     WebArgsInvalid,
     WebAccessConfigInvalid,
     WebProviderUnconfigured,
@@ -71,10 +72,13 @@ pub struct WebProviderIdentity {
 pub struct WebApprovalPayload {
     pub operation: WebOperation,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub query: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub origin: Option<String>,
     pub provider: Option<String>,
     pub provider_id: Option<String>,

@@ -3,4 +3,4 @@ import type { WebOperation } from "./WebOperation";
 import type { WebProviderStatus } from "./WebProviderStatus";
 import type { WebTrust } from "./WebTrust";
 
-export type WebApprovalPayload = { operation: WebOperation, query: string | null, url: string | null, origin: string | null, provider: string | null, provider_id: string | null, provider_status: WebProviderStatus, trust: WebTrust, local_precheck: boolean, provider_fetch: boolean, cost_per_1000_success_cny: number, };
+export type WebApprovalPayload = { operation: WebOperation, query?: string, url?: string, origin?: string, provider: string | null, provider_id: string | null, provider_status: WebProviderStatus, trust: WebTrust, local_precheck: boolean, provider_fetch: boolean, cost_per_1000_success_cny: number, };

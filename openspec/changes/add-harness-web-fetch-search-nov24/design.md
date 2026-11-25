@@ -2,7 +2,7 @@
 
 - Change ID: `add-harness-web-fetch-search-nov24`
 - 日期: 2026-11-24
-- 状态: D1「默认允许所有」与 D2「设置 → 自动化 → 网页访问」均已获 Alex 批准；初始提案期已结束。当前仅完成阶段1的合同、provider 解析、注册与 settings 后端，阶段2的 executor、权限管线、Ask 预览与设置 UI 尚未实现；本分支是本地中间态，不能 merge 或 dogfood
+- 状态: D1「默认允许所有」与 D2「设置 → 自动化 → 网页访问」均已获 Alex 批准；初始提案期已结束。阶段1的合同、provider 解析、注册与 settings 后端，阶段2的权限管线、Ask 预览与设置 UI，以及阶段3的 URL / DNS、固定地址 transport、手动 redirect、预检与取消均已完成。真实 DeepSeek executor 尚未实现；本分支是本地中间态，不能 merge 或 dogfood
 
 ## 1. 结论与边界
 

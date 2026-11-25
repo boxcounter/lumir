@@ -247,7 +247,7 @@ test("WebAccessPolicy 与完整 Ask 载荷可解析，且不产 remember/persist
 
   const raw = {
     operation: "fetch",
-    query: null,
+    query: undefined,
     url: "https://example.com/a?q=1",
     origin: "https://example.com",
     provider: "deepseek",
@@ -271,8 +271,8 @@ test("Search 预览保留完整 query 与空 provider，不伪造配置身份", 
   const raw = {
     operation: "search",
     query: "  full synthetic query  ",
-    url: null,
-    origin: null,
+    url: undefined,
+    origin: undefined,
     provider: null,
     provider_id: null,
     provider_status: "missing",
