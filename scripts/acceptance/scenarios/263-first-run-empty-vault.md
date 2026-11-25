@@ -1,17 +1,20 @@
 ---
 # M851（0.13.0 初装验证，M849 报告 §B / §E 的 #4 / #5 / #6）：首启空态合同与空 vault 新建入口。
+# change add-first-run-onboarding-nov25 起，无 last_vault 的首启由启动态首启模式承接（唯一
+# 「添加 vault」）；本场景第一段改判首启模式，第二段仍是**老用户**空 vault（last_vault 非 null）
+# 的 D107 + 新建入口。
 #
-# 真机链：空配置 → 无 vault 空态（Open vault 可见可达）→ 空 vault（正文给出可见「新建笔记」）
+# 真机链：空配置 → 首启模式（添加 vault）→ 老用户空 vault（D107 + 新建笔记）
 # → 新建不带扩展名的 note（默认补 .md）→ 编辑保存 → 退出重启恢复。
 #
-# 原生目录选择器边界（README「已知边界」）：套件不驱动 rfd 的 NSOpenPanel，因此「Open vault」
-# 只判入口在 AX 里可见可点；装载空 vault 的终态用「预置注册表 + last_vault + 重启」表达
-# （与场景 17 / 67 同一口径）。「空 vault」的「空」由删掉 $vault2 的唯一 fixture 得到——
-# 它比主验收 vault 干净，删一个文件就真的空了。
+# 原生目录选择器边界（README「已知边界」）：套件不驱动 rfd 的 NSOpenPanel，因此首启模式的
+# 「添加 vault」只判入口在 AX 里可见可点；老用户空 vault 的终态用「预置注册表 + last_vault +
+# 重启」表达（与场景 17 / 67 同一口径）。「空 vault」的「空」由删掉 $vault2 的唯一 fixture
+# 得到——它比主验收 vault 干净，删一个文件就真的空了。
 id: "263-first-run-empty-vault"
 item: 263
 tier: full
-title: 首启空态与空 vault 新建：无 SAMPLE / 错误占位、可见新建入口、默认 .md、保存与重启恢复
+title: 首启模式 + 老用户空 vault 新建：唯一添加 vault、D107 新建入口、默认 .md、保存与重启恢复
 seed:
   registry:
     - { id: acc-b, path: $vault2, lastOpenedAt: 1757000003000 }
@@ -34,14 +37,16 @@ steps:
     file: config.json
     content: |
       {"version":1,"editor":{"mode":"md"},"ui":{"language":"zh"}}
-  - name: 重启进入「未打开」空态（空配置：无 last_vault、无恢复提示）
+  - name: 重启进入启动态首启模式（空配置：无 last_vault、无恢复提示）
     do: restart
     requireVault: false
     expect:
-      - label: 左栏空态说明行在位（可读的下一步指引）
-        ax: { has: "打开一个目录作为 vault" }
-      - label: 「打开 vault」是按钮节点（与说明行里的同族子串区分开）
-        ax: { has: "/AXButton[^\\n]*打开 vault/" }
+      - label: 唯一主操作是「添加 vault」
+        ax: { has: "/AXButton[^\\n]*添加 vault/" }
+      - label: 首启不铺既有树空态（D5 说明行不在）
+        ax: { not: "打开一个目录作为 vault" }
+      - label: 首启不显示既有 D6「打开 vault」按钮
+        ax: { not: "/AXButton[^\\n]*打开 vault/" }
       - label: 不残留恢复类提示（这不是 last_vault 失效路径）
         ax: { not: "上次打开的 vault 已不可用" }
       - label: 不残留「正在恢复」
@@ -54,9 +59,9 @@ steps:
         ax: { not: "Attachment not found" }
       - label: 首屏没有图片读取失败占位（Image read failed）
         ax: { not: "Image read failed" }
-      - shot: 01-空配置首启-无vault空态
+      - shot: 01-首启模式-添加vault
 
-  - name: 打开注册表里的空 vault（等价于 Open vault 选中空目录后的终态），重启进入空 vault 首入态
+  - name: 打开注册表里的空 vault（等价于非首启用户打开空目录后的终态），重启进入老用户空 vault 首入态
     do: configWrite
     lastVault: $vault-b
     language: zh
