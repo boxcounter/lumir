@@ -64,6 +64,7 @@ test("触发、过滤、方向键 / ⌃NP 与 Enter：完整路径、焦点和 c
   const doc = "[[al";
   await openDoc(page, doc, ["notes/Alpha.md", "notes/alphabet.md", "notes/Beta.md", "notes/readme.markdown"]);
   await expect(page.locator(OVERLAY)).toBeVisible();
+  await expect(page.locator(`${OVERLAY}-list`)).toHaveAttribute("aria-label", "筛选");
   expect(await rows(page)).toEqual(["notes/Alpha.md", "notes/alphabet.md"]);
   expect(await fileText(page, "source.md")).toBe(doc);
 
@@ -134,13 +135,51 @@ test("无匹配只显示既有空态，Enter 委派编辑器且不创建笔记",
   const doc = "[[missing";
   await openDoc(page, doc);
   await expect(page.locator(OVERLAY)).toBeVisible();
-  await expect(page.locator(".lumir-link-suggest-empty")).toHaveText(/没有匹配的条目|No matching items/);
+  await expect(page.locator(".lumir-link-suggest-empty")).toHaveText("没有匹配的条目");
   await expect(page.locator(ROW)).toHaveCount(0);
   await page.keyboard.press("Enter");
   expect(await readDocument(page)).toBe(`${doc}\n`);
   expect(await fileText(page, "source.md")).toBe(doc);
   expect(await fileText(page, "missing.md")).toBeUndefined();
 });
+
+for (const { shape, doc } of [
+  { shape: "有候选", doc: "[[al" },
+  { shape: "空态", doc: "[[missing" },
+] as const) {
+  test(`${shape}已打开时 zh → en → zh 即时 relabel，候选状态与磁盘不变`, async ({ page }) => {
+    await openDoc(page, doc);
+    const list = page.locator(`${OVERLAY}-list`);
+    const empty = page.locator(".lumir-link-suggest-empty");
+    await expect(page.locator(OVERLAY)).toBeVisible();
+    await expect(list).toHaveAttribute("aria-label", "筛选");
+
+    for (const target of [
+      { lang: "en", label: "Filter", noMatch: "No matching items" },
+      { lang: "zh-Hans", label: "筛选", noMatch: "没有匹配的条目" },
+    ] as const) {
+      const before = {
+        doc: await readDocument(page),
+        disk: await fileText(page, "source.md"),
+        caret: await caret(page),
+        focused: await focused(page),
+        rows: await rows(page),
+        active: await page.locator(`${ROW}.is-active`).allTextContents(),
+      };
+      await page.keyboard.press("Meta+Shift+L");
+      await expect(page.locator("html")).toHaveAttribute("lang", target.lang);
+      await expect(list).toHaveAttribute("aria-label", target.label);
+      await expect(empty).toHaveText(target.noMatch);
+      await expect(page.locator(OVERLAY)).toBeVisible();
+      expect(await readDocument(page)).toBe(before.doc);
+      expect(await fileText(page, "source.md")).toBe(before.disk);
+      expect(await caret(page)).toBe(before.caret);
+      expect(await focused(page)).toBe(before.focused);
+      expect(await rows(page)).toEqual(before.rows);
+      expect(await page.locator(`${ROW}.is-active`).allTextContents()).toEqual(before.active);
+    }
+  });
+}
 
 test("接受前索引失效：零候选写入，Enter 走原逻辑", async ({ page }) => {
   const doc = "[[al";
@@ -272,7 +311,7 @@ test("光标位于视口下缘时浮层向上翻转且不越界", async ({ page 
     view.scrollDOM.scrollTop = view.scrollDOM.scrollHeight;
     const caret = view.coordsAtPos(head)!;
     view.scrollDOM.scrollTop += caret.bottom - (view.scrollDOM.clientHeight - 24);
-    view.contentDOM.dispatchEvent(new Event("input"));
+    view.scrollDOM.dispatchEvent(new Event("scroll"));
   });
   await expect(page.locator(OVERLAY)).toBeVisible();
   const geometry = await page.locator(".cm-content").evaluate((content) => {
@@ -296,7 +335,7 @@ test("三主题壳完全不透明，长路径和同名可辨，边缘与 resize 
       document.documentElement.style.setProperty("--editor-font-size", value === "dark" ? "32px" : "16px");
     }, theme);
     await expect(page.locator(OVERLAY)).toBeVisible();
-    const reading = await page.locator(OVERLAY).evaluate((overlay) => {
+    const readGeometry = () => page.locator(OVERLAY).evaluate((overlay) => {
       const rect = overlay.getBoundingClientRect();
       const canvas = document.createElement("canvas");
       canvas.width = canvas.height = 1;
@@ -305,6 +344,8 @@ test("三主题壳完全不透明，长路径和同名可辨，边缘与 resize 
       context.fillRect(0, 0, 1, 1);
       return { alpha: context.getImageData(0, 0, 1, 1).data[3], left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: innerWidth, height: innerHeight };
     });
+    await expect.poll(async () => (await readGeometry()).bottom).toBeLessThanOrEqual(800);
+    const reading = await readGeometry();
     expect(reading.alpha).toBe(255);
     expect(reading.left).toBeGreaterThanOrEqual(0);
     expect(reading.right).toBeLessThanOrEqual(reading.width);
@@ -374,6 +415,79 @@ test("上下文矩阵：代码 / frontmatter / Link / Image / 完整链接 / 只
   expect(await readDocument(page)).toBe("[[alp");
 });
 
+test("原生输入事务矩阵：opener 即开、query 逐拍同步、opener 不完整即关且插件不崩溃", async ({ page }) => {
+  const consoleErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  const paths = ["Alpha.md", "Beta.md", "sigma.md", "source.md"];
+  const cases = [
+    { name: "普通正文", prefix: "" },
+    { name: "列表正文", prefix: "- " },
+    { name: "CJK 前缀", prefix: "笔记 " },
+    { name: "多行第二行", prefix: "first\n" },
+  ];
+  for (const { name, prefix } of cases) {
+    await openExperiment(page, prefix, paths);
+    await page.keyboard.type("[[");
+    await expect(page.locator(OVERLAY), `${name}：完整 opener 后打开`).toBeVisible();
+    await expect.poll(() => rows(page), { message: `${name}：空 query 使用当前未过滤候选` }).toEqual(paths);
+
+    await page.keyboard.type("s");
+    await expect.poll(() => rows(page), { message: `${name}：query=s 不得展示上一代 items` }).toEqual(["sigma.md", "source.md"]);
+    await page.keyboard.type("i");
+    await expect.poll(() => rows(page), { message: `${name}：query=si 同步收窄` }).toEqual(["sigma.md"]);
+
+    await page.keyboard.press("Backspace");
+    await expect.poll(() => rows(page), { message: `${name}：删除 i 后恢复 query=s` }).toEqual(["sigma.md", "source.md"]);
+    await page.keyboard.press("Backspace");
+    await expect.poll(() => rows(page), { message: `${name}：删除 s 后恢复空 query` }).toEqual(paths);
+    await page.keyboard.press("Backspace");
+    await expect(page.locator(OVERLAY), `${name}：opener 不完整后关闭`).toHaveCount(0);
+    expect(await readDocument(page)).toBe(`${prefix}[`);
+  }
+  expect(consoleErrors).toEqual([]);
+});
+
+test("requestMeasure 读阶段不写候选 DOM，写阶段完成定位", async ({ page }) => {
+  await openExperiment(page, "", ["notes/Alpha.md"]);
+  await page.locator(".cm-content").evaluate((content) => {
+    const view = (content as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const probe = window.__wikilinkMeasure = { reads: 0, writes: 0, readMutations: 0 };
+    const requestMeasure = view.requestMeasure.bind(view);
+    view.requestMeasure = (request: any) => {
+      if (request?.read === undefined) return requestMeasure(request);
+      return requestMeasure({
+        ...request,
+        read: (current: any) => {
+          const observer = new MutationObserver(() => {});
+          observer.observe(document.body, { attributes: true, childList: true, characterData: true, subtree: true });
+          const result = request.read(current);
+          probe.readMutations += observer.takeRecords().filter((record) => {
+            if (record.target === view.contentDOM) return true;
+            if (record.target instanceof Element && record.target.closest(".lumir-link-suggest") !== null) return true;
+            return [...record.addedNodes, ...record.removedNodes].some((node) =>
+              node instanceof Element && (node.matches(".lumir-link-suggest") || node.querySelector(".lumir-link-suggest") !== null));
+          }).length;
+          observer.disconnect();
+          probe.reads += 1;
+          return result;
+        },
+        write: request.write === undefined ? undefined : (...args: any[]) => {
+          probe.writes += 1;
+          return request.write(...args);
+        },
+      });
+    };
+    view.dispatch({ changes: { from: 0, insert: "[[al" }, selection: { anchor: 4 } });
+  });
+  await expect(page.locator(OVERLAY)).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__wikilinkMeasure.reads)).toBeGreaterThan(0);
+  expect(await page.evaluate(() => window.__wikilinkMeasure.readMutations)).toBe(0);
+  expect(await page.evaluate(() => window.__wikilinkMeasure.writes)).toBeGreaterThan(0);
+  expect(await rows(page)).toEqual(["notes/Alpha.md"]);
+});
+
 test("compositionend：DOM 已是最终候选而 state 仍旧，pending flush 前零刷新，flush 后仅刷新一次", async ({ page }) => {
   const doc = "[[";
   await openExperiment(page, doc, ["notes/Alpha.md", "notes/Beta.md"]);
@@ -438,5 +552,6 @@ test("compositionend：DOM 已是最终候选而 state 仍旧，pending flush �
 declare global {
   interface Window {
     __wikilinkIme: { pending: boolean; dispatches: number; refreshes: number };
+    __wikilinkMeasure: { reads: number; writes: number; readMutations: number };
   }
 }

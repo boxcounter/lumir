@@ -2,13 +2,14 @@ import { syntaxTree, syntaxTreeAvailable } from "@codemirror/language";
 import { StateEffect, type EditorState, type Extension } from "@codemirror/state";
 import { EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import { cancelCompositionSettle, scheduleCompositionSettle } from "./composition-settle";
+import { onRelabel } from "./copy";
 import { registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import { FILTER_LABEL, NO_MATCH_TEXT, foldCase, isFoldedMatch } from "./list-filter";
 import {
   applyOverlayPlacement,
-  measureOverlayNaturalWidth,
   overlayFontSize,
   placeOverlay,
+  type OverlayPlacement,
 } from "./overlay-placement";
 import { isInsideCodeContext } from "./preview/code-context";
 import { detectFrontmatter } from "./preview/frontmatter";
@@ -180,6 +181,23 @@ interface OpenState {
   readonly active: number;
 }
 
+interface PlaceMeasurement {
+  readonly placement: OverlayPlacement;
+  readonly available: number;
+  readonly top: number;
+  readonly baseLeft: number;
+}
+
+function sameOpenState(left: OpenState, right: OpenState): boolean {
+  return left.active === right.active &&
+    left.trigger.openerFrom === right.trigger.openerFrom &&
+    left.trigger.queryFrom === right.trigger.queryFrom &&
+    left.trigger.head === right.trigger.head &&
+    left.trigger.query === right.trigger.query &&
+    left.items.length === right.items.length &&
+    left.items.every((item, index) => item.path === right.items[index]?.path && item.target === right.items[index]?.target);
+}
+
 class LinkSuggestView {
   readonly view: EditorView;
   private readonly files: () => readonly string[];
@@ -203,13 +221,14 @@ class LinkSuggestView {
     this.list = view.dom.ownerDocument.createElement("div");
     this.list.className = "lumir-link-suggest-list";
     this.list.setAttribute("role", "listbox");
-    this.list.setAttribute("aria-label", FILTER_LABEL());
     this.empty = view.dom.ownerDocument.createElement("div");
     this.empty.className = "lumir-link-suggest-empty";
-    this.empty.textContent = NO_MATCH_TEXT();
     this.root.append(this.list, this.empty);
+    this.relabel();
+    onRelabel(() => {
+      if (!this.destroyed) this.relabel();
+    });
     view.contentDOM.addEventListener("keydown", this.onKeyDown, true);
-    view.contentDOM.addEventListener("input", this.onInput);
     view.contentDOM.addEventListener("compositionstart", this.onCompositionStart);
     view.contentDOM.addEventListener("compositionend", this.onCompositionEnd);
     view.contentDOM.addEventListener("blur", this.onBlur);
@@ -238,7 +257,6 @@ class LinkSuggestView {
     cancelCompositionSettle(this.view, "link-suggest");
     this.close();
     this.view.contentDOM.removeEventListener("keydown", this.onKeyDown, true);
-    this.view.contentDOM.removeEventListener("input", this.onInput);
     this.view.contentDOM.removeEventListener("compositionstart", this.onCompositionStart);
     this.view.contentDOM.removeEventListener("compositionend", this.onCompositionEnd);
     this.view.contentDOM.removeEventListener("blur", this.onBlur);
@@ -340,8 +358,34 @@ class LinkSuggestView {
     const previousPath = this.state?.items[this.state.active]?.path;
     let active = previousPath === undefined ? -1 : items.findIndex((item) => item.path === previousPath && item.target !== null);
     if (active < 0) active = items.findIndex((item) => item.target !== null);
-    this.state = { trigger, items, active };
+    const next = { trigger, items, active };
+    const previous = this.state;
+    this.state = next;
+    if (previous !== null && sameOpenState(previous, next)) {
+      this.schedulePlace();
+      return;
+    }
     this.render();
+  }
+
+  private schedulePlace(): void {
+    this.clearPlaceStyles();
+    this.view.requestMeasure({
+      read: () => this.measurePlace(),
+      write: (measured) => this.writePlace(measured),
+      key: this,
+    });
+  }
+
+  private clearPlaceStyles(): void {
+    this.root.style.width = "";
+    this.root.style.minWidth = "";
+    this.root.style.maxHeight = "";
+  }
+
+  private relabel(): void {
+    this.list.setAttribute("aria-label", FILTER_LABEL());
+    this.empty.textContent = NO_MATCH_TEXT();
   }
 
   private render(): void {
@@ -349,6 +393,7 @@ class LinkSuggestView {
     if (state === null) return;
     if (!this.root.isConnected) this.view.dom.ownerDocument.body.append(this.root);
     registerEscapeLayer("link-suggest", () => this.close());
+    this.relabel();
     this.list.replaceChildren();
     this.empty.hidden = state.items.length !== 0;
     this.list.hidden = state.items.length === 0;
@@ -382,47 +427,60 @@ class LinkSuggestView {
     else this.view.contentDOM.removeAttribute("aria-activedescendant");
     const active = this.list.children[state.active] as HTMLElement | undefined;
     active?.scrollIntoView({ block: "nearest" });
-    this.place();
+    this.schedulePlace();
   }
 
   private place(): void {
+    this.clearPlaceStyles();
+    this.writePlace(this.measurePlace());
+  }
+
+  private measurePlace(): PlaceMeasurement | null {
     const state = this.state;
-    if (state === null) return;
+    if (state === null) return null;
     const caret = this.view.coordsAtPos(state.trigger.head);
     const win = this.view.dom.ownerDocument.defaultView;
-    if (caret === null || win === null || caret.bottom < 0 || caret.top > win.innerHeight) {
-      this.close();
-      return;
-    }
+    if (caret === null || win === null || caret.bottom < 0 || caret.top > win.innerHeight) return null;
     const placement = placeOverlay({
       tier: "list",
-      natural: measureOverlayNaturalWidth(this.root),
+      natural: this.root.getBoundingClientRect().width,
       host: win.innerWidth,
       hostLeft: 0,
       fontSize: overlayFontSize(this.root),
       anchor: { left: caret.left, right: caret.right },
       preferred: "left",
     });
-    applyOverlayPlacement(this.root, placement);
     const below = win.innerHeight - caret.bottom - 12;
     const above = caret.top - 12;
     const direction = below >= 80 || below >= above ? "below" : "above";
     const available = Math.max(0, Math.min(272, direction === "below" ? below : above));
-    if (available < 26) {
+    if (available < 26) return null;
+    const height = Math.min(this.root.getBoundingClientRect().height, available);
+    const top = direction === "below" ? caret.bottom + 4 : caret.top - height - 4;
+    const offsetParent = this.root.offsetParent as HTMLElement | null;
+    const baseLeft = offsetParent?.getBoundingClientRect().left ?? 0;
+    return {
+      placement,
+      available,
+      top: Math.min(win.innerHeight - height - 8, Math.max(8, top)),
+      baseLeft,
+    };
+  }
+
+  private writePlace(measured: PlaceMeasurement | null): void {
+    if (measured === null) {
       this.close();
       return;
     }
-    this.root.style.maxHeight = `${available}px`;
-    const height = this.root.getBoundingClientRect().height;
-    const top = direction === "below" ? caret.bottom + 4 : caret.top - height - 4;
-    this.root.style.top = `${Math.min(win.innerHeight - height - 8, Math.max(8, top))}px`;
+    applyOverlayPlacement(this.root, measured.placement, measured.baseLeft);
+    this.root.style.maxHeight = `${measured.available}px`;
+    this.root.style.top = `${measured.top}px`;
   }
 
   private onKeyDown = (event: KeyboardEvent): void => {
     keyboardEvents.set(this.view, event);
   };
 
-  private onInput = (): void => this.refresh();
   private onCompositionStart = (): void => this.compositionStart();
   private onCompositionEnd = (): void => this.compositionEnd();
   private onBlur = (): void => this.close();

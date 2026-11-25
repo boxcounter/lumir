@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { EditorState, type Extension } from "@codemirror/state";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
-import { ensureSyntaxTree } from "@codemirror/language";
+import { ensureSyntaxTree, syntaxTreeAvailable } from "@codemirror/language";
 import {
   acceptTargetForPath,
   buildLinkSuggestions,
@@ -179,6 +179,35 @@ test("接受前重读索引：路径消失、扩展名全集变化或根文件�
   assert.equal(acceptTargetForPath(["dir/other.md"], "note.md"), null);
   assert.equal(acceptTargetForPath(["note.markdown", "dir/other.md"], "note.md"), null);
   assert.equal(acceptTargetForPath(["note.md", "dir/note.md"], "note.md"), null);
+});
+
+test("已有候选时语法树暂不可用仍重算 query，且不绕过关闭条件", () => {
+  const prefix = "ordinary text\n".repeat(10_000);
+  const previous = stateAt(`${prefix}[[s`);
+  assert.equal(findLinkSuggestTrigger(previous, { focused: true, allowUnavailableSyntax: true })?.query, "s");
+  const opened = previous.update({
+    changes: { from: previous.doc.length, insert: "i" },
+    selection: { anchor: previous.doc.length + 1 },
+  }).state;
+  const head = opened.selection.main.head;
+  assert.equal(syntaxTreeAvailable(opened, head), false);
+  assert.equal(findLinkSuggestTrigger(opened, { focused: true }), null);
+  assert.deepEqual(findLinkSuggestTrigger(opened, { focused: true, allowUnavailableSyntax: true }), {
+    openerFrom: prefix.length,
+    queryFrom: prefix.length + 2,
+    head,
+    query: "si",
+  });
+
+  ensureSyntaxTree(opened, opened.doc.length, 1000);
+  assert.equal(syntaxTreeAvailable(opened, head), true);
+  assert.equal(findLinkSuggestTrigger(opened, { focused: true })?.query, "si");
+
+  for (const suffix of ["[", "![[si", "[[s|i"]) {
+    const closed = stateAt(`${prefix}${suffix}`);
+    assert.equal(syntaxTreeAvailable(closed, closed.selection.main.head), false, suffix);
+    assert.equal(findLinkSuggestTrigger(closed, { focused: true, allowUnavailableSyntax: true }), null, suffix);
+  }
 });
 
 test("大库与 1MB 文档：当前行触发和万文件过滤的同步预算保持在 16ms 内", () => {
