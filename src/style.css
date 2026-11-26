@@ -2774,6 +2774,11 @@ body {
 .lumir-qo-item:hover {
   background: var(--hover);
 }
+/* 游标行悬停不得丢掉游标标记（change fix-selector-ime-aria-nov25）：底色保持 --sel，inset 1px
+   描边由上面的 .is-active 规则提供。只覆盖 TOC；Quick Open 的 hover 口径不在本 change 面内。 */
+.lumir-toc-item.is-active:hover {
+  background: var(--sel);
+}
 /* 快速打开行的路径两段（M702，change overlay-width-contract-oct24 design §4 / W5）：
    目录前缀先收缩、**文件名整体不先裁**——旧的单行尾省略会把文件名（路径的身份主体）
    整段吃掉（M698 实测：77 字符深层路径裁 42.5%，文件名消失）。两段拼接后的 textContent
@@ -2988,6 +2993,11 @@ body {
 }
 .vault-row:hover {
   background: var(--hover);
+}
+/* 游标行悬停不得丢掉游标标记（change fix-selector-ime-aria-nov25）：底色保持 --sel，inset 1px
+   描边由 .is-active 规则提供。当前项（is-current）的悬停口径不变——它另有 ✓ / 「当前」标记。 */
+.vault-row.is-active:hover {
+  background: var(--sel);
 }
 /* 键盘游标（is-active）：--sel 底色 + inset 1px 描边（currentColor）——与当前项同底色时
    仍指得出游标位置（共存规则同 .lumir-toc-item，M217 worker 定并记录）。 */

@@ -356,13 +356,16 @@ test("vault 筛选：显示名子串命中（非前缀）、失效行参与、�
   await expect(page.locator(".vault-row.is-current")).toHaveCount(0);
   await expect(page.locator(".ft-vault-name")).toHaveText("demo-vault");
 
-  // 失效行同样参与筛选（它是「重新定位…」的唯一入口）：命中时仍在结果集里，但不进键盘游标空间
+  // 失效行同样参与筛选（它是「重新定位…」的唯一入口）：命中时仍在结果集里，并且可以被游标指向
+  //（change fix-selector-ime-aria-nov25 第三轮：可达性是键盘清理失效行的前提，可用性只由
+  // aria-disabled / is-missing / 「重新定位…」表达）。
   await clearQuery(page);
   await page.keyboard.type("gone");
   await expect(rows).toHaveCount(1);
   await expect(page.locator(".vault-row.is-missing")).toHaveCount(1);
   await expect(page.locator(".vault-row.is-missing .vault-row-act")).toHaveText("重新定位…");
-  await expect(page.locator(".vault-row.is-active")).toHaveCount(0);
+  await expect(page.locator(".vault-row.is-active .vault-row-name")).toHaveText("gone-vault");
+  await expect(page.locator(".vault-row.is-missing")).toHaveAttribute("aria-disabled", "true");
 
   // 摘要与路径不参与匹配：输入摘要里的话（D101）零命中，当前 vault 依旧不变
   await clearQuery(page);

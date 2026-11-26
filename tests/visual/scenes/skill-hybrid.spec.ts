@@ -499,42 +499,72 @@ function syntheticSkills(count: number, description = "合成描述"): typeof SK
   }));
 }
 
-// oracle 必须是**真实可见带**：menuRect ∩ panelRect ∩ viewport。拿 option 比菜单自身矩形
-// 与实现同源（REVIEW.md「断言等价于子串」条的同族假绿）——盒被面板裁掉时它照样绿。
+// oracle 必须是**真实可见带**，且必须**独立于实现**算：实现（`skillMenuClip`）取的是
+// `menuRect ∩ panelRect ∩ viewport`，这里按合同 C2 再交上**全部裁切祖先**并扣掉候选自身的
+// 边框与 padding。与实现同源的 oracle 只能证明「实现和自己一致」——菜单盒被某个祖先裁掉时
+// 它照样绿（REVIEW.md「断言等价于子串」条的同族假绿）。同时断言可见标记 `.is-selected`
+// 与 `aria-selected` 落在**同一个** option 上：只查 ARIA 会漏掉「状态对、标记没画」的缺陷。
 async function expectHighlightedVisible(menu: ReturnType<Page["locator"]>): Promise<void> {
   const selected = menu.locator("[role=option][aria-selected=true]");
   await expect(selected).toHaveCount(1);
   const geometry = await menu.evaluate((root) => {
     const option = root.querySelector("[role=option][aria-selected=true]");
     if (option === null) throw new Error("没有高亮 option");
+    const marked = Array.from(root.querySelectorAll(".is-selected"));
     const harness = root.closest(".lumir-harness");
     if (harness === null) throw new Error("候选不在 harness 面板内");
     const menuRect = root.getBoundingClientRect();
     const panelRect = harness.getBoundingClientRect();
     const optionRect = option.getBoundingClientRect();
+    const style = getComputedStyle(root);
+    // 真实可见带：菜单 ∩ 全部裁切祖先 ∩ 视口，再扣掉滚动口自己的边框与 padding（合同 C2/C3）。
+    let clipTop = Math.max(menuRect.top, 0);
+    let clipBottom = Math.min(menuRect.bottom, window.innerHeight);
+    const clippers: string[] = [];
+    for (let node = root.parentElement; node !== null; node = node.parentElement) {
+      const nodeStyle = getComputedStyle(node);
+      if (nodeStyle.overflowX === "visible" && nodeStyle.overflowY === "visible") continue;
+      const rect = node.getBoundingClientRect();
+      clipTop = Math.max(clipTop, rect.top);
+      clipBottom = Math.min(clipBottom, rect.bottom);
+      clippers.push(`${node.className || node.tagName.toLowerCase()}:${rect.top.toFixed(1)}..${rect.bottom.toFixed(1)}`);
+    }
+    const scrollportTop = menuRect.top + root.clientTop;
+    const bandTop = Math.max(scrollportTop + (Number.parseFloat(style.paddingTop) || 0), clipTop);
+    const bandBottom = Math.min(
+      scrollportTop + root.clientHeight - (Number.parseFloat(style.paddingBottom) || 0),
+      clipBottom,
+    );
     return {
       menuTop: menuRect.top,
       menuBottom: menuRect.bottom,
       panelTop: panelRect.top,
       panelBottom: panelRect.bottom,
       viewportHeight: window.innerHeight,
-      clipTop: Math.max(menuRect.top, panelRect.top, 0),
-      clipBottom: Math.min(menuRect.bottom, panelRect.bottom, window.innerHeight),
+      clipTop,
+      clipBottom,
+      bandTop,
+      bandBottom,
+      clippers,
       optionTop: optionRect.top,
       optionBottom: optionRect.bottom,
       rowHeight: optionRect.height,
       scrollTop: root.scrollTop,
+      markedCount: marked.length,
+      markedIsSelected: marked.length === 1 && marked[0] === option,
     };
   });
   const detail = JSON.stringify(geometry);
-  // 盒本身必须先落在面板与视口内，否则「带内」是假的：scrollTop 物理上无法把被裁区里的项搬进屏幕。
+  // 盒本身必须先落在裁切祖先与视口内，否则「带内」是假的：scrollTop 物理上无法把被裁区里的项搬进屏幕。
   expect(geometry.menuTop, `候选盒顶越过面板顶：${detail}`).toBeGreaterThanOrEqual(geometry.panelTop - 0.5);
   expect(geometry.menuBottom, `候选盒底越过面板底：${detail}`).toBeLessThanOrEqual(geometry.panelBottom + 0.5);
   expect(geometry.menuTop, `候选盒顶越过视口：${detail}`).toBeGreaterThanOrEqual(-0.5);
   expect(geometry.menuBottom, `候选盒底越过视口：${detail}`).toBeLessThanOrEqual(geometry.viewportHeight + 0.5);
   expect(geometry.clipBottom - geometry.clipTop, `真实 clip 没有高度：${detail}`).toBeGreaterThan(0);
-  expect(geometry.optionTop, `高亮项上缘越过真实 clip：${detail}`).toBeGreaterThanOrEqual(geometry.clipTop - 0.5);
-  expect(geometry.optionBottom, `高亮项下缘越过真实 clip：${detail}`).toBeLessThanOrEqual(geometry.clipBottom + 0.5);
+  expect(geometry.markedCount, `同一时刻只能有一个 .is-selected：${detail}`).toBe(1);
+  expect(geometry.markedIsSelected, `可见标记必须与 aria-selected 同项：${detail}`).toBe(true);
+  expect(geometry.optionTop, `高亮项上缘越出真实可见带：${detail}`).toBeGreaterThanOrEqual(geometry.bandTop - 0.5);
+  expect(geometry.optionBottom, `高亮项下缘越出真实可见带：${detail}`).toBeLessThanOrEqual(geometry.bandBottom + 0.5);
 }
 
 async function outsideScrollPositions(page: Page): Promise<Array<{ node: string; scrollTop: number }>> {
