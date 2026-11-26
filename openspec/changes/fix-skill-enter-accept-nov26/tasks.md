@@ -68,5 +68,7 @@
       因为残留了另一份同名源会话。修复：726 在恢复前先「新会话」确保目标不是当前会话；恢复行改用
       AXPress（`do: click`）并在同一步断言浮层收起；m460 视觉补「恢复 wire 的上下文节原样上屏」
       守卫（4/4 PASS，`visual-m460-full.log`）。**产品恢复路径零改动。**
-- [ ] 4.3 主会话真机复跑 868 / 726（本 worker 不跑真机；A 的缺陷现场只在 WKWebView 出现）。
-
+- [x] 4.3 主会话真机复跑 868 / 726：**2/2 PASS**（日志
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/skill-enter-accept-nov26/native-868-726-r3.log`：
+      726 35.8s / 868 100.8s，前台焦点均已取得）；K3 最终 clean/merge 绑定 `865ff40a`。
+      Alex 2026-11-26 决定本轮只做轻量验证，**不跑完整 gate / CI，不声称完整 gate 通过**。

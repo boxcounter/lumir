@@ -76,3 +76,23 @@
   修复为场景先去新会话再恢复、恢复行改 AXPress 并断言浮层收起；另补 m460 视觉守卫证明恢复 wire
   的上下文节原样上屏。K3 已审的接受键合同不变。
 
+## 归档记录
+
+### 归档前（节点 2 五要件）
+
+1. **方案已批准**：节点 1 为 Alex 2026-11-26「认可这个方案」；实现期 A（WKWebView 同坐标
+   `mousemove` 抢游标）是缺陷修复，B（726 恢复等待）是场景/焦点修正，均未扩大接受键合同。
+2. **独立评审**：K3 最终 **clean / merge**，绑定 tip `865ff40a`（本轮任务书给出的最终 verdict；
+   评审材料由 tower 归档）。评审指出的 proposal / tasks EOF 空行为纯卫生项，已在本提交清理。
+3. **tasks 完成**：`tasks.md` 全勾（含 4.1/4.2 返修与 4.3 真机复跑），无放弃项。
+4. **门禁与真机证据**：**Alex 2026-11-26 决定本轮只做轻量验证，未跑完整 `scripts/gate.sh` / CI，
+   本 change 不声称完整 gate 通过。** 已取得：unit `2049/2049`、`skill-hybrid` 77/77、m460 4/4、
+   `docs-check` PASS、`openspec validate --all --strict` 39/39；真机 868/726 **2/2 PASS**，
+   日志 `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/skill-enter-accept-nov26/native-868-726-r3.log`
+   （726 35.8s / 868 100.8s，两次前台焦点均取得）。视觉基线零改动。
+5. **规格对账**：`openspec-archive-check` 门禁模式 PASS（扫过 13 份 delta / 182 段 / 无静默丢段）；
+   `validate --all --strict` 39/39；`docs/backlog.md` 归档队列有且仅有一条本 change 条目。
+
+### 归档后
+
+（归档完成后补：归档提交、包装器输出、修链读数与 `--archived` PASS 读数。）
