@@ -47,9 +47,12 @@ normalize 或自绘块级选区带。
    是一步 history；连续文本输入按 CM 规则聚簇。
 4. 现有 composer history 上 MUST NOT 执行 `addToHistory:false` 或 `remote` 的文档变更。事务
    过滤器拒绝这类变更；不得给 sync effect 增加 `mapPos` 来修补旧分支。
-5. 草稿恢复、切 vault、新会话、会话重载、发送清空与拒绝合并后的复位 MUST 新建 `EditorState`，
-   旧 history 不可达。新会话与会话重载 MUST 同时清除当前 bound vault 的盘上草稿，其他 vault
-   的草稿与复位后的新输入不得受影响。不得用非 history 文档补丁复位。
+5. 草稿恢复、切 vault、发送清空与拒绝合并后的复位 MUST 新建 `EditorState`，旧 history 不可达。
+   新建会话、选择 / 恢复其他会话与会话重载 MUST NOT 复位输入区、MUST NOT 新建 `EditorState`：
+   文字、卡片、Skill、光标与撤销历史原样保留，下一次发送进入当前选中会话；这些切换 MUST NOT
+   清除盘上草稿（草稿只在发送成功或用户手动删除时清除）。切 vault MUST 恢复各 vault 自己的
+   草稿，MUST NOT 跨 vault 混用；会话切换 MUST 作废在途的草稿恢复，迟到的读回不得覆盖保留的
+   输入区或重建编辑史。不得用非 history 文档补丁复位。
 
 ### HC3 — IME 组合归 CM，插卡 FIFO 与单 pendingSend
 
@@ -65,7 +68,9 @@ CM 独占组合文本、组合选区与组合中删除。实现 MUST NOT 在 com
 4. compositionend drain 成功且世代匹配时，先清 pending，再调用一次 `performSend()`。drain 失败
    取消发送并保留未消费请求，MUST NOT 投递缺卡消息；后续可重试。
 5. 切 vault、新会话与面板销毁取消旧代队列和 pendingSend。`activity.phase` 不得代替 pendingSend
-   去重。发送成功清空 composer 与草稿，不把未消费的队列当成已投递内容。
+   去重。取消只作用于发送意图与旧视图的队列，MUST NOT 清掉输入区的文字 / 卡片 / 光标
+   （change preserve-composer-across-sessions-nov26）。发送成功清空 composer 与草稿，不把未消费
+   的队列当成已投递内容。
 6. Chromium CDP 只证明真引擎回归通道；原生 WKWebView 拼音与候选窗动作仍需真机终判。
 
 ### HC4 — 零长度 widget、纯文本复制与 scoped AX
