@@ -104,4 +104,5 @@ Alex 的需求原话：没有打开 TAB 时 content pane 不显示行号、无�
 归档为 `2026-11-27-fix-no-tab-empty-state-nov27`；specs 更新 `keymap-commands` 3 条
 MODIFIED、`pane-layout` +1 ADDED / 1 MODIFIED，Totals `+1, ~4, -0, →0`；修链 0 处
 （扫过 5 篇 Markdown / 2 条相对链接），`openspec-links: PASS（710 条全部可达）`。
-归档提交 hash 与 `--archived` PASS 读数待首次归档提交后回填。
+归档提交 `f437b9a6`；`node scripts/openspec-archive-check.mjs --archived
+fix-no-tab-empty-state-nov27` PASS（4 条 MODIFIED，对比 98 段；人工恢复 0 段，声明认领 0 段）。
