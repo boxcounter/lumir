@@ -131,3 +131,17 @@ snippet → 整条移除 results），读数在这里算一次即可同时服务
    MODIFIED / 262 段 / 无静默丢段；归档队列 1 项已完成 change 有唯一条目）；`validate --all
    --strict` 39 passed / 0 failed；`docs/backlog.md` 归档队列有且仅有一条本 change 条目（80/80 行，
    与本次删除 3 条已归档旧条目等量抵消）。
+
+### 归档后
+
+- **归档提交**：`b906cd26219dd439212b256de1c9ca6e3fdfc2cf`（归档目录 + 并入后的 living spec
+  一起提交）。
+- **包装器实际输出**：`Change 'compact-web-search-result-summary-nov26' archived as
+  '2026-11-26-compact-web-search-result-summary-nov26'.`；`harness: update`（`~ 5 modified`），
+  `Totals: + 0, ~ 5, - 0, → 0`。
+- **修链读数**：`归档后修链 0 处（扫过 4 篇 Markdown / 1 条相对链接）`；
+  `openspec-links: PASS（校验 709 条相对链接，全部可达）`。
+- **归档后审计**：`node scripts/openspec-archive-check.mjs --archived
+  compact-web-search-result-summary-nov26` → `PASS（5 条 MODIFIED，对比 96 段；人工恢复 0 段，
+  声明认领 0 段）`（2026-11-26）。
+- **docs-check**：归档后复跑 PASS（归档队列随 change 离开活跃区自然核销；backlog 80/80 行）。
