@@ -1000,7 +1000,7 @@ mod tests {
     /// identity 段 2181 → 2550 字节（QUOTE_REFERENCE 未动）。
     /// change `add-harness-web-fetch-search-nov24`：补统一网页工作流（search → fetch、untrusted
     /// data、默认 Allow 来自用户配置、curl 不自动降级），identity 段 2550 → 2847 字节
-    /// （QUOTE_REFERENCE 未动）。
+    /// （QUOTE_REFERENCE 未动）。本地 prompt 修订：identity 段 2847 → 2839 字节，指纹同步更新。
     #[test]
     fn identity_prompt_teaches_unified_web_workflow_and_trust_boundary() {
         for expected in [
@@ -1027,7 +1027,7 @@ mod tests {
                 fnv1a64(quote.as_bytes()),
                 quote.len(),
             ),
-            (0xc65956ee7ea2325f, 2847, 0x5cba54b785b843b, 1170),
+            (0x1c010d8daacd293f, 2839, 0x5cba54b785b843b, 1170),
         );
     }
 
