@@ -155,11 +155,13 @@ steps:
     do: click
     target: { any: "新建文件…" }
     expect:
-      - label: 行内输入框出现（新建文件的读屏名）
-        ax: { has: "新建文件的名称" }
-  - name: 输入文件名
+      # 默认名（change add-default-note-name-nov24）：新建文件输入框预填「未命名笔记」并全选；
+      # 输入框非空时 AX 只有值、空值态读屏名不上屏——按值面判。
+      - label: 行内输入框出现（预填默认名）
+        ax: { has: '/AXTextField = "未命名笔记"/' }
+  - name: 输入文件名（全选后键入即替换默认名）
     do: typeInNode
-    target: { role: AXTextField, name: "新建文件的名称|root-new.md" }
+    target: { role: AXTextField, name: "未命名笔记|root-new.md" }
     text: "root-new.md"
     expect:
       - label: 输入落地

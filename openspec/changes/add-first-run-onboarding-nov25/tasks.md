@@ -226,4 +226,6 @@
       `新建文件的名称` 不上屏；263 的断言与 `typeInNode` target 仍按旧读屏名 ⇒ 真机 FAIL。
       产品无回归（D107 / 首启行为正常，输入框 aria-label 仍是 `New file name`）。场景改为按
       预填值断言 / 注入（`/AXTextField = "未命名笔记"/`、target `未命名笔记|note`、提交后
-      `not: ['/AXTextField/']`），判据强度不变。
+      `not: ['/AXTextField/']`），判据强度不变。同型旧断言一并修 `47c-create-and-delete`
+      （两处新建文件）与 `220-sidebar-resize-hide-root-create`（根下新建文件）；目录新建不预填，
+      仍按空值态读屏名判，未动。

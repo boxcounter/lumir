@@ -130,12 +130,14 @@ steps:
     do: click
     target: { any: "新建文件…" }
     expect:
-      - label: 行内输入框出现（新建文件的读屏名）
-        ax: { has: "新建文件的名称" }
+      # 默认名（change add-default-note-name-nov24）：新建文件输入框预填「未命名笔记」并全选；
+      # 输入框非空时 AX 只有值、空值态读屏名不上屏（见「已知边界」5）。
+      - label: 行内输入框出现（预填默认名）
+        ax: { has: '/AXTextField = "未命名笔记"/' }
       - shot: 新建文件输入框
-  - name: 输入 fresh.md（M507 原子注入）
+  - name: 输入 fresh.md（M507 原子注入；全选后键入即替换默认名）
     do: typeInNode
-    target: { role: AXTextField, name: "新建文件的名称|fresh.md" }
+    target: { role: AXTextField, name: "未命名笔记|fresh.md" }
     text: "fresh.md"
     expect:
       - label: 输入落地
@@ -209,11 +211,12 @@ steps:
     do: click
     target: { any: "新建文件…" }
     expect:
-      - label: 行内输入框出现
-        ax: { has: "新建文件的名称" }
-  - name: 输入 probe.md
+      # 同上：新目录下的文件输入框同样预填默认名，按值面判。
+      - label: 行内输入框出现（预填默认名）
+        ax: { has: '/AXTextField = "未命名笔记"/' }
+  - name: 输入 probe.md（全选后键入即替换默认名）
     do: typeInNode
-    target: { role: AXTextField, name: "新建文件的名称|probe.md" }
+    target: { role: AXTextField, name: "未命名笔记|probe.md" }
     text: "probe.md"
   - name: Enter 提交
     do: key
@@ -242,7 +245,8 @@ teardown:
 1. **删除 = 移到废纸篓 + 确认框**：文件档正文点名条目（`aaaren.md 会移到系统废纸篓。`），
    确认后 vault 内条目消失——磁盘断言**等可观测终态**（树行消失）再读，不在同一个 tick 里赌。
 2. **目录删除的确认文案**必须明示「连同其中全部内容」，取消后目录与其中文件都在（不真删）。
-3. **目录下新建文件**：内联命名（读屏名 `新建文件的名称`）→ 磁盘出现空文件 → **自动打开**。
+3. **目录下新建文件**：内联命名（输入框预填默认名 `未命名笔记` 并全选，AX 按值面判）→
+   磁盘出现空文件 → **自动打开**。
 4. **目录下新建子目录**：磁盘出现目录、树里出现条目；目录的磁盘真值另有一条不依赖目录旁路的
    判据（在它里面再建一个文件，那个文件存在 ⇒ 父目录必然是真目录）。
 
@@ -289,8 +293,10 @@ teardown:
   用 `do: waitFor { has: ["menu-sub/freshdir"] }`；「新建文件已自动打开」的判据是标签读屏名出现
   `fresh.md`（正向锚点），不是「界面变了」。
 - **5. 真机 AX 读不到非空值输入框的读屏名（M324 实测）**：`<input type="text">` 值为空时带读屏名、
-  非空时只剩 `= "值"`。因此新建文件的输入框用读屏名 `新建文件的名称` 开场、输入后改判
-  `/AXTextField = "freshdir" /`（值面）；两条一起才说明「哪一行起来的」。
+  非空时只剩 `= "值"`。本组两种行内新建因此按不同判据：**新建目录**的输入框值为空（目录不预填），
+  用读屏名 `新建子目录的名称` 开场、输入后改判 `/AXTextField = "freshdir" /`（值面）；
+  **新建文件**的输入框自 change add-default-note-name-nov24 起始终预填 `未命名笔记` 并全选，
+  开场就只有值面 `AXTextField = "未命名笔记"`，键入替换后判 `/AXTextField = "<键入名>"`。
 - **6. 不做手感判定**：删除确认框的间距/阴影观感、内联输入框的宽度手感归 Alex；本组只留截图。
   形态回归在 chromium 层（`tests/visual/scenes/tree-menu.spec.ts`）。
 - **7. 不覆盖**：跨目录移动（非目标）、多选批量操作（非目标）、vault 根本身的右键（非目标）；
