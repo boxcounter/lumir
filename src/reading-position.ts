@@ -58,8 +58,9 @@ export interface ReadingPositionStoreDeps {
   applyPosition(position: ScrollPosition): void;
   /** 读某 vault 的阅读位置表；无历史（首次 / 损坏 / 版本不符）resolve 为 null。 */
   getPositions(vaultId: string): Promise<ReadingPositions | null>;
-  /** 写某 vault 的阅读位置表（整份镜像；写失败由后端降级为 warning）。 */
-  putPositions(vaultId: string, entries: ReadingPositionMap): Promise<void>;
+  /** 写某 vault 的阅读位置表（整份镜像）。resolve 的布尔值是**真实落盘结果**：磁盘写失败为
+   *  false（warning 由后端记）。普通调用方忽略它；`document.save-all` 的屏障据此判失败。 */
+  putPositions(vaultId: string, entries: ReadingPositionMap): Promise<boolean>;
   /** 一组 vault 相对路径的**批量**存在探测（后端 `fs_paths_exist`），返回其中确实存在的那些。
    *
    *  它补的是「装载时的枚举结果不再是 vault 内文件的全集」这件事：被 vault 自己的忽略声明
@@ -77,8 +78,12 @@ export interface ReadingPositionStoreDeps {
 export interface ReadingPositionStore {
   /** 视口滚动后调用（防抖落盘；位置与待写内容相同则不排期）。 */
   scrolled(): void;
-  /** 把待写内容立刻落盘（切文件 / 切标签 / 切 vault 前、退出前）。 */
-  flush(): Promise<void>;
+  /** 把待写内容立刻落盘（切文件 / 切标签 / 切 vault 前、退出前）。
+   *
+   *  返回是否真的写成功（`true` 也包含「没有待写内容、无需写盘」这一档）。既有调用方按
+   *  `void` 忽略它，语义不变；`document.save-all` 的屏障拿它作为「阅读位置真的落盘了」
+   *  的判据——写失败时不得把一次保存全部报成成功。 */
+  flush(): Promise<boolean>;
   /** 打开某文档后恢复它的位置（装载复位之后、文档已进入 view 时调用）；重载路径共用同一条
    *  （M286：外部改写 / 冲突放弃的就地重载也要按装载口径恢复）。待写内容优先于盘上镜像。 */
   restoreFor(path: string): void;
@@ -207,13 +212,17 @@ export function createReadingPositionStore(
     return mergePending(mirror, pending, Date.now());
   }
 
-  async function write(vaultId: string, entries: ReadingPositionMap): Promise<void> {
+  async function write(vaultId: string, entries: ReadingPositionMap): Promise<boolean> {
     try {
-      await deps.putPositions(vaultId, entries);
+      // 后端把磁盘写失败降级成 resolved `false`（warning 已在 Rust 侧记）；IPC 本身失败才是 reject。
+      // 两者都必须让保存全部屏障看见 false——普通调用方照旧忽略返回值。
+      return await deps.putPositions(vaultId, entries);
     } catch (e) {
       // 写失败只降级（与 last_vault、标签会话写失败同口径）：位置只影响「下次打开从哪里开始」，
-      // 不值得拦停用户的一次打开、切换或退出。
+      // 不值得拦停用户的一次打开、切换或退出。返回值只给需要「真实落盘」判据的调用方
+      //（document.save-all 的屏障），其余调用方照旧忽略。
       deps.warn(errorMessage(e));
+      return false;
     }
   }
 
@@ -234,15 +243,15 @@ export function createReadingPositionStore(
    *  那边的「当前快照」随时可得、多写一次是补漏；这边的盘上状态只由 pending 定义，没有 pending 就
    *  没有新信息。**prune 的结果也搭在下一次真实写入上**（spec：装载后清理「下一次落盘后盘上也不再
    *  出现」），不为了清理单独写一次。 */
-  async function flush(): Promise<void> {
+  async function flush(): Promise<boolean> {
     cancelTimer();
-    if (pending.size === 0) return;
+    if (pending.size === 0) return true; // 没有新信息可写：这一档算成功（不是「没跑」）
     const vaultId = currentId;
     const next = snapshot();
     pending.clear();
     mirror = next;
-    if (vaultId === undefined) return; // 还没有 vault（启动路径）：没有可写的键
-    await write(vaultId, next);
+    if (vaultId === undefined) return true; // 还没有 vault（启动路径）：没有可写的键
+    return write(vaultId, next);
   }
 
   function scrolled(): void {

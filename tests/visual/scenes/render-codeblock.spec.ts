@@ -1140,7 +1140,8 @@ test("应用级口径（D1）：翻转作用于全部会话，新标签页取当
   });
   await page.keyboard.type("x");
   await expect(page.locator(".tab")).toHaveCount(1);
-  await page.locator('.ft-row[title="wrap2.md"]').click();
+  // ⌘-点击新开标签（change improve-file-open-harness-affordance-nov26 起普通点击会就地替换 A）。
+  await page.locator('.ft-row[title="wrap2.md"]').click({ modifiers: ["Meta"] });
   await expect(page.locator(".modeline-path")).toHaveText("wrap2.md");
   await expect(page.locator(".tab")).toHaveCount(2);
 

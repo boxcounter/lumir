@@ -27,6 +27,16 @@ pub const EVENT_NAME: &str = "harness:event";
 /// 事件信封的字段名：会话所属 vault 的根路径（= 后端 sessions 映射的键）。
 pub const VAULT_FIELD: &str = "vault";
 
+/// 事件信封的字段名：发出事件的**逻辑会话令牌**（`Session::subagent_token`，change
+/// add-harness-message-withdraw-nov26）。
+///
+/// 为什么 vault 不够：撤回会把 A 换成 B（同一 vault、新令牌），而旧 A 的后台线程可能在替换后
+/// 才发出 `subagent_*` / `notice` / `title` 事件——只按 vault 过滤会让它们落进 B 的视图。
+/// 令牌由 [`ScopedSink`] 在构造时定格（= 该回合/该任务所属会话），前端与 `persistence` 事件同一
+/// 口径按令牌准入（退役或更旧的令牌整条丢弃）。`0` = 无会话（空态 / 单测），此时**不写该键**，
+/// 读者按「旧后端」放行。
+pub const SESSION_TOKEN_FIELD: &str = "session_token";
+
 /// 把 vault 标识盖进事件载荷的顶层（信封字段的唯一施加点，M312）。
 ///
 /// 非对象载荷原样放过（九类构造函数都产对象，这条只防未来有人发非对象）。
@@ -71,21 +81,37 @@ pub trait StreamSink {
 pub struct ScopedSink<'a> {
     inner: &'a dyn EventSink,
     vault: String,
+    session_token: u64,
 }
 
 impl<'a> ScopedSink<'a> {
-    pub fn new(inner: &'a dyn EventSink, vault: impl Into<String>) -> Self {
+    pub fn new(inner: &'a dyn EventSink, vault: impl Into<String>, session_token: u64) -> Self {
         Self {
             inner,
             vault: vault.into(),
+            session_token,
         }
     }
 }
 
 impl EventSink for ScopedSink<'_> {
     fn emit(&self, mut payload: serde_json::Value) {
-        stamp_vault(&mut payload, &self.vault);
+        stamp_scope(&mut payload, &self.vault, self.session_token);
         self.inner.emit(payload);
+    }
+}
+
+/// 信封字段的唯一施加点（vault + 逻辑会话令牌）：`ScopedSink` 与 `turn::OwnedScopedSink` 共用，
+/// MUST NOT 各写一份（REVIEW.md「同一语义两处真源」条）。令牌为 0 时不写该键（空态 / 单测）。
+pub fn stamp_scope(payload: &mut serde_json::Value, vault: &str, session_token: u64) {
+    stamp_vault(payload, vault);
+    if session_token > 0 {
+        if let Some(object) = payload.as_object_mut() {
+            object.insert(
+                SESSION_TOKEN_FIELD.to_string(),
+                serde_json::Value::from(session_token),
+            );
+        }
     }
 }
 
@@ -494,13 +520,32 @@ mod tests {
         }
     }
 
+    /// 信封令牌（change add-harness-message-withdraw-nov26）：有会话时每条事件都带
+    /// `session_token`，空态（0）不写该键——前端据此拒收退役会话的迟到事件。
+    #[test]
+    fn scoped_sink_stamps_session_token_only_when_present() {
+        let inner = Collect::default();
+        let seen = inner.0.clone();
+        ScopedSink::new(&inner, "/tmp/vault-a", 11).emit(done());
+        ScopedSink::new(&inner, "/tmp/vault-a", 0).emit(done());
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen[0]["session_token"], serde_json::json!(11));
+        assert_eq!(seen[0]["vault"], serde_json::json!("/tmp/vault-a"));
+        assert!(
+            seen[1].get("session_token").is_none(),
+            "无会话（0）时不写该键，读者按旧后端放行"
+        );
+    }
+
     /// 十类载荷**每一类**都盖上 vault 标识——漏一类就是一条跨 vault 泄漏路径（M312）。
     /// `ScopedSink` 是生产中唯一的装配点（`turn::run_turn`），这里驱动的是同一个装饰器。
     #[test]
     fn scoped_sink_stamps_vault_on_every_event_kind() {
         let inner = Collect::default();
         let seen = inner.0.clone();
-        let sink = ScopedSink::new(&inner, "/tmp/vault-a");
+        // 令牌 0：本用例只判「每一类都盖 vault」，令牌键由
+        // `scoped_sink_stamps_session_token_only_when_present` 单独钉（有会话才写）。
+        let sink = ScopedSink::new(&inner, "/tmp/vault-a", 0);
         sink.emit(text_chunk("你好"));
         sink.emit(tool_call("vault_read", "started", "读 a.md", "call-1"));
         sink.emit(approval_request("ap-1", "vault_patch", Some("@@"), None));
@@ -715,8 +760,8 @@ mod tests {
         let b = Collect::default();
         let seen_a = a.0.clone();
         let seen_b = b.0.clone();
-        ScopedSink::new(&a, "/tmp/vault-a").emit(done());
-        ScopedSink::new(&b, "/tmp/vault-b").emit(done());
+        ScopedSink::new(&a, "/tmp/vault-a", 7).emit(done());
+        ScopedSink::new(&b, "/tmp/vault-b", 8).emit(done());
         assert_eq!(
             seen_a.lock().unwrap()[0][VAULT_FIELD],
             serde_json::json!("/tmp/vault-a")
@@ -784,7 +829,7 @@ mod tests {
         // vault 信封：与其余事件同一装饰器（ScopedSink）。
         let inner = Collect::default();
         let seen = inner.0.clone();
-        ScopedSink::new(&inner, "/tmp/vault-a").emit(payload.clone());
+        ScopedSink::new(&inner, "/tmp/vault-a", 7).emit(payload.clone());
         let event = seen.lock().unwrap()[0].clone();
         assert_eq!(event[VAULT_FIELD], serde_json::json!("/tmp/vault-a"));
         assert_eq!(event["state"], serde_json::json!("degraded"));

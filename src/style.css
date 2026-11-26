@@ -3420,3 +3420,120 @@ body {
 :root[data-theme="eink"] .ft-confirm-ok {
   border-width: 1.4px;
 }
+
+/* 退出前的保存全部确认弹框（change add-quit-save-all-dialog-nov27）：居中模态。
+   遮罩与浮层壳沿用键位面板 / 设置面板的 recipe（--scrim、--preview-bg + 1px --border +
+   --shadow-raise + --r10；eink 1.4px、无阴影）。层级 40 高于设置面板（30）与其它浮层（20）——
+   它可以在任何浮层打开时由后端退出拦截触发，必须盖住整窗。 */
+.lumir-quit-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-12);
+  background: var(--scrim);
+}
+
+/* author 的 display:flex 会盖掉 UA 的 [hidden] 规则，显式补回。 */
+.lumir-quit-overlay[hidden] {
+  display: none;
+}
+
+.lumir-quit-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  width: 100%;
+  /* 与文件树删除确认同宽（440px）：两条短句 + 两个按钮，不需要更宽。 */
+  max-width: 440px;
+  padding: var(--sp-9) var(--sp-10) var(--sp-8);
+  background: var(--preview-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r10);
+  box-shadow: var(--shadow-raise);
+  font-family: var(--font-sans);
+  outline: none;
+}
+
+:root[data-theme="eink"] .lumir-quit-card {
+  border-width: 1.4px;
+  box-shadow: none;
+}
+
+.lumir-quit-title {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-bold);
+}
+
+.lumir-quit-body {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-ui-s);
+  line-height: var(--lh-ui);
+}
+
+/* 状态行：无文案时也占位，避免保存中 / 失败时弹框高度跳动（视觉合同 §4.3）。 */
+.lumir-quit-status {
+  margin: 0;
+  min-height: 1.2em;
+  font-size: var(--fs-ui-s);
+  line-height: var(--lh-ui);
+  color: var(--text-2);
+}
+
+.lumir-quit-status[data-tone="error"] {
+  color: var(--danger);
+}
+
+.lumir-quit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-3);
+}
+
+.lumir-quit-btn {
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r5);
+  background: transparent;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.lumir-quit-btn:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.lumir-quit-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.lumir-quit-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+:root[data-theme="eink"] .lumir-quit-btn:focus-visible {
+  outline-color: #000;
+}
+
+/* 主按钮：确认动作在右（macOS 习惯），取 accent-fill 填充档；次按钮是描边档。 */
+.lumir-quit-btn-primary {
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+  color: var(--accent-fill-text);
+}
+
+.lumir-quit-btn-primary:hover:not(:disabled) {
+  background: var(--accent-fill);
+  filter: brightness(1.05);
+}

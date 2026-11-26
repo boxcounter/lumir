@@ -6,8 +6,9 @@ import { linkSuggestionIsOpen, linkSuggestionIsSettling } from "./link-suggest";
 import { createImageViewer, imageModelineText } from "./image-viewer";
 import type { ImageInfo, ImageViewerHandle } from "./image-viewer";
 import type { EditorView } from "@codemirror/view";
-import { applyKeyOverrides, BLOCK_SCROLL_CLASS, COMPOSER_TEXT_COMMAND_IDS, EDITOR_COMMAND_IDS, KEY_BINDINGS, Keymap, TAB_GOTO_IDS } from "./keys";
+import { applyKeyOverrides, BLOCK_SCROLL_CLASS, COMPOSER_TEXT_COMMAND_IDS, coversNativeInputHosts, EDITOR_COMMAND_IDS, isTextEntryHost, KEY_BINDINGS, Keymap, TAB_GOTO_IDS } from "./keys";
 import type { CommandId, CommandRunner, CommandRuntime, EditorCommandId, KeyBinding, KeyOverrides } from "./keys";
+import { selectAllOf } from "./overlay-select";
 import { DEFAULT_SPLIT_RATIO, clampSplitRatio, createDividerDrag, createPaneLayout, emptyPaneGuideVisible, paneBlocksInput } from "./pane-layout";
 import { createFirstRunTips } from "./first-run-tips";
 import { createFirstRunClaim } from "./first-run-claim";
@@ -35,6 +36,7 @@ import {
   fsTrashEntry,
   fsWriteAttachment,
   fetchUrlTitle,
+  appQuit,
   documentSetDirty,
   isCommandError,
   onAttachmentNaming,
@@ -59,6 +61,8 @@ import type { NamingOutcome } from "./bindings/NamingOutcome";
 import type { RemovedVault } from "./bindings/RemovedVault";
 import type { SemanticNameTask } from "./paste-image";
 import { createSaveController, SAVE_GUARD_TOAST_CLASS } from "./save-controller";
+import { createSaveAllBarrier, initialSaveAllLog } from "./save-all";
+import { createQuitDialog } from "./quit-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getName, getVersion } from "@tauri-apps/api/app";
@@ -3000,11 +3004,12 @@ function openImage(path: string, targetPane?: number): boolean {
 // 模式并登记磁盘 revision；image 在下面早于文本装载分流（`openImage`，M629），binary 仍走
 // `loadSessionContent` 里的 D25 分支——两条判定都不在这里重复（`kind` 取 `openKind` 一处分类）。
 //
-// 落点由 intent 决定（M254 起只剩两个取值，预览机制已退场）：
+// 落点由 intent 决定（M254 起只剩两个取值；文件树的普通点击 / ⌘-点击在
+// improve-file-open-harness-affordance-nov26 起分别落到这两个取值）：
 //   - "current"（**默认值**）：当前标签跟随换文档——文档内链接跟随 / 另存为新文件 /
-//     恢复备份三条链路都是「当前这份文档换个落点」，也是「不传就退化成 M149 之前的
-//     行为」这个保守兜底；
-//   - "new"：新开一个标签（单击 / 双击 / ⌘-点击文件树、新建文件后的自动打开、会话恢复）。
+//     恢复备份 / **文件树普通点击**都是「当前这份文档换个落点」，也是「不传就退化成
+//     M149 之前的行为」这个保守兜底；
+//   - "new"：新开一个标签（**文件树 ⌘-点击**、新建文件后的自动打开、快速打开、会话恢复）。
 //
 // `targetPane`（pane 下标，缺省 undefined）是**显式落点**，只有会话恢复批量路径传它（M321）：
 // 命中他 pane 已开的同文件时，落点取这个指定 pane 而不是活跃 pane——恢复期活跃 pane 是后建的
@@ -3875,6 +3880,10 @@ function isComposerTarget(event: KeyboardEvent | undefined): boolean {
 function composerTextFaceCommands(): Partial<Record<CommandId, CommandRunner>> {
   const wrapped: Partial<Record<CommandId, CommandRunner>> = {};
   for (const id of COMPOSER_TEXT_COMMAND_IDS) {
+    // ⌘A 的落面比 text 面宽（原生输入宿主，见 coversNativeInputHosts）：它由下面的
+    // `editor.select-all` 显式条目统一分派，不由本包装再包一层——两处各写一遍面判定就是
+    // 第二个真源（REVIEW.md『同一语义两处真源』条）。
+    if (coversNativeInputHosts(id)) continue;
     const base = editor.commands[id];
     wrapped[id] = (event) => {
       if (isComposerTarget(event)) {
@@ -3887,9 +3896,97 @@ function composerTextFaceCommands(): Partial<Record<CommandId, CommandRunner>> {
   return wrapped;
 }
 
+/** 已推给后端的 dirty 镜像值（M149）：只在**变化**时上报。
+ *
+ *  标签切换会频繁调用 syncActiveDocument → syncBackendDirty，每切换一次就 invoke 一遍
+ *  是白费（后端是覆盖式写入，同一个值重复推没有语义），而且会破坏 M107 的「启动只推一次
+ *  复位镜像」这条既有断言（它的意图正是「别在上报通道上乱喷」）。undefined = 还没推过，
+ *  启动时必然推一次。 */
+let pushedDirty: boolean | undefined;
+
+/**
+ * 保存全部的机器可读**状态日志**（change add-acceptance-installed-app-pause）：文本形如
+ * `save-all-log s0:g0:idle s1:g1:running s2:g1:ok`，**视觉隐藏、AX 可达**。
+ *
+ * 为什么需要它（K3 P1-3 第二轮）：成功 toast（D1049）只活 3.5s，且每次成功都同一句文本；
+ * 只看文本或只看「代次更大」都会让旧信号 / 跨代信号提前放行。日志是**追加**的：每次命令调用
+ * 都留下 seq、操作代次与状态（running / ok / failed / busy）。验收通道在触发前读基线，触发后
+ * 必须看到第一条新记录是 running 并锁定它的代次，随后只接受**同代次 ok**；无归属的更高代 ok、
+ * busy 被别代 ok 覆盖都不成立。
+ *
+ * 视觉隐藏不改变任何像素（inline 样式，不占布局），也不进 toast / 文案表——它是机器日志，
+ * 不是用户文案。
+ */
+const saveAllMarker = document.createElement("span");
+saveAllMarker.style.cssText =
+  "position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;";
+saveAllMarker.textContent = initialSaveAllLog();
+document.body.append(saveAllMarker);
+
+/** 把后端 dirty 镜像 await 同步为 `dirty`；失败时清掉本地镜像缓存，让下一次同步重推。
+ *  （既有 `syncBackendDirty` 是「变化才推」的 fire-and-forget；保存全部屏障需要真实往返。） */
+async function pushDirtyMirror(dirty: boolean): Promise<void> {
+  try {
+    await documentSetDirty(dirty);
+    pushedDirty = dirty;
+  } catch (e) {
+    pushedDirty = undefined;
+    throw e;
+  }
+}
+
+/**
+ * 保存全部（change add-acceptance-installed-app-pause）：一条有终态、有代次的保存屏障。
+ * 步骤与判据见 `src/save-all.ts` 的文件头与 `createSaveAllBarrier`——本处只装配真实依赖：
+ *
+ *   - `saveAllDirty` / `switcher.flush` / `readingPositions.flush`：前者的返回值是「全部闭环」，
+ *     后两者的返回值是**真实落盘**（后端磁盘写失败 resolve false，warning 已记）。
+ *   - `anyDirty`：全部 pane 的任一会话。
+ *   - `syncDirty`：awaited `document_set_dirty`；失败即屏障失败。
+ *   - `log`：机器可读的操作归属日志（验收通道的唯一成功判据）。
+ *   - toast：用户可读的成功 / 失败 / 并发提示（D1049 / D1050 / D1051）。
+ *
+ * 只读会话（`external`）没有保存落点，但结构上不可能 dirty；图片会话同理（saveAllDirty 跳过）。
+ */
+const saveAll = createSaveAllBarrier({
+  saveAllDirty: () => save.saveAllDirty(),
+  flushSessions: () => switcher.flush(),
+  flushPositions: () => readingPositions.flush(),
+  anyDirty: () => editor.sessions().some((session) => session.dirty),
+  syncDirty: (dirty) => pushDirtyMirror(dirty),
+  log: (text) => {
+    saveAllMarker.textContent = text;
+  },
+  toastSuccess: () => toast(t("D1049"), [], false, "success"),
+  toastFailure: () => toast(t("D1050")),
+  toastBusy: () => toast(t("D1051")),
+});
+
+/**
+ * 退出前的保存全部确认弹框（change add-quit-save-all-dialog-nov27）：后端退出守卫拦截
+ * ⌘Q / 关窗后 emit `app:quit_blocked`，这里把它变成居中模态——旧路径的右下角 sticky toast
+ * 在用户视线之外（焦点在左上角编辑器），已整条切断。
+ *
+ * 保存复用上面同一条 `saveAll` 屏障（`document.save-all` / 菜单 / 弹框三条入口同一实现，
+ * REVIEW.md『同一语义两处真源』条）；退出只走受控的 `app_quit`（后端复核 dirty 镜像）。
+ * `anyDirty` 与屏障的依赖同源：全部 pane 的任一会话。
+ */
+const quitDialog = createQuitDialog({
+  mount: document.body,
+  inertRoot: app,
+  saveAll: () => saveAll.run(),
+  anyDirty: () => editor.sessions().some((session) => session.dirty),
+  quit: () => appQuit(),
+  restoreFocus: () => editor.focusPreservingReadingPosition(),
+});
+
 const commands: CommandRuntime = {
   ...editor.commands,
   ...composerTextFaceCommands(),
+  // 全选（⌘A 的键盘路径与 Edit 菜单的全选项共用这一处）。落面按**事件目标**（键盘）或
+  // **当前焦点**（菜单）解析，四个面一条顺序：全屏遮罩 → composer → 编辑器 → 原生文本宿主。
+  // MUST NOT 在各浮层 / 各输入框里再写一份就地分支（change fix-text-input-select-all-nov26）。
+  "editor.select-all": (event) => selectAllAt(event?.target ?? document.activeElement),
   "document.save": () => {
     // vault 外只读会话没有保存落点（change quick-open-file-oct23 的 D2）：结构性只读已挡住
     // dirty，这里挡的是「保存链路按绝对路径直调后端」那条必然被拒的路径——用户不该看到一片
@@ -3897,6 +3994,10 @@ const commands: CommandRuntime = {
     if (editor.activeSession().external === true) return;
     void save.save();
   },
+  // 保存全部（change add-acceptance-installed-app-pause）：File → Save All 与验收通道
+  // 共用的一条屏障实现（见 `saveAll`）。默认不绑键——菜单是鼠标入口，键盘入口留给
+  // 用户在 [keys] 里自绑。
+  "document.save-all": () => void saveAll.run(),
   // 轨道 A 原样迁入（键位与作用域不变）；M144 起跟随光标/选区处的链接——外链交系统
   // 浏览器、wikilink 走既有跳转链路；M145 补齐其余形态：相对路径 md 走应用内跳转、
   // vault 内非 md 交系统默认应用、纯锚点只提示。落在非链接处无操作（不假装有反馈）。
@@ -4028,19 +4129,17 @@ function gotoTabCommands(): Record<(typeof TAB_GOTO_IDS)[number], CommandRunner>
 // 里——焦点落在表格滚动容器上时命令照常生效；容器自己的滚动键由表内绑定用 `when`
 // 收窄（M132），分发器入口另对已消费事件（defaultPrevented）让路。
 const keymapContext = {
-  isEditorEvent: (event: KeyboardEvent) => {
-    const target = event.target;
-    return (
-      target instanceof Node &&
-      paneLayout.panes().some(
-        (pane) =>
-          pane.handle.kind === "doc" && pane.handle.editor.view.contentDOM.contains(target),
-      )
-    );
-  },
+  isEditorEvent: (event: KeyboardEvent) => isEditorDomNode(event.target),
   // `text` 作用域的第二个面（M447）：事件目标在 harness composer 内。与上面那条包装同一
   // 个助手（单一真源），面板不在场时为假——族外 editor 命令与 chrome 上的按键照旧不命中。
   isComposerEvent: isComposerTarget,
+  // ⌘A 的附加落面（change fix-text-input-select-all-nov26）：任意可编辑文本宿主——两处 CM 面
+  // 之外还有浮层 / 内联编辑 / 设置里的原生输入框。只有 `inputHosts` 的绑定读它（见
+  // keys.ts 的 KeymapContext.isTextInputEvent）；族内其余 text 命令不因它放宽。
+  // 判据复用同一批助手：编辑器 / composer 两个面 + keys.ts 的 `isTextEntryHost`（结构化，
+  // 单测可用替身驱动）；三处 MUST NOT 各写一份。
+  isTextInputEvent: (event: KeyboardEvent) =>
+    isEditorDomNode(event.target) || isComposerTarget(event) || isTextEntryHost(event.target),
   // 命令级命中条件（M240，理由见 keys.ts 的 KeymapContext.commandGate）：`table.toggle-fullscreen`
   // 的命中条件需要编辑器状态（caret 在不在渲染为 grid 的表内 / 容器是否持焦），而
   // `[keys]` 覆盖产出的绑定没有 `when` 字段——条件因此落在命令实现方。不满足时返回 false，
@@ -4157,13 +4256,47 @@ const settingsPanel = createSettingsPanel({
   },
 });
 
-/** 菜单「全选」的落面（M627；M650 加遮罩档）：菜单点击没有键盘事件可判面，按**当前焦点**
- *  路由——全屏遮罩开着 → 选遮罩内容（与遮罩内 ⌘A 同一落面，D3）；composer 持焦 → composer
- *  全选；其余 → 编辑器全选（与让位前的原生 selectAll 在编辑器里的结果等价）。
- *  键盘路径不经这里：它走 `text` 作用域的 `composerTextFaceCommands` 包装，按事件目标分派
- *  同一个命令。面判据复用 `isComposerNode`（单一真源）；遮罩内容根归遮罩端口自己管，
- *  MUST NOT 在这里查遮罩 DOM。 */
-function selectAllByFocusedFace(): void {
+/** 事件目标 / 焦点是否落在**编辑器内容区**内（任一 doc pane 的 CM contentDOM，含 widget）。
+ *  键位层的 `isEditorEvent` 与全选分派共用这一份判据（MUST NOT 两处各写一遍）。 */
+function isEditorDomNode(node: EventTarget | null): boolean {
+  return (
+    node instanceof Node &&
+    paneLayout.panes().some(
+      (pane) => pane.handle.kind === "doc" && pane.handle.editor.view.contentDOM.contains(node),
+    )
+  );
+}
+
+/** 把 `host` 的全部文本设为当前选区；认领了目标返回 true。
+ *
+ *  两种实现：原生 `input` / `textarea` 走 `.select()`（同时聚焦、选区 0 → value.length）；
+ *  contenteditable 走 DOM Range（内容不是 `value`，没有 `.select()` 可用）。判据
+ *  `isTextEntryHost` 已排除勾选框 / 滑块一类没有「全部文本」语义的控件。 */
+function selectAllInTextEntry(host: HTMLElement): boolean {
+  if (host instanceof HTMLInputElement || host instanceof HTMLTextAreaElement) {
+    host.select();
+    return true;
+  }
+  if (host.isContentEditable) {
+    selectAllOf(host);
+    return true;
+  }
+  return false;
+}
+
+/** ⌘A 的**唯一**落面分派（change fix-text-input-select-all-nov26）：键盘路径传事件目标，
+ *  菜单路径传当前焦点，两条路走同一个函数。顺序即优先级：
+ *   ① 全屏遮罩开着 → 选遮罩内容（内容根归遮罩端口自己管，MUST NOT 在这里查遮罩 DOM）；
+ *   ② composer 内 → composer 全选（CM 选区，卡片不参与）；
+ *   ③ 编辑器内容区内 → 编辑器全选（CM 选区）；
+ *   ④ 原生文本宿主（浮层输入框 / 内联重命名 / 设置 / 搜索框）→ 该宿主自己的全选；
+ *   ⑤ 其余焦点（按钮 / 树行 / 空白 chrome）→ 编辑器整篇，与让位前的菜单口径一致。
+ *
+ *  判定助手都只有一份：`isComposerNode` / `isEditorDomNode` / `isTextEntryHost`。
+ *  新增输入面**不需要**在这里加分支——凡支持整值选中的原生宿主（文本类 input / textarea /
+ *  contenteditable）都落 ④；日期 / 时间族不在此列（平台不支持整值选中，见 keys.ts 的
+ *  SELECTABLE_INPUT_TYPES），它们不命中 `inputHosts`，⌘A 落回平台。 */
+function selectAllAt(target: EventTarget | null): void {
   if (tableFullscreen.isOpen()) {
     tableFullscreen.selectAll();
     return;
@@ -4172,20 +4305,38 @@ function selectAllByFocusedFace(): void {
     codeBlockFullscreen.selectAll();
     return;
   }
-  if (isComposerNode(document.activeElement)) {
+  if (isComposerNode(target)) {
     harnessPanel.composerCommand("editor.select-all");
     return;
   }
+  if (isEditorDomNode(target)) {
+    editor.commands["editor.select-all"]();
+    return;
+  }
+  if (
+    target instanceof Element &&
+    isTextEntryHost(target) &&
+    selectAllInTextEntry(target as HTMLElement)
+  ) return;
   editor.commands["editor.select-all"]();
+}
+
+/** 菜单「全选」的入口（M627；M650 加遮罩档）：菜单点击没有键盘事件可判面，按**当前焦点**
+ *  交给同一个 `selectAllAt`——焦点在输入框里时选中输入串，MUST NOT 落到编辑器正文
+ *（change fix-text-input-select-all-nov26 之前，菜单路径只认 composer 与遮罩，其余一律
+ *  选编辑器：重命名输入框持焦时会「抢错焦点」）。 */
+function selectAllByFocusedFace(): void {
+  selectAllAt(document.activeElement);
 }
 
 // 原生 Edit 菜单的撤销 / 重做 / 全选项与 File/Window 的关闭项（lib.rs 的自定义项，都不带
 // accelerator）点击后经此事件回到前端——菜单与键盘走同一个命令层，不产生第二套实现。
 // 取值口径见 lib.rs MENU_COMMAND_EVENT：菜单只说 undo / redo / close / selectAll 这类平台
 // 术语，映射到命令 id 是前端的事。关闭项映射到 `tab.close`（M149：⌘W 归标签，菜单里的关闭项
-// 因此也关标签而不是关窗，两者的语义必须一致）；全选按焦点面路由（M627：⌘A 让出加速键后，
-// 菜单项仍要能全选，且焦点在 composer 里时选 composer 全文；M650 起全屏遮罩开着时选遮罩内容，
-// 与遮罩内就地消费的 ⌘A 同一落面）。
+// 因此也关标签而不是关窗，两者的语义必须一致）；全选按当前焦点交给统一分派 `selectAllAt`
+//（M627：⌘A 让出加速键后，菜单项仍要能全选，且焦点在 composer 里时选 composer 全文；M650 起
+// 全屏遮罩开着时选遮罩内容；change fix-text-input-select-all-nov26 起焦点在原生输入框时选输入串，
+// 与键盘路径同一个函数）。
 // M132：该通道从装配层直连 listen 收进 ipc.ts 的 onMenuCommand（同类事件走同一模块，
 // M131 已把它记为待收编项）；ipc.ts 的这一族因此覆盖 invoke 与 listen 两条通道。
 const MENU_COMMANDS: Record<string, CommandRunner | undefined> = {
@@ -4199,6 +4350,9 @@ const MENU_COMMANDS: Record<string, CommandRunner | undefined> = {
   // change add-model-automation-settings-oct24：应用菜单「设置…」与 ⌘, 走同一条命令实现
   // （`app.settings-open` 的 toggle）；菜单项本身不带 accelerator（spec「设置面板入口」）。
   settings: () => settingsPanel.toggle(),
+  // change add-acceptance-installed-app-pause：File → Save All 与命令层同一条实现
+  // （`document.save-all`），不新开第二条保存链路或第二个屏障。
+  saveAll: commands["document.save-all"],
 };
 onMenuCommand((payload) => {
   // 与键盘分发同一个总闸门：原生菜单（设置 / 键位速查 / 关闭 / 撤销 / 全选）在首启模式
@@ -4308,14 +4462,6 @@ onRelabel(() => {
   }
 });
 
-/** 已推给后端的 dirty 镜像值（M149）：只在**变化**时上报。
- *
- *  标签切换会频繁调用 syncActiveDocument → syncBackendDirty，每切换一次就 invoke 一遍
- *  是白费（后端是覆盖式写入，同一个值重复推没有语义），而且会破坏 M107 的「启动只推一次
- *  复位镜像」这条既有断言（它的意图正是「别在上报通道上乱喷」）。undefined = 还没推过，
- *  启动时必然推一次。 */
-let pushedDirty: boolean | undefined;
-
 /** 后端退出守卫（Cmd+Q / 关窗拦截）的 dirty 镜像：判据是「**任一**标签有未保存修改」。
  *  旧实现只有一个文档，取单个 dirty 即可；多标签下必须取并集，否则后台标签里的修改在
  *  退出时会被静默放行。无 Tauri 后端（纯浏览器预览）时同步失败无害，静默忽略。 */
@@ -4356,9 +4502,9 @@ editor.onDocChanged(() => syncModelineMeta());
 syncBackendDirty();
 
 // 退出/关窗被 dirty 守卫拦截时必须可见（M101）：后端 prevent_exit/prevent_close
-// 本身无任何界面表现，前端收到事件要给出可理解的提示。sticky：拦截提示不得
-// 在用户看到前自动消隐（守卫反馈要持续可见，点击浮条关闭）。
-onQuitBlocked(() => save.showQuitBlocked()).catch(() => {});
+// 本身无任何界面表现。change add-quit-save-all-dialog-nov27 起由**居中模态**承担（旧右下角
+// sticky toast 在用户视线外）：说明 + 「保存全部并退出」/「取消」，重复事件不叠弹。
+onQuitBlocked(() => quitDialog.open()).catch(() => {});
 let tree!: ReturnType<typeof createFileTree>;
 
 // ---------------------------------------------------------------------------
@@ -4495,9 +4641,15 @@ function pickVault(forceNew = false): void {
 }
 
 tree = createFileTree(shell.treeMount, {
-  // 打开文件的落点：树已经不再判定意图（M254）——单击 / 双击 / ⌘-点击一律是「开一个标签」，
-  // 预览机制退场后这三者没有可区分的落点，判定权因此收回装配层一处（"new"）。
-  onOpenFile: (path, kind) => void openFile(path, kind, "new"),
+  // 打开文件的落点：手势 → 意图的判定在树的 `treeOpenIntent` 一处（change
+  // improve-file-open-harness-affordance-nov26）——普通点击 = 当前标签就地打开、
+  // ⌘-点击 = 新开标签并保留当前标签；这里只按意图路由，不再自己读鼠标事件。
+  //
+  // 唯一的例外是**当前标签有未保存修改**：普通点击退回「新开一个」——就地替换会把那份修改
+  // 连同标签一起丢掉，而「打开另一个文件不丢修改、也不弹拦截」是 M149 起的既有口径（save-guard
+  // 场景判的就是它）。判定放在装配层（它持有 editor），树仍只报手势。
+  onOpenFile: (path, kind, intent) =>
+    void openFile(path, kind, intent === "current" && editor.activeSession().dirty ? "new" : intent),
   // 空态按钮（未装载 vault 时唯一入口）与浮层底部的「新增 vault…」同一条链路。
   onOpenVault: () => requestAddVault(),
   // 树头部的常驻入口（形态 A）：展开 / 收起列表浮层。

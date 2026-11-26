@@ -362,8 +362,9 @@ test("输入条：[keys] 重绑 ⌃J 生效；切标签收起且不跳转", asyn
   await page.keyboard.press("Escape");
   await expect(gotoBox(page)).toBeHidden();
 
-  // 开第二个标签（b.md），再切回 a.md：⌘1 / ⌘2 的落点是标签序号。
-  await page.locator('.ft-row[title="b.md"]').click();
+  // 开第二个标签（b.md，⌘-点击新开；普通点击会就地替换 a.md），再切回 a.md：
+  // ⌘1 / ⌘2 的落点是标签序号。
+  await page.locator('.ft-row[title="b.md"]').click({ modifiers: ["Meta"] });
   await expect(page.locator(".modeline-path")).toHaveText("b.md");
   await page.keyboard.press("Meta+1");
   await expect(page.locator(".modeline-path")).toHaveText("a.md");
@@ -772,8 +773,8 @@ test("非编辑器焦点的 ⌘⇧N：搜索框与 harness composer 内同样命
 
 test("后台标签同步：切走再切回时后台会话已是新态（不是切回时才补）", async ({ page }) => {
   await openFile(page, { "a.md": GUTTER_DOC, "b.md": "# Beta\n\nBeta 正文。\n" }, "a.md");
-  // 第二个标签（b.md）留在后台，再回 a.md
-  await page.locator('.ft-row[title="b.md"]').click();
+  // 第二个标签（b.md，⌘-点击新开）留在后台，再回 a.md
+  await page.locator('.ft-row[title="b.md"]').click({ modifiers: ["Meta"] });
   await expect(page.locator(".modeline-path")).toHaveText("b.md");
   await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
   await page.keyboard.press("Meta+1");

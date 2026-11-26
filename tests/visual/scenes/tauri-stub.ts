@@ -533,7 +533,9 @@ export async function stubTauri(
           pane_split_ratio: args.pane_split_ratio ?? 0.5,
           updated_at: Date.now(),
         });
-        return null;
+        // 真后端 `vault_session_put` 返回 `Ok(bool)`：写失败记 warning 但如实回 false；
+        // 保存全部屏障据此判「真实落盘」（change add-acceptance-installed-app-pause）。
+        return true;
       },
       // 阅读位置读（M194）：无记录等价于「没有阅读位置历史」（与 Rust 侧的五种 None 同义），
       // 前端据此从篇首开始、不给任何提示。调用记录留档：场景据此断言「装载 vault 时只读一次」
@@ -555,7 +557,8 @@ export async function stubTauri(
           entries?: Record<string, { pos: number; y: number; x: number; at: number }>;
         }>).push({ vault_id: args.vault_id, entries: args.entries });
         positions.set(args.vault_id ?? "", args.entries ?? {});
-        return null;
+        // 同 `vault_session_put`：真后端返回 `Ok(bool)`，屏障按 resolved false 判失败。
+        return true;
       },
       log_event: (args) => {
         (w.__logEvents as LogEventRecord[]).push({

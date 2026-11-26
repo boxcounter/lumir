@@ -740,16 +740,9 @@ class Toc implements TocHandle {
     const token = keyToken(event);
     if (token === null) return;
     switch (token) {
-      // 输入框内的全选必须由本层显式接管（与 Quick Open 同源，change fix-selector-ime-aria-nov25：
-      // 筛选框是「输入面」，合同见 quick-open 的「输入面内的全选（⌘A）」）。⌘A 的全局绑定是
-      // `editor.select-all`、作用域 `text`（只在编辑器 / composer 命中），浮层输入框不在其中；
-      // WKWebView / 原生 Select All 菜单是否把这条键送进 input 不归本仓控制。这里直接选中输入框
-      // 内容并阻止默认行为，MUST NOT 依赖上游默认行为，也 MUST NOT 绕到 editor.select-all
-      //（那会选中正文、丢掉输入串）。组合期已由本方法首行守卫挡掉，不会走到这里。
-      case "Cmd-A":
-        event.preventDefault();
-        this.input.select();
-        return;
+      // ⌘A 不在此列（change fix-text-input-select-all-nov26）：输入框内的全选由统一键位层按
+      // 「任意可编辑文本宿主」分派（`editor.select-all` 的 `inputHosts` 附加面），浮层 MUST NOT
+      // 再写一份就地 `input.select()`。组合期已由本方法首行守卫挡掉，不会走到分发表。
       // ⌃N / ⌃P 是 Emacs 的 next-line / previous-line，与 ↑↓ 完全等价：同一落点、同一钳位口径，
       // 共用 move() 这一份实现（浮层里 MUST NOT 有第二套下标逻辑）。
       case "ArrowDown":

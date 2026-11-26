@@ -16,6 +16,7 @@ import type { SettingsSnapshot } from "./bindings/SettingsSnapshot";
 import type { SettingsPatch } from "./bindings/SettingsPatch";
 import type { SettingsApplyOutcome } from "./bindings/SettingsApplyOutcome";
 import type { FsChange } from "./bindings/FsChange";
+import type { WithdrawOutcome } from "./bindings/WithdrawOutcome";
 import type { FsEntryChangedEvent } from "./bindings/FsEntryChangedEvent";
 import type { ReadingPositions } from "./bindings/ReadingPositions";
 import type { VaultInfo } from "./bindings/VaultInfo";
@@ -160,6 +161,13 @@ export function documentSetDirty(dirty: boolean): Promise<void> {
 /** 订阅退出/关窗被 dirty 守卫拦截的通知；返回退订函数。 */
 export function onQuitBlocked(handler: () => void): Promise<() => void> {
   return listen("app:quit_blocked", () => handler());
+}
+
+/** 受控退出（change add-quit-save-all-dialog-nov27）：保存全部成功后由用户显式请求退出。
+ *  后端 `app_quit` 会复核 dirty 镜像为 false 才真正退出；仍 dirty 时返回 `quit_blocked_dirty`。
+ *  MUST NOT 用合成键盘事件 / Apple Event 替代本命令。 */
+export function appQuit(): Promise<void> {
+  return invoke<void>("app_quit");
 }
 
 /**
@@ -398,15 +406,16 @@ export function vaultSessionGet(vaultId: string): Promise<VaultSession | null> {
 /** 写某 vault 的 pane 布局会话（M318：各 pane 的标签集合 / 顺序 / 激活项 + 分隔条比例，任一
  *  变化后防抖写，切换前与退出前 flush）。`harnessPane` 记 harness pane 是否在场（ADR 0008
  *  Decision 6 的 Phase 2 消费位，change move-harness-to-pane-chat-frame；会话内容不持久化）。
- *  写失败在后端降级为 warning 并照常 resolve：会话只影响「下次打开这个 vault 恢复什么」，不值得
- *  拦停用户的一次切换或退出。只有 vault_id 非法才 reject（路径逃逸防护）。 */
+ *  resolve 的布尔值是**真实落盘结果**：后端磁盘写失败会记 warning 并 resolve `false`（普通调用方
+ *  忽略它，仍只降级、不拦停切换或退出；`document.save-all` 的屏障据此判失败）。只有 vault_id
+ *  非法才 reject（路径逃逸防护）。 */
 export function vaultSessionPut(
   vaultId: string,
   panes: PaneSession[],
   paneSplitRatio: number,
   harnessPane: boolean,
-): Promise<void> {
-  return invoke<void>("vault_session_put", {
+): Promise<boolean> {
+  return invoke<boolean>("vault_session_put", {
     vault_id: vaultId,
     panes,
     pane_split_ratio: paneSplitRatio,
@@ -425,13 +434,14 @@ export function readingPositionGet(vaultId: string): Promise<ReadingPositions | 
 }
 
 /** 写某 vault 的阅读位置表（整份内存镜像；滚动停止后防抖写、切换文件 / 标签 / vault 前与退出
- *  前 flush）。写失败在后端降级为 warning 并照常 resolve：位置只影响「下次打开从哪里开始」，
- *  不值得拦停用户的一次切换或退出。只有 vault_id 非法才 reject（路径逃逸防护）。 */
+ *  前 flush）。resolve 的布尔值是**真实落盘结果**：后端磁盘写失败会记 warning 并 resolve `false`
+ *  （普通调用方忽略它，仍只降级、不拦停；`document.save-all` 的屏障据此判失败）。只有 vault_id
+ *  非法才 reject（路径逃逸防护）。 */
 export function readingPositionPut(
   vaultId: string,
   entries: ReadingPositions["entries"],
-): Promise<void> {
-  return invoke<void>("reading_position_put", { vault_id: vaultId, entries });
+): Promise<boolean> {
+  return invoke<boolean>("reading_position_put", { vault_id: vaultId, entries });
 }
 
 // ---------------------------------------------------------------------------
@@ -493,6 +503,9 @@ export function onMenuCommand(handler: (command: string) => void): Promise<() =>
  * **宽容解析**：缺字段的事件按「归属未知」放行（纯浏览器桩 / 本 change 之前的载荷形态）。 */
 interface HarnessEventEnvelope {
   vault?: string;
+  /** 发出事件的逻辑会话令牌（change add-harness-message-withdraw-nov26）：撤回把 A 换成 B 后，
+   *  旧 A 的迟到事件带旧令牌，面板按与 `persistence` 相同的准入丢弃。缺键 = 旧后端（放行）。 */
+  session_token?: number;
 }
 
 /** harness:event 的事件载荷（`type` 判别；每类都带信封字段 `vault`）。
@@ -783,6 +796,13 @@ export function harnessResumeSession(session_id: string): Promise<SessionResumeI
  */
 export function harnessDeleteSession(session_id: string): Promise<void> {
   return invoke<void>("harness_delete_session", { session_id });
+}
+
+/** 撤回最近一条用户消息（change add-harness-message-withdraw-nov26）。`confirm=false` 时若本轮
+ *  执行过工具，后端**什么都不做**、只回执工具名（`needs_confirmation`）；确认后再以 `true` 调
+ *  一次，届时全部校验与派生会话检测重新复跑。 */
+export function harnessWithdraw(confirm: boolean): Promise<WithdrawOutcome> {
+  return invoke<WithdrawOutcome>("harness_withdraw", { confirm });
 }
 
 /** harness:event 的 type 白名单（**单一真源**：`parseHarnessEvent` 不再各列一份）。

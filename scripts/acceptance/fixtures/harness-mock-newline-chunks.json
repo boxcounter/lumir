@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "边界前段。\n\n边界后段。\n首字符检验。结束。",
+      "chunks": ["边界前段。\n\n边界后段。\n", "首字符检验。", "结束。"],
+      "chunk_delay_ms": 6000,
+      "usage": { "input_tokens": 1200, "cached_tokens": 300, "output_tokens": 20 }
+    }
+  ]
+}

@@ -527,10 +527,6 @@ const COPY_TABLE = {
     zh: "当前文档有未保存修改，无法{action}；请先保存（Cmd+S）",
     en: "This document has unsaved changes, so it can't {action}; save first (Cmd+S)",
   },
-  D232: {
-    zh: "当前有未保存修改，无法退出；请先保存（Cmd+S）",
-    en: "There are unsaved changes, so quitting is blocked; save first (Cmd+S)",
-  },
   D233: {
     zh: "当前没有打开的文件，无法保存；修改仍在编辑器内（按 Cmd+Z 可撤销）",
     en: "No file is open, so there's nothing to save; your changes are still in the editor (Cmd+Z undoes them)",
@@ -605,7 +601,7 @@ const COPY_TABLE = {
   D265: { zh: "同上（M110/M111）；M447：编辑器与 composer 两处文本面共用同一绑定", en: "Same as above (M110/M111); M447: one binding serves both text faces (editor + composer)" },
   D266: { zh: "行尾；落点藏进隐藏 replace 时回退到最后可停靠位（M118）；M447：编辑器与 composer 两处文本面共用同一绑定", en: "End of line; when the landing point hides inside a replace decoration it falls back to the last stoppable position (M118); M447: one binding serves both text faces (editor + composer)" },
   D267: { zh: "D2 裁决：⌃A = 行首（Emacs C-a），与 ⌃E 对称；全选改由 ⌘A 承担；M447：编辑器与 composer 两处文本面共用同一绑定", en: "D2 ruling: ⌃A = start of line (Emacs C-a), symmetric with ⌃E; select-all moves to ⌘A; M447: one binding serves both text faces (editor + composer)" },
-  D268: { zh: "D1/D2：⌘A 全选，编辑器与 composer 两处都成立（M627 文本面）。Edit 菜单的 Select All 让出加速键（见 lib.rs）", en: "D1/D2: ⌘A selects all in both the editor and the composer (M627 text face). The Edit menu's Select All gives up its accelerator (see lib.rs)" },
+  D268: { zh: "D1/D2：⌘A 全选，落面是当前聚焦的任意可编辑文本宿主——编辑器与 composer（M627 文本面），以及浮层筛选框 / 内联重命名 / 搜索 / 设置里的原生输入框（change fix-text-input-select-all-nov26：装配层一处 selectAllAt 按事件目标分派，菜单的全选项走同一个分派）。Edit 菜单的 Select All 让出加速键（见 lib.rs）", en: "D1/D2: ⌘A selects all on the focused editable text host — the editor and the composer (M627 text face), plus native inputs in overlays, inline rename, search and settings (change fix-text-input-select-all-nov26: one selectAllAt in the assembly layer dispatches by event target; the menu's Select All uses the same dispatch). The Edit menu's Select All gives up its accelerator (see lib.rs)" },
   D269: { zh: "mac 惯例撤销；原生 Edit 菜单的 Undo 项已让出该键（lib.rs）", en: "The mac convention for undo; the native Edit menu's Undo item has given the key up (lib.rs)" },
   D270: { zh: "mac 惯例重做；原生 Edit 菜单的 Redo 项已让出该键（lib.rs）", en: "The mac convention for redo; the native Edit menu's Redo item has given the key up (lib.rs)" },
   D271: { zh: "Emacs 规范绑定 C-/", en: "The canonical Emacs binding C-/" },
@@ -701,8 +697,8 @@ const COPY_TABLE = {
   // （编号停用、不复用，deck 沿革记于 文案-Copy.md）——悬停提示与读屏名仍走 D327。
   // -------------------------------------------------------------------------
   D327: {
-    zh: "对话面板",
-    en: "Chat panel",
+    zh: "Harness 面板",
+    en: "Harness pane",
   },
   D328: {
     zh: "问点什么…（Enter 发送，⇧Enter 换行）",
@@ -793,7 +789,7 @@ const COPY_TABLE = {
   },
   D345: {
     zh: "在旁侧 pane 打开 / 收起 harness（M303 唤起/收起面板；M346/HP1 语义改 pane 化，change move-harness-to-pane-chat-frame）：无第二 pane 时自动分栏（默认宽度比 harness:文档 = 1:1），已有第二 doc pane 时其标签并入另一 pane 后换位；再按收起、标签不丢。语义取「A = Agent」，⌘ 系归 mac 惯例。取 global——焦点在左栏 / 搜索框 / 浮层里时同样要能打开；面板打开时焦点在面板的输入框里（不在 contentDOM 内），再按要能收起。冲突已核（零冲突，三条独立来源）：① 表内——keys.ts 即真源，⌘⇧ 系现有 Cmd-Shift-z（重做）/ Cmd-Shift-o（toc.toggle）/ Cmd-Shift-T（view.theme-cycle）/ Cmd-Shift-L（view.language-cycle）四条，⌘⇧A 不在其中；② 原生菜单 accelerator 集合（tauri 的 Menu::default() 逐项来自 muda 的 items/predefined.rs，清单见 keys.ts 文件头 M149 段）不含 ⌘⇧A；③ macOS 系统级不预置 ⌘⇧A（Finder 的「应用程序」快捷键只在 Finder 窗口作用域）。可经 [keys] 重绑 / 解绑",
-    en: "Open / collapse the harness chat pane (M303 opened/collapsed the panel; M346/HP1 changed the semantics to the pane model, change move-harness-to-pane-chat-frame): with no second pane it splits automatically (default width ratio harness:document = 1:1); with a second document pane that pane's tabs merge into the other pane before the swap; pressing again collapses it without losing tabs. The letter means A = Agent, and the ⌘ family follows mac conventions. Scope is global — it must also work with focus in the left column, the search box or a popover; with the pane open focus is in its input (not inside contentDOM) and pressing again must close it. Conflicts checked (none, three independent sources): (1) the table's ⌘⇧ bindings are ⇧⌘Z (redo) / ⇧⌘O (toc.toggle) / ⇧⌘T (view.theme-cycle) / ⇧⌘L (view.language-cycle) and ⌘⇧A is not among them (keys.ts is the source of truth); (2) the native menu accelerator set (tauri's Menu::default() takes each item from muda's items/predefined.rs, list in the M149 section of the keys.ts header) has no ⌘⇧A; (3) macOS presets no ⌘⇧A (Finder's Applications-folder shortcut is scoped to Finder windows). Can be rebound / unbound via [keys]",
+    en: "Open / collapse the Harness pane (M303 opened/collapsed the panel; M346/HP1 changed the semantics to the pane model, change move-harness-to-pane-chat-frame): with no second pane it splits automatically (default width ratio harness:document = 1:1); with a second document pane that pane's tabs merge into the other pane before the swap; pressing again collapses it without losing tabs. The letter means A = Agent, and the ⌘ family follows mac conventions. Scope is global — it must also work with focus in the left column, the search box or a popover; with the pane open focus is in its input (not inside contentDOM) and pressing again must close it. Conflicts checked (none, three independent sources): (1) the table's ⌘⇧ bindings are ⇧⌘Z (redo) / ⇧⌘O (toc.toggle) / ⇧⌘T (view.theme-cycle) / ⇧⌘L (view.language-cycle) and ⌘⇧A is not among them (keys.ts is the source of truth); (2) the native menu accelerator set (tauri's Menu::default() takes each item from muda's items/predefined.rs, list in the M149 section of the keys.ts header) has no ⌘⇧A; (3) macOS presets no ⌘⇧A (Finder's Applications-folder shortcut is scoped to Finder windows). Can be rebound / unbound via [keys]",
   },
   D346: {
     zh: "与当前文档对话——发送时会携带上方显示的上下文，发送前可核对。",
@@ -1939,7 +1935,7 @@ const COPY_TABLE = {
   D645: { zh: "切换主题", en: "Cycle theme" },
   D646: { zh: "切换界面语言", en: "Cycle interface language" },
   D647: { zh: "收起或展开左栏", en: "Collapse or expand the sidebar" },
-  D648: { zh: "打开或收起对话面板", en: "Toggle the chat panel" },
+  D648: { zh: "打开或收起 Harness 面板", en: "Toggle the Harness pane" },
   D649: { zh: "拆分窗格", en: "Split pane" },
   D650: { zh: "切到另一个窗格", en: "Focus the other pane" },
   D651: { zh: "关闭窗格", en: "Close pane" },
@@ -3026,6 +3022,108 @@ const COPY_TABLE = {
   D1045: { zh: "首次使用提示", en: "Getting started tips" },
   D1046: { zh: "选中文本", en: "Select text" },
   D1047: { zh: "右键左栏 vault 名", en: "Right-click the vault name" },
+  // 保存全部（change add-acceptance-installed-app-pause）：D1048 是命令标签（键位面板 / 菜单
+  // 对应的人类标签），D1049 是屏障全绿后的正向完成信号（必须是一条**正**观测——验收通道
+  // 据此判「保存链路真的跑完」，不得以「没有错误提示」代替），D1050 是任一步失败时的终态提示。
+  D1048: { zh: "保存全部", en: "Save All" },
+  D1049: { zh: "已保存全部更改", en: "All changes saved" },
+  D1050: {
+    zh: "未能保存全部更改，请按提示处理后重试",
+    en: "Couldn't save all changes. Follow the prompts above and try again.",
+  },
+  // 并发 / 重复触发保存全部：前一次屏障还在跑，第二次不开新代次（单飞），给一条中性提示。
+  D1051: { zh: "正在保存全部更改", en: "Saving all changes" },
+  D1052: {
+    zh: "撤回",
+    en: "Withdraw",
+  },
+  D1053: {
+    zh: "先停止本轮，再撤回",
+    en: "Stop this turn first, then withdraw",
+  },
+  D1054: {
+    zh: "本轮已执行：{tools}；撤回不会撤销这些操作。",
+    en: "This turn ran: {tools}. Withdrawing will not undo them.",
+  },
+  D1055: {
+    zh: "确认撤回",
+    en: "Withdraw anyway",
+  },
+  D1056: {
+    zh: "已撤回；原文已回到输入区，可编辑后重新发送",
+    en: "Withdrawn; the message is back in the composer for editing",
+  },
+  D1057: {
+    zh: "该会话还有派生出来的会话（{sessions}），不能撤回；请先处理这些会话后再试",
+    en: "This session has derived sessions ({sessions}) and cannot be withdrawn; handle them first",
+  },
+  D1058: {
+    zh: "最近一轮不是你在本窗口发出的消息，不能撤回",
+    en: "The latest turn was not sent from this window, so it cannot be withdrawn",
+  },
+  D1059: {
+    zh: "当前会话没有可撤回的用户消息",
+    en: "This session has no user message to withdraw",
+  },
+  D1060: {
+    zh: "当前会话还没有留存身份，无法撤回",
+    en: "This session has no retention identity yet and cannot be withdrawn",
+  },
+  D1061: {
+    zh: "撤回失败：无法删除原会话留存；原会话与输入区均未改变",
+    en: "Withdraw failed: the original session could not be deleted; the session and composer are unchanged",
+  },
+  D1062: {
+    zh: "撤回失败：无法发布撤回后的新会话（{reason}）；原会话与输入区均未改变",
+    en: "Withdraw failed: the new session could not be published ({reason}); the session and composer are unchanged",
+  },
+  D1063: {
+    zh: "有另一个会话正在从它恢复（如 cron 专用会话）；请等这次运行结束后再撤回",
+    en: "Another session is resuming from it (for example a cron session); withdraw after that run finishes",
+  },
+  D1064: {
+    zh: "撤回未完成：原会话已保留，但新建的会话没能清理（清单里可能多出一行，可手动删除）",
+    en: "Withdraw incomplete: the original session is kept, but the new session could not be cleaned up (an extra row may remain; delete it manually)",
+  },
+  D1065: {
+    zh: "无法确认是否还有派生会话（{path} 不可读），为安全起见不撤回；原会话未改动",
+    en: "Cannot verify that no derived session exists ({path} is unreadable), so nothing was withdrawn; the original session is unchanged",
+  },
+  D1066: {
+    zh: "无法读取当前会话的装配记录，撤回已取消；原会话未改动（{reason}）",
+    en: "Could not read the session's assembly record; the withdraw was cancelled and the session is unchanged ({reason})",
+  },
+  D1067: {
+    zh: "本轮之后又到达了后台通知；为避免把通知当成你的消息处理，请先发下一条消息再撤回",
+    en: "A background notice arrived after this turn; send another message first so the notice is not mistaken for yours",
+  },
+  // 退出前的保存全部确认弹框（change add-quit-save-all-dialog-nov27）。旧路径是右下角 sticky
+  // toast（D232），用户视线在左上角看不到；本组是居中模态的标题 / 说明 / 主按钮与三条状态行。
+  // 「取消」复用 D136，不新造一条同义文案。
+  D1068: { zh: "有未保存的修改", en: "Unsaved changes" },
+  D1069: {
+    zh: "退出前需要先保存全部修改。保存失败时不会退出。",
+    en: "Save all changes before quitting. If saving fails, Lumir won't quit.",
+  },
+  D1070: { zh: "保存全部并退出", en: "Save All and Quit" },
+  D1071: {
+    zh: "正在保存全部更改，完成后将退出",
+    en: "Saving all changes; Lumir will quit when done",
+  },
+  D1072: {
+    zh: "未能保存全部更改，退出已取消；请处理提示后重试",
+    en: "Couldn't save all changes, so Lumir didn't quit. Follow the prompts and try again.",
+  },
+  D1073: {
+    zh: "保存后又出现了新的修改，退出已取消；请重试",
+    en: "Changes appeared after saving, so Lumir didn't quit. Try again.",
+  },
+  D1074: {
+    zh: "退出请求未被受理，应用未退出；请重试",
+    en: "The quit request wasn't accepted; Lumir is still open. Try again.",
+  },
+  D1075: { zh: "正在退出", en: "Quitting" },
+
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -3049,7 +3147,22 @@ export const COPY: Record<CopyKey, CopyEntry> = COPY_TABLE;
  *（细节措辞有损失，是 D6(a) 的明账）——因此模板只使用该 code **全部**构造点都提供的占位名。
  */
 export const ERROR_COPY: Record<string, CopyKey> = {
+  // 受控退出被后端复核拒绝（change add-quit-save-all-dialog-nov27）：与弹框的失败状态行
+  // 同一条文案（D1074，无占位）；前端弹框直接渲染状态行，这里满足「每个 CommandError code
+  // 都有文案」的完整性门禁与未知调用方的兜底。
+  quit_blocked_dirty: "D1074",
   harness_skills_invalid: "D982",
+  harness_withdraw_derived_exists: "D1057",
+  harness_withdraw_not_applicable: "D1058",
+  harness_withdraw_nothing: "D1059",
+  harness_withdraw_failed: "D1060",
+  harness_withdraw_delete_failed: "D1061",
+  harness_withdraw_publish_failed: "D1062",
+  harness_withdraw_resume_in_flight: "D1063",
+  harness_withdraw_rollback_incomplete: "D1064",
+  harness_withdraw_scan_failed: "D1065",
+  harness_withdraw_read_failed: "D1066",
+  harness_withdraw_tail_notice: "D1067",
   vault_not_open: "D159",
   vault_list_failed: "D160",
   config_home_unknown: "D161",

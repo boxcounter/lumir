@@ -67,8 +67,30 @@ test("空态主界面：标识块在场、三段文案、在 traffic 灯区内�
   const box = (await block.boundingBox())!;
   // 落位判据：左缘起于 traffic 灯占位区之后（padding-left 78px 让出三颗系统按钮），±1px
   expect(Math.abs(box.x - 78)).toBeLessThanOrEqual(1);
+  // 无标签（tabstrip 隐藏）时，标题栏动作钮仍贴**标题栏右端**——MUST NOT 紧贴 traffic 右缘
+  // （左栏宽 236px 处，视觉上等于悬在 Content pane 左上角上方；change
+  // improve-file-open-harness-affordance-nov26 的合同 2）。
+  const toggleBox = (await page.locator(".lumir-hp-toggle").boundingBox())!;
+  const viewport = page.viewportSize()!;
+  expect(Math.abs(toggleBox.x + toggleBox.width - (viewport.width - 12))).toBeLessThanOrEqual(2);
+  expect(toggleBox.x).toBeGreaterThan(viewport.width / 2);
   // 元素级基线（M246）：三段文字的字形墨被整页 0.001 容差吞掉，形态只能由元素 crop 钉住
   await expectScreenshot(block, "titlebar-identity-block.png");
+});
+
+test("vault 已装载但没有标签：harness toggle 贴标题栏右端（与空态同一落位）", async ({ page }) => {
+  await open(page); // DEMO_VAULT：vault 装载成功，但没有打开任何文件
+  await expect(page.locator(".tabstrip")).toBeHidden();
+  const toggle = page.locator(".lumir-hp-toggle");
+  await expect(toggle).toBeVisible();
+  const toggleBox = (await toggle.boundingBox())!;
+  const viewport = page.viewportSize()!;
+  // 右缘 = 视口右缘 − 钮自身 margin-right（--sp-6 = 12px；标题栏 padding-right 已归零），±2px
+  expect(Math.abs(toggleBox.x + toggleBox.width - (viewport.width - 12))).toBeLessThanOrEqual(2);
+  // 整体落在右半区：落在左栏宽（236px）附近就是「浮在 Content pane 左上」的旧缺陷。
+  expect(toggleBox.x).toBeGreaterThan(viewport.width / 2);
+  // 结构顺序不变：动作钮仍是标题栏的最后一个孩子（标签段保持 hidden、不占宽度）。
+  expect(await toggle.evaluate((el) => el.parentElement?.lastElementChild === el)).toBe(true);
 });
 
 test("有标签时标识块仍在 traffic 灯区；harness toggle 钉标题栏右端", async ({ page }) => {

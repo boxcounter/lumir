@@ -474,12 +474,14 @@ export interface VaultSessionStoreDeps {
   layout(): { panes: readonly PaneSnapshotInput[]; ratio: number; harnessPane: boolean };
   /** 读 / 写某 vault 的 pane 布局会话（装配层给 ipc 封装）。 */
   getSession(vaultId: string): Promise<VaultSession | null>;
+  /** 写一份会话；resolve 的布尔值是**真实落盘结果**（磁盘写失败 = false，warning 由后端记）。
+   *  普通调用方（防抖写 / 切换 / 退出）忽略它；`document.save-all` 的屏障据此判失败。 */
   putSession(
     vaultId: string,
     panes: StoredPane[],
     ratio: number,
     harnessPane: boolean,
-  ): Promise<void>;
+  ): Promise<boolean>;
   /** 一组 vault 相对路径的**批量**存在探测（后端 `fs_paths_exist`），返回其中确实存在的那些。
    *
    *  存在探测而不是「在枚举集合里」的原因见 [`restorePlan`]；**批量**而不是逐条是因为候选数
@@ -528,8 +530,12 @@ export interface VaultSessionStore {
   /** 标签集合 / 顺序 / 激活项变化后调用（防抖落盘）。 */
   sessionChanged(): void;
   /** 把待写内容立刻落盘（切换前 / 退出前）。没有待写内容也会写一份当前快照——退出路径上
-   *  没有第二次机会，多写一次几百字节比漏一次便宜。 */
-  flush(): Promise<void>;
+   *  没有第二次机会，多写一次几百字节比漏一次便宜。
+   *
+   *  返回是否真的写成功（`false` = 后端拒写 / IO 失败，warning 已由 `deps.warn` 给出）。
+   *  既有调用方（退出 / 切换）按 `void` 忽略它，语义不变；`document.save-all` 的屏障拿它
+   *  作为「会话真的落盘了」的判据——写失败时不得把一次保存全部报成成功。 */
+  flush(): Promise<boolean>;
   /** 当前 vault 装载完成：登记当前项（写盘的键），按会话**先建壳、再装载激活项的正文**
    *  （M283 的 3.2：标签栏当帧齐，内容按需）。
    *  返回的 Promise 在「壳建齐 + 激活项内容装载完 + 跳过计数给出」那一刻 resolve（测试与
@@ -587,13 +593,17 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
     timer = null;
   }
 
-  async function write(vaultId: string, payload: SessionSnapshot): Promise<void> {
+  async function write(vaultId: string, payload: SessionSnapshot): Promise<boolean> {
     try {
-      await deps.putSession(vaultId, payload.panes, payload.ratio, payload.harnessPane);
+      // 后端把磁盘写失败降级成 resolved `false`（warning 已在 Rust 侧记）；IPC 本身失败才是 reject。
+      // 两者都必须让保存全部屏障看见 false——普通调用方照旧忽略返回值。
+      return await deps.putSession(vaultId, payload.panes, payload.ratio, payload.harnessPane);
     } catch (e) {
       // 写失败只降级（与 last_vault 写失败同口径）：会话只影响「下次打开恢复什么」，
-      // 不值得拦停用户的一次切换或退出。
+      // 不值得拦停用户的一次切换或退出。返回值只给需要「真实落盘」判据的调用方
+      //（document.save-all 的屏障），其余调用方照旧忽略。
       deps.warn(errorText(e));
+      return false;
     }
   }
 
@@ -799,13 +809,13 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
     }, SESSION_WRITE_DEBOUNCE_MS);
   }
 
-  async function flush(): Promise<void> {
+  async function flush(): Promise<boolean> {
     cancelTimer();
     const payload = pending ?? snapshot();
     pending = null;
     const vaultId = currentId;
-    if (vaultId === undefined) return; // 还没有 vault（启动路径）：没有可写的键
-    await write(vaultId, payload);
+    if (vaultId === undefined) return true; // 还没有 vault（启动路径）：没有可写的键，也没有待落盘内容
+    return write(vaultId, payload);
   }
 
   async function onVaultLoaded(vaultId: string, entries: readonly FsEntry[]): Promise<void> {
@@ -1054,7 +1064,7 @@ class VaultSwitcher implements VaultSwitcherHandle {
     this.store.sessionChanged();
   }
 
-  flush(): Promise<void> {
+  flush(): Promise<boolean> {
     return this.store.flush();
   }
 
@@ -1681,15 +1691,10 @@ class VaultSwitcher implements VaultSwitcherHandle {
     const token = keyToken(event);
     if (token === null) return;
     switch (token) {
-      // 输入框内的全选必须由本层显式接管（与 Quick Open / TOC 同源，change
-      // fix-selector-ime-aria-nov25：筛选框是「输入面」，合同见 quick-open 的「输入面内的全选
-      // （⌘A）」）。WKWebView 是否把原生 Select All 送进 input 不归本仓控制；直接选中输入框内容
-      // 并阻止默认行为，MUST NOT 绕到 editor.select-all（那会选中正文、丢掉输入串）。组合期已由
-      // 本方法首行守卫挡掉，不会走到这里。
-      case "Cmd-A":
-        event.preventDefault();
-        this.input.select();
-        return;
+      // ⌘A 不在此列（change fix-text-input-select-all-nov26）：筛选框是「输入面」，但全选不再由
+      // 本浮层就地接管——统一键位层的 `editor.select-all` 带 `inputHosts` 附加面，落到任意原生
+      // 文本宿主（含本筛选框）时调用该宿主的 `.select()`；MUST NOT 绕到 editor.select-all
+      //（那会选中正文、丢掉输入串）。组合期已由本方法首行守卫挡掉，不会走到分发表。
       // ⌃N / ⌃P 是 Emacs 的 next-line / previous-line，与 ↑↓ 完全等价（同一落点、同一钳制），
       // 共用 move() 这一份实现——浮层里 MUST NOT 有第二套下标逻辑（与大纲浮层 M157 同口径）。
       case "ArrowDown":

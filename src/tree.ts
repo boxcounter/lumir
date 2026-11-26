@@ -255,6 +255,19 @@ export function isTextOpenKind(kind: OpenKind): boolean {
   return kind === "md" || kind === "code" || kind === "text";
 }
 
+/** 文件树点击的打开意图（change improve-file-open-harness-affordance-nov26，浏览器式语义）：
+ *  - 普通点击（双击是两次普通点击）= `"current"`：当前标签就地打开目标文件；
+ *  - ⌘-点击 = `"new"`：新开一个标签并激活，当前标签原样保留（内容 / 未保存状态 / 位置）。
+ *
+ *  只认 `metaKey`：Shift / Alt / Ctrl 不另立落点（与普通点击同义）。判定只此一处——行监听
+ *  与单测共用它，装配层只按意图路由，MUST NOT 在监听或装配层再读一次鼠标事件
+ *  （REVIEW.md「同一语义两处真源」条）。 */
+export type TreeOpenIntent = "current" | "new";
+
+export function treeOpenIntent(event: { metaKey: boolean }): TreeOpenIntent {
+  return event.metaKey ? "new" : "current";
+}
+
 /** 会话恢复时一个条目的**建壳裁决**（M629，change add-image-file-preview §1.4）：
  *  - `"doc"`：文本类（md / code / text）⇒ 建文本壳（`createShellSession`）；
  *  - `"image"`：图片 ⇒ 建图片会话（`createImageSession`，不建文本壳）——放行图片是本 change
@@ -280,10 +293,11 @@ export function linkableVaultPaths(paths: readonly string[]): string[] {
 }
 
 export interface FileTreeCallbacks {
-  /** 打开文件：按 openKind 分类交给装配层处理。**不带意图**（M254）：预览标签机制随
-   *  change preview-tab-removal 退场后，单击 / 双击 / ⌘-点击树文件都是「开一个标签」，
-   *  三者没有可区分的落点，树因此不再判定意图——落点归装配层一处（"new"）。 */
-  onOpenFile(path: string, kind: OpenKind): void;
+  /** 打开文件：按 openKind 分类交给装配层处理。**带打开意图**（change
+   *  improve-file-open-harness-affordance-nov26）：普通点击 = `"current"`（当前标签就地打开），
+   *  ⌘-点击 = `"new"`（新开标签并保留当前标签）。手势 → 意图的判定只有 `treeOpenIntent`
+   *  一处，装配层只按意图路由，不再自己读鼠标事件。 */
+  onOpenFile(path: string, kind: OpenKind, intent: TreeOpenIntent): void;
   /** 未打开 vault 空态里的「打开 vault」按钮（文案 D6）：走目录选择器链路。 */
   onOpenVault(): void;
   /** 树头部 vault 切换器入口（形态 A，M163）的点击：打开列表浮层。
@@ -714,15 +728,16 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     if (node.entry.kind === "dir") {
       row.addEventListener("click", () => toggle(node));
     } else {
-      // 单击 / 双击 / ⌘-点击都是「打开这个文件」（M254）。**没有修饰键分支**了：原来的
-      // 「⌘-点击 = 新固定标签」是相对「单击 = 复用预览标签」而言的，预览机制退场后两者
-      // 落到同一个落点（新开一个标签），继续读 event.metaKey 只会留下一条永不生效的分支。
+      // 单击 = 当前标签就地打开；⌘-点击 = 新开标签并保留当前标签（change
+      // improve-file-open-harness-affordance-nov26 的浏览器式语义）。手势 → 意图只走
+      // `treeOpenIntent` 一处（判定与单测同源，装配层只按意图路由）。
       //
-      // dblclick 也一并删掉：浏览器在 dblclick 之前会先派发两次 click，两次都走打开——
-      // 第一次建标签，第二次命中「同一个文件已经打开 → 切到既有标签」的短路。所以双击的
-      // 可观察结果是「打开」这同一个，多一条监听只是重复。
-      const open = () => cb.onOpenFile(node.entry.path, openKind(node.entry.path));
-      row.addEventListener("click", open);
+      // 双击不另设监听：浏览器在 dblclick 之前会先派发两次 click，两次都按「当前标签」落点，
+      // 第一次就地打开、第二次命中「同一个文件已经打开 → 切到既有标签」的短路，可观察结果
+      // 仍是就地打开。Shift / Alt / Ctrl 同理不分支（与普通点击同义）。
+      row.addEventListener("click", (event) =>
+        cb.onOpenFile(node.entry.path, openKind(node.entry.path), treeOpenIntent(event)),
+      );
     }
     return row;
   }
@@ -1054,6 +1069,10 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     // Enter 提交、Esc 取消。两个键在输入框内就地消费（preventDefault）：编辑器键位层
     // 的作用域按「事件目标是否在 contentDOM 内」判定，这里本来就不命中；显式消费是给
     // 「以后谁在 window 上加监听」留一道不依赖作用域的保险。
+    // ⌘A **不在**这里接管（change fix-text-input-select-all-nov26）：内联编辑框是原生
+    // `input`，统一键位层的 `editor.select-all` 带 `inputHosts` 附加面，按事件目标落到本框
+    // 并调用其 `.select()`。MUST NOT 在此另写 `case "Cmd-A"`——各输入面各写一份就是本
+    // change 收掉的缺陷形态（重命名漏写、⌘A 静默落空）。
     input.addEventListener("keydown", (event) => {
       const token = keyToken(event);
       if (token === "Enter") {

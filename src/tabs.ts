@@ -657,8 +657,11 @@ export function createTabs(deps: TabsDeps): TabsHandle {
   }
 
   /** 按意图挑落点会话（只决定「落到哪个标签」，内容装载在 openFile 里做）：
-   *  - "current"：前台会话就地换文档（跟随链接 / 另存为新文件 / 恢复崩溃备份）；
-   *  - "new"：新开一个标签（单击 / 双击 / ⌘-点击树文件，以及新建文件后的自动打开）。
+   *  - "current"：前台会话就地换文档（跟随链接 / 另存为新文件 / 恢复崩溃备份 / 文件树普通点击）；
+   *  - "new"：新开一个标签（文件树 ⌘-点击、新建文件后的自动打开、快速打开、会话恢复）。
+   *
+   *  文件树的手势 → 意图判定只在 `src/tree.ts` 的 `treeOpenIntent` 一处（change
+   *  improve-file-open-harness-affordance-nov26），本函数只按意图挑会话。
    *
    *  空态里那个**没有文件**的会话不是一个标签（冷启动的示例文档、关掉最后一个标签后的空
    *  文档），它就是「还没有打开任何文件」这个状态本身，因此就地复用它——否则每次单击都会
@@ -666,7 +669,13 @@ export function createTabs(deps: TabsDeps): TabsHandle {
    *  且没有落盘基准（openFile 的守卫在它是前台时会拦下），复用它等于丢掉那份草稿，因此脏的
    *  一律新开。 */
   function targetSessionFor(intent: "new" | "current"): EditorSession {
-    if (intent === "current") return editor.activeSession();
+    if (intent === "current") {
+      const active = editor.activeSession();
+      // 图片会话不能改判成文本会话（`reloadSession` 对非 doc 会话是空操作）：就地替换
+      // 只会留下一个图片前台 + 空正文的假象。当前标签是图片会话时退回「新开一个」——
+      // 与 `openImage` 恒新开（文本不能改判成图片）是同一条边界的另一侧。
+      if (isDocSession(active)) return active;
+    }
     const reusable = editor.sessions().find(
       (session) => session.path === undefined && !session.dirty,
     );

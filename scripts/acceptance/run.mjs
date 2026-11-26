@@ -31,6 +31,8 @@ import {
   launchApp,
   listLumirInstances,
   prepareSeed,
+  productBundleId,
+  readBundleId,
   reclaimPort,
   resetCronState,
   resetPositions,
@@ -54,6 +56,25 @@ import {
   waitAppReady,
   waitStartupRestore,
 } from "./lib/drive.mjs";
+import {
+  activateByPid,
+  acquirePauseLock,
+  assertNoActivePause,
+  assertPauseExclusive,
+  PauseFailed,
+  PAUSE_LOCK,
+  pauseFailureExitCode,
+  pauseClosingNote,
+  quitInstalledByCmdQ,
+  readSaveAllLog,
+  registerActiveRunner,
+  releasePauseLock,
+  runInstalledPause,
+  runPauseThenPreflight,
+  triggerSaveAllMenuItem,
+  unregisterActiveRunner,
+  waitSaveAllCompletion,
+} from "./lib/installed-app.mjs";
 import { Evidence, appendRunLog, writeSummary } from "./lib/evidence.mjs";
 import { checkScenario, loadScenario, runScenario } from "./lib/execute.mjs";
 import {
@@ -72,6 +93,13 @@ import { envHome, InfraError, log, mkdirp, repoRoot, resultsRoot, sleep, vaultDi
 
 const args = process.argv.slice(2);
 const keepApp = args.includes("--keep-app");
+// 安装版显式暂停（change add-acceptance-installed-app-pause）：**只有显式给这个开关**才会
+// 触达 /Applications/Lumir.app（默认行为一字不变）。`--check` / `--list` 两个早退出口在
+// 碰机器资源之前就返回，因此带上它也只是静态查询、不建锁、不登记。
+const pauseInstalled = args.includes("--pause-installed");
+/** 本次跑批的安装版暂停结局（由 runInstalledPause 就地更新）：收尾 / 信号路径据此如实声明
+ *  「安装版现在是什么状态」，且**从不**重开 / 恢复它。 */
+const pauseOutcome = { requested: pauseInstalled, touched: false, state: "skipped", target: null };
 // `--batch <档>`（M749）：批次的唯一真源是场景 front-matter 的 `tier:`，这里只解析与筛选
 // （实现见 lib/batches.mjs，参数解析放在纯函数里才能钉住「批次取值不会被当成 id 前缀」）。
 // 缺省 `full` 是**全量**：不带 --batch 的跑批与分层前逐条相同，分层不得静默收窄默认行为。
@@ -528,6 +556,66 @@ function assertNoForeignLumir() {
   );
 }
 
+/**
+ * 安装版暂停阶段（change add-acceptance-installed-app-pause）。只在 `--pause-installed` 时调用；
+ * **暂停锁由调用方（`main`）先拿、暂停段结束时释放**——先拿锁再复核排他，避免检查与建锁之间
+ * 的竞态窗口。
+ *
+ * 顺序是合同的一部分：发现 → 身份 → 激活（按 pid）→ File → Save All → **等完成信号** →
+ * 身份复核 → ⌘Q → 等原 pid 消失。任何一步失败都抛出（退出码 2），不会走到 ⌘Q；已经 ⌘Q 之后
+ * 没有恢复步骤——安装版保持关闭，需要时由用户自己启动（Alex 2026-11-26 决定）。
+ */
+async function runPausePhase() {
+  const kimi = process.env.KIMICU_BIN ?? "/Applications/KimiCU.app/Contents/MacOS/kimi-cu";
+  if (!existsSync(kimi)) {
+    throw new PauseFailed(
+      `KimiCU 未安装（${kimi}）：安装版暂停需要 AX 通道，本次零副作用退出（未触碰安装版）。` +
+        "安装：curl -fsSL https://cdn.kimi.com/kimi-computer-use/latest/setup_macos.sh | bash",
+    );
+  }
+  const ensureCu = async () => {
+    if (!cu) {
+      cu = await CuClient.start();
+      log("KimiCU MCP 已连接（安装版暂停阶段）\n");
+    }
+    return cu;
+  };
+  const readState = async (pid) => (await (await ensureCu()).state(pid, { mode: "ax" })).text;
+  await runInstalledPause({
+    requested: true,
+    state: pauseOutcome,
+    listInstances: () => listLumirInstances(),
+    productId: productBundleId(),
+    readBundleId: (appPath) => readBundleId(appPath),
+    activate: (pid) => activateByPid({ pid }).then(() => undefined),
+    readLog: (pid) => readSaveAllLog({ pid, readState }),
+    triggerSaveAll: async (pid) => {
+      const client = await ensureCu();
+      await triggerSaveAllMenuItem({
+        pid,
+        readState,
+        click: (targetPid, index) => client.click(targetPid, { index }),
+      });
+    },
+    waitSaveAll: (pid, baseline) =>
+      waitSaveAllCompletion({
+        pid,
+        readState,
+        baselineSeq: baseline.seq,
+        baselineGeneration: baseline.generation,
+      }),
+    quit: async (pid) => {
+      const client = await ensureCu();
+      return quitInstalledByCmdQ({
+        pid,
+        pressKey: (targetPid, keys) => client.pressKey(targetPid, keys),
+        findInstances: () => listLumirInstances(),
+      });
+    },
+    evidence: (line) => appendRunLog(root, `${new Date().toISOString()} ${line}`),
+  });
+}
+
 const PHASE_LABELS = {
   reset: "复位",
   stop: "退出",
@@ -600,6 +688,36 @@ async function main() {
         `focus=${hint ? `#${hint.index} "${hint.name}"` : "unknown"} target=pending`,
     );
   }
+  // 活动 runner 登记（change add-acceptance-installed-app-pause）：真跑批都登记一份，供暂停
+  // 判「同机有没有别人在跑」。普通跑批另判「暂停进行中」——暂停必须全机独占（自定义 vault 的
+  // 普通并行照旧：两条普通跑批互不阻塞，只在暂停窗口内被挡）。记在最前面、清在 finally，
+  // 崩溃残留由下一次判据按「pid 已死」忽略（不删别人的文件）。
+  registerActiveRunner({ mode: pauseInstalled ? "run-with-pause" : "run", vault: targets.vault });
+  let pauseLockHeld = false;
+  try {
+    if (pauseInstalled) {
+      // 先 `mkdir` 原子拿暂停锁、**再**复核排他：反过来的顺序（先复核、后拿锁）在两步之间
+      // 留了一个窗口——另一条普通跑批恰在这几毫秒里检查「没有暂停锁」并通过，就会与暂停并发。
+      // 拿锁之后复核，普通跑批要么看到锁（拒绝），要么它的登记被我们看见（我们拒绝），
+      // 两者至少命中一方。
+      await acquirePauseLock();
+      pauseLockHeld = true;
+      try {
+        assertPauseExclusive();
+      } catch (e) {
+        releasePauseLock();
+        pauseLockHeld = false;
+        throw e;
+      }
+    } else {
+      const pauseCheck = assertNoActivePause();
+      if (pauseCheck.reclaimed) log("回收上次暂停残留的锁（持有人进程已退出）");
+    }
+  } catch (e) {
+    if (pauseLockHeld) releasePauseLock();
+    unregisterActiveRunner();
+    throw e;
+  }
   // 锁要在任何动共享资源的动作之前拿（reclaimPort 会杀进程、resetVault 会删文件）。
   if (needsRmachineLock()) {
     await acquireRmachineLock();
@@ -608,7 +726,22 @@ async function main() {
     log(`跳过跑批锁：LUMIR_ACCEPTANCE_VAULT 显式指向独立 vault（${targets.vault}），按隔离并行放行`);
     log("  注意：端口仍可能与别的跑批相撞，真并行请同时覆写 LUMIR_ACCEPTANCE_PORT\n");
   }
-  await preflight();
+  // 证据目录先建：安装版暂停的每一步都要落 run.log（失败时尤其需要——那是「停在哪一步」的
+  // 唯一证据）。此后原有的 mkdirp 只剩幂等的一行。
+  await mkdirp(root);
+  // 安装版暂停（opt-in）必须在**原有 preflight 之前**：preflight 的 assertNoForeignLumir 会把
+  // 安装版实例挡住，而暂停通道的目的正是先把用户手头的安装版以正常路径关掉。暂停结束后
+  // preflight **原样执行**（它才是最终判据：同机仍应有零实例）。
+  // 暂停段结束时释放暂停锁（跑批继续；登记仍覆盖整轮，第二次暂停据此被挡）。
+  try {
+    await runPauseThenPreflight({
+      requested: pauseInstalled,
+      pause: runPausePhase,
+      preflight,
+    });
+  } finally {
+    if (pauseLockHeld && releasePauseLock()) log(`安装版暂停锁已释放：${PAUSE_LOCK}`);
+  }
   log(
     bundleBinary()
       ? `实例 flavour：bundle（${bundleBinary()}；bundle id ${acceptanceBundleId()}，通知点击回调回到本进程）`
@@ -619,7 +752,6 @@ async function main() {
   log(`证据目录：${root}（git 外）`);
   const reclaimed = await reclaimPort(acceptPort());
   if (reclaimed.length) log(`回收上次残留进程：${reclaimed.join(", ")}`);
-  await mkdirp(root);
   // 索引与日志都是**跨 run 增量**的（M379：同一天多次跑、多 mission 共用同一日期目录是常态）：
   // `run.log` / `app.log` 都是追加写，补一条 run 头把两次 run 的段落分开（summary.md /
   // results.json 的合并口径见 evidence.mjs 的 writeSummary）。
@@ -638,8 +770,10 @@ async function main() {
     }`,
   );
 
-  cu = await CuClient.start();
-  log("KimiCU MCP 已连接\n");
+  if (!cu) {
+    cu = await CuClient.start();
+    log("KimiCU MCP 已连接\n");
+  }
 
   const results = [];
   let invalidCount = 0;
@@ -903,6 +1037,24 @@ async function recordInvalid(scenario, e) {
   return { status, records: evidence.records };
 }
 
+/** 信号路径的收尾声明（同步 append：`process.exit` 不会再等 await）。只写状态，不写任何
+ *  真实 vault 名 / 标签标题 / 正文。 */
+function notePauseOnSignal() {
+  // SIGINT 可能落在「⌘Q 已发出、正在等原 pid 消失」的窗口里：同步复查一次原 pid，别把
+  // 「其实刚退出了」写成「未由本通道关闭」。只读列表，不发任何信号、不做恢复。
+  if (pauseOutcome.touched && pauseOutcome.state !== "closed" && pauseOutcome.target) {
+    const alive = listLumirInstances().some((instance) => instance.pid === pauseOutcome.target.pid);
+    pauseOutcome.state = alive ? "stopped" : "closed";
+  }
+  const note = pauseClosingNote(pauseOutcome) ?? "安装版暂停未执行（本通道不会自动启动安装版）";
+  log(note);
+  try {
+    appendFileSync(path.join(root, "run.log"), `${new Date().toISOString()} INSTALLED-PAUSE ${note}\n`);
+  } catch {
+    /* 证据目录可能还没建：信号路径尽力而为 */
+  }
+}
+
 /**
  * 退出路径全覆盖：正常结束 / 断言失败 / 异常走 `finally`，SIGINT / SIGTERM 走 signal 钩子，
  * 另有 `exit` 兜底（`process.exit` 那条路径也不漏）。删锁本身幂等，重复调用无副作用。
@@ -914,12 +1066,18 @@ for (const [sig, code] of [
   ["SIGTERM", 143],
 ]) {
   process.on(sig, () => {
-    log(`\n收到 ${sig}：释放跑批锁后退出（已起的 app 实例按残留处理）`);
+    log(`\n收到 ${sig}：释放锁后退出（已起的 app 实例按残留处理）`);
+    // 安装版不做任何恢复：已关就保持关闭，没关就原样留着；结果里必须能读到这句话。
+    if (pauseInstalled) notePauseOnSignal();
+    releasePauseLock();
+    unregisterActiveRunner();
     releaseRmachineLock();
     process.exit(code);
   });
 }
 process.on("exit", () => {
+  releasePauseLock();
+  unregisterActiveRunner();
   releaseRmachineLock();
 });
 
@@ -966,12 +1124,26 @@ try {
   // 锁被占：持有人信息是给人看的，原样走 stderr；退出码并入「运行失败」（2）。
   if (e instanceof LockBusyError) process.stderr.write(`${e.message}\n`);
   else log(`运行失败：${e.message}`);
-  exitCode = 2;
+  // 暂停控制错误与其余运行失败同档（2 = 本次读数不算数）；映射本身由 installed-app.test.mjs 钉住。
+  exitCode = pauseFailureExitCode(e) ?? 2;
 } finally {
   if (!keepApp && handle) await stopApp(handle);
   if (keepApp && handle) log(`app 保留运行中：pid ${handle.pid}（vault ${vaultDir()}，配置 ${envHome()}）`);
   if (handle) await reportStrayBundleInstances({ keepPid: keepApp ? handle.pid : null });
   await cu?.stop();
+  // 安装版结局（成功 / FAIL / INVALID / 异常都走这里）：只声明状态，**不恢复、不重开**。
+  // 结果里必须能读到「安装版按请求保持关闭，需时由用户自行启动」这一句。
+  if (pauseInstalled) {
+    const note = pauseClosingNote(pauseOutcome) ?? "安装版暂停未执行（本通道不会自动启动安装版）";
+    log(note);
+    try {
+      await appendRunLog(root, `${new Date().toISOString()} INSTALLED-PAUSE ${note}`);
+    } catch {
+      /* 证据目录可能还没建（早期失败）：终端输出已给出 */
+    }
+  }
+  unregisterActiveRunner();
+  releasePauseLock();
   if (releaseRmachineLock()) log(`跑批锁已释放：${RMACHINE_LOCK}`);
 }
 process.exit(exitCode);

@@ -49,14 +49,14 @@ steps:
       - label: 输入框持焦点（下一步的注入落在它身上）
         ax: { focused: "AXTextField" }
       - shot: 内联重命名输入框
-  # M768 通道审计（保留 AX，不切 cgevent）：这里的 ⌘A 打在**树内联重命名的原生 `<input>`** 上，
-  # 不在应用的键位层作用域里——`src/keys.ts` 的 `Cmd-a → editor.select-all` 属 `text` 面，分发时
-  # 只认编辑器 / composer 两个事件源，原生输入框里由 WebKit 自己的 selectAll 处理。本步的判据只
-  # 要求「文本被选中」（下一条 typeInNode 整串替换选区、回读值恰为新名），AX 全选在同一个原生控件
-  # 上给出的正是这个语义 ⇒ 保留 KimiCU 的 `cmd+a`（`ax_select_all`）。替成真键盘事件不增加区分度。
-  - name: 全选原名（chord 盲发不重试）
+  # change fix-text-input-select-all-nov26：树内联重命名框是**输入面**，⌘A 由应用的统一键位层
+  # 接管（`editor.select-all` 的 `inputHosts` 附加面 → `selectAllAt` → 输入框 `.select()`）。
+  # 因此本步 MUST 走 `channel: cgevent` 的真键盘事件：KimiCU 的 `cmd+a` 会走 AX 全选兼容路径
+  # （零键盘事件），既验不到应用的分派、也会把「⌘A 静默落空」的老缺陷判成绿。
+  - name: 全选原名（真实键盘事件，chord 盲发不重试）
     do: key
     key: "cmd+a"
+    channel: cgevent
   - name: 输入新名（M507：原生输入原子注入 type_text 单串 + 计数回读；逐字符 press_key 会丢 'e'）
     do: typeInNode
     target: { role: AXTextField, name: "aaa-menu.md|aaaren.md" }
@@ -98,10 +98,11 @@ steps:
         ax: { has: '/AXTextField = "aaaren.md" /' }
       - label: 输入框持焦点
         ax: { focused: "AXTextField" }
-  # M768 通道审计（保留 AX）：同第一处 ⌘A——原生输入框的全选，判据只要求文本被选中。
+  # 同第一处 ⌘A：真实键盘事件（应用接管），AX 全选会绕开被测路径。
   - name: 全选并输入撞名
     do: key
     key: "cmd+a"
+    channel: cgevent
   - name: 输入 note.md（与既有 fixture 撞名；M507 原子注入）
     do: typeInNode
     target: { role: AXTextField, name: "aaaren.md|note.md" }
@@ -119,11 +120,11 @@ steps:
         file: { path: aaaren.md, exists: true }
       - shot: 撞名拒绝
 
-  # M768 通道审计（保留 AX）：同本场景第一处 ⌘A——原生输入框的全选，判据只要求文本被选中
-  # （随后逐字符键入 `.git`，无 typeInNode 的整串替换）。
+  # 同本场景第一处 ⌘A：真实键盘事件（后续逐字符键入 `.git`，无 typeInNode 的整串替换）。
   - name: 忽略集名也拒绝（.git）——前端不再预检，判定只在 Enter 之后由后端给（change ignore-tiers-config）
     do: key
     key: "cmd+a"
+    channel: cgevent
   - name: 输入 .git
     do: keys
     keys: [".", "g", "i", "t"]
@@ -204,7 +205,7 @@ teardown:
   Enter 之后立刻读树会读到旧状态。判据写成 `do: waitFor { has: ["aaaren.md"] }`，不拿「这次跑得
   快不快」赌。同一段的负向断言（无「已被外部删除」/「检测到外部修改」误报）旁边都有正向锚点
   （树里出现新名），不是空转的负向。
-- **3. 注入通道的两条老账**：① `cmd+a` 是 chord，套件**盲发不重试**（丢键就红，按 README 先复跑
+- **3. 注入通道的两条老账**：① `cmd+a`（cgevent 真键盘事件）是 chord，套件**盲发不重试**（丢键就红，按 README 先复跑
   一次再判产品缺陷）；② 内联输入框的**素材串注入走 `do: typeInNode`**（M507：`type_text` 整串
   一次 + M143 计数回读重试）——旧写法逐字符 `do: keys` 对 WKWebView 丢键（'e' 本机确定性丢失，
   M497 归因、M504 实测原场景「aaaren.md」落「aaarn.」），回读重试修不了确定性丢失。**唯一未迁的

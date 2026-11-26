@@ -4,7 +4,9 @@
 #
 # 为什么这条判据只能在真机层：
 #   1. `⌘A` 是否被 WKWebView / 原生菜单 / 键位层截走只有真机按键能答（chromium 里原生 select-all
-#      本来就能用，夹具层的 defaultPrevented 只判「有没有显式接管」）。
+#      本来就能用，夹具层的 defaultPrevented 只判「有没有显式接管」）。本场景的 ⌘A 步 MUST 走
+#      `channel: cgevent` 的真键盘事件：KimiCU 的 `cmd+a` 走 AX 全选兼容路径（零键盘事件），
+#      会把「应用没接管」判成绿（change fix-text-input-select-all-nov26 的根因现场）。
 #   2. 目录语境的提示行与候选收窄是 AX 可见文本 + 真索引的联合读数；chromium 场景已覆盖 DOM
 #      逐条文本，这里补「真 webview 下同样成立」。
 #
@@ -91,9 +93,10 @@ steps:
   - name: 输入三个字符
     do: keys
     keys: ["a", "b", "c"]
-  - name: ⌘A
+  - name: ⌘A（真实键盘事件——KimiCU 的 cmd+a 走 AX 全选兼容路径，验不到应用的分派）
     do: keys
     keys: ["cmd+a"]
+    channel: cgevent
   - name: 键入替换（只有全选成立时 Value 才是单个字符）
     do: keys
     keys: ["z"]

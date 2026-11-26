@@ -57,7 +57,9 @@ test("A/B/A and same-length documents bind each ready event to its path", async 
   });
   await page.goto("/");
   for (const path of ["a.md", "b.md"]) {
-    await page.locator(`.ft-row[title="${path}"]`).click();
+    // 第二个文件用 ⌘-点击新开标签（change improve-file-open-harness-affordance-nov26 起
+    // 普通点击会就地替换当前标签；下面的「关掉 a.md 的标签再重开」需要两个标签并存）。
+    await page.locator(`.ft-row[title="${path}"]`).click(path === "b.md" ? { modifiers: ["Meta"] } : {});
     await expect(page.locator(".cm-content")).toContainText(path === "b.md" ? "Beta" : "Alpha");
   }
   // 第三次「打开 a」：M254 起单击一个**已经打开**的文件只是切到它的标签（复用既有会话，

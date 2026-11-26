@@ -181,6 +181,17 @@
 // 因此 MUST NOT 登记进 `KEYLESS_COMMAND_IDS`。三条独立来源的键位占用核对写在绑定条目 D548 的
 // 正文里（表即文档，本段不另抄一份）。
 //
+// change fix-text-input-select-all-nov26（Alex 2026-11-26「Quick Open 等输入框同类问题反复出现，
+// 这不是个案而是模式」）：**⌘A 的落面补齐为「当前聚焦的任意可编辑文本宿主」**。M627 把 ⌘A 交回
+// 本表时只声明了 `text` 面的两处 CM 面（编辑器 / composer），浮层里的原生输入框不在其中——三处
+// 浮层各自就地 `input.select()`（quick-open / toc / vault），文件树的内联重命名没写，于是 ⌘A
+// 静默落空（M627 起 Edit 菜单的预置 Select All 已让出加速键，原生路径也不再兜底）。本 change
+// 不再逐个输入面补分支：`editor.select-all` 仍归 `text` 面（作用域与绑定表逐字不变，键位面板
+// 因此无像素漂移），另由 `coversNativeInputHosts` 派生一条**附加面**——原生 `input` / `textarea` /
+// contenteditable 也是它的落面；装配层的一处 `selectAllAt` 按事件目标（菜单路径按焦点）分派到
+// 输入框全选 / composer 全选 / 编辑器全选 / 全屏遮罩全选。三处浮层的就地分支与它们的键位旁路一并
+// 删除，`Cmd-A` 重新只剩本表一条来源（静态对账见 tests/unit/text-input-faces.test.ts）。
+//
 // 平台口径（M131 评审 r1 F1 如实记录）：迁移后**表内绑定一律全平台无条件生效**，不再有
 // 平台门。两处与迁移前不同，均只在非 macOS 平台可观测：
 //   - ⌃N/P/F/B/E 迁移前是 CM keymap 的 `{ mac: "Ctrl-n" }`（只绑 mac），现在非 mac 平台
@@ -320,6 +331,8 @@ export const COMPOSER_TEXT_COMMAND_IDS = [
   // 0 → doc.length 的问题文本；Edit 菜单的预置 SelectAll 已按 M131/M149
   // 先例在 src-tauri/src/lib.rs 让出加速键，⌘A 因此回到本表）。它不是 Emacs 导航族成员，
   // 但满足文本面命令的判据「在编辑器与 composer 内同样成立的文本编辑命令」。
+  // change fix-text-input-select-all-nov26：它仍是 `text` 面的成员（作用域不变），同时是
+  // 下面 `NATIVE_INPUT_HOST_COMMAND_IDS` 的唯一成员——**附加面**，不是第四个作用域。
   "editor.select-all",
   "editor.cursor-forward",
   "editor.cursor-backward",
@@ -343,6 +356,26 @@ export const COMPOSER_TEXT_COMMAND_IDS = [
   "editor.extend-word-forward",
   "editor.extend-word-backward",
 ] as const;
+
+/**
+ * 在 `text` 面的两处 CM 面之外**额外覆盖原生输入宿主**（支持整值选中的文本类 `input` /
+ * `textarea` / contenteditable，类型边界见 `SELECTABLE_INPUT_TYPES`）的命令组（change
+ * fix-text-input-select-all-nov26）。
+ *
+ * 为什么单列一个小清单而不扩 `text` 面：`text` 面的判据是「在 composer 内同样成立的文本编辑
+ * 命令」，整族若一起覆盖原生输入框，⌃F / ⌃A / ⌃K 等会把输入框里的原生编辑语义抢走（那些命令
+ * 的实现作用于编辑器文档，不作用于输入框）。全选是**平台级动作**：它的语义就是「选中当前聚焦
+ * 的那个输入面的全部内容」，与输入面是不是 CM 无关——因此只有它需要这条附加面。
+ *
+ * 派生方式：`coversNativeInputHosts` 是唯一判据，绑定表与键位面板都不手写这个标记；单测双向
+ * 对账（清单 ↔ 绑定表 ↔ 分发行为，见 tests/unit/keys.test.ts 与 text-input-faces.test.ts）。
+ */
+export const NATIVE_INPUT_HOST_COMMAND_IDS = ["editor.select-all"] as const;
+
+/** 该命令是否在原生输入宿主内也命中（`text` 面之外的附加面；判据的单一来源）。 */
+export function coversNativeInputHosts(command: CommandId): boolean {
+  return (NATIVE_INPUT_HOST_COMMAND_IDS as readonly string[]).includes(command);
+}
 
 /** ⌘1–9 直达第 1–9 个标签的命令 id（M149）。命令层没有参数通道，序号只能落在 id 上——
  *  这样 `[keys]` 配置重绑与键位面板都能如实显示「⌘3 → tab.goto-3」，也不会出现
@@ -368,6 +401,11 @@ export const TAB_COMMAND_IDS = ["tab.close", "tab.next", "tab.prev", ...TAB_GOTO
 /** 非标签的全局命令 id（键位面板「全局」组的成员；实现落在装配层 main.ts）。 */
 export const NON_TAB_GLOBAL_COMMAND_IDS = [
   "document.save",
+  // 保存全部（change add-acceptance-installed-app-pause）：把「保存 → 标签会话 flush →
+  // 阅读位置 flush → 后端 dirty 镜像同步」做成一条有终态的屏障，供原生 File → Save All
+  // 与验收通道调用。**默认不绑键**（登记进 KEYLESS_COMMAND_IDS）——菜单是它的鼠标入口，
+  // 键盘入口由用户在 [keys] 里自绑；⌘S 仍只保存前台文档。
+  "document.save-all",
   // M144：`wikilink.follow` → `link.follow`——命令现在跟随光标/点击处的**链接**，
   // 外链交给系统浏览器、wikilink 走既有跳转链路。名字不再只覆盖 wikilink。
   "link.follow",
@@ -524,6 +562,10 @@ export const KEYLESS_COMMAND_IDS: readonly string[] = [
   // M316：双栏三条容器命令（pane.split / pane.other / pane.close）M319 起**有默认绑定**
   //（⌥S / ⌥O / ⌥W，Alex 节点 1 落槌），故 MUST NOT 登记在本「默认不绑键」清单里——清单与
   // 绑定表无交集由本文件末尾的 typecheck 与 tests/unit/keys.test.ts 的三项对账各守一遍。
+  // change add-acceptance-installed-app-pause：保存全部**有意不占物理键位**（⌘S 仍是单文档
+  // 保存；⌘⇧S 在不同应用里语义分歧，且菜单键等价会截走 webview 的键位分发——M131 / M149 /
+  // M627 同一机制）。鼠标入口是 File → Save All（lib.rs 的自定义菜单项）。
+  "document.save-all",
 ];
 
 export type EditorCommandId = (typeof EDITOR_COMMAND_IDS)[number];
@@ -559,6 +601,15 @@ export interface KeyBinding {
   whenKey?: CopyKey;
   /** `when` 的**短徽标**说明（速查行内用）；与 `whenKey` / `when` 同生同灭。 */
   whenShortKey?: CopyKey;
+  /**
+   * 该绑定在 `text` 面的两处 CM 面之外，是否**还覆盖原生输入宿主**（change
+   * fix-text-input-select-all-nov26）。取值 MUST 由 `coversNativeInputHosts` 派生，MUST NOT 手写
+   * ——清单（`NATIVE_INPUT_HOST_COMMAND_IDS`）是判据的单一来源，单测按它双向对账。
+   *
+   * 只对 `text` 作用域有意义：`editor` / `global` 的判定不读本字段。它是「同一条绑定在哪些
+   * 输入面里还成立」的补充，不改变 `scopeOfCommand` 的派生结果（面板的作用域徽标因此不漂移）。
+   */
+  inputHosts?: boolean;
 }
 
 /** 块级横滚容器的 class（M180）：livePreview 的表格滚动容器与代码块滚动容器**共用**它——
@@ -664,7 +715,10 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   // 一条绑定，实现在装配层按事件目标分派）。同时 Edit 菜单的预置 SelectAll 已让出加速键
   //（src-tauri/src/lib.rs 的 swap_select_all_item），⌘A 才到得了本层：M131 的 ⌘Z / M149 的
   // ⌘W 是同一机制，之前 ⌘A 全靠引擎原生 selectAll 兜底，而它在混排 composer 上选不到全文。
-  { key: "Cmd-a", command: "editor.select-all", scope: scopeOfCommand("editor.select-all"), docKey: "D268" },
+  // change fix-text-input-select-all-nov26：`inputHosts` 是**派生**的附加面（原生 input /
+  // textarea / contenteditable）——作用域仍是 text，绑定仍是这一条；范围由
+  // `coversNativeInputHosts` 给出，MUST NOT 在这里手写 true（单测双向对账）。
+  { key: "Cmd-a", command: "editor.select-all", scope: scopeOfCommand("editor.select-all"), inputHosts: coversNativeInputHosts("editor.select-all"), docKey: "D268" },
 
   // ── 编辑器内：撤销 / 重做（M131 新增能力，CM history 线性双栈，见 editor.ts）
   { key: "Cmd-z", command: "editor.undo", scope: "editor", docKey: "D269" },
@@ -897,6 +951,17 @@ export interface KeymapContext {
    */
   isComposerEvent?(event: KeyboardEvent): boolean;
   /**
+   * 事件目标是否落在**任意可编辑文本宿主**内（change fix-text-input-select-all-nov26）：
+   * 编辑器内容区、composer、支持整值选中的原生输入宿主（文本类 `input` / `textarea` /
+   * contenteditable；日期 / 时间族不在此列，见 `SELECTABLE_INPUT_TYPES`）。
+   *
+   * 只有 `inputHosts: true` 的绑定（当前仅 ⌘A → `editor.select-all`）会读它：`text` 面的两处
+   * CM 面之外，平台级全选还要落到浮层 / 内联编辑的原生输入框上。族内其余 text 命令 MUST NOT
+   * 因本判据放宽——它们的实现作用于编辑器文档，落到输入框里会把原生编辑语义抢走。
+   * 可选——缺省视为 false（既有调用方与替换件不必实现）。
+   */
+  isTextInputEvent?(event: KeyboardEvent): boolean;
+  /**
    * 命令级命中条件（M240）：返回 `false` 时该绑定不接管、事件原样留给原生路径
    *（不 `preventDefault`），语义与 `KeyBinding.when` 相同。
    *
@@ -932,6 +997,60 @@ export function isEditableHost(target: unknown): boolean {
   const el = target as { tagName?: unknown; isContentEditable?: unknown };
   const tag = typeof el.tagName === "string" ? el.tagName.toUpperCase() : "";
   return el.isContentEditable === true || tag === "INPUT" || tag === "TEXTAREA";
+}
+
+/** 支持「整值选中」的 `input` 类型（change fix-text-input-select-all-nov26 的真实浏览器实测，
+ *  Chromium 151）：`.select()` 之后**键入整段替换**的类型才收进本清单——text / search / tel /
+ *  url / email / password / number。
+ *
+ *  为什么是正向清单而不是「排除勾选框」的反向清单：平台对某些类型（日期 / 时间族）的 `.select()`
+ *  是**静默无效**的，反向清单会把它们当成输入面、吞掉 ⌘A 后什么都不做。正向清单的默认是
+ *  「不认识就不算输入面」——⌘A 落回平台，而不是被本层吞掉；将来新增类型也会走这条安全默认。
+ *
+ *  实测口径（Chromium 151，页面内合成 input）：
+ *  - `select()` 对**任何** type 都不抛错；
+ *  - `setSelectionRange` 对 email / number / date / time / month / week / datetime-local / color /
+ *    range / checkbox 抛 `InvalidStateError`——本模块只用 `.select()`，MUST NOT 改用
+ *    `setSelectionRange` 做全选；
+ *  - email / number 的 `selectionStart` 恒为 null，但 `.select()` 确实选中整值（键入 `9` 后
+ *    值从 `abc@x.com` / `123` 变成 `9`）；判据因此只看行为，不看 `selectionStart`；
+ *  - date / time / month / week / datetime-local 的 `.select()` 无效果：之后键入 `9`，date 变
+ *    `0009-11-26`、time 变 `09:34`（编辑的是聚焦段，不是整值），故**不**收进本清单。 */
+const SELECTABLE_INPUT_TYPES = new Set([
+  "text",
+  "search",
+  "tel",
+  "url",
+  "email",
+  "password",
+  "number",
+]);
+
+/**
+ * 事件目标是不是**可输入文本**的宿主：文本类 `input`、`textarea`、contenteditable。
+ *
+ * 与 `isEditableHost` 的分界（两条判据各有消费者，MUST NOT 合并）：
+ *  - `isEditableHost` 服务「打字键守卫」——目标可编辑就够，勾选框也是可编辑宿主（只是不接受
+ *    字符），单字符绑定的让位规则对它同样适用；
+ *  - 本判据服务「平台全选动作的落面」——勾选框 / 滑块上没有「全部文本」可选，把它们算进来
+ *    会让 ⌘A 被吞掉却什么都不做。change fix-text-input-select-all-nov26 的装配层分派与
+ *    `KeymapContext.isTextInputEvent` 共用这一份。
+ *
+ * 写成结构化读字段的理由同 `isEditableHost`：本模块要能在无 DOM 的单测里跑。
+ * `isContentEditable` 在 contenteditable 的后代上同样为真（HTML 规范的可编辑性继承），
+ * 因此事件目标落在编辑器 / 合成 contenteditable 的内部节点上时也判得中。
+ */
+export function isTextEntryHost(target: unknown): boolean {
+  if (target === null || typeof target !== "object") return false;
+  const el = target as { tagName?: unknown; isContentEditable?: unknown; type?: unknown };
+  if (el.isContentEditable === true) return true;
+  const tag = typeof el.tagName === "string" ? el.tagName.toUpperCase() : "";
+  if (tag === "TEXTAREA") return true;
+  if (tag !== "INPUT") return false;
+  // 缺省 / 非法的 type 在浏览器里就是 text（`input.type` 已归一到 "text"）；替身元素没有
+  // type 字段时按 text 处理。日期 / 时间族与勾选类控件不在清单里，见 SELECTABLE_INPUT_TYPES。
+  const type = typeof el.type === "string" ? el.type.toLowerCase() : "text";
+  return SELECTABLE_INPUT_TYPES.has(type);
 }
 
 /** 键是不是「打字键」：`event.key` 长度为 1（字母 / 数字 / 符号 / 空格）且不带 ⌘ / ⌃ / ⌥。
@@ -1070,6 +1189,10 @@ export function applyKeyOverrides(
       key: raw,
       command: command as CommandId,
       scope,
+      // 附加面同样是**命令的属性**，随覆盖一起派生（change fix-text-input-select-all-nov26）：
+      // 否则把别的键绑到 `editor.select-all` 后，它在原生输入宿主里不命中——同一命令两种落面，
+      // 正是「同一语义两处真源」的形态。`[keys]` 只换「键 → 命令」，面上的语义不随配置漂移。
+      ...(coversNativeInputHosts(command as CommandId) ? { inputHosts: true } : {}),
       // 运行期合成的绑定也要有来由（面板逐条显示）：文本同样进文案表（D320），
       // 只是参数由这里在运行期给出——MUST NOT 在 keys.ts 里另写一份字面量。
       docKey: "D320",
@@ -1175,9 +1298,12 @@ export class Keymap {
       if (binding.scope === "editor" && !ctx.isEditorEvent(event)) return; // 作用域外：不消费
       // text 面（M447）：编辑器内容区内**或** composer 内都命中——同一物理键在两处文本面共用
       // 同一条绑定，实现在装配层按事件目标分派（面板外 / chrome 上都不命中，不消费）。
+      // change fix-text-input-select-all-nov26：`inputHosts` 的绑定（⌘A）另在任意可编辑文本
+      // 宿主内命中——平台级全选不挑输入面的实现（CM 还是原生 input）；族内其余命令不读这一支。
       if (
         binding.scope === "text" &&
-        !(ctx.isEditorEvent(event) || ctx.isComposerEvent?.(event) === true)
+        !(ctx.isEditorEvent(event) || ctx.isComposerEvent?.(event) === true) &&
+        !(binding.inputHosts === true && ctx.isTextInputEvent?.(event) === true)
       ) {
         return;
       }

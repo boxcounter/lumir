@@ -255,17 +255,20 @@ pub fn vault_session_get(vault_id: String) -> Result<Option<VaultSession>, Comma
 /// 防抖写，切换前与退出前 flush）。`harness_pane` 记 harness pane 是否在场（ADR 0008
 /// Decision 6 的 Phase 2 消费位；会话内容不持久化，恢复出的是空会话）。
 ///
-/// 写失败返回 `Ok(())` 并记 warning——与 `last_vault` 写失败同口径（M127），MUST NOT 拦停
-/// 切换与打开：会话只影响「下次打开这个 vault 时恢复什么」，不值得让用户的一次切换失败。
-/// 只有 `vault_id` 非法才返回错误信封：id 是文件名，这是路径逃逸防护（`vault_registry::valid_id`），
-/// 不是写失败。
+/// 返回 `Ok(true)` = 已落盘、`Ok(false)` = 磁盘写失败（warning 已记）——**普通调用方**（切换、
+/// 防抖写、beforeunload）照旧忽略这个布尔值，失败仍只降级、MUST NOT 拦停切换与打开：会话只影响
+/// 「下次打开这个 vault 时恢复什么」，不值得让用户的一次切换失败。只有 `vault_id` 非法才返回
+/// 错误信封：id 是文件名，这是路径逃逸防护（`vault_registry::valid_id`），不是写失败。
+///
+/// `false` 是「保存全部」屏障的真实落盘判据（change add-acceptance-installed-app-pause）：
+/// 它必须能区分「写成功」与「磁盘写失败但被降级」，否则会把一次未落盘的保存报成成功。
 #[tauri::command(rename_all = "snake_case")]
 pub fn vault_session_put(
     vault_id: String,
     panes: Vec<PaneSession>,
     pane_split_ratio: f64,
     harness_pane: bool,
-) -> Result<(), CommandError> {
+) -> Result<bool, CommandError> {
     vault_registry::valid_id(&vault_id)?;
     let dir = sessions_dir()?;
     // 入口同一校验（见 [`sanitize`]）：盘上不出现绝对路径、越界比例与超量 pane。
@@ -276,13 +279,22 @@ pub fn vault_session_put(
         pane_split_ratio,
         updated_at: vault_registry::now_ms(),
     });
-    if let Err(e) = save_to(&dir, &vault_id, &session) {
-        eprintln!(
-            "lumir: 记录 vault 会话失败（已忽略，切换与打开不受影响）：{}：{e}",
-            dir.join(format!("{vault_id}.json")).display()
-        );
+    Ok(put_into(&dir, &vault_id, &session))
+}
+
+/// 写一份会话并返回真实结果：`false` = 磁盘写失败（warning 已记，调用方可降级）。
+/// 抽出来是为了让「失败返回 false」这条判据可单测——命令本身要读真实配置目录，测试不碰。
+fn put_into(dir: &Path, vault_id: &str, session: &VaultSession) -> bool {
+    match save_to(dir, vault_id, session) {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!(
+                "lumir: 记录 vault 会话失败（已忽略，切换与打开不受影响）：{}：{e}",
+                dir.join(format!("{vault_id}.json")).display()
+            );
+            false
+        }
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -555,6 +567,25 @@ mod tests {
             vec![pane(&[], None)],
             "空 panes 补成单空 pane"
         );
+    }
+
+    /// P1-1（K3 verdict）：真实磁盘写失败必须从 `put` 路径如实返回 `false`，不能只打 warning
+    /// 后回 `true`——否则「保存全部」的屏障会在未落盘时发成功终态。
+    #[test]
+    fn put_reports_false_when_disk_write_fails() {
+        let dir = TempDir::new();
+        let payload = single(&["a.md"], Some("a.md"));
+        assert!(put_into(dir.path(), "a", &payload), "正常目录必须返回 true");
+
+        // 目标目录的父路径是一个普通文件 → create_dir_all 必失败
+        let blocker = dir.path().join("blocker");
+        fs::write(&blocker, "x").unwrap();
+        let failed_dir = blocker.join("sessions");
+        assert!(
+            !put_into(&failed_dir, "b", &payload),
+            "磁盘写失败必须返回 false（warning 仍由 put_into 记）"
+        );
+        assert!(!failed_dir.join("b.json").exists(), "失败不得留下半份文件");
     }
 
     #[test]

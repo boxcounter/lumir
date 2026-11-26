@@ -12,7 +12,7 @@ config:
 # 本场景判的就是「首启那一刻的默认状态」，因此不预置任何 provider / 会话。
 steps:
   # ── 第一段：空配置下发送 ⇒ 无 provider 的错误行 ─────────────────────────────
-  - name: ⌘⇧A 打开对话面板（空配置的首次发送面）
+  - name: ⌘⇧A 打开 Harness 面板（空配置的首次发送面）
     do: keys
     keys: ["cmd+shift+a"]
   - name: 等面板与空会话落定
@@ -51,7 +51,7 @@ steps:
       - shot: 02-无provider-错误行-en
 
   # ── 第二段：设置面板添加 provider + 模型，保存并重启恢复 ────────────────────
-  - name: 收起对话面板（让会话按「面板收起」落盘，重启后 ⌘⇧A 的状态才是确定的）
+  - name: 收起 Harness 面板（让会话按「面板收起」落盘，重启后 ⌘⇧A 的状态才是确定的）
     do: keys
     keys: ["cmd+shift+a"]
     expect:
@@ -172,7 +172,7 @@ steps:
         ax: { not: "AXGroup (Settings)" }
 
   # ── 第三段：网络失败 ⇒ 错误行不含内部 URL / 原始技术串 ─────────────────────
-  - name: ⌘⇧A 打开对话面板
+  - name: ⌘⇧A 打开 Harness 面板
     do: keys
     keys: ["cmd+shift+a"]
   - name: 等面板与发送钮落定

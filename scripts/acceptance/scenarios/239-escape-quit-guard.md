@@ -2,7 +2,7 @@
 id: "239-escape-quit-guard"
 item: 239
 tier: core
-title: Escape 不削弱退出守卫（change fix-escape-overlay-close-oct24）：dirty 文档按 Esc 不退出且不弹提示、⌘Q 仍被拦下、保存后 ⌘Q 正常放行
+title: Escape 不削弱退出守卫（change fix-escape-overlay-close-oct24 + add-quit-save-all-dialog-nov27）：dirty 文档按 Esc 不退出且不弹退出确认、⌘Q 被拦下并弹居中确认、取消后保存、干净 ⌘Q 正常放行
 open: harness-note.md
 marker: "HNL-ALPHA"
 steps:
@@ -56,8 +56,8 @@ steps:
         ax: { has: "/AXTextArea/" }
       - label: 应用仍在且 dirty 标记仍在（Esc 没有丢改动、也没有把它存掉）
         ax: { has: "（未保存）" }
-      - label: 不出现退出拦截提示（用户按的是 Esc：提示出现即缺陷，哪怕数据没丢——设计 §5.4 ①）
-        ax: { not: "无法退出" }
+      - label: 不出现退出确认弹框（用户按的是 Esc：弹框出现即缺陷，哪怕数据没丢——设计 §5.4 ①）
+        ax: { not: "保存全部并退出" }
       - label: 文档正文逐字节不变（Esc 不改文档）
         editor: { unchangedSince: dirtyBase }
       - label: 磁盘文件未被改写（sha256 与 mtime 双判据）
@@ -68,21 +68,44 @@ steps:
     do: keys
     keys: ["cmd+q"]
 
-  - name: 等退出拦截提示（守卫的唯一可见出口：D232 的 toast）
+  - name: 等退出确认弹框（change add-quit-save-all-dialog-nov27：居中模态，不再是右下角 toast）
     do: waitFor
     waitFor:
-      has: ["当前有未保存修改，无法退出"]
+      has: ["有未保存的修改", "保存全部并退出"]
     timeoutMs: 15000
     expect:
-      - label: 提示在场（未保存时 ⌘Q 仍被拦下——与上一步的「Esc 不出现提示」成对，两个方向都判）
-        ax: { has: "当前有未保存修改，无法退出" }
+      - label: 弹框在场（未保存时 ⌘Q 仍被拦下——与上一步的「Esc 不出现弹框」成对，两个方向都判）
+        ax: { has: "有未保存的修改" }
+      - label: 主按钮是「保存全部并退出」（两条动作之一；没有「丢弃修改」）
+        ax: { has: "保存全部并退出" }
+      - label: 次按钮是「取消」
+        ax: { has: "/^取消$/" }
       - label: 应用仍在（退出被拦下，编辑器与 dirty 标记都在）
         ax: { has: "（未保存）" }
       - label: 文档正文逐字节不变（退出路径不碰文档）
         editor: { unchangedSince: dirtyBase }
       - label: 磁盘文件未被改写
         file: { path: harness-note.md, unchangedSince: docDirty, mtimeUnchangedSince: docDirty }
-      - shot: 03-CmdQ被守卫拦下
+      - shot: 03-CmdQ被守卫拦下并弹出确认
+
+  - name: 按 Escape 取消退出确认（只关弹框，不退出、不保存）
+    do: key
+    key: escape
+
+  - name: 等弹框关闭（取消路径：应用仍在、dirty 仍在）
+    do: waitFor
+    waitFor:
+      not: ["保存全部并退出"]
+    timeoutMs: 15000
+    expect:
+      - label: 弹框已关闭
+        ax: { not: "保存全部并退出" }
+      - label: 应用仍在且 dirty 标记仍在（取消没有丢改动、也没有把它存掉）
+        ax: { has: "（未保存）" }
+      - label: 文档正文逐字节不变（取消不碰文档）
+        editor: { unchangedSince: dirtyBase }
+      - label: 磁盘文件未被改写
+        file: { path: harness-note.md, unchangedSince: docDirty, mtimeUnchangedSince: docDirty }
 
   - name: 保存（⌘S）——把文档变成干净态
     do: keys
@@ -142,12 +165,16 @@ change `fix-escape-overlay-close-oct24` 的 E6（退出守卫不削弱）+ 设�
 | 段 | 用户路径 | 期望 | 本条判据 |
 |---|---|---|---|
 | ① | 文档 dirty、无任何层，按 `Esc` | 应用在、dirty 标记在、文档与磁盘逐字节不变、**不出现退出拦截提示** | 「Esc 不关层、不退出、也不触发守卫提示」——用户按的是 Esc，提示出现同样是缺陷，哪怕数据没丢 |
-| ② | 同一 dirty 文档按 `⌘Q` | 仍被守卫拦下、出现提示、应用不退出 | 与 ① 成对：同一个应用，两条键的提示行为必须相反（①不许出现、②必须出现） |
+| ② | 同一 dirty 文档按 `⌘Q` | 仍被守卫拦下、出现**居中退出确认弹框**（`保存全部并退出` / `取消`）、应用不退出 | 与 ① 成对：同一个应用，两条键的弹框行为必须相反（①不许出现、②必须出现） |
 | ③ | 保存后按 `⌘Q` | 正常退出、不再提示；重启后保存内容仍在 | 守卫没有被改宽成「什么都拦」；退出通道本身还能走通 |
 
-**为什么 ① 的负向判据要留一拍再读**：退出提示是瞬时 toast（`save.showQuitBlocked` → D232），
-渲染要几百毫秒；紧贴按键读 AX 的 `not` 断言会恒真（REVIEW.md「读不到当成空」条的另一面）。
-`do: sleep` 2s 之后再读，负向判据才有区分度。
+**为什么 ① 的负向判据要留一拍再读**：退出确认弹框由 `app:quit_blocked` 事件触发、经 IPC 与
+DOM 渲染，落到 AX 要几百毫秒；紧贴按键读 AX 的 `not` 断言会恒真（REVIEW.md「读不到当成空」
+条的另一面）。`do: sleep` 2s 之后再读，负向判据才有区分度。
+
+**② 的弹框必须在保存前显式取消**（change add-quit-save-all-dialog-nov27）：弹框打开期间
+背景 `#app` 为 inert，⌘S 不保证到达编辑器；场景用 Escape 走取消路径（同时验证「取消只关弹框、
+不退出、不保存」），再保存并走干净 ⌘Q。弹框的「保存全部并退出」正路径归场景 884。
 
 ## 断言口径与已知边界
 

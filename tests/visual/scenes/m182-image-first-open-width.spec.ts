@@ -153,11 +153,11 @@ test("图片显示宽度不随时间/缓存变化，且只由固有宽度与栏�
 
   // 切走再切回：同一次会话内，图片字节已缓存（warm 路径）。
   //
-  // M254 起「单击另一个文件」是**新开一个标签**，再单击回来只是切到那个标签——那不是第二次
-  // 装载（标签切换复用同一份 EditorState，且会恢复到它自己的滚动位置，CM 的渲染范围因此比
-  // 首开窄，长文末尾的图片可能不在 DOM 里）。本用例要判的是「同一份文档的第二次**装载**是否
-  // 收敛到同一份读数」，所以走「关掉标签 → 再单击打开」：那是一次真正的重开，字节仍走缓存。
-  await page.locator('.ft-row[title="other.md"]').click();
+  // change improve-file-open-harness-affordance-nov26 起普通点击 = 当前标签就地打开，所以
+  // 「切走」用 ⌘-点击新开标签；本用例要判的是「同一份文档的第二次**装载**是否收敛到同一份
+  // 读数」，因此仍走「关掉 width-matrix 标签 → 再单击打开」：那是一次真正的重开，字节仍走缓存
+  //（标签切换复用同一份 EditorState，不是第二次装载）。
+  await page.locator('.ft-row[title="other.md"]').click({ modifiers: ["Meta"] });
   await expect(page.locator(".cm-content")).toContainText("另一篇");
   await page.locator(".tab", { hasText: "width-matrix.md" }).locator(".tab-close").click();
   await page.locator('.ft-row[title="width-matrix.md"]').click();

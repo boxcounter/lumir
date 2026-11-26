@@ -209,11 +209,12 @@ test("键盘：游标走全部列表行（失效行可重新定位 / 清理）�
 test("Enter 切到目标 vault：目标装载 + 切换前把当前 vault 的会话落盘", async ({ page }) => {
   await stubTauri(page, { ...DEMO_VAULT, vaults: REGISTRY, switchTo: VAULT_B_FIXTURE });
   await page.goto("/");
-  // 两个标签（双击开一个、单击另一个文件再开一个——M254 起单击也开正式标签；
+  // 两个标签（第一个用双击/普通点击打开，第二个用 ⌘-点击新开——change
+  // improve-file-open-harness-affordance-nov26 起普通点击会就地替换当前标签；
   // 全部有路径的标签都入会话，落盘内容用它验得到）
   await page.locator('.ft-row[title="README.md"]').dblclick();
   await page.locator('.ft-row[title="docs"]').click();
-  await page.locator('.ft-row[title="docs/guide.md"]').dblclick();
+  await page.locator('.ft-row[title="docs/guide.md"]').click({ modifiers: ["Meta"] });
   await expect(page.locator(".tab")).toHaveCount(2);
   await expect(page.locator(".cm-content")).toContainText("指南内容");
 

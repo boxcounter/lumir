@@ -75,6 +75,11 @@ const KEYBOARD_SHORTCUTS_MENU_ID: &str = "lumir.keyboard_shortcuts";
 #[cfg(target_os = "macos")]
 const SETTINGS_MENU_ID: &str = "lumir.settings";
 
+/// 自定义「保存全部」菜单项 id（change add-acceptance-installed-app-pause）：File 子菜单里
+/// 的鼠标入口。见 add_save_all_item。
+#[cfg(target_os = "macos")]
+const SAVE_ALL_MENU_ID: &str = "lumir.save_all";
+
 /// 菜单命令事件名（M131）：前端 main.ts 订阅它，把菜单点击交给统一键位层的命令实现。
 /// 载荷见 menu_command_of（菜单只说 undo / redo 这类平台术语，映射到前端命令 id 是前端的事）。
 #[cfg(target_os = "macos")]
@@ -151,6 +156,9 @@ pub fn run() {
             commands::fs_file_mtime,
             commands::document_save,
             commands::document_set_dirty,
+            // 受控退出（change add-quit-save-all-dialog-nov27）：退出确认弹框「保存全部并退出」
+            // 在保存屏障成功后调用；命令内复核 dirty 镜像，仍脏即拒绝（前端不能绕过退出守卫）。
+            commands::app_quit,
             commands::log_event,
             commands::open_external_url,
             commands::fetch_url_title,
@@ -222,6 +230,7 @@ pub fn run() {
             harness::harness_list_sessions,
             // 历史会话删除（M406）：选择器行内删除入口的后端，活跃会话拒删。
             harness::harness_delete_session,
+            harness::harness_withdraw,
             // composer 粘贴图片（change harness-composer-image-paste）：harness 侧内容
             // 寻址附件的写 / 读（落点 attachments/<vault 稳定 id>/，MUST NOT 触碰 vault）。
             harness::harness_write_image,
@@ -444,8 +453,9 @@ fn work_area_size(window: &tauri::WebviewWindow) -> Option<(u32, u32)> {
 }
 
 /// macOS 菜单改造入口：一次 `Menu::default()` 内完成退出守卫（M101）、撤销/重做让位
-/// （M131）、关闭项让位（M149）、全选让位（M627）与键位速查入口
-/// （change improve-keybindings-lookup-oct24）五处手术，改完统一 set_menu。
+/// （M131）、关闭项让位（M149）、全选让位（M627）、键位速查入口
+/// （change improve-keybindings-lookup-oct24）与保存全部入口
+/// （change add-acceptance-installed-app-pause）等手术，改完统一 set_menu。
 ///
 /// 为什么合成一个入口：改造都要基于 tauri 默认菜单做增删，各自 `Menu::default()`
 /// 再 set_menu 会让后装的那次覆盖掉前一次（退出守卫会静默失效）。返回值语义沿旧例——
@@ -459,12 +469,16 @@ fn install_menu_overrides(app: &tauri::AppHandle) -> tauri::Result<()> {
     let select_all_swapped = swap_select_all_item(&menu, app)?;
     let shortcuts_added = add_keyboard_shortcuts_item(&menu, app)?;
     let settings_added = add_settings_item(&menu, app)?;
+    // 保存全部插在 File 子菜单尾部替换之后：swap_close_window_items 依赖「File 末项是预置
+    // Close」，先插一项会把那条结构假设打破（它会静默跳过关闭项让位）。
+    let save_all_added = add_save_all_item(&menu, app)?;
     if quit_guarded
         || undo_redo_swapped
         || close_swapped
         || select_all_swapped
         || shortcuts_added
         || settings_added
+        || save_all_added
     {
         app.set_menu(menu)?;
     }
@@ -540,6 +554,42 @@ fn add_settings_item<R: tauri::Runtime>(
     }
     let item = MenuItemBuilder::with_id(SETTINGS_MENU_ID, "Settings…").build(app)?;
     app_menu.insert(&item, 2)?;
+    Ok(true)
+}
+
+/// File → **Save All**（change add-acceptance-installed-app-pause）：保存全部的鼠标入口。
+///
+/// **不带 accelerator**：任何菜单键等价都会在 NSApplication 分发阶段截获物理键——既会让
+/// `[keys]` 重绑变成假开关，也会形成「一个 token 两条分发映射」（M131 / M149 / M627 同一
+/// 机制的三次实证）。该命令在 `src/keys.ts` 里登记为**默认不绑键**（KEYLESS_COMMAND_IDS），
+/// 键位仍只由用户的 `[keys]` 覆盖承担；菜单点击经 MENU_COMMAND_EVENT 回到前端同一条命令
+/// 层（`document.save-all` 的保存屏障），MUST NOT 另开一条保存链路。
+///
+/// 文案锁 en（与原生 File / Edit / Help 一致，先例 D149–D151）。结构性假设（tauri 2.12
+/// `Menu::default`）：File 子菜单存在（文案 "File"）；校验失败即保持默认菜单并打 stderr。
+/// 插在 File 子菜单**开头**：关闭项让位之后末项是自定义 Close，插在末尾会把它挤到中间，
+/// 破坏「关闭项在末位」的 macOS 惯例与既有结构断言。
+#[cfg(target_os = "macos")]
+fn add_save_all_item<R: tauri::Runtime>(
+    menu: &Menu<R>,
+    app: &tauri::AppHandle<R>,
+) -> tauri::Result<bool> {
+    let file = menu.items()?.into_iter().find_map(|item| match item {
+        MenuItemKind::Submenu(submenu)
+            if submenu.text().map(|text| text == "File").unwrap_or(false) =>
+        {
+            Some(submenu)
+        }
+        _ => None,
+    });
+    let Some(file) = file else {
+        eprintln!(
+            "lumir: save all menu not installed: Menu::default() has no File submenu (tauri menu structure changed)"
+        );
+        return Ok(false);
+    };
+    let item = MenuItemBuilder::with_id(SAVE_ALL_MENU_ID, "Save All").build(app)?;
+    file.insert(&item, 0)?;
     Ok(true)
 }
 
@@ -815,6 +865,9 @@ fn menu_command_of(id: &str) -> Option<&'static str> {
         // change add-model-automation-settings-oct24：Settings… 与 ⌘, 走同一条命令实现
         // （前端 MENU_COMMANDS 把它接到 app.settings-open 的 toggle 上）。
         SETTINGS_MENU_ID => Some("settings"),
+        // change add-acceptance-installed-app-pause：File → Save All 与命令层同一条实现
+        // （前端 MENU_COMMANDS 把它接到 document.save-all 的保存屏障上）。
+        SAVE_ALL_MENU_ID => Some("saveAll"),
         _ => None,
     }
 }
@@ -2666,6 +2719,20 @@ mod tests {
         assert_eq!(menu_command_of("Select All"), None);
         assert_eq!(menu_command_of("Keyboard Shortcuts"), None);
         assert_eq!(menu_command_of(""), None);
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod menu_command_tests {
+    /// File → Save All 的点击必须回到前端同一条命令实现（change add-acceptance-installed-app-pause）。
+    /// 判据是载荷本身：`menu_command_of` 把菜单 id 映射成前端 `MENU_COMMANDS` 的键 `saveAll`——
+    /// 这条映射断了，菜单点击就会静默无反应（菜单不带 accelerator，没有第二条路径）。
+    #[test]
+    fn save_all_menu_maps_to_frontend_command() {
+        assert_eq!(
+            super::menu_command_of(super::SAVE_ALL_MENU_ID),
+            Some("saveAll")
+        );
     }
 }
 

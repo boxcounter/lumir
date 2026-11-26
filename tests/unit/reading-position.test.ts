@@ -64,6 +64,8 @@ interface Rig {
   getPositionsImpl: (vaultId: string) => Promise<ReadingPositions | null>;
   failRead: boolean;
   failWrite: boolean;
+  /** 后端 resolved false（真实磁盘写失败，warning 由后端记）——与 reject 档分开。 */
+  writeSucceeds: boolean;
   writes: Array<{ vaultId: string; entries: ReadingPositionMap }>;
   warns: string[];
   /** 批量存在探测的假实现：默认「都不在 vault 内」（= 只看枚举集合的旧口径）。 */
@@ -85,6 +87,7 @@ function createRig(): Rig {
     },
     failRead: false,
     failWrite: false,
+    writeSucceeds: true,
     writes: [],
     warns: [],
     pathsExistImpl: async () => [],
@@ -97,7 +100,9 @@ function createRig(): Rig {
     getPositions: (vaultId) => rig.getPositionsImpl(vaultId),
     putPositions: async (vaultId, entries) => {
       if (rig.failWrite) throw { code: "io", message: "磁盘只读" };
+      if (!rig.writeSucceeds) return false;
       rig.writes.push({ vaultId, entries });
+      return true;
     },
     pathsExist: (paths) => {
       rig.probes.push([...paths]);
@@ -225,8 +230,8 @@ test("flush：取消防抖并立刻落盘待写内容；没有待写内容不写
   mock.timers.enable({ apis: ["setTimeout"] });
   try {
     const rig = createRig();
-    // 还没装载任何 vault：没有可写的键
-    await rig.store.flush();
+    // 还没装载任何 vault：没有可写的键——这一档算成功（没有待写内容 ≠ 写失败）
+    assert.equal(await rig.store.flush(), true);
     assert.equal(rig.writes.length, 0);
 
     rig.activePath = "a.md";
@@ -236,12 +241,13 @@ test("flush：取消防抖并立刻落盘待写内容；没有待写内容不写
     // 没有待写内容就不写盘：这个时点挂在**每次开文件 / 切标签**上，无条件写等于一次打开一次
     // tmp+rename，还会在「什么都没读」的启动路径上落一份空表（真机场景 28 实测到过：scroll 之前
     // 位置文件就已存在）
-    await rig.store.flush();
+    assert.equal(await rig.store.flush(), true);
     assert.equal(rig.writes.length, 0);
 
     rig.view = position(900);
     rig.store.scrolled();
-    await rig.store.flush(); // 窗口未到就切走
+    // 真实写入成功 = true（document.save-all 的屏障拿它作「阅读位置真的落盘」判据）。
+    assert.equal(await rig.store.flush(), true); // 窗口未到就切走
     assert.equal(rig.writes.length, 1);
     assert.equal(rig.writes[0].entries["a.md"]?.pos, 900);
     mock.timers.tick(READING_POSITION_DEBOUNCE_MS * 2);
@@ -480,12 +486,21 @@ test("降级四种：读不到 / 无历史 / 版本不符（后端已归成 null
   rig.store.restoreFor("a.md");
   assert.deepEqual(rig.applied, []);
 
-  // ③ 写失败只记一条 warning，不抛出、不拦停
+  // ③ 写失败只记一条 warning，不抛出、不拦停；返回 false 让「保存全部」的屏障判失败
   rig.failWrite = true;
   rig.view = position(700);
   rig.store.scrolled();
-  await rig.store.flush();
+  assert.equal(await rig.store.flush(), false);
   assert.deepEqual(rig.warns, ["磁盘只读"]);
+  assert.equal(rig.writes.length, 0);
+
+  // ③b 后端 resolved false（真实磁盘写失败，warning 已在 Rust 侧记）：同样 false，前端不重复 warning
+  rig.failWrite = false;
+  rig.writeSucceeds = false;
+  rig.view = position(800);
+  rig.store.scrolled();
+  assert.equal(await rig.store.flush(), false);
+  assert.deepEqual(rig.warns, ["磁盘只读"], "resolved false 不新增前端 warning");
   assert.equal(rig.writes.length, 0);
 
   // ④ 未装载 vault 时恢复是 no-op（启动早期）

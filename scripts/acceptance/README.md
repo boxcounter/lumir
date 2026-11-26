@@ -12,6 +12,7 @@ node scripts/acceptance/run.mjs 01 08        # 按筛选词跑：精确 id → i
 node scripts/acceptance/run.mjs --list       # 列出场景（配合 --batch 与筛选词看会跑哪几条）
 node scripts/acceptance/run.mjs --check      # 静态校验场景（不真机，秒级；挡 key 拼错/断言形态错）
 node scripts/acceptance/run.mjs --keep-app   # 跑完保留 app，人工接手看现场
+node scripts/acceptance/run.mjs --pause-installed …  # 先按请求暂停安装版（opt-in，见下节）
 ```
 
 ### 批次（tier）：core / full / bundle / evidence
@@ -429,6 +430,13 @@ dev 端口是**全机共享**的，`reclaimPort()` 只在两个 app 实例同时
 
 **并行怎么放行**：`LUMIR_ACCEPTANCE_VAULT` 显式覆写成**别的** vault（不等于 `lib/util.mjs` 的缺省值）时
 跳过锁——跑批声明了自己那套 vault。把 `LUMIR_ACCEPTANCE_VAULT` 设成缺省值本身不算覆写（仍旧持锁）。
+
+**活动 runner 登记与暂停锁（change add-acceptance-installed-app-pause）**：每条真跑批启动时在
+`/tmp/lumir-acceptance-runners/<pid>.json` 登记（mode / vault / startedAt / cwd），退出时只删**自己
+pid** 的那一份；pid 已死的残留不删、也不再当成「有人在跑」。`--pause-installed` 的暂停段另持
+`/tmp/lumir-acceptance-installed-pause.lock`（`mkdir` 原子）——暂停必须全机独占：有任何别的活动
+runner、或读不出 pid 的登记，暂停拒绝；普通跑批启动时若暂停锁的持有人活着也拒绝（暂停窗口内）。
+两条普通跑批之间不受影响（自定义 vault 并行照旧）。
 端口是第二份共享资源：要真并行还必须**同时**覆写 `LUMIR_ACCEPTANCE_PORT`，否则 `reclaimPort()` 会按
 「端口被非本 worktree 的进程占用」报错（报错不静默，但那次跑批起不来）。
 
@@ -475,18 +483,60 @@ bundle 身份，按名字解析会落到安装版（激活一律用按 pid 的
 
 **异常边界（任一命中即停手问 Alex，不得二选一）**：
 
-- **退出被未保存修改挡住**：dirty 时 ⌘Q 会被产品的退出守卫拦下并显示「当前有未保存修改，无法退出；
-  请先保存（Cmd+S）」（copy D232），关标签 / 切 vault 还会出现「保存并关闭 / 放弃修改并关闭 / 取消」
+- **退出被未保存修改挡住**：dirty 时 ⌘Q 会被产品的退出守卫拦下并显示**居中的退出确认弹框**
+  （change add-quit-save-all-dialog-nov27：标题「有未保存的修改」，只有「保存全部并退出 / 取消」
+  两条动作，不提供「丢弃修改」）；关标签 / 切 vault 还会出现「保存并关闭 / 放弃修改并关闭 / 取消」
   与「保存并切换 / 放弃修改并切换 / 取消」三出口卡片（D92/D93 与 D109/D110）。**不得选择丢弃更改**
-  ——不点「放弃修改」两个出口；也不要代点「保存」（真实 vault 仍只读，不能替人写盘）。把界面留在
-  原样交给 Alex；
+  ——不点任何「放弃修改」出口；也不要代点「保存全部并退出」（真实 vault 仍只读，不能替人写盘）。
+  把界面留在原样交给 Alex；
 - **归属无法确认**（上面三样证据拿不齐或互相矛盾）；
 - **正常退出失败**（无窗口可 ⌘Q、应用无响应、发了 ⌘Q 进程仍在）：不要用 SIGTERM / SIGKILL 补刀。
 
 三条都要求「停下来问」，不是「挑一个损失小的选项接着干」。真实 vault 仍**只读**——代为退出不是
 碰用户数据的入口。
 
-**安装版实例不在本节授权内**：`/Applications/Lumir.app` 这类打包实例只在空闲 ≥10 分钟且前台是别的 app 时才可优雅退出（Apple Event quit）并登记；活跃使用时先问 tower。它同样受「不得丢数据」约束：Apple Event 不经过退出守卫，拿不准 dirty 状态就先停手问 Alex，别把「空闲」当成「没有未保存修改」。
+**安装版实例不在本节授权内**：`/Applications/Lumir.app` 这类打包实例只在空闲 ≥10 分钟且前台是别的 app 时才可优雅退出（Apple Event quit）并登记；活跃使用时先问 tower。它同样受「不得丢数据」约束：Apple Event 不经过退出守卫，拿不准 dirty 状态就先停手问 Alex，别把「空闲」当成「没有未保存修改」。**唯一的例外是显式 `--pause-installed` 通道**（下一节）：那是一条 opt-in、有保存屏障与身份复核的机器流程，不是「代退出」的通用授权。
+
+### 安装版显式暂停（`--pause-installed`，change add-acceptance-installed-app-pause）
+
+```bash
+node scripts/acceptance/run.mjs --pause-installed --batch core
+```
+
+**目的**：agent 跑批被用户手头常驻的 `/Applications/Lumir.app` 挡住时，不必再等人肉 ⌘Q——先把
+安装版**按请求**暂停（保存全部 → 正常退出），再照常跑隔离验收。Alex 2026-11-26 的决定：
+**退出后不需要恢复**（「如果我需要用安装版我会自己启动」），因此本通道没有恢复 / 重开 /
+LaunchServices 复原 / `--recover-installed` 之类出口；崩溃 / 断电同样没有恢复入口，也**不得**
+因此伪造成功。
+
+| 合同 | 机器判据 |
+|---|---|
+| 默认行为不变 | 没有 `--pause-installed` 时 `lib/installed-app.mjs` 一行都不执行；`--check` / `--list` 不会碰安装版 |
+| 只认唯一、canonical 的 `/Applications/Lumir.app` | `discoverInstalledApp`：dev 实例 / 验收 bundle / 别的 `.app` 副本 / 多实例 / pid 或 startedAt 读不到 / bundle id ≠ 产品 id ⇒ **退出码 2、零副作用**（不激活、不点菜单、不 ⌘Q） |
+| 保存前与 ⌘Q 前复核身份 | `verifyInstalledTarget`：pid + startedAt（±2s，抗 pid 复用）+ app 根 + bundle id；任一变化即停手 |
+| 保存屏障 | 经原生 **File → Save All** 触发产品侧 `document.save-all`。产品维护**追加式**状态日志 `save-all-log s<seq>:g<代次>:<状态> …`（视觉隐藏、AX 可达）。触发前读基线（最后一条的 seq / 代次）；触发后**第一条新记录必须是 running**，锁定它的代次 G，随后只接受 **G 的 ok**。直接出现更高代 ok、同一代次旧 ok、`busy`（并发被单飞拒绝，即使之后有别代 ok）、`failed`、缺日志 / 空树 / 读失败 / 超时 ⇒ 不 ⌘Q、不跑批。屏障本身含 saveAllDirty → 标签会话真实 flush → 阅读位置真实 flush → 后端 dirty 镜像同步；两个 flush 的 `false` 来自后端的**真实磁盘写结果**（不是「resolved 即成功」） |
+| 只用按 pid 激活 + 正常 ⌘Q | System Events 按 `unix id` 置前（MUST NOT 按名字）；`press_key` 发真实 `cmd+q`（走菜单守卫）；等**原 pid** 消失。**禁止** Apple Event quit / SIGTERM / SIGKILL / pkill，禁止绕过 dirty 守卫 |
+| 保存或退出受阻 | 退出码 2、**现场原样保留**（不代点「放弃修改」、不补刀）；安装版仍开着，由用户处置 |
+| 暂停后仍是原样的 preflight | 暂停结束（安装版退出）后 `preflight()` / `assertNoForeignLumir` **原样执行**；验收仍隔离 XDG / 合成 vault / 独立端口 |
+| 绝不恢复 | 成功 / FAIL / INVALID / SIGINT / 异常都不重开安装版，保留原退出码；收尾与 `run.log` 明确写「安装版已按请求保持关闭，需时由用户自行启动」 |
+| 全机独占 | 独立暂停锁 `/tmp/lumir-acceptance-installed-pause.lock`（`mkdir` 原子）+ 活动 runner 登记 `/tmp/lumir-acceptance-runners/<pid>.json`：第二次暂停、暂停与普通跑批并发都拒绝；自定义 vault 的普通并行保留（两条普通跑批互不阻塞，只在暂停窗口内被挡） |
+| 锁只释放自己的 session | 暂停锁 / runner 登记都核对 pid：不是自己的不删；崩溃残留（pid 已死）由下一次判据回收 |
+| 证据口径 | `INSTALLED-PAUSE phase=…` 行只写 pid / app path / bundle id / 阶段 / 计数 / 错误；**不写**真实 vault 名、标签标题或正文；安装版阶段默认不截图（AX 一律 `mode: "ax"`） |
+
+**边界（如实登记）**
+
+- 安装版必须是**含 `document.save-all` 的构建**（本 change 起）。旧构建没有 File → Save All，
+  暂停会在「等不到菜单项」处退出码 2（不碰文档、不 ⌘Q）——重新安装当前构建后再用。
+- 完成信号是**归属日志**（`save-all-log … g<代次>:ok`），不是 toast 文案：安装版可能来自另一个
+  文案版本，文本判据会失效或误判；日志由产品 `src/save-all.ts` 追加维护，旧信号 / 跨代信号 /
+  busy 被别代 ok 覆盖在结构上无法冒充。安装版必须包含该日志的构建（本 change 起）；旧构建会在
+  「找不到状态日志」处退出码 2（零副作用）。
+- 菜单可达性依赖 KimiCU 的 AX 树暴露菜单栏（`AXMenuBarItem` / `AXMenuItem`）。读不到即
+  退出码 2，**不退回快捷键**（该命令按设计没有默认键位）。
+- **真实安装版的整链路（发现 → 菜单 → 完成信号 → ⌘Q）尚未在真机上跑过**（本轮 mission
+  明确不执行真机）；机器判据在 `lib/installed-app.test.mjs`，真机验收登记为待办。
+- 与旧口径的分工：ad-hoc 的「代为退出安装版」仍按上一节的授权边界执行；本通道只服务
+  `--pause-installed` 的跑批前置。
 
 ### 运行环境是隔离的（这些事一起保证可复现）
 

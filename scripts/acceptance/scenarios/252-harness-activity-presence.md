@@ -18,7 +18,7 @@ marker: "HNL-ALPHA"
 # **AX 承载（首跑已定案，2026-10-28）**：三态的可读承载不能只靠 toggle 钮 `aria-describedby`
 # 指向的视觉隐藏文本——WKWebView 把 `<button>` 当叶子节点，嵌在钮内的文本不进 AX 树，
 # `aria-describedby` 也只进 AXDescription（dump 不打印）。承载因此同时写了钮的 `title`
-#（dump 里的 `help=`）：有态时是「对话面板 · 处理中 / 有新的回复 / 有失败结果」，空闲时逐字等于
+#（dump 里的 `help=`）：有态时是「Harness 面板 · 处理中 / 有新的回复 / 有失败结果」，空闲时逐字等于
 # D327。下面几条 `ax: { has: … }` 判的就是它——判据没变（三态必须可读），换的只是那条通道。
 #
 # **面板展开时 toggle 不在场上**（双 pane 退让条款，`setChromeRetreat`）：此时状态文本读不到，
@@ -75,9 +75,9 @@ steps:
       - label: 面板已收起（分隔条不在 AX 里）
         ax: { not: "分隔条" }
       # 角色是 AXCheckBox 而不是 AXButton：带 `aria-pressed` 的 button 在 WKWebView 的 AX 树里
-      # 映射成复选框（场景 86 早已实证并写在它的注释里）。读屏名仍是 D327「对话面板」。
+      # 映射成复选框（场景 86 早已实证并写在它的注释里）。读屏名仍是 D327「Harness 面板」。
       - label: toggle 钮重新在场上（收起态的承载体）
-        node: { role: AXCheckBox, name: "对话面板", present: true }
+        node: { role: AXCheckBox, name: "Harness 面板", present: true }
       - label: 收起不复活空闲——状态文本仍是「处理中」
         ax: { has: "处理中" }
       - shot: 03-收起仍在途

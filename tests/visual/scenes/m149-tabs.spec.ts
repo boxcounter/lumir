@@ -25,6 +25,7 @@ import {
 
 const ALPHA = "# Alpha 标题\n\nAlpha 的第一段。\n";
 const BETA = "# Beta 标题\n\nBeta 的第一段。\n";
+const GAMMA = "# Gamma 标题\n\nGamma 的第一段。\n";
 
 /** 长文：用来验证「滚动位置逐标签保留」——必须长到能滚出多屏。 */
 const LONG = ["# 顶部 TOP-MARK", "", ...Array.from({ length: 80 }, (_, i) => `填充 ${i + 1} 行。`)].join("\n") + "\n";
@@ -33,8 +34,9 @@ const VAULT: VaultFixture = {
   entries: [
     { path: "alpha.md", kind: "file", size: ALPHA.length, mtime_ms: 0 },
     { path: "beta.md", kind: "file", size: BETA.length, mtime_ms: 0 },
+    { path: "gamma.md", kind: "file", size: GAMMA.length, mtime_ms: 0 },
   ],
-  files: { "alpha.md": ALPHA, "beta.md": BETA },
+  files: { "alpha.md": ALPHA, "beta.md": BETA, "gamma.md": GAMMA },
   links: {},
 };
 
@@ -144,30 +146,69 @@ test("标签栏：空态隐藏、单标签常驻、无预览字形、dirty 点�
   await expectScreenshot(strip, "tab-bar-dirty.png");
 });
 
-test("打开意图：单击 / ⌘-点击 / 双击都是开一个标签（不再互相顶掉）", async ({ page }) => {
+test("打开意图：单击在当前标签打开、⌘-点击新开标签并保留当前标签（浏览器式）", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
 
+  // 空态单击：复用「还没有文件的空文档」，出一个指向 alpha 的正式标签。
   await page.locator('.ft-row[title="alpha.md"]').click();
   await expect(page.locator(".cm-content")).toContainText("Alpha 的第一段");
+  await expect(page.locator(".tab")).toHaveCount(1);
+  await expect(page.locator(".tab.is-active .tab-name")).toHaveText("alpha.md");
+  // 焦点：打开动作不抢走触发它的树行焦点（既有打开语义，本 change 不改焦点链路）。
+  expect(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.className ?? "")).toContain("ft-row");
 
-  // 单击第二个文件：新开一个标签，alpha 的标签保留（M254 之前它会被就地顶掉）。
+  // 普通点击第二个文件：**当前标签就地替换**（change improve-file-open-harness-affordance-nov26
+  // 之前是「新开一个」；旧形态会让左栏每点一次就攒一排标签）。
   await page.locator('.ft-row[title="beta.md"]').click();
   await expect(page.locator(".cm-content")).toContainText("Beta 的第一段");
-  await expect(page.locator(".tab")).toHaveCount(2);
+  await expect(page.locator(".cm-content")).not.toContainText("Alpha 的第一段");
+  await expect(page.locator(".tab")).toHaveCount(1);
+  await expect(page.locator(".tab-name")).toHaveText(["beta.md"]);
   await expect(page.locator(".tab.is-active .tab-name")).toHaveText("beta.md");
-  // 顺序 = 打开顺序，第一个仍是 alpha（新标签追加在尾部，不改既有位置）。
-  await expect(page.locator(".tab-name")).toHaveText(["alpha.md", "beta.md"]);
+  expect(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.className ?? "")).toContain("ft-row");
 
-  // ⌘-点击一个已打开的文件：同一文件不重复开，只是切过去（与单击同一条落点）。
+  // 让当前标签 dirty，随后 ⌘-点击 alpha：新开标签并激活，当前标签的内容与未保存状态原样保留。
+  await page.locator(".cm-content").click();
+  await page.keyboard.type("DIRTYPROBE");
+  await expect(page.locator(".cm-content")).toContainText("DIRTYPROBE");
+  await expect(page.locator(".tab.is-active .tab-dirty")).toBeVisible();
   await page.locator('.ft-row[title="alpha.md"]').click({ modifiers: ["Meta"] });
+  await expect(page.locator(".cm-content")).toContainText("Alpha 的第一段");
   await expect(page.locator(".tab")).toHaveCount(2);
+  await expect(page.locator(".tab-name")).toHaveText(["beta.md", "alpha.md"]);
   await expect(page.locator(".tab.is-active .tab-name")).toHaveText("alpha.md");
 
-  // 双击同样不新开（浏览器在 dblclick 前先派发两次 click，两次都落在这条短路上）。
-  await page.locator('.ft-row[title="beta.md"]').dblclick();
-  await expect(page.locator(".tab.is-active .tab-name")).toHaveText("beta.md");
+  // 切回 beta：⌘-点击没有改动当前标签的文档内容与 dirty 状态。
+  await page.locator(".tab-name", { hasText: /^beta\.md$/ }).click();
+  await expect(page.locator(".cm-content")).toContainText("Beta 的第一段");
+  await expect(page.locator(".cm-content")).toContainText("DIRTYPROBE");
+  await expect(page.locator(".tab.is-active .tab-dirty")).toBeVisible();
+  // 读屏名带上该标签自己的未保存状态（文案 D90）——⌘-点击没有把 dirty 转给新标签。
+  await expect(page.locator(".tab.is-active .tab-open")).toHaveAttribute("aria-label", /beta\.md（未保存）/);
+
+  // 例外：当前标签 dirty 时普通点击**不就地替换**，退回新开一个——原标签与未保存内容原样
+  // 保留（M149 起的「打开另一个文件不丢修改、也不弹拦截」口径；save-guard 场景同判）。
+  await page.locator('.ft-row[title="gamma.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("Gamma 的第一段");
+  await expect(page.locator(".tab")).toHaveCount(3);
+  await expect(page.locator(".tab.is-active .tab-name")).toHaveText("gamma.md");
+  // 关掉 gamma（干净）回到 beta：beta 的未保存内容仍在；保存掉它，让下一步有干净的当前标签。
+  await page.locator(".tab", { hasText: "gamma.md" }).locator(".tab-close").click();
   await expect(page.locator(".tab")).toHaveCount(2);
+  // 关掉活跃标签后前台交给左邻（alpha）；切回 beta 再保存。
+  await page.locator(".tab-name", { hasText: /^beta\.md$/ }).click();
+  await expect(page.locator(".tab.is-active .tab-name")).toHaveText("beta.md");
+  await expect(page.locator(".tab.is-active .tab-dirty")).toBeVisible();
+  await page.keyboard.press("Meta+s");
+  await expect(page.locator(".tab.is-active .tab-dirty")).toBeHidden();
+
+  // 双击不新开（浏览器在 dblclick 前先派发两次 click，两次都按「当前标签」落点；
+  // 第二次命中「同一个文件已打开」的短路，可观察结果仍是就地打开）。
+  await page.locator('.ft-row[title="gamma.md"]').dblclick();
+  await expect(page.locator(".cm-content")).toContainText("Gamma 的第一段");
+  await expect(page.locator(".tab")).toHaveCount(2);
+  await expect(page.locator(".tab.is-active .tab-name")).toHaveText("gamma.md");
   // 两个标签的字形仍然一致（没有「刚打开的那一个」是斜体这种事）
   expect(await tabNameFontStyles(page)).toEqual(["normal", "normal"]);
 
@@ -201,8 +242,8 @@ test("切标签保留滚动位置与撤销史（逐标签，不重新解析、�
   expect(beforeTop).not.toBe(""); // 取不到位置是读失败，不许当成「位置为空」混过去
   expect(beforeTop).not.toBe("# 顶部 TOP-MARK"); // 确实滚离了篇首
 
-  // 切到另一个标签再切回来。
-  await page.locator('.ft-row[title="beta.md"]').click();
+  // 切到另一个标签再切回来（⌘-点击新开标签：普通点击会就地替换掉刚改过的 long.md）。
+  await page.locator('.ft-row[title="beta.md"]').click({ modifiers: ["Meta"] });
   await expect(content).toContainText("Beta 的第一段");
   await page.locator(".tab-open", { hasText: "long.md" }).click();
   await expect.poll(() => readDocument(page)).toContain("QMQ");

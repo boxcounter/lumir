@@ -759,6 +759,11 @@ impl SubagentHub {
             .inner
             .runtime
             .with_session(&self.inner.scope, |session| {
+                // 父会话已被重建（撤回 / 重置 / 恢复替换）时旧中枢不得再写它的留存：
+                // 否则 `notice_delivered` sidecar 会落进 B 的文件（K3 P1-2）。
+                if session.subagent_token() != self.inner.parent_token {
+                    return;
+                }
                 session.jsonl().record(&serde_json::json!({
                     "kind": "notice_delivered",
                     "run_ids": [run_id],
@@ -1207,14 +1212,22 @@ fn spawn_idle_watcher(hub: Arc<HubInner>) {
     }
 }
 
-/// 把合并后的通知写进父会话（LLM input + 面板行）。父会话已被重建 / 不存在时静默放弃
-/// （会话令牌由 `with_session` 的当前会话间接校验：不存在即 `harness_no_session`）。
+/// 把合并后的通知写进父会话（LLM input + 面板行）。父会话已被重建 / 不存在时静默放弃——
+/// **显式比较中枢保存的 `parent_token`**，不靠「当前会话恰好还在」间接校验：撤回把 A 换成 B
+/// 之后当前会话仍然存在，旧 hub 的通知必须被拦住（K3 P1-2）。
 fn insert_notices_into_session(hub: &Arc<HubInner>, text: &str, batch: &str) -> bool {
     hub.runtime
         .with_session(&hub.scope, |session| {
+            // 中枢建的父会话必须仍是**当前**会话：A→B 之后旧 hub 的唤醒线程若走到这里，
+            // 通知会被写进 B 的 input / panel（并随下一次请求进入模型上下文）。令牌不符即
+            // 放弃，调用方按「插入失败」回滚 delivered 标记（K3 P1-2）。
+            if session.subagent_token() != hub.parent_token {
+                return false;
+            }
             insert_notice_message(session, text, Some(batch));
+            true
         })
-        .is_ok()
+        .unwrap_or(false)
 }
 
 /// `harness:event` 的 `notice` 事件（change add-harness-subagents tasks §10.4）：面板
@@ -3338,16 +3351,19 @@ mod tests {
         fn wait_blocked_settled(&self, hub: &SubagentHub, expected: &'static str) {
             let observe = || {
                 let notices = self.notice_inputs().len();
+                let notified = self.events("subagent_notified").len();
                 let wake = hub.inner.wake.lock().unwrap_or_else(|e| e.into_inner());
-                (wake.blocked, wake.pending.len(), notices)
+                (wake.blocked, wake.pending.len(), notices, notified)
             };
             assert!(
                 self.wait(Duration::from_secs(3), || {
-                    let (blocked, pending, notices) = observe();
-                    blocked == Some(expected) && pending == 1 && notices == 1
+                    let (blocked, pending, notices, notified) = observe();
+                    // 通知先上屏、事件随后 emit：只等通知会在两步之间抢读 `events(..)[0]`，
+                    // 1272 条并行时偶发 index out of bounds。
+                    blocked == Some(expected) && pending == 1 && notices == 1 && notified >= 1
                 }),
-                "触顶 / 停止分支未在 3s 内落定：期望 blocked={expected:?} / pending=1 / 通知=1，\
-                 实际 (blocked, pending, 通知) = {:?}",
+                "触顶 / 停止分支未在 3s 内落定：期望 blocked={expected:?} / pending=1 / 通知=1 / 事件≥1，\
+                 实际 (blocked, pending, 通知, 事件) = {:?}",
                 observe()
             );
         }
@@ -4525,6 +4541,72 @@ mod tests {
         );
         // 用户回合把 pending 与标记一并消费（通知已在历史里，无需再投递）。
         assert!(hub.inner.wake.lock().unwrap().pending.is_empty());
+    }
+
+    /// K3 P1-2：触顶分支「已标 delivered、尚未 insert」的窗口里父会话被换掉（撤回把 A 换成 B
+    /// 的等价形态）：旧 hub 的通知 MUST NOT 写进新会话（否则会随 B 的下一条请求进模型上下文），
+    /// 插入失败后 delivered 回滚、pending 保留。
+    #[test]
+    fn blocked_notice_after_parent_swap_is_not_written_into_the_new_session() {
+        let f = Fixture::new("wake-blocked-swap", r#"{"responses":[]}"#, |_| {});
+        f.research("");
+        let hub = f.hub();
+        {
+            let mut wake = hub.inner.wake.lock().unwrap();
+            wake.chain = AUTO_WAKE_CHAIN_MAX;
+            wake.pending.push(NoticeRun {
+                run_id: "r-swap".into(),
+                agent: "research".into(),
+                description: "换会话窗口里的通知".into(),
+                status: "completed".into(),
+                stopped_by: None,
+                summary: "结论".into(),
+            });
+            wake.batch = Some("wb-swap".into());
+            wake.deadline = Some(Instant::now() - Duration::from_millis(1));
+        }
+        let hook_hub = hub.clone();
+        *AFTER_BLOCKED_MARK_HOOK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(Box::new(move || {
+            // 模拟撤回：旧会话被丢弃、换成一个全新的逻辑会话（令牌随之改变）。
+            let config = hook_hub
+                .inner
+                .config
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            let runtime = hook_hub
+                .inner
+                .runtime
+                .upgrade()
+                .expect("夹具的 Runtime 仍活着");
+            runtime.new_session(&hook_hub.inner.scope).unwrap();
+            runtime
+                .acquire_turn(&hook_hub.inner.scope, &config)
+                .unwrap();
+            runtime.release_turn(&hook_hub.inner.scope);
+        }));
+        process_wake(&hub.inner);
+        let new_session_input = f
+            .runtime
+            .with_session(&f.scope, |session| session.input().to_vec())
+            .unwrap();
+        assert!(
+            !new_session_input
+                .iter()
+                .any(|item| item["role"].as_str() == Some("user")),
+            "旧 hub 的通知不得写进新会话的 input：{new_session_input:?}"
+        );
+        let wake = hub.inner.wake.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(
+            wake.pending.iter().any(|notice| notice.run_id == "r-swap"),
+            "插入失败后 pending 必须保留"
+        );
+        assert!(
+            !wake.delivered.contains("r-swap"),
+            "插入失败后 delivered 必须回滚"
+        );
     }
 
     /// 起回合在飞期间：窗口内新到一条通知 + 用户发言 + 在飞失败——用户回合只能取走

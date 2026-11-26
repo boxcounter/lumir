@@ -265,10 +265,14 @@ test("保存中继续编辑：延迟写只算快照，dirty / 选区 / history �
   expect(calls[0]!.expected_revision).toBe(fixtureRevision(README_ORIGINAL));
   expect(calls[0]!.content).toContain("ONE");
 
-  // 在途期间继续输入 + 后端 dirty 镜像是 true：退出仍被拦。
+  // 在途期间继续输入 + 后端 dirty 镜像是 true：退出仍被拦（居中模态）。
   await typeInDoc(page, "TWO");
   await fireQuitBlocked(page);
-  await expect(page.locator(".lumir-toast", { hasText: "无法退出" })).toBeVisible();
+  await expect(page.locator(".lumir-quit-card")).toBeVisible();
+  await expect(page.locator("#lumir-quit-title")).toHaveText("有未保存的修改");
+  // 取消只关弹框，后续保存 / 重试步骤继续在编辑器里做。
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".lumir-quit-overlay")).toBeHidden();
 
   await releaseFault(page, "document_save");
   await expect(page.locator(".lumir-toast", { hasText: "仍有未保存修改" })).toBeVisible();
@@ -295,7 +299,7 @@ test("保存中继续编辑：延迟写只算快照，dirty / 选区 / history �
   expect(writes[1]!.content).toContain("ONETWO");
   expect(writes[1]!.content).not.toContain("TAIL");
   await expect(page.locator(".modeline-path")).not.toContainText("未保存");
-  await expect(page.locator(".lumir-toast", { hasText: "无法退出" })).toHaveCount(0);
+  await expect(page.locator(".lumir-quit-overlay")).toBeHidden();
   expect(await fileText(page, "README.md")).toContain("ONETWO");
   expect(await dirtyReports(page)).toContain(false);
 });

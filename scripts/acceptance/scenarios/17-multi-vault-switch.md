@@ -13,7 +13,7 @@ seed:
     # 不归档，列表照常可见。
     - { id: acc-gone, path: /tmp/lumir-m102-acceptance-gone, lastOpenedAt: 1757000000000 }
 steps:
-  - name: 打开 tabs-a.md（单击 = 预览标签），随后键入把它固定住
+  - name: 打开 tabs-a.md（空态单击：复用空文档出一个正式标签）
     do: open
     file: tabs-a.md
     marker: "标签场景 A"
@@ -24,7 +24,7 @@ steps:
       - label: 已经有一个标签
         ax: { count: { pattern: "关闭 ", exact: 1 } }
 
-  - name: 键入内容——首次输入即把预览标签固定住（此后单击别的文件不会再顶掉它）
+  - name: 键入内容（标签随之 dirty；写盘只由 ⌘S 触发）
     do: type
     text: "APIN"
     expect:
@@ -42,15 +42,17 @@ steps:
       - label: 磁盘上确有这次输入（固定下来的内容真的落盘了）
         file: { path: tabs-a.md, has: "APIN" }
 
-  - name: 再打开 tabs-b.md（前一个已固定，所以另开一个新标签）
-    do: open
-    file: tabs-b.md
-    marker: "标签场景 B"
+  - name: 拿前台（修饰键点击走真实指针通道，要求 Lumir 是 key window）
+    do: focusWindow
+    retries: 4
+  - name: ⌘-点击 tabs-b.md——新开一个标签并保留 tabs-a（普通点击会就地替换）
+    do: click
+    target: { role: AXButton, name: "^tabs-b\\.md$", modifiers: ["cmd"] }
     expect:
       - shot: 两个标签
       - label: 第二个文件上屏
         editor: { has: "标签场景 B" }
-      - label: 现在有两个标签（预览语义会就地替换，只剩一个）
+      - label: 现在有两个标签（⌘-点击新开；普通点击会就地替换、只剩一个）
         ax: { count: { pattern: "关闭 ", exact: 2 } }
 
   - name: 第二个标签也键入 + ⌘S 固定并落盘

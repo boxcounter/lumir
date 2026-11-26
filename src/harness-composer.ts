@@ -319,25 +319,52 @@ export function composerIsEmpty(state: EditorState): boolean {
  * updateListener）。
  */
 export function mergeRejectedComposerContent(
-  restored: ComposerContent,
-  current: ComposerContent,
-): ComposerContent {
+  restored: ComposerContentInput,
+  current: ComposerContentInput,
+): ComposerContentInput {
+  return mergeComposerContents(restored, current, "");
+}
+
+/**
+ * 撤回后的 composer 合并（change add-harness-message-withdraw-nov26）：被撤回的原文在前、
+ * 用户当前输入在后，两段之间补一个换行；光标落在**原文末尾**（用户接下来多半是改这句话再发）。
+ * 与 [`mergeRejectedComposerContent`] 共用同一份合并核心，只差分隔符与光标位置。
+ */
+export function mergeWithdrawnComposerContent(
+  restored: ComposerContentInput,
+  current: ComposerContentInput,
+): ComposerContentInput {
+  const merged = mergeComposerContents(restored, current, restored.text.endsWith("\n") ? "" : "\n");
+  return { ...merged, caret: restored.text.length };
+}
+
+/** 两份 composer 内容的确定性合并（原文在前、当前在后；卡片与 Skill 的偏移随原文长度平移）。
+ *  `separator` 为空时与发送拒绝的既有口径逐字节相同。 */
+function mergeComposerContents(
+  restored: ComposerContentInput,
+  current: ComposerContentInput,
+  separator: string,
+): ComposerContentInput {
   if (current.text === "" && current.cards.length === 0) return restored;
-  const text = restored.text + current.text;
+  const text = restored.text + separator + current.text;
+  const shift = restored.text.length + separator.length;
   const skills = [
     ...(restored.skills ?? []),
-    ...(current.skills ?? []).map((ref) => ({ ...ref, from: ref.from + restored.text.length })),
+    ...(current.skills ?? []).map((ref) => ({ ...ref, from: ref.from + shift })),
   ].filter((ref) => skillRefValid(text, ref));
   return {
     text,
-    caret: current.caret === null ? null : restored.text.length + current.caret,
-    cards: sortPlacedAttachments([
+    caret: current.caret === null ? null : shift + current.caret,
+    cards: [
       ...restored.cards,
       ...current.cards.map((attachment) => ({
         ...attachment,
-        anchor: attachment.anchor + restored.text.length,
+        anchor: (attachment.anchor ?? attachment.at ?? 0) + shift,
       })),
-    ]),
+    ]
+      .map((card, index) => ({ card, index }))
+      .sort((a, b) => (a.card.anchor ?? 0) - (b.card.anchor ?? 0) || a.index - b.index)
+      .map(({ card }) => card),
     skills,
   };
 }

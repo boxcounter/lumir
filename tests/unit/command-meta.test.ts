@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { COMMAND_META, SCOPE_DESCRIPTION_KEYS, SCOPE_LABEL_KEYS } from "../../src/command-meta.ts";
 import {
   COMMAND_IDS,
+  KEYLESS_COMMAND_IDS,
   KEY_BINDINGS,
   keyToken,
   scopeOfCommand,
@@ -46,6 +47,20 @@ test("COMMAND_META：每条标签中英两列都非空，模板参数齐全", ()
     assert.ok(!zh.includes("{"), `${command} 的中文标签有未插值占位：${zh}`);
     assert.ok(!en.includes("{"), `${command} 的英文标签有未插值占位：${en}`);
   }
+});
+
+test("保存全部：有命令 id / 标签 D1048 / 默认不绑键（无遮挡键位，菜单是鼠标入口）", () => {
+  // change add-acceptance-installed-app-pause：`document.save-all` 必须显式登记为「默认不绑键」——
+  // 这既是「有实现、有意不占键位」的签字，也保证不会静默抢走任何物理组合（菜单项同样不带
+  // accelerator，见 src-tauri/src/lib.rs 的 add_save_all_item）。
+  assert.ok((COMMAND_IDS as readonly string[]).includes("document.save-all"));
+  assert.equal(COMMAND_META["document.save-all"].labelKey, "D1048");
+  assert.ok(KEYLESS_COMMAND_IDS.includes("document.save-all"));
+  assert.equal(
+    KEY_BINDINGS.some((binding) => binding.command === "document.save-all"),
+    false,
+    "保存全部 MUST NOT 有默认绑定",
+  );
 });
 
 test("COMMAND_META：别名非空，允许含空格的自然短语（MUST NOT 以空白为由拒绝）", () => {
