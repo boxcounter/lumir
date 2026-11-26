@@ -14,11 +14,15 @@ import {
   KEYLESS_COMMAND_IDS,
   KEY_BINDINGS,
   Keymap,
+  NATIVE_INPUT_HOST_COMMAND_IDS,
   NON_TAB_GLOBAL_COMMAND_IDS,
   TABLE_SCROLL_CLASS,
   TAB_GOTO_IDS,
   WIDGET_COMMAND_IDS,
   applyKeyOverrides,
+  coversNativeInputHosts,
+  isEditableHost,
+  isTextEntryHost,
   keyToken,
   normalizeKey,
   scopeOfCommand,
@@ -1347,4 +1351,182 @@ test("text 面命令可经 [keys] 重绑 / 解绑，作用域仍派生为 text",
     unbound.bindings.find((binding) => binding.command === "editor.cursor-forward" && normalizeKey(binding.key) === "Ctrl-F"),
     undefined,
   );
+});
+
+// ---------------------------------------------------------------------------
+// ⌘A 的输入面附加落面（change fix-text-input-select-all-nov26）
+//
+// 缺陷根因：⌘A 的落面只声明了 text 面的两处 CM 面（编辑器 / composer），浮层里的原生输入框
+// 不在其中。M627 起 Edit 菜单的预置 Select All 已让出加速键，原生路径也不再兜底——于是每个
+// 浮层各自就地 input.select()，文件树的内联重命名漏写，⌘A 静默落空。
+//
+// 本层守三件事：① 清单 ↔ 绑定表的双向对账（附加面只有一处派生）；② 分发器只在
+// `isTextInputEvent` 为真时把它落进原生输入宿主；③ 族内其余 text 命令**不**因这条附加面放宽。
+// ---------------------------------------------------------------------------
+
+test("输入面附加面：清单 ↔ 绑定表双向对账，只有 ⌘A 一条绑定带 inputHosts", () => {
+  assert.deepEqual(
+    [...NATIVE_INPUT_HOST_COMMAND_IDS],
+    ["editor.select-all"],
+    "附加面清单当前应只有全选（新增命令须先在本测试里写明理由）",
+  );
+  for (const id of NATIVE_INPUT_HOST_COMMAND_IDS) {
+    assert.ok(commandIds.includes(id), `${id} 不在 COMMAND_IDS`);
+    assert.ok(
+      (COMPOSER_TEXT_COMMAND_IDS as readonly string[]).includes(id),
+      `${id} 应仍在 text 面命令组里（附加面不改变作用域派生）`,
+    );
+    assert.equal(scopeOfCommand(id), "text", `${id} 的作用域仍是 text（第四种作用域不在本 change 的面上）`);
+    assert.equal(coversNativeInputHosts(id), true);
+  }
+  const flagged = KEY_BINDINGS.filter((binding) => binding.inputHosts === true);
+  assert.deepEqual(
+    flagged.map((binding) => binding.command),
+    [...NATIVE_INPUT_HOST_COMMAND_IDS],
+    "inputHosts 的绑定集合与清单不一致（绑定表 MUST NOT 手写这个标记）",
+  );
+  for (const binding of KEY_BINDINGS) {
+    if (binding.inputHosts === true) {
+      assert.equal(normalizeKey(binding.key), "Cmd-A", "附加面当前只挂在 ⌘A 上");
+      assert.equal(binding.command, "editor.select-all");
+    }
+  }
+  // 族内其余命令不得被这条附加面捎上：它们实现作用于编辑器文档，落进输入框会抢原生编辑语义。
+  for (const id of COMPOSER_TEXT_COMMAND_IDS) {
+    if ((NATIVE_INPUT_HOST_COMMAND_IDS as readonly string[]).includes(id)) continue;
+    assert.equal(coversNativeInputHosts(id), false, `${id} MUST NOT 覆盖原生输入宿主`);
+  }
+});
+
+test("isTextEntryHost：整值可选的 input / textarea / contenteditable 为真，其余控件与日期时间族为假", () => {
+  // 判据是「`.select()` 是否真的选中整值」，不是「是不是 input」。真实浏览器（Chromium 151）实测：
+  // number / email 的 selectionStart 为 null、setSelectionRange 抛 InvalidStateError，但 .select()
+  // 之后键入整段替换；date / time / month / week / datetime-local 的 .select() 静默无效（之后
+  // 键入仍按段编辑）——它们必须落在 false，否则 ⌘A 会被吞掉却什么都不做。
+  for (const target of [
+    { tagName: "INPUT" },
+    { tagName: "input", type: "text" },
+    { tagName: "INPUT", type: "search" },
+    { tagName: "INPUT", type: "tel" },
+    { tagName: "INPUT", type: "url" },
+    { tagName: "INPUT", type: "password" },
+    { tagName: "INPUT", type: "number" },
+    { tagName: "INPUT", type: "email" },
+    { tagName: "TEXTAREA" },
+    { tagName: "textarea" },
+    { isContentEditable: true },
+    { tagName: "SPAN", isContentEditable: true },
+  ]) {
+    assert.equal(isTextEntryHost(target), true, `${JSON.stringify(target)} 应判为文本输入宿主`);
+  }
+  for (const target of [
+    { tagName: "INPUT", type: "checkbox" },
+    { tagName: "INPUT", type: "radio" },
+    { tagName: "INPUT", type: "range" },
+    { tagName: "INPUT", type: "file" },
+    { tagName: "INPUT", type: "button" },
+    { tagName: "INPUT", type: "hidden" },
+    { tagName: "INPUT", type: "date" },
+    { tagName: "INPUT", type: "time" },
+    { tagName: "INPUT", type: "month" },
+    { tagName: "INPUT", type: "week" },
+    { tagName: "INPUT", type: "datetime-local" },
+    { tagName: "BUTTON" },
+    { tagName: "DIV" },
+    { isContentEditable: false },
+    null,
+    undefined,
+    "input",
+  ]) {
+    assert.equal(isTextEntryHost(target), false, `${JSON.stringify(target)} MUST NOT 判为文本输入宿主`);
+  }
+  // 日期 / 时间族不是「文本输入宿主」，但仍是「可编辑宿主」（打字键守卫的口径不变）。
+  assert.equal(isEditableHost({ tagName: "INPUT", type: "date" }), true);
+  assert.equal(isTextEntryHost({ tagName: "INPUT", type: "date" }), false);
+  // 与打字键守卫的判据分界：勾选框也是「可编辑宿主」（守卫照旧让位），但不是「文本输入宿主」。
+  assert.equal(isEditableHost({ tagName: "INPUT", type: "checkbox" }), true);
+  assert.equal(isTextEntryHost({ tagName: "INPUT", type: "checkbox" }), false);
+});
+
+test("分发器：⌘A 在原生输入宿主内命中并消费；族内其余 text 命令不因附加面放宽", () => {
+  const host = fakeWindow();
+  const { runtime, runs } = recordingRuntime();
+  let inEditor = false;
+  let inComposer = false;
+  let onTextInput = false;
+  new Keymap().attach(host.target, runtime, {
+    isEditorEvent: () => inEditor,
+    isComposerEvent: () => inComposer,
+    isTextInputEvent: () => onTextInput,
+  });
+
+  // 重命名输入框（原生 input）持焦：⌘A 命中、消费、走同一条命令。
+  onTextInput = true;
+  const onRename = keyEvent({ key: "a", metaKey: true, target: { tagName: "INPUT" } });
+  host.fire(onRename);
+  assert.equal(onRename.defaultPrevented, true, "输入框里的 ⌘A 必须由本层消费（原生路径已无兜底）");
+  assert.deepEqual(runs, ["editor.select-all"]);
+
+  // 同一条附加面上的**族内其余命令**不命中：⌃F 在输入框里归原生 caret，不能被编辑器命令抢走。
+  const ctrlF = keyEvent({ key: "f", ctrlKey: true, target: { tagName: "INPUT" } });
+  host.fire(ctrlF);
+  assert.equal(ctrlF.defaultPrevented, false, "⌃F 在原生输入框里仍归原生路径");
+  assert.deepEqual(runs, ["editor.select-all"]);
+
+  // 焦点不在任何文本面（按钮 / 树行）：⌘A 不消费——全局 Select All MUST NOT 抢错焦点。
+  onTextInput = false;
+  const onButton = keyEvent({ key: "a", metaKey: true, target: { tagName: "BUTTON" } });
+  host.fire(onButton);
+  assert.equal(onButton.defaultPrevented, false, "非文本面上的 ⌘A 不消费");
+  assert.deepEqual(runs, ["editor.select-all"]);
+
+  // 编辑器 / composer 两面照旧命中（附加面不是它们的替代品）。
+  inEditor = true;
+  const inEditorEvent = keyEvent({ key: "a", metaKey: true, target: { isContentEditable: true } });
+  host.fire(inEditorEvent);
+  assert.equal(inEditorEvent.defaultPrevented, true);
+  assert.deepEqual(runs, ["editor.select-all", "editor.select-all"]);
+
+  inEditor = false;
+  inComposer = true;
+  const inComposerEvent = keyEvent({ key: "a", metaKey: true, target: { isContentEditable: true } });
+  host.fire(inComposerEvent);
+  assert.equal(inComposerEvent.defaultPrevented, true);
+  assert.deepEqual(runs, ["editor.select-all", "editor.select-all", "editor.select-all"]);
+
+  // 组合期：分发器在作用域判定之前就让路（不改选中、不消费），与两条浮层的旧就地分支同口径。
+  inComposer = false;
+  onTextInput = true;
+  const composing = keyEvent({ key: "a", metaKey: true, isComposing: true, target: { tagName: "INPUT" } });
+  host.fire(composing);
+  assert.equal(composing.defaultPrevented, false, "组合期 ⌘A 归输入法 / 原生路径");
+  assert.deepEqual(runs, ["editor.select-all", "editor.select-all", "editor.select-all"]);
+});
+
+test("分发器：没有 isTextInputEvent 实现时附加面不生效（既有替换件逐条不变）", () => {
+  const host = fakeWindow();
+  const { runtime, runs } = recordingRuntime();
+  new Keymap().attach(host.target, runtime, { isEditorEvent: () => false });
+  const event = keyEvent({ key: "a", metaKey: true, target: { tagName: "INPUT" } });
+  host.fire(event);
+  assert.equal(event.defaultPrevented, false);
+  assert.deepEqual(runs, []);
+});
+
+test("[keys] 覆盖：绑到 editor.select-all 的键同样带附加面，绑走的键丢掉附加面", () => {
+  const rebound = applyKeyOverrides({ "Cmd-j": "editor.select-all" });
+  assert.deepEqual(rebound.warnings, []);
+  const moved = rebound.bindings.find((binding) => normalizeKey(binding.key) === "Cmd-J");
+  assert.equal(moved?.command, "editor.select-all");
+  assert.equal(moved?.scope, "text", "作用域仍由命令派生");
+  assert.equal(moved?.inputHosts, true, "附加面随命令派生：换一个键绑全选，原生输入宿主里照样命中");
+
+  // 反向：把 ⌘A 改绑到族内普通命令，附加面必须消失（否则原生输入框里的 ⌘A 会被那条命令吃掉）。
+  const stolen = applyKeyOverrides({ "Cmd-a": "editor.cursor-forward" });
+  assert.deepEqual(stolen.warnings, []);
+  const cmdA = stolen.bindings.find((binding) => normalizeKey(binding.key) === "Cmd-A");
+  assert.equal(cmdA?.command, "editor.cursor-forward");
+  assert.equal(cmdA?.inputHosts, undefined, "非附加面命令 MUST NOT 带 inputHosts");
+  // 原绑定被覆盖后，表里不再有第二条指向 editor.select-all 的键（一个 token 一条绑定不受影响）。
+  assert.equal(stolen.bindings.filter((binding) => binding.command === "editor.select-all").length, 0);
 });

@@ -1230,7 +1230,9 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
 
   // 就地键（浮层容器上）：输入框持焦时事件目标在浮层里，`editor` / `text` 作用域的绑定不命中，
   // 这些键由浮层自己消费——`preventDefault` 同时是分发表那边的让路信号。`Tab` 不接管
-  //（留给原生焦点遍历，spec 明写）。
+  //（留给原生焦点遍历，spec 明写）。⌘A **不在此列**（change fix-text-input-select-all-nov26）：
+  // 它是平台级全选，落面由统一键位层按 `isTextInputEvent` 分派到输入框本身——浮层 MUST NOT
+  // 再写一份就地 `input.select()`（那条单边分支正是本 change 收掉的形态）。
   popover.addEventListener("keydown", (event) => {
     if (event.isComposing || event.keyCode === 229) return;
     // Escape 归共享准入（change fix-escape-overlay-close-oct24）：无修饰才关层，带修饰键只消费
@@ -1239,15 +1241,6 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
     const token = keyToken(event);
     if (token === null) return;
     switch (token) {
-      case "Cmd-A":
-        // 输入框内的全选必须由本层显式接管（change fix-quick-open-select-all-directory-children-nov21）：
-        // ⌘A 的全局绑定是 `editor.select-all`、作用域 `text`（只在编辑器 / composer 命中），
-        // 浮层输入框不在那个作用域里；而 WKWebView / 原生 Select All 菜单是否把这条键送进
-        // input 不归本仓控制（M627 起菜单项已让出加速键）。这里直接选中输入框内容并
-        // preventDefault，把「全选输入串」变成输入面自己的合同，不依赖任何上游的默认行为。
-        event.preventDefault();
-        input.select();
-        return;
       case "Enter":
         event.preventDefault();
         void confirm();
