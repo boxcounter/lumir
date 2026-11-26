@@ -22,18 +22,19 @@
 - [x] 2.4 撤回成功后的视图换代：重放 B 的面板、persistence token、标题 / 首条消息、读数与任务区刷新、composer 回填 + `markDraft`、toast。
 - [x] 2.5 文案 D1052–D1062（含 6 个错误码）双表同步；撤回钮与确认条样式（非 hover 帧零像素变化）。
 - [x] 2.6 前端单测 9 条（`tests/unit/harness-withdraw-composer.test.ts`，含失败 Skill 与 >80 字符长名）+ `resetView` 调用点矩阵与 i18n 门禁同步更新；令牌账本单测 8 条（`tests/unit/harness-session-tokens.test.ts`，含缺 token 兼容事件与 A/B 交错）。
-- [x] 2.7 真面板 chromium 场景 4 条（`tests/visual/scenes/harness-withdraw-message-nov26.spec.ts`：直接撤回 / 工具二次确认 / 派生拒绝 / 旧令牌迟到事件拒收），无像素断言、不新增基线。
+- [x] 2.7 真面板 chromium 场景 4 条（`tests/visual/scenes/harness-withdraw-message-nov26.spec.ts`：直接撤回 / 工具二次确认 / 派生拒绝 / 旧令牌迟到事件拒收），无像素断言、不新增基线；归档分支另有第 5 条「非空前缀重建」（`f789fae2`，判据面修复的配套）。
 
 ## 3. 验收场景
 
 - [x] 3.1 新增真机场景 882（transcript 节点在场性翻转 / composer 值在场 / 最新 JSONL `not` 被撤回文本 + `opened_from":"withdraw"` / 会话目录 `glob exact:1`）；`node scripts/acceptance/coverage.mjs` 重生成 COVERAGE。
-- [x] 3.2 `node scripts/acceptance/run.mjs --check` 通过（301 场景）。
-- [ ] 3.3 真机执行场景 882 至 PASS（**本轮不执行真机**，留待验收批；执行前核 880/881/877/879 的占用）。
+- [x] 3.2 `node scripts/acceptance/run.mjs --check` 通过（实现批 301 场景；归档分支复跑 308 场景）。
+- [x] 3.3 真机执行场景 882 至 **PASS，13 断言**（2026-11-27；证据
+  `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-27-ux-goal-r4/882-harness-withdraw-message/`）。首轮真机暴露出判据误命中 composer（`AXTextArea` 下的 CodeMirror 文本子节点），已按「面板重建为 B 的前缀」口径修判据并补非空前缀真面板用例（`f789fae2`），产品行为未改。
 
 ## 4. 验证
 
 - [x] 4.1 `cargo test --lib`（含 `withdraw_tests` 18 条、子代理交错 1 条、事件信封 1 条）通过。
-- [x] 4.2 `pnpm test` 通过（2097 条：含新增投影 9 条与令牌账本 8 条）。
+- [x] 4.2 `pnpm test` 通过（实现批 2097 条：含新增投影 9 条与令牌账本 8 条；归档分支复跑 2145 条）。
 - [x] 4.3 根 `tsc --noEmit` 与 `tests/visual` 的 tsc 通过。
 - [x] 4.4 `node scripts/gate.sh quick` 与 `scripts/visual/run.sh`（`LUMIR_VISUAL_STRUCTURAL=1`，结构 / 计算属性层）通过；像素层本轮不跑、未更新任何基线。
 - [x] 4.5 `node scripts/docs-check.sh` 通过。
@@ -42,4 +43,4 @@
 
 ## 5. 归档（不在本 mission 内执行）
 
-- [ ] 5.1 节点 2 五要件与归档记录（真机 882 PASS 后才能开始）。
+- [x] 5.1 节点 2 五要件与归档记录（见 `proposal.md` 的「节点 2：归档记录」）。
