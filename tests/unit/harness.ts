@@ -262,6 +262,9 @@ export function createEditorDouble(): EditorDouble {
         // 的取值逐项一致（values 由那条构造点定死，本替身不为测试放宽）。
         mode: kind === "image" ? "image" : (options.mode ?? "md"),
         editable: kind === "image" ? false : (options.editable ?? isEditablePath(path)),
+        // change fix-no-tab-empty-state-nov27：测试替身不建模结构性只读（没有分栏空 pane /
+        // 首启 tips 的呈现态），恒 false——与真编辑器 makeSession 的初值一致。
+        structuralReadOnly: false,
         // 本替身不建模 vault 外只读会话（M655 的 `createExternalSession` 在真编辑器里）。
         external: false,
         scroll: undefined,

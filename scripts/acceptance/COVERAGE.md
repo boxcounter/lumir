@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：307
-- 验收项（不同 item 编号）：275
-- 分档：core 32 / full 265 / bundle 5 / evidence 5（full 批 = 全部 307 个，含其余各档）
+- 场景：308
+- 验收项（不同 item 编号）：276
+- 分档：core 32 / full 266 / bundle 5 / evidence 5（full 批 = 全部 308 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -293,3 +293,4 @@
 | 882 | `882-harness-withdraw-message` | 撤回最近一条用户消息：transcript 移除、原文回 composer、新会话 B 唯一且上下文不再含它 | full |
 | 883 | `883-file-open-harness-affordance` | 文件树打开意图（普通点击=当前标签、⌘点击=新标签并保留）与无标签时 Harness 图标贴右缘 / 文案 | full |
 | 884 | `884-quit-save-all-dialog` | 退出前的保存全部确认弹框：⌘Q 弹居中模态、Escape 取消留场、保存失败留场不退出、保存全部并退出落盘 | full |
+| 885 | `885-no-tab-empty-state` | 无 TAB 空态：单 pane scratch 无行号但可输入；分栏空 pane 无行号、键入无效、引导在场 | full |

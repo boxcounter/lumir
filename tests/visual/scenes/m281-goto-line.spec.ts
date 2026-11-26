@@ -820,8 +820,13 @@ test("双 pane 同步：两个 pane 的前台会话同时变化", async ({ page 
   await expect.poll(() => gutterCountsPerPane(page)).toEqual([0, 0]);
 });
 
-test("新 pane 继承当前值：on 时 split 出的新 pane 第一帧即有 gutter", async ({ page }) => {
-  await openFile(page, { "a.md": GUTTER_DOC }, "a.md", { config: { keys: { F2: "pane.split" } } });
+test("新 pane：on 档空 pane 无 gutter，打开文档后两 pane 同帧恢复（change fix-no-tab-empty-state-nov27）", async ({ page }) => {
+  await openFile(
+    page,
+    { "a.md": GUTTER_DOC, "b.md": "# Beta\n\nBeta 正文。\n" },
+    "a.md",
+    { config: { keys: { F2: "pane.split" } } },
+  );
   await configApplied(page);
   await page.waitForTimeout(80);
   await page.locator(".cm-content").click();
@@ -830,6 +835,11 @@ test("新 pane 继承当前值：on 时 split 出的新 pane 第一帧即有 gut
 
   await page.keyboard.press("F2");
   await expect(page.locator(".editor-pane")).toHaveCount(2);
+  // 新 pane 是空文档：on 档也不出行号（per-pane hasTabs 压过全局开关）。
+  await expect.poll(() => gutterCountsPerPane(page)).toEqual([1, 0]);
+  // 打开带路径文档后，该 pane 在唯一同步点恢复 on 档 gutter；左 pane 不受影响。
+  await page.locator('.ft-row[title="b.md"]').click();
+  await expect(page.locator(".editor-pane").nth(1).locator(".cm-content")).toContainText("Beta 正文");
   await expect.poll(() => gutterCountsPerPane(page)).toEqual([1, 1]);
 });
 
