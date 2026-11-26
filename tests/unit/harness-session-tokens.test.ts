@@ -107,3 +107,51 @@ test("A/B 交错：A 的兼容事件不动 A 的水位，也不影响 B；无水
   assert.equal(tokens.eventAdmitted("/vault/c", 1), true);
   assert.equal(tokens.watermark("/vault/c"), 1);
 });
+
+// ── 退役时机：只退役「动作发起时」捕获的旧会话 ──────────────────────────────
+//
+// 判据来自 persistence-health-nov23 的 V6 / 「迟到的旧 switched 回包」两条 CI 稳定红：
+// 恢复 / 撤回的回执落地时，**新会话自己的事件可能已经先到**并把水位推进到新 token。
+// 若回执按「当前水位」退役，新 token 会被记入退役集，其快照随后被拒收，告警永久 hidden。
+// 反向验证：把这一组里任一条改成 `retire(vault)`（旧实现语义），断言立刻转红。
+
+test("回执前新会话事件先推进水位：只退役发起时捕获的旧 token，新 token 的计数与快照都不受影响", () => {
+  const tokens = createSessionTokenLedger();
+  assert.equal(tokens.snapshotAdmitted("/vault/a", 41), true);
+  // 恢复 / 撤回发起时定格：旧会话身份 = 41。
+  const previous = tokens.watermark("/vault/a");
+  // 新会话自己的写失败事件先于 Promise 回执到达（V6 现场）。
+  assert.equal(tokens.eventAdmitted("/vault/a", 42), true);
+  assert.equal(tokens.watermark("/vault/a"), 42);
+  // 回执落地：退役只针对发起时捕获的 41。
+  tokens.retire("/vault/a", previous);
+  assert.equal(tokens.retired().has(42), false, "新会话自己的 token MUST NOT 被退役");
+  assert.equal(tokens.watermark("/vault/a"), 42, "水位停在新会话，不被清空");
+  assert.equal(tokens.snapshotAdmitted("/vault/a", 42), true, "回执带来的完整快照是地板");
+  assert.equal(tokens.eventAdmitted("/vault/a", 41), false, "旧会话的迟到事件仍被拒");
+});
+
+test("迟到的旧回包只退役它发起时捕获的 token：新一代已接纳的水位与快照都保留", () => {
+  const tokens = createSessionTokenLedger();
+  assert.equal(tokens.snapshotAdmitted("/vault/a", 41), true);
+  const previous = tokens.watermark("/vault/a"); // 旧回包发起时看到的正是 41
+  // 新一代（token 42）先落地：另一个恢复回执 / 它自己的事件把水位推到 42。
+  assert.equal(tokens.snapshotAdmitted("/vault/a", 42), true);
+  // 旧回包迟到：只退役 41，MUST NOT 清掉 42。
+  tokens.retire("/vault/a", previous);
+  assert.equal(tokens.watermark("/vault/a"), 42);
+  assert.equal(tokens.retired().has(42), false);
+  assert.equal(tokens.snapshotAdmitted("/vault/a", 42), true, "新一代的快照仍准落地");
+  assert.equal(tokens.eventAdmitted("/vault/a", 41), false);
+});
+
+test("发起时尚无水位（捕获 null）：回执不存在的退役不得清掉在途采纳的新 token", () => {
+  const tokens = createSessionTokenLedger();
+  const previous = tokens.watermark("/vault/a");
+  assert.equal(previous, null);
+  assert.equal(tokens.eventAdmitted("/vault/a", 7), true);
+  tokens.retire("/vault/a", previous);
+  assert.equal(tokens.watermark("/vault/a"), 7, "空捕获不是「清空水位」的授权");
+  assert.equal(tokens.snapshotAdmitted("/vault/a", 7), true);
+  assert.equal(tokens.eventAdmitted("/vault/a", 6), false);
+});

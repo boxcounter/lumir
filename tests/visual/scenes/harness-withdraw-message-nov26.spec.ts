@@ -33,18 +33,29 @@ type Mode = "direct" | "confirm" | "refuse";
 async function setup(
   page: Page,
   mode: Mode,
-  opts: { messages?: ReadonlyArray<Record<string, unknown>>; kept?: ReadonlyArray<Record<string, unknown>> } = {},
+  opts: {
+    messages?: ReadonlyArray<Record<string, unknown>>;
+    kept?: ReadonlyArray<Record<string, unknown>>;
+    /** `harness_withdraw` 挂起，直到页面调用 `__resolveWithdraw()`（构造「B 的事件先于回执」）。 */
+    deferWithdraw?: boolean;
+    /** 回执落地后 `harness_state` 带回的 persistence 读数（撤回后 B 的完整快照 = 地板）。 */
+    afterWithdrawPersistence?: Record<string, unknown>;
+  } = {},
 ): Promise<void> {
   const messages = opts.messages ?? MESSAGES;
   const kept = opts.kept ?? [];
+  const deferWithdraw = opts.deferWithdraw ?? false;
+  const afterWithdrawPersistence = opts.afterWithdrawPersistence ?? null;
   await stubTauri(page, VAULT);
   await page.addInitScript(
-    ({ mode, messages, kept, marker }) => {
+    ({ mode, messages, kept, marker, deferWithdraw, afterWithdrawPersistence }) => {
       const w = window as unknown as Record<string, any>;
       const internals = w.__TAURI_INTERNALS__;
       const origInvoke = internals.invoke;
       w.__withdrawCalls = [] as Array<{ confirm: boolean }>;
       w.__harnessEventHandlerIds = [] as number[];
+      w.__afterWithdraw = false;
+      w.__resolveWithdraw = null as null | (() => void);
       const snapshot = {
         messages,
         usage: { ctx_pct: 0, cache_pct_session: 0 },
@@ -55,7 +66,16 @@ async function setup(
         in_flight: false,
       };
       internals.invoke = async (cmd: string, args: any) => {
-        if (cmd === "harness_state") return JSON.stringify(snapshot);
+        if (cmd === "harness_state") {
+          // 撤回回执落地后身份换成 B（token 12）；带 persistence 选项时 B 的完整快照带读数。
+          return JSON.stringify({
+            ...snapshot,
+            session_token: w.__afterWithdraw ? 12 : 11,
+            ...(w.__afterWithdraw && afterWithdrawPersistence !== null
+              ? { persistence: afterWithdrawPersistence }
+              : {}),
+          });
+        }
         if (cmd === "harness_withdraw") {
           w.__withdrawCalls.push({ confirm: args.confirm === true });
           if (mode === "refuse") {
@@ -68,7 +88,7 @@ async function setup(
           if (mode === "confirm" && args.confirm !== true) {
             return { needs_confirmation: true, tool_names: ["vault_patch", "cli_run"] };
           }
-          return {
+          const receipt = {
             needs_confirmation: false,
             tool_names: mode === "confirm" ? ["vault_patch", "cli_run"] : [],
             info: {
@@ -79,6 +99,16 @@ async function setup(
               first_user_text: null,
             },
           };
+          if (deferWithdraw) {
+            return new Promise((resolve: (value: unknown) => void) => {
+              w.__resolveWithdraw = () => {
+                w.__afterWithdraw = true;
+                resolve(receipt);
+              };
+            });
+          }
+          w.__afterWithdraw = true;
+          return receipt;
         }
         if (cmd === "harness_list_sessions") return [];
         if (cmd === "harness_skills_list") return [];
@@ -95,7 +125,7 @@ async function setup(
         }
       };
     },
-    { mode, messages, kept, marker: MARKER },
+    { mode, messages, kept, marker: MARKER, deferWithdraw, afterWithdrawPersistence },
   );
   await page.goto("/");
   await page.locator('.ft-row[title="withdraw-note.md"]').click();
@@ -221,4 +251,49 @@ test("旧会话的迟到事件按会话令牌拒收；新令牌的同一批事�
   await expect(page.locator(".lumir-tp-run")).toHaveCount(1);
   await expect(page.locator(".lumir-hp-notice")).toHaveCount(1);
   await expect(page.locator(".lumir-hp-sname")).toHaveText("新标题");
+});
+
+// 撤回先把旧会话 A 换成 B，B 的写失败事件可能先于 `harness_withdraw` 的回执送达面板（与
+// persistence-health-nov23 的 V6 同一时序类）。回执落地时只允许退役**发起时**捕获的 A
+// （token 11）：若按落地时的水位退役，会把 B 自己的 12 记入退役集，B 的完整快照随后被拒收，
+// 警示块在回执后永久消失。反向验证：把 `applyWithdraw` 改回 `retire(actionVault)`，最后两条
+// 断言转红（本用例先于修复编写，红/绿都实测过）。
+test("撤回回执前 B 的写失败事件先到：回执不得退役 B 的 token，完整快照仍是地板", async ({ page }) => {
+  const degraded = {
+    type: "persistence",
+    vault: ROOT,
+    session_token: 12,
+    state: "degraded",
+    since_ts: 1795000000,
+    severity: "history",
+    detail: "llm_request:write",
+    history_written: true,
+    history_gap: { present: true, since_ts: 1795000000, detail: "llm_request:write" },
+  };
+  await setup(page, "direct", { deferWithdraw: true, afterWithdrawPersistence: degraded });
+  const note = page.locator("[data-persistence-health]");
+  await page.locator(".lumir-hp-msg-user").hover();
+  await page.locator(".lumir-hp-withdraw").click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => typeof (window as unknown as Record<string, any>).__resolveWithdraw,
+      ),
+    )
+    .toBe("function");
+
+  // B（token 12）的写失败事件先于回执：警示块立即显示。
+  await page.evaluate((payload) => {
+    (window as unknown as { __fireHarnessEvent: (p: unknown) => void }).__fireHarnessEvent(payload);
+  }, degraded);
+  await expect(note).toBeVisible();
+  await expect(note).toContainText("此前部分记录也未能保存");
+
+  // 回执落地：完整快照（token 12 / 同一失败）是地板，告警必须仍在。
+  await page.evaluate(() => {
+    (window as unknown as Record<string, any>).__resolveWithdraw();
+  });
+  await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(0);
+  await expect(note).toBeVisible({ timeout: 5000 });
+  await expect(note).toContainText("此前部分记录也未能保存");
 });

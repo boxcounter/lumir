@@ -4226,9 +4226,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   /** 显式「新会话」/ 从历史恢复：旧逻辑会话的 token、健康读数与「已提示」标记一并作废。
-   *  后端新会话本身从空健康起算，这里只清渲染面与一次性提示的节流键。 */
-  function resetPersistenceView(): void {
-    sessionTokens.retire(currentVault);
+   *  后端新会话本身从空健康起算，这里只清渲染面与一次性提示的节流键。
+   *  `previousToken` = 动作发起时捕获的旧会话身份：在途期间新会话的事件可能已把水位推进到
+   *  新 token，MUST NOT 把它一并退役。 */
+  function resetPersistenceView(previousToken: number | null): void {
+    sessionTokens.retire(currentVault, previousToken);
     persistenceView = {
       state: "ok",
       severity: null,
@@ -7038,6 +7040,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (withdrawInFlight) return;
     const actionVault = currentVault;
     const actionToken = viewGeneration;
+    // 旧会话身份在**发起时**定格：回执落地时水位可能已被 B 的事件推进，退役必须只针对旧值。
+    const previousToken = sessionTokens.watermark(actionVault);
     withdrawInFlight = true;
     syncWithdrawButton();
     let info: SessionWithdrawInfo | null = null;
@@ -7058,7 +7062,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       withdrawInFlight = false;
       syncWithdrawButton();
     }
-    if (info !== null) applyWithdraw(info, actionVault);
+    if (info !== null) applyWithdraw(info, actionVault, previousToken);
   }
 
   /** 确认条上的工具名（`{tools}` 的重取素材；语言切换不重算工具清单本身）。 */
@@ -7114,9 +7118,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     withdrawConfirmEl = row;
   }
 
-  /** 撤回成功：重放 B 的面板、换持久化身份、把被撤回的原文交回 composer。 */
-  function applyWithdraw(info: SessionWithdrawInfo, actionVault: string | null): void {
-    sessionTokens.retire(actionVault);
+  /** 撤回成功：重放 B 的面板、换持久化身份、把被撤回的原文交回 composer。
+   *  `previousToken` = 撤回发起时捕获的旧会话身份（同 `resetPersistenceView`：在途期间 B 的
+   *  事件可能已把水位推进到新 token，MUST NOT 退役它）。 */
+  function applyWithdraw(
+    info: SessionWithdrawInfo,
+    actionVault: string | null,
+    previousToken: number | null,
+  ): void {
+    sessionTokens.retire(actionVault, previousToken);
     sessionTokens.adopt(actionVault, persistenceSessionTokenOf(info.session_token));
     persistenceSnapshotSeq += 1;
     resetView({ clearActivityFor: actionVault });
@@ -11256,6 +11266,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 发起时定格：记录只清这个 vault，DOM 复位只在视图仍是发起视图时执行（design §7 / §14.3b）。
     const actionVault = currentVault;
     const actionToken = viewGeneration;
+    // 旧会话身份同样在发起时定格（见 resumeSession 的同名捕获）。
+    const previousToken = sessionTokens.watermark(actionVault);
     harnessNewSession()
       .then(() => {
         if (actionToken !== viewGeneration || (actionVault !== null && actionVault !== currentVault)) {
@@ -11272,7 +11284,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 读回把保留下来的内容换成切换前的盘上草稿。下一次发送进入新会话。
         preserveComposerAcrossSessionSwitch();
         // 新逻辑会话：旧会话的 token 与「已提示」标记作废；完整快照是空健康的地板。
-        resetPersistenceView();
+        resetPersistenceView(previousToken);
         fetchPersistenceSnapshot();
         // resetView 只清渲染面、不碰 chip 读数：档位随会话对象一起被丢弃（M362 裁决点 1），
         // 不重取快照的话 chip 会停在上一段会话的档位，与后端「无会话 = 默认 High」分叉
@@ -11590,11 +11602,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   function resumeSession(entry: SessionEntry): void {
     const actionVault = currentVault;
     const actionToken = viewGeneration;
+    // 旧会话身份在**发起时**定格：恢复期间新会话的写失败事件可能先于回执到达并把水位推进
+    // 到新 token（V6 的现场）。回执 / 迟到旧回包只退役发起时那一个，MUST NOT 退役新 token。
+    const previousToken = sessionTokens.watermark(actionVault);
     harnessResumeSession(entry.sessionId)
       .then((info) => {
         if (actionVault !== null && (actionVault !== currentVault || actionToken !== viewGeneration)) {
           if (info.switched !== false) {
-            sessionTokens.retire(actionVault);
+            sessionTokens.retire(actionVault, previousToken);
             activity.reset(actionVault);
           }
           return;
@@ -11603,7 +11618,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           setSessPop(false);
           return;
         }
-        sessionTokens.retire(actionVault);
+        sessionTokens.retire(actionVault, previousToken);
         sessionTokens.adopt(actionVault, persistenceSessionTokenOf(info.session_token));
         persistenceSnapshotSeq += 1;
         resetView({ clearActivityFor: actionVault });
