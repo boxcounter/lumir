@@ -14,6 +14,7 @@ node --test \
   scripts/acceptance/lib/drive.test.mjs \
   scripts/acceptance/lib/env-chmod.test.mjs \
   scripts/acceptance/lib/execute.test.mjs \
+  scripts/acceptance/lib/installed-app.test.mjs \
   scripts/acceptance/lib/ime-driver.test.mjs \
   scripts/acceptance/lib/evidence.test.mjs \
   scripts/acceptance/build-bundle.test.mjs \

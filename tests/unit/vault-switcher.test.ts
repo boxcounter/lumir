@@ -351,6 +351,9 @@ interface StoreRig {
   /** 探测调用记录：断言「一次批量、MUST NOT 逐条发起」用。 */
   probes: string[][];
   setWritesFail(fail: boolean): void;
+  /** 后端**真实落盘失败**（resolved false，warning 由后端记）的开关；与 reject 档分开——
+   *  保存全部屏障必须两种都判失败。 */
+  setWriteSucceeds(ok: boolean): void;
   /** 让内容装载慢一拍（一次 setImmediate）：用于构造「装载在途时又切了一次 vault」的现场。 */
   setOpenSlow(next: boolean): void;
 }
@@ -360,6 +363,7 @@ function createStoreRig(): StoreRig {
   let ratio = 0.5;
   let getSession: (vaultId: string) => Promise<VaultSession | null> = async () => null;
   let writesFail = false;
+  let writeSucceeds = true;
   let openSlow = false;
   // 装配层的活跃 pane 模型（M321）：`applyPaneCount` 建 pane 时新 pane 成为活跃——分栏后
   // 活跃恒是**后建的右 pane**（真实装配层同口径，也正是本缺陷的触发条件）。
@@ -392,6 +396,7 @@ function createStoreRig(): StoreRig {
     pathsExistImpl: async () => [],
     probes: [],
     setWritesFail: (fail) => void (writesFail = fail),
+    setWriteSucceeds: (ok) => void (writeSucceeds = ok),
     setOpenSlow: (next) => void (openSlow = next),
   };
   rig.store = createVaultSessionStore({
@@ -403,7 +408,9 @@ function createStoreRig(): StoreRig {
     getSession: (vaultId) => getSession(vaultId),
     putSession: async (vaultId, nextPanes, nextRatio, nextHarness) => {
       if (writesFail) throw new Error("磁盘只读");
+      if (!writeSucceeds) return false;
       rig.writes.push({ vaultId, panes: nextPanes, ratio: nextRatio });
+      return true;
     },
     pathsExist: (paths) => {
       rig.probes.push([...paths]);
@@ -527,7 +534,8 @@ test("会话存储：flush 写最新快照并取消防抖（切换前 / 退出�
     rig.setSessions(tab("a.md"), tab("c.md"));
     rig.setActivePath("c.md");
     rig.store.sessionChanged(); // 窗口内的第二次变化
-    await rig.store.flush();
+    // 返回值是 document.save-all 屏障的判据：真写成功 = true（既有调用方仍 void 忽略）。
+    assert.equal(await rig.store.flush(), true);
     assert.deepEqual(rig.writes.at(-1), {
       vaultId: "vault-a",
       panes: [{ tabs: ["a.md", "c.md"], active: "c.md" }],
@@ -547,8 +555,22 @@ test("会话存储：写失败只降级（一条 warning，不抛出、不拦停
   rig.setActivePath("a.md");
   await rig.store.onVaultLoaded("vault-a", []);
   rig.setWritesFail(true);
-  await rig.store.flush();
+  // IPC reject：写失败只降级（warning 保留），但返回 false——保存全部的屏障据此判失败。
+  assert.equal(await rig.store.flush(), false);
   assert.deepEqual(rig.warns, ["磁盘只读"]);
+  assert.equal(rig.writes.length, 0);
+});
+
+test("会话存储：后端 resolved false（真实磁盘写失败）同样使 flush 为 false，且不重复 warning", async () => {
+  // P1-1（K3 verdict）：真实后端在磁盘写失败时 resolve false（warning 已在 Rust 侧记），不会
+  // reject。只判 reject 的实现会把这条写失败当成功——保存全部的屏障因此会在未落盘时发成功。
+  const rig = createStoreRig();
+  rig.setSessions(tab("a.md"));
+  rig.setActivePath("a.md");
+  await rig.store.onVaultLoaded("vault-a", []);
+  rig.setWriteSucceeds(false);
+  assert.equal(await rig.store.flush(), false);
+  assert.deepEqual(rig.warns, [], "warning 由后端记，前端不得重复上屏");
   assert.equal(rig.writes.length, 0);
 });
 
@@ -1757,7 +1779,7 @@ function createSwitcherRig(rows: VaultListEntry[]): SwitcherRig {
       editor.scrollTop = editor.caretTop;
     },
     getSession: async () => null,
-    putSession: async () => {},
+    putSession: async () => true,
     // 本组用例不碰存在探测：默认「都不在 vault 内」（= 只看枚举集合的旧口径）。
     pathsExist: async () => [],
     openPinned: async () => true,
@@ -1898,7 +1920,7 @@ test("浮层：未装载 vault（入口不存在）时打开是无操作", () =>
     restoreReadingPosition: () => {},
     focusEditor: () => {},
     getSession: async () => null,
-    putSession: async () => {},
+    putSession: async () => true,
     pathsExist: async () => [],
     openPinned: async () => true,
     applyPaneCount: () => {},
