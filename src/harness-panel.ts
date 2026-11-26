@@ -2641,6 +2641,10 @@ export function renderMarkdownInto(
 /**
  * 流式源 → 「已完成块 / 进行中尾块」切分：块边界 = 代码围栏之外的空行。列表内部与末尾列表
  * 之后的空行只作候选：后续缩进续段仍可能属于该列表，须等后续顶层块确认列表关闭后才定稿。
+ *
+ * 返回的边界恒 ≤ source.length：它是下一片尾块的起点（`slice` 起点 / `renderedFinalized`
+ * 游标），越界就会把下一片的首字符切掉。`split("\n")` 在源以换行结尾时会多产出一个空串行，
+ * 按它算出的边界是 source.length + 1——必须在出口夹住。
  */
 export function finalizedUpTo(source: string): number {
   let inFence: string | null = null;
@@ -2656,7 +2660,7 @@ export function finalizedUpTo(source: string): number {
     }
     offset += line.length + 1;
   }
-  return finalizedBoundaryFromTop(boundaries, mdParser.parse(source).topNode);
+  return Math.min(finalizedBoundaryFromTop(boundaries, mdParser.parse(source).topNode), source.length);
 }
 
 export function finalizedBoundaryFromTop(boundaries: readonly number[], top: MdSyntaxNode): number {

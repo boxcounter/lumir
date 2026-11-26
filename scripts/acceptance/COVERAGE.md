@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：299
-- 验收项（不同 item 编号）：268
-- 分档：core 32 / full 257 / bundle 5 / evidence 5（full 批 = 全部 299 个，含其余各档）
+- 场景：300
+- 验收项（不同 item 编号）：269
+- 分档：core 32 / full 258 / bundle 5 / evidence 5（full 批 = 全部 300 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -286,3 +286,4 @@
 | 875 | `875-harness-markdown-bold` | Harness Markdown strong：有序列表空行后的缩进续段在流式中间态与终态均不显示字面星号 | full |
 | 876 | `876-harness-web-production-no-injection` | 生产 dev 不激活验收注入：哨兵端点零使用、URL 规则不放宽、provider 仍只有 official | full |
 | 878 | `878-composer-preserve-across-sessions` | 新建 / 选择会话保留 composer（文字、引用卡与草稿；下一次发送进入当前会话） | full |
+| 879 | `879-harness-stream-boundary-newline` | 流式分片边界不越界：前一片以换行结尾时，下一片首字符在中间态即上屏 | full |
