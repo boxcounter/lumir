@@ -8,7 +8,40 @@
 > 节点 1（提案评审）：**通过**。Alex 在盘点一批放行项后明确排期顺序——先修流式丢字符——
 > 回复原话：「好。请你安排」（2026-11-26）。本 change 的批准边界即该裁决：只修这份数据正确性
 > 缺陷，不做视觉改动、不顺手改渲染语义；范围与判据见下文。
-> 节点 2（归档评审）：待真机场景 879 跑出 PASS 后按例外类别之外的常规通道办理。
+> 节点 2（归档评审）：**机器 + 独立评审放行**（2026-11-27）。五要件读数：
+>
+> 1. **方案已批准**：节点 1 通过（Alex 2026-11-26「好。请你安排」）；实现期未扩 scope——改动面
+>    = `src/harness-panel.ts` 的 `finalizedUpTo` 一处返回值 + 单测 / 验收场景 / change 制品，
+>    与「What Changes」逐条对应，未动视觉、渲染策略或 Markdown 语义。
+> 2. **独立评审 clean / merge**：K3 主会话终审通过（clean / merge，会话内裁决；本批无独立
+>    verdict 文件落 `.local/reviews/`）。评审绑定实现 tip `e91c33b0`（分支
+>    `fix/harness-stream-trailing-newline-nov26`）。该 tip 之后本 change 的测试 / 验收场景 /
+>    fixture 零改动（`git log e91c33b0..HEAD -- tests/unit/harness-stream-boundary.test.ts
+>    scripts/acceptance/scenarios/879-harness-stream-boundary-newline.md` 为空）；`src/harness-panel.ts`
+>    在合并后另被几个不相关 change 改过（session-token / withdraw / 品牌文案等），但本批复跑
+>    `finalizedUpTo` 的单测仍 2145 pass / 0 fail，归档批未改任何代码、测试或场景。
+> 3. **tasks 完成**：全部勾选；原先未勾的两项（4.4 真机执行、6.3 backlog 条目 + 节点 2）由本批
+>    以真机 PASS 与归档动作闭合，未放弃任何任务项。
+> 4. **门禁与真机证据**：quick 合并后 `GATE RESULT: 13/13 PASS（SKIP 0）`（主会话读数）；
+>    前端全量单测本 worktree 复跑 2145 tests / 0 fail；`bash scripts/docs-check.sh` PASS；
+>    真机 879 PASS 16 条（13 条断言 + 3 张截图，含中间态「第二片首字符即上屏」判据），证据
+>    `.local/acceptance/2026-11-27-ux-goal/879-harness-stream-boundary-newline/`
+>    （`status.txt` = PASS，`steps.md` 逐条 PASS）；本 change 无视觉改动、未更新像素基线。
+> 5. **规格对账**：`openspec-archive-check` 门禁模式随 docs-check PASS；
+>    `validate --all --strict` PASS（45 passed / 0 failed）；归档跟踪队列有且仅有一条条目
+>    （`docs/backlog.md`，本批落条目时删一条已归档历史记录以守 80 行硬上限）。
+>
+> **归档后**（2026-11-27）：归档提交 `08999fad`（`chore(openspec): archive fix-harness-stream-boundary-newline-nov26`）。
+> 包装器 `node scripts/openspec-archive.mjs fix-harness-stream-boundary-newline-nov26` 输出：
+> `Task status: ✓ Complete` / `Applying changes to openspec/specs/harness/spec.md: + 1 added` /
+> `Totals: + 1, ~ 0, - 0, → 0` / `Change 'fix-harness-stream-boundary-newline-nov26' archived as
+> '2026-11-27-fix-harness-stream-boundary-newline-nov26'`；归档后修链 **0 处**（扫过 3 篇 Markdown /
+> 0 条相对链接），`openspec-links: PASS（校验 712 条相对链接，全部可达）`。
+> 归档提交后审计 `node scripts/openspec-archive-check.mjs --archived fix-harness-stream-boundary-newline-nov26`
+> → `PASS（openspec/changes/archive/2026-11-27-fix-harness-stream-boundary-newline-nov26：0 条 MODIFIED，
+> 对比 0 段；人工恢复 0 段，声明认领 0 段）`。本 change 是纯 ADDED delta，对账脚本只审 MODIFIED 段，
+> 故「0 条 MODIFIED / 0 段」是预期读数；新 requirement「流式分片定稿的边界与字符守恒」已随
+> 归档并入 `openspec/specs/harness/spec.md`（validate 44 passed / 0 failed）。
 
 ## Why
 
