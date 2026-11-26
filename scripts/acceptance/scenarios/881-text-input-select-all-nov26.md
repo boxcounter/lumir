@@ -15,24 +15,29 @@
 # （`= "1/` / `= "ZZ-NO-SUCH-QUERY-88/`），这样「全选没生效只删了尾字符」与「Backspace 整拍丢失、
 # 值还在」两种失败形态都会命中。
 #
-# 2026-11-27 真机 881 FAIL 的修复（证据
-# `.local/acceptance/2026-11-27-ux-goal/881-text-input-select-all-nov26/steps.md`）：
-#   ① 跳转到行的输入框**非空时 AX 只暴露值**（dump 里是 `AXTextField = "1"`；aria-label 不出现，
-#      见 scripts/acceptance/README.md「真机 AX 读不到非空值输入框的读屏名」）。原断言
-#      `ax.has "跳转到行"` 与 typeInNode 目标 `跳转到行|12` 都因此解析不到节点——这是**场景
-#      locator 错**，不是产品回归（同一份证据里 `focused=AXTextField` 已证明输入框在场且持焦）。
-#      现在按值定位；键入改走 56 号场景的 `keys` 通道（预填值已全选 ⇒ 键入即替换，回读目标 =
-#      持焦输入框），不再依赖 typeInNode 对空态 / 非空态读屏名的猜测。
-#   ② **AX 的 AXTextArea 暴露整篇正文**（dump 01 的 [203] 是全文；行节点也整篇在场）。因此
-#      `ax.has/not` 对正文里的任何一行都恒真——原「第 39 行尚未进入视口」与「跳转后标记出现」
-#      两条判据都不是可见性判据（前者必红、后者必绿）。两条一并删除；落点改用**被测功能自己的
-#      读数**：Enter 后再按 ⌥G，输入条预填值 = 当前光标行号（56 号场景的同一手法），读到 140
-#      即证明跳转落点。可见性 / 居中由 chromium 的 `tests/visual/scenes/m281-goto-line.spec.ts`
-#      （`lineCenterOffset` + 实测 rect）与 Alex 截图手感负责，不在本场景冒充 AX 判据。
-#   ③ 搜索步的查询串改用文档里不存在的 `ZZ-NO-SUCH-QUERY-881`：这一步只验 ⌘A 全选/清空查询框，
-#      MUST NOT 让搜索命中移动光标或滚动正文（否则后续「预填 140」的落点判据会被提前改道）。
-#   ④ fixture 改为 160 行的 `goto-line-far.md`（第 140 行 = FAR-TARGET-MARK）：跳转真的产生
-#      滚动位移，截图供人看；可见性本身**不**作为 AX 判据（见 ②）。
+# 2026-11-27 真机 881 的两次 FAIL 与修复：
+#   r1（`.local/acceptance/2026-11-27-ux-goal/881-text-input-select-all-nov26/`）：
+#   ① 跳转到行的输入框**非空时 AX 只暴露值**（`AXTextField = "1"`；aria-label 不出现，见
+#      scripts/acceptance/README.md「真机 AX 读不到非空值输入框的读屏名」）。原断言
+#      `ax.has "跳转到行"` 与 typeInNode 目标 `跳转到行|12` 都解析不到节点——**场景 locator 错**，
+#      不是产品回归（同一份证据里 `focused=AXTextField` 已证明输入框在场且持焦）。现在按值定位；
+#      非空框的键入走 56 号场景的 `keys` 通道（预填值已全选 ⇒ 键入即替换，回读目标 = 持焦框）。
+#   ② **AXTextArea.value 是渲染窗口，不是整篇正文**：160 行 fixture 只暴露前 53 行（r4 实测
+#      267 字符，到「行53」为止；49 行的旧 fixture 恰好整篇都渲染，才让 r1 看起来像全文）。
+#      因此 `editor.has/not` 可判「某行是否已渲染进窗口」（远距行有效：启动时第 140 行不在，
+#      跳转后在），但 MUST NOT 当作整篇内容或精确像素可见性；`editor.unchangedSince` 只覆盖
+#      窗口——跨滚动 / 跳转后不可再用它判「正文不变」，零写盘改用文件 sha256 + mtime。
+#   r4（`.local/acceptance/2026-11-27-ux-goal-r4/881-text-input-select-all-nov26/`）：
+#   ③ ⌘A 清空后输入框为**空**，`keys` 注入 140 时套件按空态 label（`跳转到行`）捕获回读身份；
+#      值一出现 label 消失 → 报「回读目标在注入过程中消失」，而 dump 02 里
+#      `AXTextField = "140"` 已落地——**套件身份口径**，不是产品。空框这一步改走 `typeInNode`
+#      （target.name 并联空态读屏名与注入后的值），复用搜索步的同一通道。
+#   ④ 搜索步的查询串用文档里不存在的 `ZZ-NO-SUCH-QUERY-881`：这一步只验 ⌘A 全选/清空查询框，
+#      MUST NOT 让搜索命中移动光标或滚动正文。
+#   ⑤ fixture 为 160 行的 `goto-line-far.md`（第 140 行 = FAR-TARGET-MARK，约 1 KB）：跳转真的
+#      产生滚动；落点**双证**——目标行进入渲染窗口（`waitFor` + `editor.has`）与再开 ⌥G 的预填
+#      值 = 光标行号 140（56 号场景的手法）。精确可见性 / 居中仍归 chromium
+#      `tests/visual/scenes/m281-goto-line.spec.ts`（`lineCenterOffset` + 实测 rect）与 Alex 手感。
 id: "881-text-input-select-all-nov26"
 item: 881
 tier: full
@@ -41,15 +46,22 @@ fixtures: [goto-line-far.md]
 open: goto-line-far.md
 marker: "FAR-DOC-TOP"
 steps:
-  - name: 启动就绪：长文档打开（目标行在第 140 行，远离开篇；可见性不在这里用 AX 判）
+  - name: 启动就绪：长文档打开，目标行在开篇渲染窗口之外
     do: settle
     expect:
       - label: 开篇可见
         editor: { has: "FAR-DOC-TOP" }
-      - label: 文档确实含远距目标行（内容判据；AXTextArea 暴露全文，见文件头 ②）
-        editor: { has: "FAR-TARGET-MARK" }
+      - label: 目标行（第 140 行）尚未进入渲染窗口（AXTextArea 值 = 渲染窗口，见文件头 ②）
+        editor: { not: "FAR-TARGET-MARK" }
+      - label: fixture 里确有目标行（文件判据，不依赖 AX 窗口）
+        file: { path: goto-line-far.md, has: "FAR-TARGET-MARK" }
 
-  - name: 记编辑器基线（两个输入面的 ⌘A 都 MUST NOT 改正文）
+  - name: 记文档文件基线（跳转 MUST NOT 写盘：sha256 + mtime 两个口径）
+    do: record
+    as: 文档文件基线
+    file: goto-line-far.md
+
+  - name: 记编辑器窗口基线（搜索步的 ⌘A MUST NOT 改可见正文）
     do: recordEditor
     as: 输入面之前的正文
 
@@ -85,7 +97,7 @@ steps:
     expect:
       - label: 查询框已整串清空（只删尾字符时是 `…-88`，Backspace 丢拍时仍是整串）
         ax: { not: '/AXTextField = "ZZ-NO-SUCH-QUERY-88/' }
-      - label: 编辑器正文逐字节不变（⌘A 落在输入面，不碰文档）
+      - label: 编辑器可见正文逐字节不变（⌘A 落在输入面，不碰文档）
         editor: { unchangedSince: 输入面之前的正文 }
 
   - name: 收起搜索
@@ -116,7 +128,6 @@ steps:
         ax: { focused: "AXTextField" }
 
   # 预填值已全选 ⇒ 键入即替换成 12（56 号场景的同一通道：数字键逐位注入 + 持焦框回读）。
-  # 不在开头「12」时（注入丢拍 / 没替换）下一步的负向断言会红——这正是「⌘A 之前不是全选」的现场。
   - name: 键入两位行号（替换预填的 1，得到 12）
     do: keys
     keys: ["1", "2"]
@@ -140,9 +151,10 @@ steps:
       - label: 行号框已整串清空（未全选时会留下 `1`，Backspace 丢拍时仍是 `12`）
         ax: { not: '/AXTextField = "1/' }
 
-  - name: 输入目标行号 140
-    do: keys
-    keys: ["1", "4", "0"]
+  - name: 输入目标行号 140（空框：typeInNode 的目标名并联空态读屏名与注入后的值）
+    do: typeInNode
+    target: { role: AXTextField, name: "跳转到行|行号|140" }
+    text: "140"
     expect:
       - label: 行号框里是 140
         ax: { has: '/AXTextField = "140"/' }
@@ -155,8 +167,18 @@ steps:
         ax: { not: "AXTextField" }
       - label: 焦点交还编辑器（下一步再按 alt+g 的前置：事件目标必须在 contentDOM 内）
         ax: { focused: "AXTextArea" }
-      - label: 跳转 MUST NOT 改正文（逐字节）
-        editor: { unchangedSince: 输入面之前的正文 }
+
+  - name: 等目标行进入渲染窗口（跳转滚动生效）
+    do: waitFor
+    waitFor: { has: ["FAR-TARGET-MARK"] }
+    timeoutMs: 10000
+    expect:
+      - label: 第 140 行已渲染进窗口（启动时不在，见第一步）
+        editor: { has: "FAR-TARGET-MARK" }
+      - label: 跳转 MUST NOT 写盘（sha256 + mtime）
+        file: { path: goto-line-far.md, unchangedSince: 文档文件基线, mtimeUnchangedSince: 文档文件基线 }
+      - label: 没有变 dirty（跳转不改文档）
+        ax: { not: "（未保存）" }
 
   - name: 落点读数：再开输入条，预填值 = 当前光标行号
     do: key
@@ -182,9 +204,12 @@ steps:
 52，全部已改为 `channel: cgevent` 的真实键盘事件。
 
 覆盖边界：
-- **跳转落点**用「再开输入条读预填」判（光标行号），不用正文标记的 AX 在场性——AXTextArea 暴露
-  整篇正文，标记在场性对任何行都恒真（2026-11-27 真机证据 dump 01 的 [203]）。落点的可见性 /
-  居中由 chromium `m281-goto-line.spec.ts` 的实测几何判定，截图只作人审材料。
+- **跳转落点双证**：① 目标行进入渲染窗口（启动时 `editor.not`、跳转后 `waitFor` + `editor.has`；
+  AXTextArea 是渲染窗口，远距行因此可判「是否已滚进窗口」）；② 再开 ⌥G 的预填值 = 光标行号
+  140（场景 56 的手法）。精确像素可见性 / 居中由 chromium `m281-goto-line.spec.ts` 的实测几何
+  判定，截图只作人审材料。
+- **零写盘**用文件 sha256 + mtime（`record` + `file.unchangedSince` / `mtimeUnchangedSince`）：
+  `editor.unchangedSince` 只覆盖渲染窗口，跳转后窗口内容会变，不能拿它判「正文不变」。
 - 菜单 Edit ▸ Select All 的点击路径不在此场景（套件没有 macOS 菜单栏驱动动作，口径与
   14-tabs / 215 / 250 同；该路径由 chromium 场景 `text-input-select-all-nov26.spec.ts` 的
   菜单用例覆盖）。
