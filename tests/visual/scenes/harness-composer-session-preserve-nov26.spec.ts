@@ -76,7 +76,11 @@ async function setup(page: Page, options: PreserveOptions = {}): Promise<void> {
       const origInvoke = internals.invoke;
       w.__draftPuts = [] as string[];
       w.__draftFiles = {} as Record<string, string>;
-      w.__sent = [] as string[];
+      // 桩模拟后端的「当前会话」：new / resume 各推进一次世代并换会话身份；send 记录发送时的
+      // 会话身份与世代——「下一次发送进入当前选中会话」因此有可观测判据（而不是只看它没报错）。
+      w.__sent = [] as Array<{ parts: string; skills: string; sessionId: string; epoch: number }>;
+      w.__currentSessionId = "initial";
+      w.__sessionEpoch = 0;
       w.__resumeCalls = 0;
       w.__newSessionCalls = 0;
       w.__draftGetCalls = 0;
@@ -88,12 +92,19 @@ async function setup(page: Page, options: PreserveOptions = {}): Promise<void> {
       let messages = opts.messages ?? [];
       internals.invoke = async (cmd: string, args: any) => {
         if (cmd === "harness_send") {
-          w.__sent.push(args.parts_json ?? "");
+          w.__sent.push({
+            parts: args.parts_json ?? "",
+            skills: args.skills_json ?? "",
+            sessionId: w.__currentSessionId,
+            epoch: w.__sessionEpoch,
+          });
           return null;
         }
         if (cmd === "harness_new_session") {
           w.__newSessionCalls += 1;
           if (opts.rejectNewSession) throw opts.rejectNewSession;
+          w.__sessionEpoch += 1;
+          w.__currentSessionId = "new";
           messages = [];
           return null;
         }
@@ -101,6 +112,8 @@ async function setup(page: Page, options: PreserveOptions = {}): Promise<void> {
         if (cmd === "harness_list_sessions") return opts.sessionList ?? [];
         if (cmd === "harness_resume_session") {
           w.__resumeCalls += 1;
+          w.__sessionEpoch += 1;
+          w.__currentSessionId = String(args.session_id ?? "resumed");
           messages = opts.resumeMessages ?? [];
           return { session_token: null, messages, switched: true };
         }
@@ -232,9 +245,11 @@ async function pasteImage(page: Page): Promise<void> {
   await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-imgcard")).toHaveCount(1);
 }
 
-/** 输入 `/acc` 并接受唯一候选：Skill 引用进入 composer。 */
+/** 输入 `/acc` 并接受唯一候选：Skill 引用进入 composer。
+ *  焦点走 CM 视图 API 而不是点 `.cm-content`——composer 里有卡片时，点击可能落到卡片 widget
+ *  上（cards 的 click 是跳回正文，不给输入区焦点），键入就会漏进编辑器。 */
 async function insertSkillRef(page: Page): Promise<void> {
-  await page.locator(".lumir-hp-composer .cm-content").click();
+  await setComposerCaret(page, 0);
   await page.keyboard.type("/acc");
   await expect(page.locator(".lumir-hp-skill-menu")).toBeVisible();
   await page.keyboard.press("Enter");
@@ -245,8 +260,29 @@ function draftPuts(page: Page): Promise<string[]> {
   return page.evaluate(() => (window as unknown as { __draftPuts: string[] }).__draftPuts);
 }
 
-function sent(page: Page): Promise<string[]> {
-  return page.evaluate(() => (window as unknown as { __sent: string[] }).__sent);
+interface SentRecord {
+  parts: string;
+  skills: string;
+  sessionId: string;
+  epoch: number;
+}
+
+/** 发送记录（载荷 + 发送时后端会话身份 / 世代）。 */
+function sent(page: Page): Promise<SentRecord[]> {
+  return page.evaluate(
+    () =>
+      (window as unknown as {
+        __sent: Array<{ parts: string; skills: string; sessionId: string; epoch: number }>;
+      }).__sent,
+  );
+}
+
+/** 桩后端的当前会话身份与切换世代（new / resume 各推进一次）。 */
+function sessionState(page: Page): Promise<{ sessionId: string; epoch: number }> {
+  return page.evaluate(() => {
+    const w = window as unknown as { __currentSessionId: string; __sessionEpoch: number };
+    return { sessionId: w.__currentSessionId, epoch: w.__sessionEpoch };
+  });
 }
 
 function draftFile(page: Page, vaultId: string): Promise<string | null> {
@@ -286,6 +322,67 @@ test("新建会话保留纯文本与 caret：只清 transcript，输入区逐字
   expect(await composerState(page)).toEqual(before);
 });
 
+// ── 发送确实进入当前选中会话（会话身份 / 世代判据） ────────────────────────
+
+test("新建会话后的发送进入新会话：保留的文字 / 引用卡 / Skill 原样投递", async ({ page }) => {
+  await setup(page, { messages: PREVIOUS_MESSAGES });
+  await insertQuoteCard(page);
+  await insertSkillRef(page);
+  await setComposerCaret(page, (await composerState(page)).doc.length);
+  await page.keyboard.type("SEND-TO-NEW-TEXT");
+
+  await page.locator(".lumir-hp-seg-new").click();
+  await expect(page.locator(".lumir-hp-sname")).toHaveText("新会话");
+  // 桩后端的「当前会话」已切到新会话；发送记录必须带同一身份与同一世代。
+  const session = await sessionState(page);
+  expect(session.sessionId).toBe("new");
+
+  await setComposerCaret(page, 0);
+  await page.keyboard.press("Enter");
+  await expect.poll(async () => (await sent(page)).length).toBe(1);
+  const record = (await sent(page))[0];
+  expect(record.sessionId).toBe("new");
+  expect(record.epoch).toBe(session.epoch);
+  expect(record.parts).toContain("SEND-TO-NEW-TEXT");
+  expect(record.parts).toContain("第一段用于摘录"); // 引用卡随消息进入投递
+  expect(record.skills).toContain("acc-skill-abc"); // Skill 引用随消息进入投递
+  await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-msg-user")).toContainText("SEND-TO-NEW-TEXT");
+  expect((await composerState(page)).doc).toBe(""); // 发送成功仍清空输入区
+});
+
+test("选择历史会话后的发送进入选中会话：之后不再切到别处", async ({ page }) => {
+  await setup(page, {
+    sessionList: [{ session_id: "s-old", first_user_text: "OLD-SESSION 旧会话", ts: 1759912345 }],
+    resumeMessages: RESTORED_MESSAGES,
+  });
+  await insertQuoteCard(page);
+  await insertSkillRef(page);
+  await setComposerCaret(page, (await composerState(page)).doc.length);
+  await page.keyboard.type("SEND-TO-SELECTED-TEXT");
+
+  await page.locator(".lumir-hp-session").click();
+  await expect(page.locator(".lumir-hp-sesspop-history").first()).toBeVisible();
+  await page.locator(".lumir-hp-sesspop-history").first().click();
+  await expect(page.locator(".lumir-hp-transcript")).toContainText("RESTORED-SESSION-MESSAGE");
+  const session = await sessionState(page);
+  expect(session.sessionId).toBe("s-old");
+
+  // 发送时的世代与恢复时相同 ⇒ 中间没有 new / resume 再次换会话。
+  await setComposerCaret(page, 0);
+  await page.keyboard.press("Enter");
+  await expect.poll(async () => (await sent(page)).length).toBe(1);
+  const record = (await sent(page))[0];
+  expect(record.sessionId).toBe("s-old");
+  expect(record.epoch).toBe(session.epoch);
+  expect(record.parts).toContain("SEND-TO-SELECTED-TEXT");
+  expect(record.parts).toContain("第一段用于摘录"); // 引用卡随消息进入投递
+  expect(record.skills).toContain("acc-skill-abc"); // Skill 引用随消息进入投递
+  await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-msg-user")).toContainText("SEND-TO-SELECTED-TEXT");
+  expect((await composerState(page)).doc).toBe("");
+});
+
 // ── 新建会话：卡片 / Skill / 撤销历史 ──────────────────────────────────────
 
 test("新建会话保留引用卡 / 图片卡 / Skill，撤销历史仍可撤销", async ({ page }) => {
@@ -293,7 +390,7 @@ test("新建会话保留引用卡 / 图片卡 / Skill，撤销历史仍可撤销
   await insertQuoteCard(page);
   await pasteImage(page);
   await insertSkillRef(page);
-  await page.locator(".lumir-hp-composer .cm-content").click();
+  await setComposerCaret(page, (await composerState(page)).doc.length);
   await page.keyboard.type("FIRST-LINE-ALPHA");
   await page.waitForTimeout(650);
   await page.keyboard.type("SECOND-LINE-BETA");
@@ -435,7 +532,7 @@ test("正向对照：挂起的草稿读回放行后确实铺进输入区（链�
   await expect.poll(async () => (await composerState(page)).doc).toBe("DISK-DRAFT-ALPHA");
 });
 
-test("在途草稿读回晚于新建 / 重载会话落地：不得覆盖保留的输入区，也不得重建编辑史", async ({ page }) => {
+test("在途草稿读回晚于新建 / 重载会话落地：不得覆盖空输入区（draftSeq 判据）", async ({ page }) => {
   await setup(page, {
     holdDraftGet: true,
     initialDraft: draftJson("DISK-DRAFT-ALPHA", 16),
@@ -453,6 +550,61 @@ test("在途草稿读回晚于新建 / 重载会话落地：不得覆盖保留�
   await page.evaluate(() => (window as unknown as { __releaseDraftGet: () => Promise<void> }).__releaseDraftGet());
   await page.waitForTimeout(50);
   expect((await composerState(page)).doc).toBe("");
+});
+
+test("在途草稿读回不得重建编辑史：切回空态后 redo 仍回到切换前的输入", async ({ page }) => {
+  await setup(page, {
+    holdDraftGet: true,
+    initialDraft: draftJson("DISK-DRAFT-ALPHA", 16),
+    messages: PREVIOUS_MESSAGES,
+    resumeMessages: [],
+  });
+  // 预置撤销历史，再把文档退回 pristine 空态（文档为空、但 redo 栈里有内容）——只有 history
+  // 未被重建时，切换后的 redo 才可能恢复它。
+  await page.locator(".lumir-hp-composer .cm-content").click();
+  await page.keyboard.type("X");
+  await setComposerCaret(page, 1);
+  await page.keyboard.press("Meta+z");
+  await expect.poll(async () => (await composerState(page)).doc).toBe("");
+
+  await page.locator(".lumir-hp-seg-new").click();
+  await expect(page.locator(".lumir-hp-sname")).toHaveText("新会话");
+  await fireCronOpen(page);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __resumeCalls: number }).__resumeCalls)).toBe(1);
+
+  await page.evaluate(() => (window as unknown as { __releaseDraftGet: () => Promise<void> }).__releaseDraftGet());
+  await page.waitForTimeout(50);
+  // 迟到的读回不得把盘上草稿铺进来（否则 resetComposer 会换掉 history）。
+  expect(await composerState(page)).toEqual({ doc: "", head: 0 });
+  await setComposerCaret(page, 0);
+  await page.keyboard.press("Meta+Shift+z");
+  await expect.poll(async () => (await composerState(page)).doc).toBe("X");
+});
+
+test("在途草稿读回不得覆盖已键入的内容与 caret，撤销历史仍可回退", async ({ page }) => {
+  await setup(page, {
+    holdDraftGet: true,
+    initialDraft: draftJson("DISK-DRAFT-ALPHA", 16),
+    messages: PREVIOUS_MESSAGES,
+    resumeMessages: [],
+  });
+  await page.locator(".lumir-hp-composer .cm-content").click();
+  await page.keyboard.type("LIVE-TEXT");
+  await setComposerCaret(page, 4);
+  const before = await composerState(page);
+
+  await page.locator(".lumir-hp-seg-new").click();
+  await expect(page.locator(".lumir-hp-sname")).toHaveText("新会话");
+  await fireCronOpen(page);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __resumeCalls: number }).__resumeCalls)).toBe(1);
+
+  await page.evaluate(() => (window as unknown as { __releaseDraftGet: () => Promise<void> }).__releaseDraftGet());
+  await page.waitForTimeout(50);
+  expect(await composerState(page)).toEqual(before); // 内容与 caret 都不得被读回改写
+  // history 未被重建：⌘Z 回退这次键入（重建 state 后撤销是空操作）。
+  await setComposerCaret(page, 4);
+  await page.keyboard.press("Meta+z");
+  await expect.poll(async () => (await composerState(page)).doc).toBe("");
 });
 
 // ── 切 vault：仍按 vault 恢复各自的草稿（合同另一半） ──────────────────────

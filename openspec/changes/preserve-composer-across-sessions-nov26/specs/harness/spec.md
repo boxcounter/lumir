@@ -64,7 +64,7 @@ anchor 的可逆性 MUST NOT 只靠 `mapPos` 反推。每次改变文档或卡�
 #### Scenario: 非 history 文档变更被拒绝
 
 - **WHEN** 代码尝试在现有 composer state 上以 `addToHistory:false` 或 `remote` 修改 doc
-- **THEN** 该事务被拒绝（开发断言 / 过滤器），composer 内容与 history 不变；装载 / 复位路径（草稿恢复、切 vault、发送清空）必须新建 `EditorState`，新建 / 选择 / 恢复会话与会话重载 MUST NOT 新建 `EditorState`；旧 history 不可达；MUST NOT 用 sync effect 的 `mapPos` 补映射
+- **THEN** 该事务被拒绝（开发断言 / 过滤器），composer 内容与 history 不变；**重建 `EditorState` 的装载 / 复位路径（草稿恢复、切 vault、发送清空）旧 history 不可达**；新建 / 选择 / 恢复会话与会话重载 MUST NOT 新建 `EditorState`，**其旧 history 仍须可达（撤销 / 重做跨这些会话切换保留）**；MUST NOT 用 sync effect 的 `mapPos` 补映射
 
 #### Scenario: 新建会话保留输入区
 
