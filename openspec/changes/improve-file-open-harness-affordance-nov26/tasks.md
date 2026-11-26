@@ -68,8 +68,9 @@
 
 - [x] 4.1 更新 `scripts/acceptance/scenarios/14-tabs.md`（另含 `17-multi-vault-switch` 的第二个标签改 ⌘-点击）：普通点击 = 当前标签替换、⌘ 点击 =
       新标签并保留当前标签；后续依赖多标签的步骤改用 ⌘ 点击建立
-- [x] 4.2 新增 `scripts/acceptance/scenarios/880-file-open-harness-affordance.md`（编号取当前最大
-      +1）：普通点击 / ⌘ 点击两态 + 无标签时 toggle 贴右缘（geom）+ hover 文案
+- [x] 4.2 新增 `scripts/acceptance/scenarios/883-file-open-harness-affordance.md`（编号按并行批次
+      核对结果取 883——880/880b/881/882 已被其他分支占用）：普通点击 / ⌘ 点击两态 +
+      无标签时 toggle 贴右缘（可点性判据）+ hover 文案
 - [x] 4.3 更新既有真机场景里的「对话面板」断言（148 / 264 / 253 / 252 / 725 / 127 / 868 等）
 - [x] 4.4 `node scripts/acceptance/coverage.mjs` 重新生成覆盖表；
       `node scripts/acceptance/run.mjs --check` PASS

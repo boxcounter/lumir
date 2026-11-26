@@ -1,6 +1,6 @@
 ---
-id: "880-file-open-harness-affordance"
-item: 880
+id: "883-file-open-harness-affordance"
+item: 883
 tier: full
 title: 文件树打开意图（普通点击=当前标签、⌘点击=新标签并保留）与无标签时 Harness 图标贴右缘 / 文案
 fixtures: [tabs-a.md, tabs-b.md]
@@ -122,7 +122,7 @@ steps:
       - label: hover 提示（AX help）逐字是 Harness 面板
         ax: { has: "Harness 面板" }
 ---
-# 880-file-open-harness-affordance —— 文件树打开意图 + 无标签 Harness 图标
+# 883-file-open-harness-affordance —— 文件树打开意图 + 无标签 Harness 图标
 
 change `improve-file-open-harness-affordance-nov26` 的三条合同在本场景的真机判据：
 

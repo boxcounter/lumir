@@ -287,4 +287,4 @@
 | 876 | `876-harness-web-production-no-injection` | 生产 dev 不激活验收注入：哨兵端点零使用、URL 规则不放宽、provider 仍只有 official | full |
 | 878 | `878-composer-preserve-across-sessions` | 新建 / 选择会话保留 composer（文字、引用卡与草稿；下一次发送进入当前会话） | full |
 | 879 | `879-harness-stream-boundary-newline` | 流式分片边界不越界：前一片以换行结尾时，下一片首字符在中间态即上屏 | full |
-| 880 | `880-file-open-harness-affordance` | 文件树打开意图（普通点击=当前标签、⌘点击=新标签并保留）与无标签时 Harness 图标贴右缘 / 文案 | full |
+| 883 | `883-file-open-harness-affordance` | 文件树打开意图（普通点击=当前标签、⌘点击=新标签并保留）与无标签时 Harness 图标贴右缘 / 文案 | full |
