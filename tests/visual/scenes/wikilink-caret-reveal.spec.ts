@@ -15,6 +15,7 @@ interface Reading {
   widgets: number;
   text: string;
   readOnly: boolean;
+  structuralReadOnly: boolean;
 }
 
 async function reading(page: Page): Promise<Reading> {
@@ -29,6 +30,7 @@ async function reading(page: Page): Promise<Reading> {
       widgets: content.querySelectorAll(".cm-lp-wikilink-resolved, .cm-lp-wikilink-ambiguous, .cm-lp-wikilink-unresolved").length,
       text: content.textContent ?? "",
       readOnly: view.state.readOnly === true,
+      structuralReadOnly: view.dom.classList.contains("lumir-structural-readonly"),
     };
   });
 }
@@ -414,12 +416,14 @@ for (const status of STATUSES) {
     await select(page, 0, 2, false);
     const before = await reading(page);
     expect(before.readOnly).toBe(true);
+    expect(before.structuralReadOnly, "普通只读文档 MUST NOT 被无 TAB 结构只读的呈现标记误伤").toBe(false);
     expect(before.focused).toBe(false);
     await recordModifierMouse(page);
     const point = await widgetPoint(page, status, 0.5);
     await page.mouse.click(point.x, point.y);
     const after = await reading(page);
     expect({ anchor: after.anchor, head: after.head }).toEqual({ anchor: before.anchor, head: before.head });
+    expect(after.focused).toBe(before.focused);
     expect(after.doc).toBe(doc);
     expect(after.widgets).toBe(1);
     const events = await modifierEvents(page);

@@ -141,7 +141,62 @@ class WikilinkWidget extends WidgetType {
     el.dataset.status = this.status;
     el.textContent = this.label;
     el.addEventListener("mousedown", (event) => {
-      if (event.button !== 0 || view.state.readOnly || event.metaKey || event.ctrlKey) return;
+      if (event.button !== 0) return;
+      if (view.state.readOnly) {
+        // 只读会话：无修饰主键的点击不进入编辑，也不让 CM 的默认指针路径改选区 / 抢焦点。
+        // MUST NOT 在这里 preventDefault：事件仍按原生路径冒泡（修饰键语义与 window 观察者不变），
+        // 只在 pointer 手势结束后（mouseup / 随后的 selectionchange）把 CM 默认指针路径可能造成的
+        // 选区 / 焦点变化还原。
+        // Meta / Ctrl / Shift / Alt 仍直接让开（既有链接跟随 / 系统次级点击 / 原生手势不变）。
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        const selection = view.state.selection;
+        const active = el.ownerDocument.activeElement;
+        let restored = false;
+        let dragged = false;
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const doc = el.ownerDocument;
+        const cleanup = (): void => {
+          doc.removeEventListener("selectionchange", restoreSelection);
+          doc.removeEventListener("mousemove", onMove, true);
+          doc.removeEventListener("mousedown", cleanup, true);
+          doc.removeEventListener("keydown", cleanup, true);
+        };
+        const onMove = (move: MouseEvent): void => {
+          if (Math.abs(move.clientX - startX) > 3 || Math.abs(move.clientY - startY) > 3) dragged = true;
+        };
+        const restoreSelection = (): void => {
+          if (restored || dragged) return;
+          if (view.state.selection.eq(selection)) return;
+          restored = true;
+          cleanup();
+          view.dispatch({ selection, userEvent: "select.pointer" });
+        };
+        const restoreFocus = (): void => {
+          if (active instanceof HTMLElement && active !== view.contentDOM && active !== el.ownerDocument.body) {
+            active.focus({ preventScroll: true });
+          } else if (view.hasFocus) {
+            view.contentDOM.blur();
+          }
+        };
+        doc.addEventListener("selectionchange", restoreSelection);
+        doc.addEventListener("mousemove", onMove, true);
+        doc.addEventListener("mouseup", () => {
+          if (dragged) {
+            cleanup();
+            return;
+          }
+          restoreSelection();
+          restoreFocus();
+        }, { once: true });
+        // selectionchange 可能晚于 mouseup / click：第一次恢复后摘监听；没有变化时也在下一次用户
+        // 交互（mousedown / keydown）摘掉，避免把后续真实选区当成这次点击的后遗症。
+        // 指针移动超过 3px 视为拖选：不还原选区 / 焦点，保留只读文档的既有选选手势。
+        doc.addEventListener("mousedown", cleanup, true);
+        doc.addEventListener("keydown", cleanup, true);
+        return;
+      }
+      if (event.metaKey || event.ctrlKey) return;
       if (event.shiftKey || event.altKey) {
         // 不消费事件；只在本次按压内挡住 widget 的原生拖选，保留既有 CM 选区。
         el.style.userSelect = "none";
