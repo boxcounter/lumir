@@ -97,10 +97,10 @@ field truncation → aggregate content → summary → snippet → pop whole res
 ```
 
 - 健康摘要在 `operation=search` 且 `code=null` 且两个读数都是合法整数时渲染；四种形态按批准口径：
-  - 正常：D1029 `N 条结果 · 文本 X`
-  - 字段截断（`truncated=true` 且 `truncated_fields` 不含 `results`）：D1031 `N 条结果 · 文本 X · 已截断`
-  - 结果裁剪（`truncated_fields` 含 `results`）：D1032 `保留 N 条结果 · 文本 X · 已截断`
-  - 真正成功空结果（`count=0` 且未截断）：D1030 `0 条结果 · 搜索成功`
+  - 正常：D1030 `N 条结果 · 文本 X`
+  - 字段截断（`truncated=true` 且 `truncated_fields` 不含 `results`）：D1032 `N 条结果 · 文本 X · 已截断`
+  - 结果裁剪（`truncated_fields` 含 `results`）：D1033 `保留 N 条结果 · 文本 X · 已截断`
+  - 真正成功空结果（`count=0` 且未截断）：D1031 `0 条结果 · 搜索成功`
   - 英文同义双语；`count=1` 用 `tPlural` 的 `enOne` 档。
 - 文本大小复用 `byteSizeText`（B / KB / MB，ASCII 单位，与图片 modeline 的 `imageSizeText` 同一份
   格式化）；不另写第二套。

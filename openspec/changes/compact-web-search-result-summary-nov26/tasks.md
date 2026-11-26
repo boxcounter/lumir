@@ -45,7 +45,7 @@
 - [x] 3.5 `applyLabels` 重渲附属单元（保留展开态），新增文案随语言切换
 - [x] 3.6 `src/harness-panel.css`：第二行 / 详情入口样式，复用既有 token；不改普通工具行 padding；
       不新增 overflow 容器
-- [x] 3.7 `src/copy-data.ts` + `文案-Copy.md`：D1029–D1032 四条双语模板与 deck 沿革
+- [x] 3.7 `src/copy-data.ts` + `文案-Copy.md`：D1030–D1033 四条双语模板与 deck 沿革（D1029 由并行 Skill 分支占用）
 - [x] 3.8 前端单测（1.2–1.3）与 `tsc` 绿
 
 ## 4. 视觉结构

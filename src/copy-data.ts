@@ -2990,18 +2990,18 @@ const COPY_TABLE = {
   // 「Web Search 按推荐」）：N = 预算裁剪后实际回送模型的结果条数，X = 最终保留结果
   // title/snippet/summary/content 的 UTF-8 字节和（`byteSizeText` 格式化）。英文单数档在
   // 运行时表（enOne），deck 只记复数母本。
-  D1029: {
+  D1030: {
     zh: "{count} 条结果 · 文本 {size}",
     en: "{count} results · text {size}",
     enOne: "{count} result · text {size}",
   },
-  D1030: { zh: "0 条结果 · 搜索成功", en: "0 results · search succeeded" },
-  D1031: {
+  D1031: { zh: "0 条结果 · 搜索成功", en: "0 results · search succeeded" },
+  D1032: {
     zh: "{count} 条结果 · 文本 {size} · 已截断",
     en: "{count} results · text {size} · truncated",
     enOne: "{count} result · text {size} · truncated",
   },
-  D1032: {
+  D1033: {
     zh: "保留 {count} 条结果 · 文本 {size} · 已截断",
     en: "Kept {count} results · text {size} · truncated",
     enOne: "Kept {count} result · text {size} · truncated",

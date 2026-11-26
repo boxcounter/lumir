@@ -1056,11 +1056,11 @@ function webHealthText(metadata: WebAuditMetadata): string | null {
   const count = metadata.result_count;
   const size = byteSizeText(metadata.result_text_bytes);
   if (metadata.truncated_fields.includes("results")) {
-    return tPlural("D1032", count, { count, size });
+    return tPlural("D1033", count, { count, size });
   }
-  if (count === 0) return t("D1030");
-  if (metadata.truncated) return tPlural("D1031", count, { count, size });
-  return tPlural("D1029", count, { count, size });
+  if (count === 0) return t("D1031");
+  if (metadata.truncated) return tPlural("D1032", count, { count, size });
+  return tPlural("D1030", count, { count, size });
 }
 
 /** 定时任务批准预览（change add-cron-conversational-registration design §6.3 契约）：形状由

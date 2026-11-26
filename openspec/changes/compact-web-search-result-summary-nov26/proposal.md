@@ -87,7 +87,7 @@ snippet → 整条移除 results），读数在这里算一次即可同时服务
   - `src/harness-panel.ts`：紧凑工具行 + 结果健康摘要 + 默认关闭的「查看详情」；审计单元不计入
     组摘要行数。
   - `src/harness-panel.css`：新附属单元的第二行样式，复用既有 token 与「查看详情」形态。
-  - `src/copy-data.ts` / `文案-Copy.md`：结果健康摘要四条双语模板（D1029–D1032）。
+  - `src/copy-data.ts` / `文案-Copy.md`：结果健康摘要四条双语模板（D1030–D1033；D1029 由并行 change add-explicit-skill-trace-nov26 占用）。
   - 新增 `src/byte-size.ts`：字节读数格式化单一来源（与图片 modeline 的既有读数同源）。
 - 关联约束：不动性能合同路径（渲染只在工具行完成后一次）；不动「不改写源文件」与配置即数据；
   不新增依赖。
