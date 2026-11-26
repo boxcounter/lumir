@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：304
-- 验收项（不同 item 编号）：272
-- 分档：core 32 / full 262 / bundle 5 / evidence 5（full 批 = 全部 304 个，含其余各档）
+- 场景：305
+- 验收项（不同 item 编号）：273
+- 分档：core 32 / full 263 / bundle 5 / evidence 5（full 批 = 全部 305 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -213,7 +213,7 @@
 | 235 | `235-keybindings-lookup-query` | 键位速查——每命令一行的内容模型、文本查询（标签 / 别名 / id）、来由零命中与查询空态 | full |
 | 236 | `236-keybindings-capture` | 键位速查——按键捕获（Home → 真实 when 绑定、被捕获的键不执行命令、⌃G 例外、无绑定空态） | full |
 | 238 | `238-escape-overlay-close` | Escape 只收最上层浮层且永不退出应用（change fix-escape-overlay-close-oct24）：权限浮层重建失焦后按 Esc、修饰键准入、焦点回还 | full |
-| 239 | `239-escape-quit-guard` | Escape 不削弱退出守卫（change fix-escape-overlay-close-oct24）：dirty 文档按 Esc 不退出且不弹提示、⌘Q 仍被拦下、保存后 ⌘Q 正常放行 | core |
+| 239 | `239-escape-quit-guard` | Escape 不削弱退出守卫（change fix-escape-overlay-close-oct24 + add-quit-save-all-dialog-nov27）：dirty 文档按 Esc 不退出且不弹退出确认、⌘Q 被拦下并弹居中确认、取消后保存、干净 ⌘Q 正常放行 | core |
 | 250 | `250-settings-panel-provider-crud` | 设置面板：⌘, 打开、增删 provider、重复 id 被拒且文件不变、删除保护与空清单 | core |
 | 251 | `251-settings-panel-legacy-preset-migration` | 设置面板：旧格式 provider（无 preset）首次启动补齐迁移，二次启动不再写盘（mtime 不变） | full |
 | 252 | `49-vault-switch-feedback` | vault 切换的即时反馈（浮层收起 / 装载指示起止）与切换器浮层的完整可读 | full |
@@ -290,3 +290,4 @@
 | 880 | `880-save-all`<br>`880b-save-all-session-flush-failure` | 保存全部（File → Save All）：多标签脏内容一次落盘，完成终态是正向信号<br>保存全部——标签会话真实写失败时判失败、不出本次完成标记；恢复权限后可再次成功 | full<br>full |
 | 881 | `881-text-input-select-all-nov26` | 文本输入面的 ⌘A——文件内搜索 / 跳转到行由应用接管（整串替换），正文逐字节不变 | full |
 | 882 | `882-harness-withdraw-message` | 撤回最近一条用户消息：transcript 移除、原文回 composer、新会话 B 唯一且上下文不再含它 | full |
+| 884 | `884-quit-save-all-dialog` | 退出前的保存全部确认弹框：⌘Q 弹居中模态、Escape 取消留场、保存失败留场不退出、保存全部并退出落盘 | full |

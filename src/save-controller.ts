@@ -184,8 +184,6 @@ export interface SaveController {
   noteRewritten(path: string, revision: string): Promise<void>;
   /** dirty 清除时整批撤下守卫提示（保存成功 / 重载）。 */
   clearGuardToasts(): void;
-  /** 退出/关窗被 dirty 守卫拦截的提示（sticky，属守卫提示族）。 */
-  showQuitBlocked(): void;
   /** vault 装载后检查残留崩溃备份并给恢复入口。 */
   checkRecovery(): Promise<void>;
   /** 崩溃备份失败的只读快照（横幅 / 标签后缀的唯一数据源）。 */
@@ -561,11 +559,6 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
 
   function clearGuardToasts(): void {
     deps.container.querySelectorAll(`.${SAVE_GUARD_TOAST_CLASS}`).forEach((el) => el.remove());
-  }
-
-  function showQuitBlocked(): void {
-    toast(t("D232"), undefined, true)
-      .classList.add(SAVE_GUARD_TOAST_CLASS);
   }
 
   // ---------------------------------------------------------------------------
@@ -1126,7 +1119,6 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     noteRevisionAdvanced,
     noteRewritten,
     clearGuardToasts,
-    showQuitBlocked,
     checkRecovery,
     recoveryFailures: () => ({
       // 按失败时刻升序：横幅取最早失败的那条作路径示例（稳定、不随 Map 插入顺序）。

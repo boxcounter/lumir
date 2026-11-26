@@ -105,12 +105,15 @@ test("保存冲突：可理解的冲突提示，修改保留，切换与退出�
   await expect(readmeTab.locator(".tab-dirty")).toBeVisible();
   await expect(page.locator(".lumir-toast", { hasText: "无法切换文件" })).toHaveCount(0);
 
-  // dirty 拦截退出（后端守卫触发 app:quit_blocked）：必须有界面提示。
+  // dirty 拦截退出（后端守卫触发 app:quit_blocked）：change add-quit-save-all-dialog-nov27 起
+  // 是居中模态（旧右下角 sticky toast 已退场），只有「保存全部并退出 / 取消」两条动作。
   await fireQuitBlocked(page);
-  await expect(page.locator(".lumir-toast", { hasText: "无法退出" })).toBeVisible();
+  await expect(page.locator(".lumir-quit-card")).toBeVisible();
+  await expect(page.locator("#lumir-quit-title")).toHaveText("有未保存的修改");
+  await expect(page.locator(".lumir-toast", { hasText: "无法退出" })).toHaveCount(0);
 });
 
-test("保存成功后所有 dirty 表现层一致清除，切换 vault 无未保存拦截", async ({ page }) => {
+test("取消退出确认后保存成功：dirty 表现层一致清除，切换 vault 无未保存拦截", async ({ page }) => {
   await stubTauri(page, {
     ...VAULT,
     switchTo: {
@@ -128,18 +131,20 @@ test("保存成功后所有 dirty 表现层一致清除，切换 vault 无未保
   await page.keyboard.type("edited");
   await expect(page.locator(".modeline-path")).toContainText("未保存");
 
-  // dirty 期间退出被拦截：sticky 提示不自动消隐（M101 设计）。
+  // dirty 期间退出被拦截：居中模态（change add-quit-save-all-dialog-nov27）。
   await fireQuitBlocked(page);
-  const blocked = page.locator(".lumir-toast", { hasText: "无法退出" });
+  const blocked = page.locator(".lumir-quit-overlay");
   await expect(blocked).toBeVisible();
+  await expect(page.locator("#lumir-quit-title")).toHaveText("有未保存的修改");
 
-  // 保存成功：modeline / 后端镜像 / sticky 守卫提示必须一致清除
-  //（旧实现 sticky 提示在保存成功后仍残留右下角 —— 桌面验收缺陷）。
+  // 取消只关弹框（不退出、不保存），随后手动保存：modeline / 后端镜像必须一致清除。
+  await page.locator(".lumir-quit-btn-secondary").click();
+  await expect(blocked).toBeHidden();
   await page.keyboard.press("Meta+s");
   await expect(page.locator(".lumir-toast", { hasText: "已保存" })).toBeVisible();
   await expect(page.locator(".modeline-path")).not.toContainText("未保存");
   await expect.poll(async () => (await dirtyReports(page)).at(-1)).toBe(false);
-  await expect(blocked).toHaveCount(0);
+  await expect(blocked).toBeHidden();
 
   // 切换 vault 不再出现未保存拦截提示，新 vault 正常装载。
   await requestAddVault(page);
@@ -170,7 +175,7 @@ test("保存写入结果未知：提示核对内容且说明修改未丢失", as
 // M107 遗留断言：行为在 feat/save-guard-follow-up-repairs（main.ts，本任务 scope 外），
 // 此处只补前端回归证据。
 
-test("退出拦截提示按文案去重：连续拦截不堆叠 sticky toast（M107）", async ({ page }) => {
+test("退出拦截是单实例居中弹框：连续拦截不叠弹（M107 的 sticky 去重口径已随弹框改写）", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
   await page.locator('.ft-row[title="README.md"]').click();
@@ -180,11 +185,13 @@ test("退出拦截提示按文案去重：连续拦截不堆叠 sticky toast（M
   await page.keyboard.type("edited");
   await expect(page.locator(".modeline-path")).toContainText("未保存");
 
-  // 连续 Cmd+Q 被后端守卫拦截（连续 app:quit_blocked）：sticky 提示复用既有浮条。
+  // 连续 Cmd+Q 被后端守卫拦截（连续 app:quit_blocked）：同一实例，不叠弹。
   await fireQuitBlocked(page);
   await fireQuitBlocked(page);
   await fireQuitBlocked(page);
-  await expect(page.locator(".lumir-toast", { hasText: "无法退出" })).toHaveCount(1);
+  await expect(page.locator(".lumir-quit-card")).toHaveCount(1);
+  await expect(page.locator(".lumir-quit-overlay")).toBeVisible();
+  await expect(page.locator(".lumir-toast", { hasText: "无法退出" })).toHaveCount(0);
 });
 
 test("启动时主动推送一次 dirty 复位镜像（M107 DirtyState 防滞留）", async ({ page }) => {
