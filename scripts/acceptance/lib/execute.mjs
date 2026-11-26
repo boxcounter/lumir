@@ -775,6 +775,8 @@ export function checkScenario(scenario) {
         push(`${at} do=typeInNode 与 keys 互斥（迁移自 do:keys 时把 keys 数组合成 text 字符串后删掉 keys）`);
       if (step.replace !== undefined && typeof step.replace !== "boolean")
         push(`${at} do=typeInNode 的 replace 需要布尔值（缺省 false=追加；true=全选后替换）`);
+      if (step.allowNoLanding !== undefined && typeof step.allowNoLanding !== "boolean")
+        push(`${at} do=typeInNode 的 allowNoLanding 需要布尔值（缺省 false=必须落地）`);
     }
     if (step.do === "waitFor") {
       // 轮询判据（M296）：`has` / `not` 两份字符串清单，至少一项非空；写错键名会静默变成
@@ -4120,6 +4122,15 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
               "已按出现次数校验确认无重复）",
           });
         }
+        return;
+      }
+      if (out.verdict === "unchanged" && step.allowNoLanding === true) {
+        evidence.record({
+          kind: "note",
+          text:
+            `typeInNode「${step.text}」目标内容逐字节未变；allowNoLanding=true，按只读宿主的负向注入接受` +
+            "（partial / duplicated / target-lost 仍判败）",
+        });
         return;
       }
       const countOf = (v) => v.split(step.text).length - 1;

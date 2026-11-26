@@ -16,7 +16,12 @@
 #    chromium 视觉层（m320）与真机默认键（场景 79 的 `alt+s`）均成立。F2 是功能键注入 /
 #    配置键名匹配的不可靠腿，不作为本场景的分栏通道。改用产品**默认** `⌥S`（`Alt-KeyS`，
 #    scope global，场景 79 已真机验证）——真实用户路径，不依赖 [keys] 覆盖。
-# 本轮只跑 `--check`；真机待主会话重排。
+# 3) r3 分栏与引导已通过，但 `do: type` 把 MUST-NOT-LAND 打进左文档：r3 AX 快照显示分栏后
+#    空 pane 的第二个 AXTextArea 已 `(focused)`，而 `type` 动作固定取第一个 AXTextArea（左文档）
+#    注入。不是产品结构性只读失效，是场景没有对准“当前焦点”。改为先点第二个 AXTextArea 建立
+#    落点，再用 `typeInNode` 显式指向第二个 AXTextArea；`allowNoLanding: true` 表示这个只读
+#    宿主的负向注入不要求落地（partial / duplicated / target-lost 仍判败），后续无文本 / 无
+#    dirty 断言原样保留。本轮只跑 `--check`；真机待主会话重排。
 id: "885-no-tab-empty-state"
 item: 885
 tier: full
@@ -78,9 +83,17 @@ steps:
         ax: { has: "在左栏选一个文件" }
       - shot: 05-分栏空-pane
 
+  - name: 点第二个 AXTextArea（右 pane）建立落点——真实焦点在空 pane，不在左文档
+    do: click
+    target: { role: AXTextArea, name: ".*", nth: 1 }
+    expect:
+      - shot: 05b-空-pane-落点
+
   - name: 在空 pane 里键入：结构性只读拒收，且不出现「打了没反应」的脏状态
-    do: type
+    do: typeInNode
+    target: { role: AXTextArea, name: ".*", nth: 1 }
     text: "MUST-NOT-LAND"
+    allowNoLanding: true
     expect:
       - label: 键入没有落进任何文档
         ax: { not: "MUST-NOT-LAND" }
