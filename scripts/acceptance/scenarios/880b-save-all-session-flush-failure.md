@@ -33,16 +33,10 @@ steps:
       - label: 输入已生效
         editor: { has: "SAVEALL-FAIL" }
 
-  - name: 触发 File → Save All
-    do: click
-    target: { role: AXMenuBarItem, name: "^File$" }
-    expect:
-      - label: 菜单里有 Save All
-        node: { role: AXMenuItem, name: "^Save All$", present: true }
-
-  - name: 点击 Save All
-    do: click
-    target: { role: AXMenuItem, name: "^Save All$" }
+  - name: 触发 File → Save All（按 pid 的 AX 菜单通道）
+    do: clickMenuItem
+    menu: File
+    item: Save All
 
   - name: 等本次代次的失败标记（会话 flush 真实失败 → 不得出现 ok）
     do: waitFor
@@ -63,15 +57,10 @@ steps:
     file: "vault-sessions"
     mode: 0o700
 
-  - name: 再次触发保存全部——恢复后必须成功，且代次加一
-    do: click
-    target: { role: AXMenuBarItem, name: "^File$" }
-    expect:
-      - label: 菜单项仍在
-        node: { role: AXMenuItem, name: "^Save All$", present: true }
-  - name: 点击第二次 Save All
-    do: click
-    target: { role: AXMenuItem, name: "^Save All$" }
+  - name: 再次触发保存全部（恢复后必须成功，且代次加一）
+    do: clickMenuItem
+    menu: File
+    item: Save All
   - name: 等第二次的完成标记
     do: waitFor
     waitFor:
@@ -85,6 +74,10 @@ steps:
 ---
 
 **判据说明（K3 P1-1 / P1-3）**
+
+- 原生菜单走 `clickMenuItem`（Swift Accessibility，按 pid）：KimiCU 的 AX 文本不暴露
+  `AXMenuBarItem` 节点；动作成功即证明 File → Save All 菜单项真的在并已被按下，找不到时
+  helper 非零退出、FAIL 里带现有菜单 / 项标题。
 
 - `envChmod` 把隔离配置下的 `vault-sessions/` 收紧到 0500，制造**真实磁盘写失败**。产品的
   `vault_session_put` 会记 warning 并返回 `false`；保存全部屏障据此判失败——不会因为「只打了

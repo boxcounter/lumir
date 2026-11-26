@@ -46,17 +46,12 @@ steps:
       - label: 标签 B 也进入未保存态
         ax: { has: "/AXRadioButton \\(tabs-b\\.md（未保存）/" }
 
-  - name: 打开原生 File 菜单（保存全部的鼠标入口，菜单项不带 accelerator）
-    do: click
-    target: { role: AXMenuBarItem, name: "^File$" }
+  - name: 通过原生 File → Save All 触发（按 pid 的 AX 菜单通道）
+    do: clickMenuItem
+    menu: File
+    item: Save All
     expect:
-      - shot: File 菜单展开
-      - label: 菜单里有 Save All 一项（命令入口真的挂上了）
-        node: { role: AXMenuItem, name: "^Save All$", present: true }
-
-  - name: 点击 Save All
-    do: click
-    target: { role: AXMenuItem, name: "^Save All$" }
+      - shot: 保存全部之后
 
   - name: 等**本次操作**的保存全部归属日志（K3 第二轮 P1-3：锁定 g1 running → 同代次 ok）
     do: waitFor
@@ -90,6 +85,11 @@ steps:
 - 这条场景守的是产品侧「保存全部」能力的真机链路：原生 **File → Save All** 菜单项（不带
   accelerator，默认不占键位）经 `MENU_COMMAND_EVENT` 回到命令层的 `document.save-all`，
   由保存屏障依次完成「保存全部脏标签 → 标签会话 flush → 阅读位置 flush → 后端 dirty 镜像同步」。
+- **菜单通道**：KimiCU 的 AX 文本把菜单栏折叠成一个 `AXMenuBar` 节点（子项只以内联
+  `[6] File` 出现），`AXMenuBarItem` 节点不存在；因此这里用 `clickMenuItem` 走 Swift
+  Accessibility helper（按 pid 读真实菜单层级、打开 File 并按下 Save All）。helper 找不到
+  菜单 / 菜单项会非零退出并把现有标题带进 FAIL——菜单项在场与否由**动作成功**证明，不再靠
+  一个结构性读不到的 AX 节点断言。
 - **正向完成信号是判据本体**（K3 第二轮 P1-3）：产品在视觉隐藏、AX 可达的节点里维护**追加式**
   状态日志 `save-all-log s<seq>:g<代次>:<状态> …`；只有屏障全绿才追加 `ok`。验收通道
   （`--pause-installed`）读触发前基线，触发后必须见到第一条新记录是 running 并锁定其代次，

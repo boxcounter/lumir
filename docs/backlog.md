@@ -2,7 +2,6 @@
 唯一的积压载体。**一条 = 一个可关闭单元**：只留结论 gist + 证据指针 + 出口 / 下一动作；叙述与过程状态进 git 历史、`.tower/comms/`、`.local/`。场景清单见 [COVERAGE.md](../scripts/acceptance/COVERAGE.md)，长期口径与已裁暂缓见 [standing-decisions.md](specs/standing-decisions.md)，运行纪律见 [scripts/acceptance/README.md](../scripts/acceptance/README.md)。维护规则：`#decide` 只收价值取舍 / 产品语义（客观可核的由 tower 裁并记录）；**已裁项不留在 `#decide`**——裁决结论随实施条目走（工作项点名裁决与日期），长期口径迁 standing-decisions；`#fix` 客观可核；`#probe` 需实验；`#check` 证据不足；`#hygiene` 已定案的小收尾。**核销即删除、不留索引**（2026-10-12 Alex 裁决），**修复 PR 同批删除对应条目、reviewer 合并前核对**（2026-10-24）；含长期口径时迁 standing-decisions，不留在本文件。**只记改变未来动作的信息**（2026-10-16 Alex 裁决）；**体量红线 80 行**（Alex 2026-10-24，自 300 下调），不为压行数删活条目；引用用主题关键词锚，MUST NOT 用编号或行号；finding 落账率由批次收尾核对（`.tower/comms/findings/` 新增数 = 新增条目数）。出口由 `scripts/backlog-check.mjs` 机器判定（完成标记 / 缺出口 / 重复或死 finding 指针 / 记录在案无 canonical 居所 / 80 行硬上限，无 ratchet、无既有豁免；随 docs-check 跑）。
 
 ## 待 Alex 裁决（`#decide`，一行一题）
-
 - **「末尾之后」空段落 / 卡片两子档的呈现**（M457/M473）：末尾空段落是否渲染成可键入的空行、卡片两子档的模型语义——口径草案见 `docs/specs/harness-composer.md` 的 HC3，需 Alex 定表现。
 - **「未保存新文档」是否提供创建入口**（M416）：当前无路径产生「无路径、可编辑」文档；做不做、做成什么形态，待 Alex 定义。
 - **`harness.subagents` 整节 / 权限 / 阈值诊断是否进设置面板**（M865）：`in_settings_scope` 只放行 `harness.subagents.enabled`，整节形状 / 夹取、权限规则、`loop_max` / `warn_ctx_pct` 的 warning 只进 console；扩不扩「设置面范围」是产品语义，扩则同批补诊断文案（当前登记为 log-only 豁免）。

@@ -169,6 +169,9 @@ export const ACTIONS = new Set([
   // 首启验收的首个 vault 打开（change add-first-run-onboarding-nov25）：只在验收实例的
   // Vite 注入桥里跑，内部走 switchToVault 完整链路；不重启、不 reload。
   "vaultOpenPath",
+  // 原生菜单点击（880/880b）：KimiCU 的 AX 文本不暴露 AXMenuBarItem 节点，按 pid 的 Swift
+  // Accessibility helper 打开 File 菜单并按下菜单项；找不到菜单 / 项即非零退出。
+  "clickMenuItem",
 ]);
 export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel", "geom", "bytes", "node", "metaLine"]);
 
@@ -718,6 +721,17 @@ export function checkScenario(scenario) {
       }
       if (step.timeoutMs !== undefined && (!Number.isFinite(step.timeoutMs) || step.timeoutMs <= 0)) {
         push(`${at} do=vaultOpenPath 的 timeoutMs 需要正数`);
+      }
+    }
+    if (step.do === "clickMenuItem") {
+      if (typeof step.menu !== "string" || step.menu.trim() === "") {
+        push(`${at} do=clickMenuItem 需要非空 menu（原生菜单标题，如 File）`);
+      }
+      if (typeof step.item !== "string" || step.item.trim() === "") {
+        push(`${at} do=clickMenuItem 需要非空 item（菜单项标题，如 Save All）`);
+      }
+      if (step.settleMs !== undefined && (!Number.isFinite(step.settleMs) || step.settleMs < 0)) {
+        push(`${at} do=clickMenuItem 的 settleMs 需要非负数`);
       }
     }
     if (step.do === "keys" && !Array.isArray(step.keys)) push(`${at} do=keys 需要 keys 数组`);
@@ -3614,6 +3628,22 @@ function notificationSpec(step, action) {
   };
 }
 
+/**
+ * 原生菜单点击的调用构造（纯函数，可单测）：菜单 / 菜单项以**独立 argv** 传给 Swift helper，
+ * 不拼进脚本字符串——标题里出现引号 / 反斜杠也不会变成 AppleScript / Swift 源码。
+ *
+ * 为什么走这条通道（880/880b 真机取证）：KimiCU 的 AX 文本把整条菜单栏折叠成一个 `AXMenuBar`
+ * 节点，子项只以 `[6] File` 这样的内联索引出现，`parseNodes` 不生成 `AXMenuBarItem` 节点；
+ * 按 role/name 找菜单项永远找不到（产品菜单本身在场）。Swift helper 直接读 Accessibility API
+ * 的真实菜单栏层级，按 pid 定位，不依赖 KimiCU 的文本渲染。
+ */
+export function menuClickInvocation(pid, menu, item) {
+  return {
+    command: "/usr/bin/swift",
+    args: [path.join(repoRoot(), "scripts/acceptance/lib/ax-menu.swift"), String(pid), menu, item],
+  };
+}
+
 async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
   const p = pid();
   switch (step.do) {
@@ -4246,6 +4276,35 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         return clickWithRetry(cu, p, px, py, { button: t.button });
       }
       return cu.click(p, { index: node.index, ...button, ...(t.count ? { count: t.count } : {}) });
+    }
+    case "clickMenuItem": {
+      // 原生菜单点击（880/880b）：KimiCU 的 AX 文本不暴露 AXMenuBarItem 节点（菜单栏被折叠成
+      // 一行），按节点点菜单项结构性做不到。这里按 pid 走 Swift AX helper，直接读真实菜单层级、
+      // 按标题打开并按下菜单项；helper 失败会带回「现有菜单 / 项标题」，不静默。
+      if (
+        typeof step.menu !== "string" ||
+        step.menu.trim() === "" ||
+        typeof step.item !== "string" ||
+        step.item.trim() === ""
+      ) {
+        throw new Error("do=clickMenuItem 需要非空 menu / item（运行期复核，不只依赖 --check）");
+      }
+      const invocation = menuClickInvocation(p, step.menu, step.item);
+      let out = "";
+      try {
+        out = execFileSync(invocation.command, invocation.args, { encoding: "utf8", timeout: 30_000 }).trim();
+      } catch (e) {
+        const stderr = e?.stderr ? String(e.stderr).trim() : "";
+        throw new Error(
+          `do=clickMenuItem 失败（${step.menu} → ${step.item}，pid ${p}）：${stderr || e.message}`,
+        );
+      }
+      evidence.record({
+        kind: "note",
+        text: `原生菜单点击：${step.menu} → ${step.item}（pid ${p}）${out ? `｜${out}` : ""}`,
+      });
+      await sleep(step.settleMs ?? 400);
+      return `原生菜单 ${step.menu} → ${step.item}`;
     }
     case "clipboardRead": {
       const clip = readClipboard();
