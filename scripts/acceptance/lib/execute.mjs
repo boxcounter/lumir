@@ -4173,6 +4173,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
           label: `click（modifiers=${modifiers.join("+")}）`,
           dx: step.dx,
           dy: step.dy,
+          note: (text) => evidence.record({ kind: "note", text }),
         });
         const out = await injectClickWithModifiers(p, point, { modifiers, count: t.count ?? 1 });
         evidence.record({ kind: "note", text: `修饰键点击（${modifiers.join("+")}）自报：${out}` });
@@ -4722,6 +4723,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         label: "doubleClick",
         dx: step.dx,
         dy: step.dy,
+        note: (text) => evidence.record({ kind: "note", text }),
       });
       const out = await injectClickWithClickState(p, point, { mode: step.mode ?? 2 });
       evidence.record({ kind: "note", text: `doubleClick 自报：${out}` });
@@ -4859,6 +4861,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         dx: step.dx,
         dy: step.dy,
         requireFrontmost: false,
+        note: (text) => evidence.record({ kind: "note", text }),
       });
       const park = { x: bounds.x + 2, y: bounds.y + 2 };
       if (Math.abs(park.x - point.x) > 4 || Math.abs(park.y - point.y) > 4) {
@@ -5333,6 +5336,82 @@ export async function readAxForScreenPoint(cu, pid, { retries = 3, label = "双�
   );
 }
 
+/** 目标节点「在窗口内」的判定 + 滚轮滚入视口的计划（纯函数，单测钉 `execute.test.mjs`）。
+ *
+ *  背景（2026-11-27 真机 14-tabs 现场）：树/列表里滚出视口的行，AX 仍会给节点与 bbox，但 bbox 的
+ *  窗口局部 y 是负的（内容坐标）——真实指针通道（修饰键点击 / doubleClick / hover / drag）拿这个
+ *  点去注入会落在窗口外。这不是坐标换算错误（screenshot → window-local 的折算是对的），也不是产品
+ *  布局问题：行本来就在可视区外。套件在这里把「把目标滚进视口」做成**通用前置**，而不是让每个场景
+ *  自己猜滚动量。
+ *
+ *  `bbox` 是**窗口局部点**（mode=ax 的口径）；`bounds` 是窗口矩形（屏幕点，w/h 用于局部比较）。
+ *  返回 null = 纵向已在窗口内（横向越界不在这里处理，交给调用方的窗口边界检查）；
+ *  否则给出 CGEvent 滚轮计划：`dy` 正 = 上滚（README 的 `scroll` 口径），`point` 是屏幕点。
+ *  滚动点取目标横向中心（夹进窗口）与窗口上/下三分之一处的可滚区（树的表头之下 / 底部之上），
+ *  让滚轮落在目标所在的滚动容器上，而不是标题栏或 modeline。 */
+export function planNodeIntoView({ bbox, bounds, margin = 2, linePx = 40, maxLines = 20 }) {
+  if (!bbox || !bounds || !(bounds.w > 16 && bounds.h > 16)) return null;
+  // 只处理**整行都在窗口外**的形态：半截被裁的行交给调用方按旧行为处理——AX 的 bbox 是
+  // web area 的内容坐标，套件拿不到「目标所在滚动容器的可视矩形」，把 y=60 这类被表头压住
+  // 的行当「可见」会点到表头；把半截行也自动滚则会改变既有场景的语义。整行在外是唯一可判的。
+  const above = bbox.y + bbox.h <= margin;
+  const below = bbox.y >= bounds.h - margin;
+  if (!above && !below) return null;
+  const direction = above ? 1 : -1;
+  const distance = above ? margin - (bbox.y + bbox.h) : bbox.y - (bounds.h - margin);
+  const dy = direction * Math.min(maxLines, Math.max(1, Math.ceil(distance / linePx)));
+  const x = Math.min(Math.max(bbox.x + bbox.w / 2, 8), bounds.w - 8);
+  const y = above
+    ? Math.min(Math.max(120, 8), bounds.h - 8)
+    : Math.max(Math.min(bounds.h - 120, bounds.h - 8), 8);
+  return { dy, distance, point: { x: bounds.x + x, y: bounds.y + y } };
+}
+
+/** 在 AX 快照里按 target 取节点（与 windowLocalTarget 的 node 形态同一条解析口径）。 */
+function windowNodeOf(nodes, target) {
+  return target?.any !== undefined
+    ? findByAny(nodes, { role: target.role, any: target.any, nth: target.nth ?? 0 })
+    : findNode(nodes, { role: target?.role, name: target?.name ?? target?.text, nth: target?.nth ?? 0 });
+}
+
+/** 把窗口外的目标节点滚进视口（通用前置，最多 6 次 CGEvent 滚轮）。
+ *
+ *  只用滚轮（`injectWheel`）不用 KimiCU 的 scroll：README「已知边界」的滚动条已记——本 app 的树
+ *  滚动区与 CM `.cm-scroller` 都没作为可滚对象暴露给 KimiCU，滚轮是唯一真正产生位移的通道。
+ *  每次滚完重读 AX 再判，距离按剩余量重算（首步大、越近越小），不猜视口高度；
+ *  6 次仍出不来就报错并把每次的 bbox / 滚轮量写进证据——不静默、不无限重试。 */
+async function scrollNodeIntoWindow(cu, pid, target, label, note) {
+  const attempts = 6;
+  let last = "";
+  let lastBounds = null;
+  for (let i = 0; i < attempts; i += 1) {
+    const ax = await readAxForScreenPoint(cu, pid, { label });
+    const bounds = windowBounds(ax.text);
+    if (!bounds) throw new Error(`${label}：滚入视口时读不到窗口矩形（AX 快照退化）`);
+    lastBounds = bounds;
+    const node = windowNodeOf(ax.nodes, target);
+    if (!node?.bbox) {
+      throw new Error(`${label}：滚入视口时目标节点从 AX 里消失（${JSON.stringify(target)}）`);
+    }
+    const plan = planNodeIntoView({ bbox: node.bbox, bounds });
+    if (plan === null) return { ax, bounds, node };
+    last = `bbox @${Math.round(node.bbox.x)},${Math.round(node.bbox.y)} ${Math.round(node.bbox.w)}×${Math.round(node.bbox.h)}`;
+    if (i === attempts - 1) break;
+    const out = await injectWheel(plan.point, { dy: plan.dy });
+    note?.(
+      `${label}：目标节点在窗口外（${last}），第 ${i + 1}/${attempts} 次滚轮滚入视口 ` +
+        `dy=${plan.dy} @屏幕 ${Math.round(plan.point.x)},${Math.round(plan.point.y)}｜${out}`,
+    );
+    await sleep(500);
+  }
+  const b = lastBounds ?? { x: 0, y: 0, w: 0, h: 0 };
+  throw new Error(
+    `${label}：目标节点在窗口外且 ${attempts} 次滚轮后仍未进入视口（${last}，` +
+      `窗口 (${b.x},${b.y} ${b.w}×${b.h})）——若它位于不可滚动的容器里，该动作无法执行；` +
+      "否则检查滚轮通道（swift + 辅助功能权限，README「已知边界」的滚动条）",
+  );
+}
+
 /**
  * 「真鼠标事件类」动作的公共前置（M379 抽出，doubleClick 与 click 的 modifiers 分支共用——
  * 同一套坐标换算只应有一份，REVIEW.md 「同一语义两处真源」条）：先拿前台，再把**窗口局部点**换算成
@@ -5346,7 +5425,7 @@ export async function readAxForScreenPoint(cu, pid, { retries = 3, label = "双�
  * 前台是硬前提：真鼠标事件落在**该点最上层的那扇窗**上，目标被别的应用盖住时事件打到别人身上
  *（表现为「遮罩不出现」这类与产品无关的假红）。KimiCU 的键盘注入可以后台走，这条通道不行。
  */
-async function windowLocalTarget(cu, pid, target, { retries = 4, label = "动作", dx, dy, requireFrontmost = true } = {}) {
+async function windowLocalTarget(cu, pid, target, { retries = 4, label = "动作", dx, dy, requireFrontmost = true, note } = {}) {
   const fg = await tryForeground(cu, pid, { retries });
   if (requireFrontmost && !fg.frontmost) {
     throw new Error(
@@ -5355,8 +5434,8 @@ async function windowLocalTarget(cu, pid, target, { retries = 4, label = "动作
         `激活尝试：${foregroundWhy(fg)}`, // M478：两条通道的成败与 osascript stderr 一并给出
     );
   }
-  const ax = await readAxForScreenPoint(cu, pid, { label });
-  const bounds = windowBounds(ax.text);
+  let ax = await readAxForScreenPoint(cu, pid, { label });
+  let bounds = windowBounds(ax.text);
   let local;
   if (target?.x !== undefined) {
     local = { x: target.x, y: target.y };
@@ -5377,11 +5456,15 @@ async function windowLocalTarget(cu, pid, target, { retries = 4, label = "动作
       y: anchorNode.bbox.y + anchorNode.bbox.h / 2 + (target.offsetY ?? 0),
     };
   } else {
-    const node =
-      target?.any !== undefined
-        ? findByAny(ax.nodes, { role: target.role, any: target.any, nth: target.nth ?? 0 })
-        : findNode(ax.nodes, { role: target?.role, name: target?.name ?? target?.text, nth: target?.nth ?? 0 });
+    let node = windowNodeOf(ax.nodes, target);
     if (!node?.bbox) throw new Error(`${label}：找不到带 bbox 的节点 ${JSON.stringify(target)}`);
+    // 行在可视区外时先滚进来（通用前置；只对节点形态生效——`{x,y}` / 锚点形态的点由作者负责）。
+    if (planNodeIntoView({ bbox: node.bbox, bounds }) !== null) {
+      const ensured = await scrollNodeIntoWindow(cu, pid, target, label, note);
+      ax = ensured.ax;
+      bounds = ensured.bounds;
+      node = ensured.node;
+    }
     local = {
       x: node.bbox.x + node.bbox.w * (target.dx ?? dx ?? 0.5),
       y: node.bbox.y + node.bbox.h * (target.dy ?? dy ?? 0.5),
