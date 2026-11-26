@@ -102,8 +102,12 @@ token 形态注意：含 Alt 的组合按物理键 `KeyboardEvent.code` 判定�
 兜（与 `ui.theme` 同款既有边界）。
 
 `ui.line_numbers` 是行号 gutter 的**全局开关**（change `global-line-numbers-toggle-nov23`，Alex 2026-11-23
-裁决）：md 与只读 code **共用这一个开关**，`"on"` = 两种模式的 gutter 都常驻、`"off"`（默认）= 打开时都没有
-（`⌥G` 的跳转输入条仍会临时带出 gutter，md 与 code 一致；那是编辑器内核的在场面，不是本键的第三档）。
+裁决）：md 与只读 code **共用这一个开关**，`"on"` = **有带路径标签的文档 pane 上**两种模式的 gutter 都
+常驻、`"off"`（默认）= 打开时都没有（`⌥G` 的跳转输入条仍会临时带出 gutter，md 与 code 一致；那是编辑器
+内核的在场面，不是本键的第三档）。**无标签的文档 pane 是两档之外的呈现条件**（change
+`fix-no-tab-empty-state-nov27`）：单 pane 未命名 scratch / 分栏空 pane 即使 `"on"` 也不显示行号，`⌥G` 的
+临时档同样受约束；该 pane 打开带路径文档后按当前档恢复。判据是 per-pane 的 `hasTabs`，与开关值合成在
+`src/line-numbers.ts` 的同一个纯函数里，不是第二份配置状态。
 它与 `ui.theme` 同路：启动真源 + 运行期切换（`view.toggle-line-numbers`（⌘⇧N）/ modeline 行号钮），
 **切换即回写本键**；写失败只 toast + 诊断日志，运行期不回滚（重启回到配置文件值）。
 已退场的 `ui.markdown_line_numbers` **不参与生效值**：携带非 `null` 值时只产生一条「该键已退场」的启动

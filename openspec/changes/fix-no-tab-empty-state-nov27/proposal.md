@@ -68,7 +68,7 @@ Alex 的需求原话：没有打开 TAB 时 content pane 不显示行号、无�
   - `src/style.css`（光标层隐藏、空 pane 引导 `cursor: default`）
 - 影响的测试：
   - 单测：`tests/unit/line-numbers.test.ts` 增 `gutterVisible` 真值表；`tests/unit/harness.ts` 替身补字段。
-  - 视觉：新增 `tests/visual/scenes/no-tab-empty-state-nov27.spec.ts`（S2–S5）；更新 `m281-goto-line.spec.ts` 的「新 pane 继承 on 档」与 `gutter-copy-path-line.spec.ts` 的「关闭最后标签」两条受影响旧断言。
+  - 视觉：新增 `tests/visual/scenes/no-tab-empty-state-nov27.spec.ts`（S2–S5）；更新 `m281-goto-line.spec.ts` 的「新 pane」用例（空 pane 无 gutter、打开文档后 1/1）与 `gutter-copy-path-line.spec.ts` 的「关闭最后标签」用例（无 gutter、无手势、重开恢复）。
   - 验收：新增 `scripts/acceptance/scenarios/885-no-tab-empty-state.md`；本批只跑 `--check`，真机未执行。
-- 视觉基线：预计 `m281-goto-line` 的「新 pane」不再进基线视图、`gutter-copy-path-line` 的空态截图变化；候选截图落 `.local/missions/fix-no-tab-empty-state-nov27/`，不自行 `--update`。
+- 视觉基线：预计 `m281-goto-line` 的「新 pane」用例不再断言空 pane 有 gutter（改为空 pane 0 / 打开文档后 1/1），`gutter-copy-path-line` 的空态截图变化；候选截图落 `.local/missions/fix-no-tab-empty-state-nov27/`，不自行 `--update`。
 - 关联约束：ADR 0003（不改写源文件）、ADR 0004（AI-only 开发）、ADR 0006（Emacs keybinding PKM 定位）。

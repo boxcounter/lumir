@@ -168,8 +168,8 @@ gutter**（per-pane `hasTabs` 条件，见同两条），因此其原位置右�
 
 #### Scenario: 无路径文档不编造路径
 
-- **WHEN** 文档没有路径（未命名 / 空态）而 gutter 在场，用户在 gutter 上右键
-- **THEN** 不写剪贴板，出现失败反馈与一条 console 诊断线索（`navigator.clipboard` 未被调用）；MUST NOT 输出 `undefined:{line}`、`: {line}` 或任何编造的路径
+- **WHEN** 某个有带路径标签的文档 pane 里，前台是一份未命名文档（`path` 缺失，gutter 因该 pane 有标签而在场），用户在 gutter 上右键
+- **THEN** 不写剪贴板，出现失败反馈与一条 console 诊断线索（`navigator.clipboard` 未被调用）；MUST NOT 输出 `undefined:{line}`、`: {line}` 或任何编造的路径。无标签 pane 没有 gutter、也就没有本手势（见上一条 Scenario）
 
 
 ### Requirement: 行号开关命令（view.toggle-line-numbers）
@@ -250,13 +250,13 @@ MUST NOT 自行改用备选键位。该命令默认有绑定，因此 MUST NOT �
 
 #### Scenario: 新 pane 继承当前值
 
-- **WHEN** 当前为 `"on"` 时执行 `pane.split` 新建一个文档 pane
-- **THEN** 新 pane 从第一帧起就有 gutter（它从运行期唯一真源读当前值），与既有 pane 同口径
+- **WHEN** 当前为 `"on"` 时执行 `pane.split` 新建一个文档 pane，随后在该 pane 打开一份带路径文档；另在空 pane 阶段按一次 `⌥G`
+- **THEN** 新 pane 在没有带路径标签时 MUST NOT 显示行号 gutter（per-pane `hasTabs=false` 压过全局 `"on"`，`⌥G` 的临时档也不例外——「继承当前值」在空态只承接到开关本身，不产生可见行号）；打开文档后，从该同步点起按 `"on"` 档显示 gutter，行号与既有 pane 同口径；空 pane 阶段的开关值与配置回写不受影响
 
 #### Scenario: 重启后保持
 
 - **WHEN** 切到 `"on"` 并成功回写后退出应用、再启动
-- **THEN** 首帧装配置后 md 与 code 都有 gutter，指示钮文本为 `on`——`config.json` 的 `[ui] line_numbers` 是启动真源
+- **THEN** 首帧装配置后，**有带路径标签的文档 pane** 的 md 与 code 都有 gutter，指示钮文本为 `on`——`config.json` 的 `[ui] line_numbers` 是启动真源；无标签的文档 pane 仍不显示行号（per-pane 条件不因重启而放宽）
 
 #### Scenario: 写回失败不回滚
 

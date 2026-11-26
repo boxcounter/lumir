@@ -44,8 +44,8 @@
       S4 分栏空 pane（无 gutter / 光标层 hidden / 键入无效 / 点击激活 / 打开文档后恢复）；
       S3 首启 tips（无 gutter / 光标 hidden / 不盖 harness）；
       S2 老用户空 vault（D107 收窄在 doc pane、harness 与 composer 可见可输入）。
-- [x] 4.2 更新 `tests/visual/scenes/m281-goto-line.spec.ts` 的「新 pane 继承 on 档」：空 pane
-      0 条 gutter，打开文档后 `[1,1]`。
+- [x] 4.2 更新 `tests/visual/scenes/m281-goto-line.spec.ts` 的「新 pane」用例：空 pane
+      0 条 gutter（on 档 + ⌥G 临时档都不例外），打开文档后 `[1,1]`。
 - [x] 4.3 更新 `tests/visual/scenes/gutter-copy-path-line.spec.ts` 的「关闭最后标签」：on 档
       无 gutter、原位置右键不复制不反馈、重开文档恢复；旧断言「空文档继承 always 档」删除。
 - [x] 4.4 `tests/unit/harness.ts` 替身补 `structuralReadOnly: false`，与真编辑器初值一致。
@@ -69,5 +69,5 @@
 - [x] 6.3 结构层视觉：`LUMIR_VISUAL_STRUCTURAL=1 pnpm --dir tests/visual exec playwright test
       scenes/no-tab-empty-state-nov27.spec.ts scenes/m281-goto-line.spec.ts
       scenes/gutter-copy-path-line.spec.ts`（按本仓实际脚本名核对后执行）。
-- [x] 6.4 完整视觉门禁与基线更新**不在本 worker 执行**：像素测试与 `scripts/gate.sh visual`
-      由主会话串行安排；真机场景 885 未执行，待主会话排期。
+- [ ] 6.4 完整视觉门禁与基线更新**不在本 worker 执行**：像素测试与 `scripts/gate.sh visual`
+      由主会话串行安排；真机场景 885 未执行，待主会话排期。完成后勾选本项，change 才进入归档跟踪。
