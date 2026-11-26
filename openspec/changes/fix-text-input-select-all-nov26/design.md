@@ -75,7 +75,7 @@
    （搜索 mount、行号 open、设置「替换」钮）；三处浮层的就地副本必须为 0。
 
 行为面由 `tests/visual/scenes/text-input-select-all-nov26.spec.ts` 的真实 DOM 矩阵与真机场景
-`880-text-input-select-all-nov26.md` 分工。静态面认不出「另造工厂名」的新输入面——这条边界写在
+`881-text-input-select-all-nov26.md` 分工。静态面认不出「另造工厂名」的新输入面——这条边界写在
 测试头部与合同文档里，不假装判据穷尽。
 
 ## 6. IME 与既有编辑命令
@@ -108,4 +108,4 @@
 - visual：`text-input-select-all-nov26.spec.ts` 十条（rename 红→绿、新建、搜索、行号、键位面板、
   菜单路径、非文本面不抢焦点、组合期、编辑器回归、contenteditable 探针）；既有 quick-open /
   selector-aria-ime / m627 场景回归。
-- 真机：场景 880（本轮只更新文件，不执行；由后续验收批跑 WKWebView 的键盘通道）。
+- 真机：场景 881（本轮只更新文件，不执行；由后续验收批跑 WKWebView 的键盘通道）。

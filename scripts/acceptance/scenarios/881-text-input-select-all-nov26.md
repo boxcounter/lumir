@@ -13,8 +13,8 @@
 # 判据的区分度：全选后按一次 Backspace，输入串必须**整段消失**；只看「值变了」会把「只删了一个
 # 字符」判成 PASS（REVIEW.md『断言等价于子串』条）。搜索框用「负向正则不许出现 `JUMP-TARGET-3`」
 # 同时挡住「没全选（删掉尾字符）」与「没接管（值原样）」两种失败形态。
-id: "880-text-input-select-all-nov26"
-item: 880
+id: "881-text-input-select-all-nov26"
+item: 881
 tier: full
 title: 文本输入面的 ⌘A——文件内搜索 / 跳转到行由应用接管（整串替换），正文逐字节不变
 fixtures: [goto-line-long.md]

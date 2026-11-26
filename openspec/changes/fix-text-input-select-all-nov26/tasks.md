@@ -60,7 +60,7 @@
 
 ## 5. 真机场景（只更新，不执行）
 
-- [x] 5.1 新增 `scripts/acceptance/scenarios/880-text-input-select-all-nov26.md`：重命名框 ⌘A
+- [x] 5.1 新增 `scripts/acceptance/scenarios/881-text-input-select-all-nov26.md`：重命名框 ⌘A
       （WKWebView 键盘通道）、菜单 Select All 的落面、输入面矩阵（Quick Open / 大纲 / vault /
       搜索 / 行号）、非文本面不抢焦点；`tier: full`。
 - [x] 5.2 `node scripts/acceptance/run.mjs --check` 静态校验通过（不真机）。

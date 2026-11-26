@@ -16,7 +16,7 @@ import { fireMenuCommand, fsMutations, stubTauri, type VaultFixture } from "./ta
 // 判据为什么必须有 `defaultPrevented` 一列：chromium 的原生 select-all 本来就工作，只看选区
 // 分不出「应用接管了」与「引擎顺手做了」——后者在 WKWebView 上不成立（用户实测的缺陷正是这条
 // 差异，同 selector-aria-ime-nov25 的口径）。真机 WKWebView 的终审在验收场景
-// `scripts/acceptance/scenarios/880-text-input-select-all-nov26.md`。
+// `scripts/acceptance/scenarios/881-text-input-select-all-nov26.md`。
 //
 // 本场景不覆盖：各浮层的候选筛选 / 关闭 / 焦点交还（quick-open、toc、vault 各自的场景与验收
 // 场景 13 / 17 / 230 已覆盖）；设置面板的全部输入（行为与其它原生 input 同一条分派，静态

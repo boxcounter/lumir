@@ -70,9 +70,9 @@ MUST NOT 选到另一个面的内容（输入框持焦时选中正文 = 违反�
 | Quick Open 筛选框 | 原生 `input`（`src/quick-open.ts`） | `selectAllAt` → 宿主 `.select()` | `quick-open.spec.ts`、验收 230d |
 | 大纲筛选框 | 原生 `input`（`src/toc.ts`） | 同上 | `selector-aria-ime-nov25.spec.ts`、验收 13 |
 | vault 筛选框 | 原生 `input`（`src/vault-switcher.ts`） | 同上 | `selector-aria-ime-nov25.spec.ts`、验收 17 |
-| 文件树内联编辑（重命名 / 新建） | 原生 `input`（`src/tree.ts`） | 同上 | `text-input-select-all-nov26`、验收 880 |
-| 文件内搜索 | 原生 `input`（`src/search.ts`） | 同上 | `text-input-select-all-nov26`、验收 880 |
-| 跳转到行 | 原生 `input`（`src/goto-line.ts`） | 同上 | `text-input-select-all-nov26`、验收 880 |
+| 文件树内联编辑（重命名 / 新建） | 原生 `input`（`src/tree.ts`） | 同上 | `text-input-select-all-nov26`、验收 881 |
+| 文件内搜索 | 原生 `input`（`src/search.ts`） | 同上 | `text-input-select-all-nov26`、验收 881 |
+| 跳转到行 | 原生 `input`（`src/goto-line.ts`） | 同上 | `text-input-select-all-nov26`、验收 881 |
 | 键位面板查询框 | 原生 `input`（`src/bindings-panel.ts`） | 同上 | `text-input-select-all-nov26` |
 | 设置面板文本框 | 原生 `input`（`src/settings-panel.ts`） | 同上 | 静态清单 + 统一行为（无独立 ⌘A 用例） |
 | 审批理由 | 原生 `textarea`（`src/harness-panel.ts`） | 同上 | 静态清单 + 统一行为 |
@@ -91,7 +91,7 @@ Skill 候选与 wikilink 候选没有独立输入框——它们过滤的是 com
 - **浏览器结构（真实 DOM）**：`tests/visual/scenes/text-input-select-all-nov26.spec.ts`——每个面
   同时读「`defaultPrevented` 为真 + 选区/值正确 + 其它面的选区不变」。先红后绿：在实现前跑同一
   spec，重命名 / 新建 / 搜索 / 行号 / 键位面板 / 菜单六条按预期判红。
-- **真机（WKWebView）**：`scripts/acceptance/scenarios/880-text-input-select-all-nov26.md`——键盘
+- **真机（WKWebView）**：`scripts/acceptance/scenarios/881-text-input-select-all-nov26.md`——键盘
   通道是否真的送达输入框只有真机可答；chromium 的原生 select-all 会掩盖缺失的接管。
 - **边界（如实登记）**：静态扫描认 `document.createElement` 与共享 `element(...)` 两种工厂；另造
   工厂名的新输入面可能漏检——行为面由 T1 的结构化判据兜底（任何原生文本宿主都落分派）。
