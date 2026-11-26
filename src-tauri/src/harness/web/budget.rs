@@ -71,7 +71,16 @@ pub fn search_success(
         mark(&mut truncated_fields, "results");
     }
 
+    // 结果读数：预算裁剪全部完成后的**单一一次**计算（change
+    // compact-web-search-result-summary-nov26）。条数 = 实际回送模型的结果数；字节 = 最终
+    // 保留结果的 title / snippet / summary / content 的 UTF-8 字节和（不含 URL / site /
+    // date / authority / query 与 JSON 开销）。live 事件与恢复路径消费同一个信封，不重算。
+    let result_count = results.len() as u32;
+    let result_text_bytes = result_text_bytes_of(&results);
+
     let mut envelope = WebEnvelope::search_success(identity, attempts, query, results);
+    envelope.result_count = Some(result_count);
+    envelope.result_text_bytes = Some(result_text_bytes);
     apply_truncation(&mut envelope, truncated_fields);
     envelope
 }
@@ -156,6 +165,19 @@ fn aggregate_chars(results: &[WebSource]) -> usize {
         .sum()
 }
 
+/// 结果文本的 UTF-8 字节和（只含 title / snippet / summary / content；中文按 UTF-8 计）。
+fn result_text_bytes_of(results: &[WebSource]) -> u64 {
+    results
+        .iter()
+        .map(|result| {
+            result.title.len() as u64
+                + result.snippet.as_ref().map_or(0, |text| text.len() as u64)
+                + result.summary.as_ref().map_or(0, |text| text.len() as u64)
+                + result.content.as_ref().map_or(0, |text| text.len() as u64)
+        })
+        .sum()
+}
+
 fn apply_truncation(envelope: &mut WebEnvelope, fields: Vec<String>) {
     envelope.truncated = !fields.is_empty();
     envelope.truncated_fields = fields;
@@ -172,4 +194,127 @@ enum AggregateField {
     Content,
     Summary,
     Snippet,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::output::{WebEnvelope, WebErrorCode, WebOperation, WebSource};
+    use super::*;
+
+    fn source(
+        title: &str,
+        snippet: Option<&str>,
+        summary: Option<&str>,
+        content: Option<&str>,
+    ) -> WebSource {
+        WebSource {
+            url: "https://example.com/synthetic".to_string(),
+            title: title.to_string(),
+            snippet: snippet.map(str::to_string),
+            summary: summary.map(str::to_string),
+            content: content.map(str::to_string),
+            content_format: None,
+            site: Some("example.com".to_string()),
+            date: None,
+            authority: None,
+        }
+    }
+
+    fn counted(envelope: &WebEnvelope) -> serde_json::Value {
+        let value = serde_json::to_value(envelope).unwrap();
+        serde_json::json!({
+            "count": value.get("result_count").cloned().unwrap_or(serde_json::Value::Null),
+            "bytes": value.get("result_text_bytes").cloned().unwrap_or(serde_json::Value::Null),
+        })
+    }
+
+    /// 读数是「预算裁剪后实际回送模型」的那一份：条数 = results.len()，字节 = 四个文本字段的
+    /// UTF-8 字节和（中文 3 字节/字）。URL / site 不计。
+    #[test]
+    fn result_metrics_count_results_and_sum_utf8_text_bytes() {
+        let envelope = search_success(
+            None,
+            1,
+            "synthetic query".to_string(),
+            vec![
+                source("甲", Some("乙乙"), None, Some("abc")),
+                source("", None, Some("中"), None),
+            ],
+        );
+        assert_eq!(
+            counted(&envelope),
+            serde_json::json!({"count": 2, "bytes": 15}),
+            "甲=3 + 乙乙=6 + abc=3 + 中=3 = 15；URL / site 不计"
+        );
+    }
+
+    #[test]
+    fn result_metrics_reflect_field_truncation() {
+        let long = "中".repeat(SEARCH_TITLE_LIMIT + 1);
+        let envelope = search_success(
+            None,
+            1,
+            "q".to_string(),
+            vec![source(&long, None, None, None)],
+        );
+        assert!(envelope
+            .truncated_fields
+            .iter()
+            .any(|field| field == "results[].title"));
+        assert_eq!(
+            counted(&envelope),
+            serde_json::json!({"count": 1, "bytes": SEARCH_TITLE_LIMIT * 3}),
+            "按裁剪后的 300 字 × 3 字节计算"
+        );
+    }
+
+    #[test]
+    fn result_metrics_reflect_whole_result_removal() {
+        let results = (0..120)
+            .map(|_| source(&"t".repeat(SEARCH_TITLE_LIMIT), None, None, None))
+            .collect();
+        let envelope = search_success(None, 1, "q".to_string(), results);
+        assert_eq!(envelope.truncated_fields, vec!["results".to_string()]);
+        assert_eq!(
+            counted(&envelope),
+            serde_json::json!({"count": 80, "bytes": 24_000}),
+            "整条移除后的实际回送条数与字节"
+        );
+    }
+
+    #[test]
+    fn truly_empty_search_is_zero_not_null() {
+        let envelope = search_success(None, 1, "q".to_string(), Vec::new());
+        assert_eq!(
+            counted(&envelope),
+            serde_json::json!({"count": 0, "bytes": 0})
+        );
+        assert!(!envelope.truncated);
+    }
+
+    #[test]
+    fn failures_and_unbudgeted_envelopes_leave_metrics_null() {
+        let mut failure = WebEnvelope::failure(
+            WebOperation::Search,
+            WebErrorCode::WebProviderUnconfigured,
+            "synthetic failure",
+            None,
+            0,
+        );
+        failure_budget(&mut failure);
+        assert_eq!(
+            counted(&failure),
+            serde_json::json!({"count": null, "bytes": null})
+        );
+        let value = serde_json::to_value(&failure).unwrap();
+        assert!(value.get("result_count").is_some(), "键必须在场，值为 null");
+        assert!(value.get("result_text_bytes").is_some());
+
+        let direct = WebEnvelope::search_success(None, 1, "q".to_string(), Vec::new());
+        assert_eq!(
+            counted(&direct),
+            serde_json::json!({"count": null, "bytes": null}),
+            "只有预算路径产出读数"
+        );
+    }
 }

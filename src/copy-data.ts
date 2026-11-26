@@ -2986,6 +2986,26 @@ const COPY_TABLE = {
     zh: "enabled 或 approval 非法：请选择有效值后再保存",
     en: "enabled or approval is invalid: choose valid values before saving",
   },
+  // Web 搜索结果健康摘要（change compact-web-search-result-summary-nov26，Alex 2026-11-26
+  // 「Web Search 按推荐」）：N = 预算裁剪后实际回送模型的结果条数，X = 最终保留结果
+  // title/snippet/summary/content 的 UTF-8 字节和（`byteSizeText` 格式化）。英文单数档在
+  // 运行时表（enOne），deck 只记复数母本。
+  D1029: {
+    zh: "{count} 条结果 · 文本 {size}",
+    en: "{count} results · text {size}",
+    enOne: "{count} result · text {size}",
+  },
+  D1030: { zh: "0 条结果 · 搜索成功", en: "0 results · search succeeded" },
+  D1031: {
+    zh: "{count} 条结果 · 文本 {size} · 已截断",
+    en: "{count} results · text {size} · truncated",
+    enOne: "{count} result · text {size} · truncated",
+  },
+  D1032: {
+    zh: "保留 {count} 条结果 · 文本 {size} · 已截断",
+    en: "Kept {count} results · text {size} · truncated",
+    enOne: "Kept {count} result · text {size} · truncated",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

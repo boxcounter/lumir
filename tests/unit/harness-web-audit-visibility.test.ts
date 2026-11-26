@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { installBackend } from "./harness.ts";
 import type { FakeBackend } from "./harness.ts";
 import { createHarnessPanel } from "../../src/harness-panel.ts";
+import { setLanguageRoot } from "../../src/copy.ts";
 import { createVaultActivityStore } from "../../src/harness-activity.ts";
 import type { HarnessPanelEditor } from "../../src/harness-panel.ts";
 import type { AppShell } from "../../src/shell.ts";
@@ -496,26 +497,71 @@ function toolsBlock(mount: FakeEl): FakeEl {
   return block;
 }
 
-/** 审计块必须紧跟在工具行（或其 termwrap 单元）之后，不能排到行前面。 */
-function assertAuditAfterRow(mount: FakeEl): FakeEl {
+
+/** 附属单元必须紧跟工具行（或其 termwrap 单元）之后；审计正文默认关闭。 */
+function assertAuditUnitAfterRow(mount: FakeEl): {
+  unit: FakeEl;
+  audit: FakeEl;
+  toggle: FakeEl;
+} {
   const block = toolsBlock(mount);
   const row = block.querySelector(".lumir-hp-tool-row");
   assert.ok(row !== null, "工具行应在场");
-  const audit = block.querySelector(".lumir-hp-web-audit");
-  assert.ok(audit !== null, "Web 审计块应在场");
-  const unit = block.querySelector(".lumir-hp-termwrap") ?? row;
+  const unit = block.querySelector(".lumir-hp-web-unit");
+  assert.ok(unit !== null, "Web 附属单元应在场");
+  const audit = unit.querySelector(".lumir-hp-web-audit");
+  assert.ok(audit !== null, "Web 审计正文应在场");
+  const toggle = unit.querySelector(".lumir-hp-web-detail-toggle");
+  assert.ok(toggle !== null, "详情入口应在场");
+  const rowUnit = block.querySelector(".lumir-hp-termwrap") ?? row;
+  const rowIndex = block.childNodes.indexOf(rowUnit);
   const unitIndex = block.childNodes.indexOf(unit);
-  const auditIndex = block.childNodes.indexOf(audit);
-  assert.ok(unitIndex >= 0, "工具行单元必须直接挂在工具块内");
-  assert.ok(block.contains(row), "工具行必须仍在工具块内");
-  assert.ok(
-    auditIndex > unitIndex,
-    `审计块必须在工具行之后（unit=${unitIndex} audit=${auditIndex}）`,
-  );
-  return audit;
+  assert.ok(rowIndex >= 0, "工具行单元必须直接挂在工具块内");
+  assert.ok(unitIndex > rowIndex, `附属单元必须在工具行之后（row=${rowIndex} unit=${unitIndex}）`);
+  assert.equal(audit.hidden, true, "审计正文默认关闭");
+  assert.equal(toggle.getAttribute("aria-expanded"), "false");
+  return { unit, audit, toggle };
 }
 
-const AUDIT = {
+/** 结果健康摘要的在场与逐字文本（`null` = 不应出现）。 */
+function assertHealth(mount: FakeEl, expected: string | null): void {
+  const health = mount.querySelector(".lumir-hp-web-health");
+  if (expected === null) {
+    assert.equal(health, null, "不应出现结果健康摘要");
+  } else {
+    assert.ok(health !== null, "结果健康摘要应在场");
+    assert.equal(health.textContent, expected);
+  }
+}
+
+/** `assert.doesNotMatch` 在本仓钉的 @types/node 档里没有声明（运行时存在、类型面缺）——
+ *  与 harness-activity-wiring.test.ts 同款本地替代，不给 tsconfig 打补丁。 */
+function assertNoMatch(value: string, pattern: RegExp, message: string): void {
+  assert.ok(!pattern.test(value), message);
+}
+
+function searchAudit(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    operation: "search",
+    query: "synthetic query",
+    url: null,
+    provider: "deepseek",
+    provider_id: "deepseek-work",
+    attempts: 1,
+    cost_per_1000_success_cny: 5,
+    local_precheck: false,
+    provider_fetch: true,
+    trust: "untrusted",
+    truncated: false,
+    truncated_fields: [],
+    code: null,
+    result_count: 2,
+    result_text_bytes: 1536,
+    ...overrides,
+  };
+}
+
+const FETCH_AUDIT = {
   operation: "fetch",
   query: null,
   url: "https://example.com/a",
@@ -529,6 +575,8 @@ const AUDIT = {
   truncated: true,
   truncated_fields: ["content"],
   code: null,
+  result_count: null,
+  result_text_bytes: null,
 };
 
 const APPROVAL_PREVIEW = {
@@ -544,7 +592,23 @@ const APPROVAL_PREVIEW = {
   cost_per_1000_success_cny: 5,
 };
 
-test("ask 批准后的 done 在已决行之后显示完整审计（attempts / truncated）", async () => {
+/** 一次 Web 调用（started → done）并收一轮终态（触发组折叠）。 */
+async function mountDone(
+  name: string,
+  summary: string,
+  web: unknown,
+  doneSummary = "成功",
+): Promise<FakeEl> {
+  const { mount, emit } = await mountPanel(() => EMPTY_SNAPSHOT);
+  emit({ type: "auto_turn_started", chain_index: 1, vault: VAULT });
+  emit({ type: "tool_call", name, status: "started", summary, call_id: "c1", vault: VAULT });
+  emit({ type: "tool_call", name, status: "done", summary: doneSummary, call_id: "c1", web, vault: VAULT });
+  emit({ type: "done", vault: VAULT });
+  await flush();
+  return mount;
+}
+
+test("ask 批准后的 done：附属单元在已决行之后，详情默认关闭、展开后完整", async () => {
   const { mount, emit } = await mountPanel(() => EMPTY_SNAPSHOT);
   emit({ type: "auto_turn_started", chain_index: 1, vault: VAULT });
   emit({
@@ -572,17 +636,21 @@ test("ask 批准后的 done 在已决行之后显示完整审计（attempts / tr
     status: "done",
     summary: "已完成",
     call_id: "call-ask",
-    web: AUDIT,
+    web: FETCH_AUDIT,
     vault: VAULT,
   });
-  const audit = assertAuditAfterRow(mount);
+  const { audit, toggle } = assertAuditUnitAfterRow(mount);
+  assert.equal(audit.hidden, true, "批准后审计同样默认关闭");
+  toggle.fire("click");
+  assert.equal(audit.hidden, false);
+  assert.equal(toggle.getAttribute("aria-expanded"), "true");
   assert.match(audit.textContent, /尝试次数/);
   assert.match(audit.textContent, /2/);
   assert.match(audit.textContent, /截断字段/);
   assert.match(audit.textContent, /content/);
 });
 
-test("恢复路径的已批准行同样显示审计块，且顺序为工具行→审计", async () => {
+test("恢复路径的已批准行同样默认关闭，展开后可见审计", async () => {
   const envelope = {
     ok: true,
     operation: "fetch",
@@ -593,6 +661,8 @@ test("恢复路径的已批准行同样显示审计块，且顺序为工具行�
     truncated: true,
     truncated_fields: ["content"],
     local_precheck: true,
+    result_count: null,
+    result_text_bytes: null,
     source: {
       url: "https://example.com/a",
       title: "",
@@ -621,12 +691,13 @@ test("恢复路径的已批准行同样显示审计块，且顺序为工具行�
     ],
   };
   const { mount } = await mountPanel(() => snapshot);
-  const audit = assertAuditAfterRow(mount);
+  const { audit, toggle } = assertAuditUnitAfterRow(mount);
+  toggle.fire("click");
   assert.match(audit.textContent, /尝试次数/);
   assert.match(audit.textContent, /content/);
 });
 
-test("无 running 行的乱序 done 仍保持工具行→审计顺序", async () => {
+test("无 running 行的乱序 done 仍保持工具行→附属单元顺序", async () => {
   const { mount, emit } = await mountPanel(() => EMPTY_SNAPSHOT);
   emit({ type: "auto_turn_started", chain_index: 1, vault: VAULT });
   emit({
@@ -635,13 +706,13 @@ test("无 running 行的乱序 done 仍保持工具行→审计顺序", async ()
     status: "done",
     summary: "已完成",
     call_id: "call-stray",
-    web: AUDIT,
+    web: FETCH_AUDIT,
     vault: VAULT,
   });
-  assertAuditAfterRow(mount);
+  assertAuditUnitAfterRow(mount);
 });
 
-test("allow_all 的 done 与 ask 批准后同形：工具行→审计", async () => {
+test("allow_all 的 done 与 ask 批准后同形：工具行→默认关闭的附属单元", async () => {
   const { mount, emit } = await mountPanel(() => EMPTY_SNAPSHOT);
   emit({ type: "auto_turn_started", chain_index: 1, vault: VAULT });
   emit({
@@ -658,10 +729,266 @@ test("allow_all 的 done 与 ask 批准后同形：工具行→审计", async ()
     status: "done",
     summary: "已完成",
     call_id: "call-allow",
-    web: AUDIT,
+    web: FETCH_AUDIT,
     vault: VAULT,
   });
-  assertAuditAfterRow(mount);
+  assertAuditUnitAfterRow(mount);
+});
+
+test("单次 Web 调用不出现组摘要；第二行是结果健康摘要，详情默认关闭", async () => {
+  const mount = await mountDone("web_search", "synthetic query", searchAudit());
+  assert.equal(
+    toolsBlock(mount).querySelector(".lumir-hp-tool-summary"),
+    null,
+    "单次调用 MUST NOT 折叠为组摘要",
+  );
+  assertHealth(mount, "2 条结果 · 文本 1.5 KB");
+  const { audit, toggle } = assertAuditUnitAfterRow(mount);
+  toggle.fire("click");
+  assert.equal(audit.hidden, false);
+  assert.match(audit.textContent, /查询/);
+  assert.match(audit.textContent, /synthetic query/);
+  assert.match(audit.textContent, /untrusted data/);
+});
+
+test("两个真实调用 + 两个审计仍计为 2；展开组后各审计仍默认关闭", async () => {
+  const { mount, emit } = await mountPanel(() => EMPTY_SNAPSHOT);
+  emit({ type: "auto_turn_started", chain_index: 1, vault: VAULT });
+  for (let index = 1; index <= 2; index += 1) {
+    const callId = `call-${index}`;
+    emit({
+      type: "tool_call",
+      name: "web_search",
+      status: "started",
+      summary: `query ${index}`,
+      call_id: callId,
+      vault: VAULT,
+    });
+    emit({
+      type: "tool_call",
+      name: "web_search",
+      status: "done",
+      summary: "成功",
+      call_id: callId,
+      web: searchAudit({ query: `query ${index}`, result_count: index, result_text_bytes: index * 1024 }),
+      vault: VAULT,
+    });
+  }
+  emit({ type: "done", vault: VAULT });
+  await flush();
+  const summary = toolsBlock(mount).querySelector(".lumir-hp-tool-summary");
+  assert.ok(summary !== null, "两次真实调用必须折叠为组摘要");
+  assert.equal(summary.dataset.count, "2", "计数只计真实工具调用，不含审计");
+  assert.match(summary.textContent, /2 个工具调用/);
+  const audits = mount.querySelectorAll(".lumir-hp-web-audit");
+  const units = mount.querySelectorAll(".lumir-hp-web-unit");
+  assert.equal(audits.length, 2);
+  assert.equal(units.length, 2);
+  assert.ok(units.every((unit) => unit.hidden), "折叠时附属单元随行隐藏");
+  assert.ok(audits.every((audit) => audit.hidden), "折叠时各审计保持默认关闭");
+  summary.fire("click");
+  assert.ok(units.every((unit) => !unit.hidden), "展开组后附属单元可见");
+  assert.ok(audits.every((audit) => audit.hidden), "展开组 MUST NOT 展开各审计");
+  const toggles = mount.querySelectorAll(".lumir-hp-web-detail-toggle");
+  toggles[0].fire("click");
+  assert.equal(audits[0].hidden, false);
+  assert.equal(audits[1].hidden, true, "打开一个审计不得连带打开另一个");
+});
+
+test("结果健康摘要：正常 / 字段截断 / 结果裁剪 / 真正空结果", async () => {
+  const cases: Array<{ audit: Record<string, unknown>; text: string }> = [
+    { audit: searchAudit({ result_count: 0, result_text_bytes: 0 }), text: "0 条结果 · 搜索成功" },
+    {
+      audit: searchAudit({
+        truncated: true,
+        truncated_fields: ["results[].content"],
+        result_count: 2,
+        result_text_bytes: 24_000,
+      }),
+      text: "2 条结果 · 文本 23 KB · 已截断",
+    },
+    {
+      audit: searchAudit({
+        truncated: true,
+        truncated_fields: ["results"],
+        result_count: 80,
+        result_text_bytes: 24_000,
+      }),
+      text: "保留 80 条结果 · 文本 23 KB · 已截断",
+    },
+    { audit: searchAudit({ result_count: 1, result_text_bytes: 1024 }), text: "1 条结果 · 文本 1.0 KB" },
+  ];
+  for (const { audit, text } of cases) {
+    const mount = await mountDone("web_search", "synthetic query", audit);
+    assertHealth(mount, text);
+  }
+});
+
+test("结果健康摘要随语言切到英文：单数档正确", async () => {
+  setLanguageRoot(() => ({ lang: "en" }));
+  try {
+    const mount = await mountDone(
+      "web_search",
+      "synthetic query",
+      searchAudit({ result_count: 1, result_text_bytes: 1024 }),
+    );
+    assertHealth(mount, "1 result · text 1.0 KB");
+  } finally {
+    setLanguageRoot(() => ({ lang: "zh-Hans" }));
+  }
+});
+
+test("失败直接显示稳定 code + 人话原因，不显示条数 / 大小；审计仍可展开", async () => {
+  const mount = await mountDone(
+    "web_search",
+    "synthetic query",
+    searchAudit({
+      provider: null,
+      provider_id: null,
+      attempts: 0,
+      provider_fetch: false,
+      code: "web_provider_unconfigured",
+      result_count: null,
+      result_text_bytes: null,
+    }),
+    "error · web_provider_unconfigured: 没有唯一可用的官方 DeepSeek Web provider",
+  );
+  assertHealth(mount, null);
+  const row = mount.querySelector(".lumir-hp-tool-row");
+  assert.ok(row !== null);
+  assert.match(row.textContent, /web_provider_unconfigured/);
+  assertNoMatch(row.textContent, /error · /, "live 与 restored 同形：不显示状态前缀");
+  assertNoMatch(row.textContent, /0 条结果|0 B/, "失败行不显示条数 / 大小");
+  assertAuditUnitAfterRow(mount);
+});
+
+test("旧记录缺结果读数：不显示条数与大小，详情仍可用", async () => {
+  const envelope = {
+    ok: true,
+    operation: "search",
+    provider: "deepseek",
+    provider_id: "deepseek-work",
+    attempts: 1,
+    trust: "untrusted",
+    truncated: false,
+    truncated_fields: [],
+    query: "legacy query",
+    results: [],
+  };
+  const snapshot = {
+    ...EMPTY_SNAPSHOT,
+    messages: [
+      {
+        role: "tool",
+        name: "web_search",
+        summary: "legacy query",
+        status: "done",
+        text: JSON.stringify(envelope),
+        ts: 1_759_000_003,
+      },
+    ],
+  };
+  const { mount } = await mountPanel(() => snapshot);
+  assertHealth(mount, null);
+  const { audit, toggle } = assertAuditUnitAfterRow(mount);
+  toggle.fire("click");
+  assert.match(audit.textContent, /legacy query/);
+});
+
+test("live 与 restored 同形同默认态", async () => {
+  const envelope = {
+    ok: true,
+    operation: "search",
+    provider: "deepseek",
+    provider_id: "deepseek-work",
+    attempts: 1,
+    trust: "untrusted",
+    truncated: false,
+    truncated_fields: [],
+    query: "synthetic query",
+    result_count: 2,
+    result_text_bytes: 1536,
+    results: [],
+  };
+  const live = await mountDone("web_search", "synthetic query", searchAudit());
+  const restored = await mountPanel(() => ({
+    ...EMPTY_SNAPSHOT,
+    messages: [
+      {
+        role: "tool",
+        name: "web_search",
+        summary: "synthetic query",
+        status: "done",
+        text: JSON.stringify(envelope),
+        ts: 1_759_000_004,
+      },
+    ],
+  }));
+  assertHealth(live, "2 条结果 · 文本 1.5 KB");
+  assertHealth(restored.mount, "2 条结果 · 文本 1.5 KB");
+  const liveAudit = live.querySelector(".lumir-hp-web-audit");
+  const restoredAudit = restored.mount.querySelector(".lumir-hp-web-audit");
+  assert.ok(liveAudit !== null && restoredAudit !== null);
+  assert.equal(liveAudit.hidden, true);
+  assert.equal(restoredAudit.hidden, true);
+  assert.equal(
+    live.querySelector(".lumir-hp-web-detail-toggle")?.getAttribute("aria-expanded"),
+    "false",
+  );
+  assert.equal(
+    restored.mount.querySelector(".lumir-hp-web-detail-toggle")?.getAttribute("aria-expanded"),
+    "false",
+  );
+  assert.equal(liveAudit.textContent, restoredAudit.textContent, "两条路径的审计内容同形");
+});
+
+test("running 行显示纯 query：旧 JSON 摘要不把默认参数带上屏", async () => {
+  const { mount, emit } = await mountPanel(() => EMPTY_SNAPSHOT);
+  emit({ type: "auto_turn_started", chain_index: 1, vault: VAULT });
+  emit({
+    type: "tool_call",
+    name: "web_search",
+    status: "started",
+    summary: '{"query":"synthetic query","count":5,"need_content":false}',
+    call_id: "call-running",
+    vault: VAULT,
+  });
+  await flush();
+  const row = mount.querySelector(".lumir-hp-tool-row");
+  assert.ok(row !== null);
+  assert.match(row.textContent, /synthetic query/);
+  assertNoMatch(row.textContent, /\{/, "running 行不显示 JSON 结构");
+  assertNoMatch(row.textContent, /count/, "running 行不显示默认参数");
+  assertNoMatch(row.textContent, /need_content/, "running 行不显示默认参数");
+});
+
+test("Ask 待决卡完整信息不变；决策前不建附属单元", async () => {
+  const { mount, emit } = await mountPanel(() => EMPTY_SNAPSHOT);
+  emit({ type: "auto_turn_started", chain_index: 1, vault: VAULT });
+  emit({
+    type: "tool_call",
+    name: "web_fetch",
+    status: "started",
+    summary: "https://example.com/a",
+    call_id: "call-ask-card",
+    vault: VAULT,
+  });
+  emit({
+    type: "approval_request",
+    id: "ap-card",
+    tool: "web_fetch",
+    web: APPROVAL_PREVIEW,
+    vault: VAULT,
+  });
+  const card = mount.querySelector(".lumir-hp-approval-web");
+  assert.ok(card !== null, "Ask 待决卡应在场");
+  assert.match(card.textContent, /https:\/\/example\.com\/a/);
+  assert.match(card.textContent, /https:\/\/example\.com/);
+  assert.match(card.textContent, /deepseek-work/);
+  assert.match(card.textContent, /HEAD \/ Range GET/);
+  assert.match(card.textContent, /5 元 \/ 1000 次/);
+  assert.match(card.textContent, /untrusted data/);
+  assert.equal(mount.querySelector(".lumir-hp-web-unit"), null, "决策前不建附属单元");
 });
 
 test("恢复的 Web 工具行不把 provider_message / request_id / 正文里的 Key 渲染上屏", async () => {
@@ -702,6 +1029,6 @@ test("恢复的 Web 工具行不把 provider_message / request_id / 正文里的
   assert.equal(
     mount.textContent.includes(canary),
     false,
-    "panel DOM 不得出现 Key / provider 原始字段",
+    "panel DOM 不得出现 Key / provider 原始字段（含默认关闭的详情）",
   );
 });

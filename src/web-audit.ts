@@ -14,6 +14,11 @@ export interface WebAuditMetadata {
   truncated: boolean;
   truncated_fields: string[];
   code: string | null;
+  /** 预算裁剪后实际回送模型的结果条数；非成功 Search / 失败 / 旧留存缺键 → null。
+   *  MUST NOT 用 0 兜底（0 是「真正成功的空结果」这一合法读数）。 */
+  result_count: number | null;
+  /** 最终保留结果 title/snippet/summary/content 的 UTF-8 字节和；口径同 `result_count`。 */
+  result_text_bytes: number | null;
 }
 
 export function parseWebAudit(value: unknown): WebAuditMetadata | undefined {
@@ -31,6 +36,10 @@ export function parseWebAudit(value: unknown): WebAuditMetadata | undefined {
     return undefined;
   }
   if (!nullableString(raw.code)) return undefined;
+  const code = (raw.code as string | null | undefined) ?? null;
+  // 失败结果不携带读数（合同：缺失 / 不可信 / 失败时指标为 null）。即使坏记录带了数值，
+  // 也在投影层归 null，而不是只靠渲染层不显示——下游消费者拿到的 metadata 本身是干净的。
+  const failed = code !== null;
   return {
     operation,
     query: (raw.query as string | null | undefined) ?? null,
@@ -44,7 +53,10 @@ export function parseWebAudit(value: unknown): WebAuditMetadata | undefined {
     trust: "untrusted",
     truncated: raw.truncated,
     truncated_fields: raw.truncated_fields as string[],
-    code: (raw.code as string | null | undefined) ?? null,
+    code,
+    // 两个读数各自独立降级：一个非法不连带丢掉另一个合法值；缺键同样归 null。
+    result_count: failed ? null : nonNegativeInteger(raw.result_count),
+    result_text_bytes: failed ? null : nonNegativeInteger(raw.result_text_bytes),
   };
 }
 
@@ -76,6 +88,8 @@ export function webAuditFromEnvelope(value: unknown): WebAuditMetadata | undefin
     truncated: raw.truncated,
     truncated_fields: raw.truncated_fields,
     code: (raw.code as string | null | undefined) ?? null,
+    result_count: raw.result_count,
+    result_text_bytes: raw.result_text_bytes,
   });
 }
 
@@ -90,4 +104,9 @@ export function webAuditFromPanelText(text: unknown): WebAuditMetadata | undefin
 
 function nullableString(value: unknown): boolean {
   return value === null || value === undefined || typeof value === "string";
+}
+
+/** 可空非负整数读数：缺失 / null / 字符串 / 负数 / 小数一律 null（不 `?? 0`）。 */
+function nonNegativeInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
 }

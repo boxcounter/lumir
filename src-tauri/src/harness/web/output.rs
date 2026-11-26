@@ -121,6 +121,14 @@ pub struct WebEnvelope {
     pub results: Option<Vec<WebSource>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<WebSource>,
+    // 结果读数（change compact-web-search-result-summary-nov26）：只在成功 Search 的
+    // 预算裁剪完成后由 `budget::search_success` **单一一次**计算。非 Search 成功、失败、
+    // 未经过预算路径的信封一律 null——MUST NOT 用 0 冒充空结果（0 是合法读数：真正成功的
+    // 空结果）。键恒在场（serde 序列化为 null），旧留存缺键由前端按 null 降级。
+    pub result_count: Option<u32>,
+    // JSON 是 number（字节数远低于 2^53）；ts-rs 的 u64 默认导出 bigint 与本载荷不符。
+    #[ts(type = "number | null")]
+    pub result_text_bytes: Option<u64>,
 }
 
 impl WebEnvelope {
@@ -187,6 +195,8 @@ impl WebEnvelope {
             query: None,
             results: None,
             source: None,
+            result_count: None,
+            result_text_bytes: None,
         }
     }
 }
@@ -233,6 +243,9 @@ pub fn audit_metadata(
         "truncated": output.get("truncated").and_then(serde_json::Value::as_bool).unwrap_or(false),
         "truncated_fields": output.get("truncated_fields").cloned().unwrap_or_else(|| serde_json::json!([])),
         "code": output.get("code").cloned().unwrap_or(serde_json::Value::Null),
+        // 结果读数只透传信封（预算路径的单一计算点），审计不重算。
+        "result_count": output.get("result_count").cloned().unwrap_or(serde_json::Value::Null),
+        "result_text_bytes": output.get("result_text_bytes").cloned().unwrap_or(serde_json::Value::Null),
     })
 }
 
@@ -384,5 +397,40 @@ mod tests {
                 "{operation:?} attempts={attempts}"
             );
         }
+    }
+
+    #[test]
+    fn audit_metadata_carries_result_metrics_and_failures_stay_null() {
+        let success = serde_json::json!({
+            "operation": "search",
+            "query": "synthetic",
+            "provider": "deepseek",
+            "provider_id": "deepseek-work",
+            "attempts": 1,
+            "local_precheck": false,
+            "truncated": true,
+            "truncated_fields": ["results"],
+            "result_count": 2,
+            "result_text_bytes": 15,
+        });
+        let audit = audit_metadata(WebOperation::Search, &success, &serde_json::json!({}));
+        assert_eq!(
+            audit["result_count"],
+            serde_json::json!(2),
+            "审计只透传，不重算"
+        );
+        assert_eq!(audit["result_text_bytes"], serde_json::json!(15));
+
+        let failure = serde_json::json!({
+            "operation": "search",
+            "attempts": 0,
+            "truncated": false,
+            "truncated_fields": [],
+            "code": "web_provider_unconfigured",
+        });
+        let audit = audit_metadata(WebOperation::Search, &failure, &serde_json::json!({}));
+        assert_eq!(audit["result_count"], serde_json::Value::Null);
+        assert_eq!(audit["result_text_bytes"], serde_json::Value::Null);
+        assert!(audit.get("result_count").is_some(), "键必须在场，值为 null");
     }
 }

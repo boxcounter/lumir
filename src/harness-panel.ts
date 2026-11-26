@@ -100,6 +100,7 @@ import {
 import type { ComposerContent, PlacedAttachment } from "./harness-composer";
 import { createComposerImeCoordinator } from "./harness-composer-ime";
 import { currentLanguage, errorText, formatDate, formatRelative, onRelabel, t, tPlural } from "./copy";
+import { byteSizeText } from "./byte-size";
 import type { CopyKey, Language } from "./copy";
 import { progressTailView } from "./harness-progress-tail";
 export { stageCopyKey } from "./harness-progress-tail";
@@ -1043,6 +1044,25 @@ function createWebAuditBlock(metadata: WebAuditMetadata): HTMLElement {
   return el;
 }
 
+/** Web 搜索结果健康摘要（change compact-web-search-result-summary-nov26）：只有「成功 Search +
+ *  两个读数都是合法整数」才渲染。N = 预算裁剪后实际回送模型的结果条数；`size` = 最终保留结果
+ *  title / snippet / summary / content 的 UTF-8 字节和（后端单点计算）。
+ *
+ *  四种形态：正常 / 字段截断 / 结果裁剪 / 真正成功的空结果。失败、非 Search、缺读数 → null，
+ *  MUST NOT 用 `0 条结果` / `0 B` 冒充（旧留存缺键即走这条降级）。 */
+function webHealthText(metadata: WebAuditMetadata): string | null {
+  if (metadata.operation !== "search" || metadata.code !== null) return null;
+  if (metadata.result_count === null || metadata.result_text_bytes === null) return null;
+  const count = metadata.result_count;
+  const size = byteSizeText(metadata.result_text_bytes);
+  if (metadata.truncated_fields.includes("results")) {
+    return tPlural("D1032", count, { count, size });
+  }
+  if (count === 0) return t("D1030");
+  if (metadata.truncated) return tPlural("D1031", count, { count, size });
+  return tPlural("D1029", count, { count, size });
+}
+
 /** 定时任务批准预览（change add-cron-conversational-registration design §6.3 契约）：形状由
  *  Rust 侧批准载荷给出（事件与快照同源同形），前端只呈现、不推导——`skip_today` 是线程按
  *  自己的时钟算好的结果，MUST NOT 在前端重算。`op = "remove"` 时只有 `id` 与 `at`
@@ -1763,6 +1783,17 @@ export function thinkingStateOf(snapshot: unknown): { level: string; supported: 
  */
 const TOOL_FAILED_SUMMARY = /^[a-z]+ · [a-z0-9_]+: /;
 
+const WEB_TOOL_NAMES = new Set(["web_search", "web_fetch"]);
+
+/**
+ * Web 失败行的尾注：live 摘要带 `error · ` / `denied · ` 状态前缀，恢复路径的
+ * `failureTextOf` 不带——两者同形是 change compact-web-search-result-summary-nov26 的合同
+ * （稳定错误码 + 人话原因直接可见，不显示条数 / 大小）。非 Web 工具逐字不变。
+ */
+function webFailureTail(name: string, summary: string): string {
+  return WEB_TOOL_NAMES.has(name) ? summary.replace(/^(?:error|denied|rejected) · /, "") : summary;
+}
+
 /**
  * 快照恢复路径上一条 assistant 记录的正文：缺 `text` / 非字符串 / 空白串 → `null`
  * （MUST NOT 渲染）。模型只发工具调用、无正文的轮次在 M367 之前会落一条 `text: Some("")`
@@ -1846,6 +1877,12 @@ function keyArgOf(name: string, args: Record<string, unknown>): string | null {
       return typeof args.path === "string" && args.path !== "" ? args.path : "/";
     case "vault_search":
       return typeof args.query === "string" && args.query !== "" ? args.query : null;
+    // Web 工具只上屏纯 query / URL（change compact-web-search-result-summary-nov26）：
+    // 旧快照的 summary 仍是 arguments JSON，默认参数（count / need_content）不进 running 行。
+    case "web_search":
+      return typeof args.query === "string" && args.query !== "" ? args.query : null;
+    case "web_fetch":
+      return typeof args.url === "string" && args.url !== "" ? args.url : null;
     case "skill_load":
       return typeof args.name === "string" && args.name !== "" ? args.name : null;
     default:
@@ -4372,6 +4409,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  轮次终态经 finalizeStreamingMessage 定格（数据引用释放，DOM 元素留在消息内）。 */
   let thinkingBlocks: ThinkingBlock[] = [];
   let thinkingDirty = false;
+  /** Web 附属单元（change compact-web-search-result-summary-nov26）：健康摘要 + 默认关闭的
+   *  「查看详情」。按已存 metadata 重渲（语言切换），元素随 transcript 清面一起丢弃。 */
+  interface WebAuditUnitEntry {
+    unit: HTMLElement;
+    metadata: WebAuditMetadata;
+  }
+  let webAuditUnits: WebAuditUnitEntry[] = [];
   /** 内容事件的到达序号（M383）：text_chunk / reasoning_chunk 各领一个单调递增号——思考块
    *  视图与正文段的**结构性创建**按到达序合并落位（「DOM 序 = 事件序」合同，见
    *  flushPendingStructures；旧实现把思考块一律锚到首个正文段之前，交错时倒置）。 */
@@ -4481,6 +4525,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     el: HTMLElement;
     rows: HTMLElement[];
     running: HTMLElement | null;
+    /** 附属单元（Web 健康摘要 + 默认关闭的审计）：随组折叠 / 展开显隐，**不计入**
+     *  `rows`（组摘要只数真实工具调用）。 */
+    extras: HTMLElement[];
+    /** 组摘要是否处于收起态（append 时给新附属单元定初始显隐）。 */
+    collapsed: boolean;
   }
   let activeTools: ToolsBlock | null = null;
   /** 已封板的工具块（开出新文本段时旧块封板）——定稿时与在途块一起折叠。 */
@@ -5567,6 +5616,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     refreshWhoLines();
     relabelToolSummaries();
     relabelThinkingViews();
+    relabelWebAuditUnits();
     // M644：浮钮的可访问名随语言重取（无新内容 / 有新内容两串）；态 / 未读取控制器现值——
     // 与 render 走同一个施加函数，不构成第二份状态。
     applyJumpBottomState({ phase: follow.phase(), unread: follow.unread() });
@@ -7057,7 +7107,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const host = streamingEl ?? lastAssistantEl;
     if (host !== null) host.append(el);
     else appendTranscriptNode(el);
-    activeTools = { el, rows: [], running: null };
+    activeTools = { el, rows: [], running: null, extras: [], collapsed: false };
     // 工具块落位后，其后的正文必须开新段（留在工具块之后）——currentSeg 封在这里：
     // 不清的话下一轮正文会继续追加进工具块之前的旧段，工具行被埋回消息末尾（M374 的
     // 时序倒置在「段后还有正文」的轮次里复现）。
@@ -7065,11 +7115,65 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return activeTools;
   }
 
-  /** 审计块统一追加点：**先有工具行、再追加审计**，并进 `rows`（折叠计数与逐行显隐）。 */
+  /** Web 附属单元（change compact-web-search-result-summary-nov26）：第二行是结果健康摘要 +
+   *  「查看详情」，审计正文默认关闭。单元**不进** `block.rows`——组摘要只数真实工具调用，
+   *  单 Web 调用因此不出摘要，两个真实调用 + 两个审计仍显示 2。 */
+  function createWebAuditUnit(metadata: WebAuditMetadata): HTMLElement {
+    const unit = document.createElement("div");
+    unit.className = "lumir-hp-web-unit";
+    const entry: WebAuditUnitEntry = { unit, metadata };
+    webAuditUnits.push(entry);
+    renderWebAuditUnit(entry, false);
+    return unit;
+  }
+
+  /** 按已存 metadata 重渲单元（创建与语言切换共用）。`preserveOpen` 保留用户当前的详情
+   *  展开态；组开合不经过本函数（只改单元的 hidden），因此不会改写各详情自身的开合。 */
+  function renderWebAuditUnit(entry: WebAuditUnitEntry, preserveOpen: boolean): void {
+    const open = preserveOpen && entry.unit.dataset.open === "true";
+    const unit = entry.unit;
+    unit.replaceChildren();
+    const meta = document.createElement("div");
+    meta.className = "lumir-hp-web-meta";
+    const health = webHealthText(entry.metadata);
+    if (health !== null) {
+      const healthEl = document.createElement("span");
+      healthEl.className = "lumir-hp-web-health";
+      healthEl.textContent = health;
+      meta.append(healthEl);
+    }
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "lumir-hp-web-detail-toggle";
+    toggle.setAttribute("aria-expanded", String(open));
+    const more = document.createElement("span");
+    more.className = "lumir-hp-tool-more";
+    const label = document.createElement("span");
+    label.textContent = t("D407");
+    more.append(createThinkChev(), label);
+    toggle.append(more);
+    const body = createWebAuditBlock(entry.metadata);
+    body.hidden = !open;
+    toggle.addEventListener("click", () => {
+      const next = body.hidden;
+      body.hidden = !next;
+      toggle.setAttribute("aria-expanded", String(next));
+      unit.dataset.open = String(next);
+      unit.classList.toggle("is-open", next);
+    });
+    meta.append(toggle);
+    unit.append(meta, body);
+    unit.dataset.open = String(open);
+    unit.classList.toggle("is-open", open);
+  }
+
+  /** 审计块统一追加点：**先有工具行、再追加附属单元**，单元进 `extras`（折叠时随行显隐），
+   *  不进 `rows`（不参与调用计数）。 */
   function appendWebAuditToBlock(block: ToolsBlock, audit: WebAuditMetadata): void {
-    const element = createWebAuditBlock(audit);
-    block.el.append(element);
-    block.rows.push(element);
+    const unit = createWebAuditUnit(audit);
+    unit.hidden = block.collapsed;
+    block.el.append(unit);
+    block.extras.push(unit);
   }
 
   /** 轮次终态收尾（幂等；done / aborted / error 经 finalizeStreamingMessage 共用本出口，
@@ -7093,6 +7197,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /** 单个工具块的折叠收尾（在途块与封板块共用）。 */
   function collapseBlock(block: ToolsBlock): void {
     if (block.rows.length < 2) return;
+    block.collapsed = true;
     const summary = document.createElement("button");
     summary.type = "button";
     summary.className = "lumir-hp-tool-summary";
@@ -7116,11 +7221,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       const open = summary.getAttribute("aria-expanded") !== "true";
       summary.setAttribute("aria-expanded", String(open));
       summary.classList.toggle("is-open", open);
+      block.collapsed = !open;
       for (const row of block.rows) row.hidden = !open && !isRunningTaskRow(row);
+      // 附属单元随组显隐；各单元自己的详情展开态由单元内部的 hidden 承担，组开合不改写它。
+      for (const extra of block.extras) extra.hidden = !open;
     });
     // 运行中的 `task` 行不被折叠隐藏（M822 C2）：用户视线在对话流里，进程控制不能藏进折叠区；
-    // 终态行随块折叠（结果可点开回看）。
+    // 终态行随块折叠（结果可点开回看）。附属单元一律随块折叠（其审计本就默认关闭）。
     for (const row of block.rows) row.hidden = !isRunningTaskRow(row);
+    for (const extra of block.extras) extra.hidden = true;
     block.el.prepend(summary);
   }
 
@@ -7129,6 +7238,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     for (const btn of transcript.querySelectorAll<HTMLElement>(".lumir-hp-tool-summary")) {
       const label = btn.querySelector(".lumir-hp-tool-text");
       if (label !== null) label.textContent = t("D387", { count: Number(btn.dataset.count ?? "0") });
+    }
+  }
+
+  /** Web 附属单元随语言重渲：健康摘要 / 「查看详情」/ 审计键名都重取文案，保留各详情当前
+   *  展开态（`renderWebAuditUnit` 从单元已存的 dataset 恢复）。 */
+  function relabelWebAuditUnits(): void {
+    for (const entry of webAuditUnits) {
+      if (!transcript.contains(entry.unit)) continue;
+      renderWebAuditUnit(entry, true);
     }
   }
 
@@ -7684,7 +7802,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           if (text !== null) {
             const outEl = document.createElement("span");
             outEl.className = "lumir-hp-tool-out";
-            outEl.textContent = `· ${summary}`;
+            outEl.textContent = `· ${webFailureTail(name, summary)}`;
             text.append(document.createTextNode(" "), outEl);
           }
         }
@@ -7732,7 +7850,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // （判据「是 JSON 才取参数」），而 M528 起 core 的成品摘要不是 JSON ⇒ 失败行的参数格
         // 整格空掉、命令本体消失（修前的可见性本来就分两半：arguments ≤80 字的调用严格版能
         // 解析出命令、看得见；>80 字的调用原文截断后照样看不见——M528 与这处一并收口）。
-        createToolText(name, toolArgsText(name, args), failed ? summary : undefined, toolPathTargetsOf(name, args)),
+        createToolText(name, toolArgsText(name, args), failed ? webFailureTail(name, summary) : undefined, toolPathTargetsOf(name, args)),
       );
     } else {
       // 无 running 行（乱序 done / 桩环境）：没有更早的那份摘要可用，done 原文按形状判定。
@@ -7744,7 +7862,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         createToolText(
           name,
           humanizeToolArgsStrict(name, summary),
-          failed ? summary : undefined,
+          failed ? webFailureTail(name, summary) : undefined,
           toolPathTargetsOf(name, summary),
         ),
       );
@@ -10120,7 +10238,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const row = document.createElement("div");
     row.className = failed ? "lumir-hp-tool-row is-fail" : "lumir-hp-tool-row is-done";
     const tail = failed
-      ? (failureTextOf(record) ?? (TOOL_FAILED_SUMMARY.test(summary) ? summary : undefined))
+      ? (failureTextOf(record) ?? (TOOL_FAILED_SUMMARY.test(summary) ? webFailureTail(name, summary) : undefined))
       : undefined;
     row.append(
       createToolIcon(failed ? "fail" : "done"),
@@ -10134,11 +10252,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     block.el.append(row);
     block.rows.push(row);
     const audit = webAuditFromPanelText(record.text);
-    if (audit !== undefined) {
-      const element = createWebAuditBlock(audit);
-      block.el.append(element);
-      block.rows.push(element);
-    }
+    if (audit !== undefined) appendWebAuditToBlock(block, audit);
   }
 
   /**
@@ -10413,6 +10527,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     thinkingDirty = false;
     pendingThinkCreates = [];
     pendingSegSeq = null;
+    webAuditUnits = [];
   }
 
   /**

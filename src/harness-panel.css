@@ -1303,6 +1303,46 @@
   font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   color: var(--text-3);
 }
+/* Web 附属单元（change compact-web-search-result-summary-nov26）：工具行之后的第二行 =
+   结果健康摘要 + 「查看详情」；审计正文默认 hidden。左缩进 17px 与 .lumir-hp-term-body
+   同一算式（图标 14 + 间距 3）。不新增 overflow 容器——审计正文内部仍用既有 .lumir-hp-argv。
+   不修改 .lumir-hp-tool-row 的全局 padding / 高度。 */
+.lumir-hp-web-unit {
+  margin: var(--sp-1) 0 var(--sp-1) 17px;
+}
+.lumir-hp-web-unit[hidden] {
+  display: none;
+}
+.lumir-hp-web-meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  line-height: var(--lh-ui);
+  color: var(--text-2);
+}
+.lumir-hp-web-detail-toggle {
+  flex: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.lumir-hp-web-detail-toggle:hover {
+  color: var(--text);
+}
+.lumir-hp-web-unit.is-open .lumir-hp-web-detail-toggle svg {
+  transform: rotate(90deg);
+}
+.lumir-hp-web-audit {
+  margin-top: var(--sp-1);
+}
+.lumir-hp-web-audit[hidden] {
+  display: none;
+}
 
 /* ── 上下文 chip（M370 起在 composer 区顶部：横线之下、composerBox 之上——发送前可核对
    的读数与输入同区，Alex 2026-10-07）：描边 chip（eink 规则⑥同形——本就描边、无底色，

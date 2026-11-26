@@ -4,4 +4,4 @@ import type { WebOperation } from "./WebOperation";
 import type { WebSource } from "./WebSource";
 import type { WebTrust } from "./WebTrust";
 
-export type WebEnvelope = { ok: boolean, provider: string | null, provider_id: string | null, operation: WebOperation, attempts: number, local_precheck: boolean, trust: WebTrust, truncated: boolean, truncated_fields: Array<string>, code: WebErrorCode | null, message: string | null, http_status: number | null, provider_code: string | null, provider_message: string | null, request_id: string | null, query: string | null, results: Array<WebSource> | null, source: WebSource | null, };
+export type WebEnvelope = { ok: boolean, provider: string | null, provider_id: string | null, operation: WebOperation, attempts: number, local_precheck: boolean, trust: WebTrust, truncated: boolean, truncated_fields: Array<string>, code: WebErrorCode | null, message: string | null, http_status: number | null, provider_code: string | null, provider_message: string | null, request_id: string | null, query: string | null, results: Array<WebSource> | null, source: WebSource | null, result_count: number | null, result_text_bytes: number | null, };

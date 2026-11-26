@@ -1546,8 +1546,8 @@ fn handle_call<C: RunContext>(
     call: &llm::ToolCall,
 ) -> (serde_json::Value, serde_json::Value) {
     // 参数摘要：live「started」事件与面板快照（M367 持久化）共用同一份，MUST NOT 各算各的
-    // （REVIEW.md 「同一语义两处真源」条：同一语义两处真源）。
-    let args_summary = summarize_args(&call.arguments);
+    // （REVIEW.md 「同一语义两处真源」条：同一语义两处真源）。Web 工具只给纯 query / URL。
+    let args_summary = summarize_args_for(&call.name, &call.arguments);
     ctx.sink().emit(events::tool_call(
         &call.name,
         "started",
@@ -2020,6 +2020,25 @@ pub(crate) fn summarize_args(arguments: &str) -> String {
         }
     }
     truncate_summary(arguments)
+}
+
+/// 按工具名取参数摘要（Web 工具只上屏纯 query / URL；其余走 [`summarize_args`]）。
+///
+/// Web 工具的 arguments 是 `{query, count, need_content}` / `{url}`：原样截断会把默认参数与
+/// JSON 结构带上 running 行（change compact-web-search-result-summary-nov26）。live 事件、
+/// 面板留存与 JSONL 恢复（`harness.rs`）共用本函数，三处同形。
+pub(crate) fn summarize_args_for(name: &str, arguments: &str) -> String {
+    if super::web::WEB_TOOL_NAMES.contains(&name) {
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(arguments) {
+            let key = if name == "web_search" { "query" } else { "url" };
+            if let Some(value) = parsed.get(key).and_then(serde_json::Value::as_str) {
+                if !value.is_empty() {
+                    return truncate_summary(value);
+                }
+            }
+        }
+    }
+    summarize_args(arguments)
 }
 
 /// 摘要按 [`SUMMARY_LIMIT`] 字符截断（超限补省略号）。
@@ -2874,6 +2893,37 @@ mod tests {
         assert_eq!(summarize_args(&path_only), truncate_summary(&path_only));
         assert!(summarize_args(&path_only).ends_with('…'));
         assert_eq!(summarize_args(r#"{"path":"a.md"}"#), r#"{"path":"a.md"}"#);
+    }
+
+    /// Web 工具行的参数摘要只上屏纯 query / URL：默认参数（`count` / `need_content`）与
+    /// arguments JSON 结构都不进 running 行 / 面板留存（change
+    /// compact-web-search-result-summary-nov26）。非 Web 工具行为逐字不变。
+    #[test]
+    fn web_tool_args_summary_is_pure_query_or_url() {
+        assert_eq!(
+            summarize_args_for(
+                "web_search",
+                r#"{"query":"synthetic query","count":5,"need_content":false}"#
+            ),
+            "synthetic query"
+        );
+        assert_eq!(
+            summarize_args_for("web_fetch", r#"{"url":"https://example.com/a"}"#),
+            "https://example.com/a"
+        );
+        assert_eq!(
+            summarize_args_for("web_search", r#"{"query":"中文 查询","count":10}"#),
+            "中文 查询"
+        );
+        assert_eq!(
+            summarize_args_for("cli_run", r#"{"command":"ls","args":["-la"]}"#),
+            "ls -la",
+            "非 Web 工具仍走既有摘要"
+        );
+        let long = format!(r#"{{"query":"{}"}}"#, "q".repeat(200));
+        let summary = summarize_args_for("web_search", &long);
+        assert_eq!(summary.chars().count(), SUMMARY_LIMIT + 1);
+        assert!(summary.ends_with('…'));
     }
 
     /// M463：`llm_error` 记录的载荷——HTTP 面三件按在场与否追加；没有 HTTP 面的错误

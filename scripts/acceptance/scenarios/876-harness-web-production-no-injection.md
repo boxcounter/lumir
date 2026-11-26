@@ -1,5 +1,6 @@
 ---
 # change add-harness-web-fetch-search-nov24 阶段5 / tasks 8.5：生产 dev 构建的反向验收。
+# change compact-web-search-result-summary-nov26：两条真实调用 + 两个审计仍计为 2。
 # 本场景由 web-production-check.sh 在设置 LUMIR_ACCEPTANCE_WEB_ENDPOINTS（指向哨兵端点）的
 # 环境里跑：普通 dev 构建没有读取该变量的代码，Web 仍按「无 DeepSeek provider」失败，
 # web_fetch 的 localhost 仍被 URL 规则拒绝。若验收注入被误编译进生产构建，web_search 会
@@ -36,10 +37,12 @@ steps:
     waitFor:
       has: ["PRODUCTION-PROBE-DONE"]
     timeoutMs: 30000
-  - name: 展开工具清单
+  - name: 展开工具清单（两条真实调用；两个审计不计入）
     do: click
     target: { role: AXButton, name: "个工具调用 · 全部完成" }
     expect:
+      - label: 组摘要只数真实调用（2，不是 4）
+        ax: { has: "2 个工具调用" }
       - label: localhost 仍被 URL 规则拒绝
         ax: { has: "web_url_blocked" }
       - label: 没有 DeepSeek provider，Web 搜索按 official-only 装配失败

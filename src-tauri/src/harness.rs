@@ -1553,7 +1553,8 @@ fn restored_panel_messages(
                     role: "tool".into(),
                     text,
                     reasoning: None,
-                    summary: Some(turn::summarize_args(
+                    summary: Some(turn::summarize_args_for(
+                        tool_name,
                         item["arguments"].as_str().unwrap_or(""),
                     )),
                     name: Some(tool_name.to_string()),
