@@ -3351,16 +3351,19 @@ mod tests {
         fn wait_blocked_settled(&self, hub: &SubagentHub, expected: &'static str) {
             let observe = || {
                 let notices = self.notice_inputs().len();
+                let notified = self.events("subagent_notified").len();
                 let wake = hub.inner.wake.lock().unwrap_or_else(|e| e.into_inner());
-                (wake.blocked, wake.pending.len(), notices)
+                (wake.blocked, wake.pending.len(), notices, notified)
             };
             assert!(
                 self.wait(Duration::from_secs(3), || {
-                    let (blocked, pending, notices) = observe();
-                    blocked == Some(expected) && pending == 1 && notices == 1
+                    let (blocked, pending, notices, notified) = observe();
+                    // 通知先上屏、事件随后 emit：只等通知会在两步之间抢读 `events(..)[0]`，
+                    // 1272 条并行时偶发 index out of bounds。
+                    blocked == Some(expected) && pending == 1 && notices == 1 && notified >= 1
                 }),
-                "触顶 / 停止分支未在 3s 内落定：期望 blocked={expected:?} / pending=1 / 通知=1，\
-                 实际 (blocked, pending, 通知) = {:?}",
+                "触顶 / 停止分支未在 3s 内落定：期望 blocked={expected:?} / pending=1 / 通知=1 / 事件≥1，\
+                 实际 (blocked, pending, 通知, 事件) = {:?}",
                 observe()
             );
         }
