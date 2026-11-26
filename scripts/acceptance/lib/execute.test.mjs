@@ -20,7 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, geomBaselineProblem, isStaleIndexError, KEY_CHANNELS, keyChannel, keysTarget, loadScenario, matcher, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, resolveKeysTarget, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, scopedAxOrder, screenshotSize, settleEditorless } from "./execute.mjs";
+import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, geomBaselineProblem, isStaleIndexError, KEY_CHANNELS, keyChannel, keysTarget, loadScenario, matcher, notificationBaseline, notificationMatches, pickFreshNotification, planNodeIntoView, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, resolveKeysTarget, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, scopedAxOrder, screenshotSize, settleEditorless } from "./execute.mjs";
 import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
 import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, SETTLE_SAMPLE_MS, settle, StepError } from "./drive.mjs";
 import { InfraError, repoRoot, secondVaultDir } from "./util.mjs";
@@ -2594,6 +2594,39 @@ test("正文单击落点（M761 新 header / M762 点口径）：captured_bounds
   // 证据行的截图像素：bbox + 40pt×1.70667（往返换算带浮点零头，按 1e-9 比）。
   assert.ok(Math.abs(g.shotPoint.x - (220 + 40 * (2048 / 1200))) < 1e-9, `证据行 x 错：${g.shotPoint.x}`);
   assert.ok(Math.abs(g.shotPoint.y - (300 + 6 * (1365 / 800))) < 1e-9, `证据行 y 错：${g.shotPoint.y}`);
+});
+
+test("planNodeIntoView：窗口外的节点给出方向正确的滚轮计划，窗口内返回 null", () => {
+  const bounds = { x: 8, y: 40, w: 1200, h: 800 };
+  // 2026-11-27 真机 14-tabs 的现场：callout.md 的窗口局部 y=-1186.3（在视口上方）
+  const above = planNodeIntoView({ bbox: { x: 16, y: -1186.3, w: 211, h: 25 }, bounds });
+  assert.ok(above !== null, "视口上方的节点必须给出滚轮计划");
+  assert.ok(above.dy > 0, `上滚（dy 正）才把上方的行带下来：${above.dy}`);
+  assert.ok(Math.abs(above.dy) <= 20, `单次滚轮有上限：${above.dy}`);
+  assert.ok(above.distance > 1160, `距离按剩余量算：${above.distance}`);
+  assert.equal(above.point.x, bounds.x + 16 + 211 / 2, "滚轮点取目标横向中心（窗口点 → 屏幕点）");
+  assert.equal(above.point.y, bounds.y + 120, "上方的滚动点落在窗口上部可滚区，不是标题栏");
+  assert.ok(above.point.x > bounds.x && above.point.x < bounds.x + bounds.w);
+
+  const below = planNodeIntoView({ bbox: { x: 16, y: 805, w: 211, h: 25 }, bounds });
+  assert.ok(below !== null && below.dy < 0, `下方的节点要下滚（dy 负）：${below?.dy}`);
+  assert.equal(below.point.y, bounds.y + bounds.h - 120, "下方的滚动点落在窗口下部可滚区");
+
+  // 已完全在窗口内：不滚（negative control：判据不能恒真）
+  assert.equal(planNodeIntoView({ bbox: { x: 16, y: 100, w: 211, h: 25 }, bounds }), null);
+  // 只横向越界（纵向在窗口内）：不归本函数处理，返回 null，由调用方的窗口边界检查报错
+  assert.equal(planNodeIntoView({ bbox: { x: -300, y: 100, w: 211, h: 25 }, bounds }), null);
+  // 半截被窗口上/下缘裁掉的行不自动滚（容器可视矩形不可得，半截判定会点到表头；见实现注释）
+  assert.equal(planNodeIntoView({ bbox: { x: 16, y: -10, w: 211, h: 25 }, bounds }), null);
+  assert.equal(planNodeIntoView({ bbox: { x: 16, y: 790, w: 211, h: 25 }, bounds }), null);
+  // 退化几何：不制造 NaN，交给调用方
+  assert.equal(planNodeIntoView({ bbox: { x: 16, y: -10, w: 211, h: 25 }, bounds: { x: 0, y: 0, w: 10, h: 10 } }), null);
+  // 远距离有单次上限（多次调用逐次收敛，不一次跳完）
+  const far = planNodeIntoView({ bbox: { x: 16, y: -5000, w: 211, h: 25 }, bounds });
+  assert.equal(Math.abs(far.dy), 20, `单次滚轮行数封顶：${far.dy}`);
+  // 横向中心夹进窗口（目标本身横向越界时也不把滚轮点算到窗外）
+  const clamped = planNodeIntoView({ bbox: { x: 5000, y: -10, w: 10, h: 5 }, bounds });
+  assert.equal(clamped.point.x, bounds.x + bounds.w - 8, `滚轮点 x 必须夹进窗口：${clamped.point.x}`);
 });
 
 test("滚轮兜底（M761）：新 header 算得出落点；读不到几何 / 落点时给原因而不是 null（不静默跳过兜底）", () => {
