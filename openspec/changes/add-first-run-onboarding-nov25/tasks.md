@@ -229,3 +229,8 @@
       `not: ['/AXTextField/']`），判据强度不变。同型旧断言一并修 `47c-create-and-delete`
       （两处新建文件）与 `220-sidebar-resize-hide-root-create`（根下新建文件）；目录新建不预填，
       仍按空值态读屏名判，未动。
+- [x] 9.8 220 真机剩余两处（2026-11-26）：① `editor.not "probe"` 被 AXTextArea 标题块里的
+      fixture 文件名 `sidebar-probe` 污染，改键入前 `recordEditor` + ⌘Z 后
+      `editor.unchangedSince`（同一 run 的 dump 实测撤销前后逐字节相同）；② 根下新建目录的
+      行由 watcher 回响收敛，Enter 后的立即读抢在回响前，改 `do: waitFor { has: [...] }` 后
+      保留原断言与截图。未删断言、未动产品。

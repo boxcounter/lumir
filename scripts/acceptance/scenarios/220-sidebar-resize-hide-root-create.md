@@ -84,6 +84,12 @@ steps:
         editor: { has: "SIDEBAR-MARK" }
       - shot: 收起之后
 
+  - name: 键入前记录编辑器基线（⌘Z 后按整篇逐字节回比）
+    do: recordEditor
+    as: 键入前文档
+    expect:
+      - label: 基线是这篇 fixture（读不到一律 FAIL）
+        editor: { has: "SIDEBAR-MARK" }
   - name: 收起后直接在文档里键入（焦点已交还活跃文档 pane）
     do: keys
     keys: ["p", "r", "o", "b", "e"]
@@ -96,8 +102,10 @@ steps:
     do: keys
     keys: ["cmd+z"]
     expect:
-      - label: 文档退回基线
-        editor: { not: "probe" }
+      # 不能用 `editor.not "probe"`：AXTextArea 的值含 CodeMirror 的标题块，fixture 文件名
+      # `sidebar-probe` 本身就在里面，负向判据永远不成立。改为与键入前的整篇逐字节回比。
+      - label: 文档逐字节回到键入前基线
+        editor: { unchangedSince: 键入前文档 }
 
   - name: 再按 ⌘B：侧栏展开，宽度回到收起前的值
     do: key
@@ -200,6 +208,10 @@ steps:
   - name: 回车提交
     do: key
     key: "return"
+  - name: 等新目录的行收敛进树（新建节点由 watcher 回响带进来，Enter 后的立即读会抢在回响前）
+    do: waitFor
+    waitFor: { has: ["new-folder-probe"] }
+  - name: 根下新建目录的终态（原断言与截图保留）
     expect:
       - label: 磁盘上出现根下的目录
         file: { path: new-folder-probe, exists: true }
@@ -231,6 +243,13 @@ teardown:
   正是「不要锁 `role: AXButton`」，锁死 popup role 会让下一次映射变化再把同一批动作打红。同一条
   口径的先例：场景 17 / 19 / 26 / 48 的同一入口 target 早已只写 `any`。
 
+- **`editor.not` 会被标题块污染（2026-11-26 现场）**：AXTextArea 的值含 CodeMirror 的标题块
+  （`title` / 文件名 / 行数 / 修改时间），本场景 fixture 的文件名 `sidebar-probe` 就在里面——
+  「键入后撤销」不能用 `editor.not "probe"` 判（永远红）。改为键入前 `recordEditor`、⌘Z 后
+  `editor.unchangedSince` 按整篇逐字节回比；同一 run 的 dump 实测撤销前后值逐字节相同。
+- **根下新建目录的行由 watcher 回响收敛（2026-11-26 现场）**：Enter 后的立即读读不到
+  `new-folder-probe`（同一次 run 的后续截图里行已在），等待因此用
+  `do: waitFor { has: ["new-folder-probe"] }`，原断言与截图保留在其后。
 - **拖拽通道精度**：dx 是窗口局部点，CGEvent 通道有 ±1–2px 抖动；侧栏宽度是 1× 位移（不是栏宽
   的 2×），因此抖动不被放大，断言仍留 ±4px 的区间（`3(1[2-9]|2[0-8])` = 312–328）。精确值
   （+80 → 316、钳制端点 180 / 480）在 chromium 层用合成鼠标事件逐值钉死
