@@ -75,3 +75,35 @@ test("快照不能把已接纳的更高水位盖回旧值；退役 token 的快�
   assert.equal(tokens.snapshotAdmitted("/vault/a", 13), true, "新会话的快照落地");
   assert.equal(tokens.watermark("/vault/a"), 13);
 });
+
+test("有水位 → 缺 token 兼容事件 → 未退役旧 token 仍拒；合法快照仍可纠偏", () => {
+  const tokens = createSessionTokenLedger();
+  assert.equal(tokens.snapshotAdmitted("/vault/a", 12), true);
+  // 旧后端 / 无信封的事件：放行，但不得清空水位。
+  assert.equal(tokens.eventAdmitted("/vault/a", null), true);
+  assert.equal(tokens.watermark("/vault/a"), 12, "兼容事件不得清空既有水位");
+  // 反例：水位若被兼容事件清掉，这条未退役的旧 token 就会复活。
+  assert.equal(tokens.eventAdmitted("/vault/a", 11), false, "未退役的旧 token 仍须拒收");
+  // 兼容事件也不耽误快照纠偏：同会话 / 更新的 token 快照照常落地。
+  assert.equal(tokens.snapshotAdmitted("/vault/a", 12), true);
+  assert.equal(tokens.snapshotAdmitted("/vault/a", 13), true);
+  assert.equal(tokens.watermark("/vault/a"), 13);
+  assert.equal(tokens.eventAdmitted("/vault/a", 12), false, "快照推进后旧 token 仍拒");
+});
+
+test("A/B 交错：A 的兼容事件不动 A 的水位，也不影响 B；无水位 vault 不因子虚水位收紧", () => {
+  const tokens = createSessionTokenLedger();
+  assert.equal(tokens.eventAdmitted("/vault/a", 12), true);
+  assert.equal(tokens.eventAdmitted("/vault/b", 5), true);
+  // 交错：A 的兼容事件 → B 的新事件 → A 的旧事件。
+  assert.equal(tokens.eventAdmitted("/vault/a", null), true);
+  assert.equal(tokens.watermark("/vault/a"), 12);
+  assert.equal(tokens.eventAdmitted("/vault/b", 6), true);
+  assert.equal(tokens.watermark("/vault/b"), 6);
+  assert.equal(tokens.eventAdmitted("/vault/a", 11), false);
+  // 从未见过会话的 vault：兼容事件不制造水位，首条带 token 事件照常接纳。
+  assert.equal(tokens.eventAdmitted("/vault/c", null), true);
+  assert.equal(tokens.watermark("/vault/c"), null);
+  assert.equal(tokens.eventAdmitted("/vault/c", 1), true);
+  assert.equal(tokens.watermark("/vault/c"), 1);
+});

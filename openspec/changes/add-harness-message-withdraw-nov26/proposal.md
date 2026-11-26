@@ -79,8 +79,9 @@ harness 的对话面板没有用户消息的删除 / 编辑 / 重发入口：发
    前端在记账前按与 `persistence` 相同的准入丢弃退役 / 更旧令牌的事件（含 `subagent_started` /
    `notice` / `title`）。令牌水位**按 vault 分账**（`src/harness-session-tokens.ts`）：不同 vault
    的令牌大小互不相干，切到 token 更小的 vault 时其事件 / 快照先接纳、旧 vault 的旧事件仍拒；
-   退役集合全局生效。后端写父会话的通知插入与投递标记比较 hub 的 `parent_token`，A→B 后旧
-   hub 的迟到写入一律放弃（blocked 分支回滚 delivered 标记）。
+   缺令牌的兼容事件只放行、不清水位（未退役的旧令牌不得因此复活）；退役集合全局生效。后端写
+   父会话的通知插入与投递标记比较 hub 的 `parent_token`，A→B 后旧 hub 的迟到写入一律放弃
+   （blocked 分支回滚 delivered 标记）。
 9. **会话清单**：A 删除后只剩 B 一行；B 的 `last_activity_ts` 因谱系断链（dangling parent）回落
    自身创建时刻。B 的会话名在首条真实请求前取自 `withdraw_seed` 的首条用户消息。
 10. **规格**：`harness` capability 新增 1 条 requirement（撤回最近一条用户消息），不改既有
@@ -122,7 +123,7 @@ harness 的对话面板没有用户消息的删除 / 编辑 / 重发入口：发
   `_resume_in_flight` / `_scan_failed` / `_read_failed` / `_publish_failed` / `_delete_failed` /
   `_rollback_incomplete` / `_failed`（文案 D1039–D1049）。
 - **验收**：新增真机场景 882（撤回三层判据 + A 删除的 glob 判据）；Rust 单测 18 条、子代理 1 条、
-  事件信封 1 条、前端单测 9 条 + 令牌账本 6 条、真面板 chromium 4 条。
+  事件信封 1 条、前端单测 9 条 + 令牌账本 8 条、真面板 chromium 4 条。
 
 ## 节点 2（归档前填写）
 

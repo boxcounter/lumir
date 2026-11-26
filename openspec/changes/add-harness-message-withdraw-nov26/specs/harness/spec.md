@@ -22,7 +22,8 @@ JSONL。
 进程级单调分配的，不同 vault 的会话各有各的号，MUST NOT 用单个全局水位——否则从大 token 的 A
 切到小 token 的 B 后，B 的合法事件 / 快照会被持续误判为旧会话（含 `persistence`）。切到尚无水位
 的 vault 时 SHALL 先接纳其首条事件 / 快照，随后按该 vault 自己的水位收紧；已退役令牌的集合仍
-全局生效。
+全局生效。缺 `session_token` 的兼容事件 SHALL 只放行、MUST NOT 清空该 vault 的既有水位（否则
+未退役的旧令牌会重新通过），也 MUST NOT 阻止后续合法快照按同一水位纠偏。
 A 已有任何派生 / 恢复会话（`restored_from` 链能走回 A）时，撤回 MUST 被拒绝并给出明确原因；
 MUST NOT 级联删除这些会话，MUST NOT 静默保留 A。派生检测 SHALL 在动作前与「发布 B 之后、删除 A
 之前」各复核一次（第二次排除 B 自身）。

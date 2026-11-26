@@ -52,9 +52,11 @@ export interface SessionTokenLedger {
   watermark(vault: string | null): number | null;
   /** 显式新会话 / 恢复 / 撤回：把该 vault 当前水位记入退役集合并清空。 */
   retire(vault: string | null): void;
-  /** 采纳一个 token（只在更大或水位为空时推进；退役 token 不采纳）。 */
+  /** 采纳一个 token（只在更大或水位为空时推进；退役 token 与 `null` 都不采纳——
+   *  水位只由 `retire` 降低或清空）。 */
   adopt(vault: string | null, token: number | null): void;
-  /** 事件准入：按**事件所属 vault** 的水位判定；放行时顺带推进该 vault 的水位。 */
+  /** 事件准入：按**事件所属 vault** 的水位判定；放行且带 token 时顺带推进该 vault 的水位。
+   *  缺 token 的兼容事件只放行、不参与水位（否则会把既有水位清空，让未退役的旧 token 复活）。 */
   eventAdmitted(vault: string | null, token: number | null): boolean;
   /** 快照准入：同一份水位；放行时以快照为权威（并从退役集合移除该 token）。 */
   snapshotAdmitted(vault: string | null, token: number | null): boolean;
@@ -74,11 +76,10 @@ export function createSessionTokenLedger(): SessionTokenLedger {
   const watermark = (vault: string | null): number | null =>
     watermarks.get(bucketOf(vault)) ?? null;
 
+  // 水位只能由 `retire` 清空 / 降低：`adopt(vault, null)` 不做事。否则缺 token 的兼容事件
+  // 会把该 vault 的既有水位清掉，未退役的旧 token 随后重新通过（K3 复审反例）。
   const adopt = (vault: string | null, token: number | null): void => {
-    if (token === null) {
-      watermarks.set(bucketOf(vault), null);
-      return;
-    }
+    if (token === null) return;
     if (retired.has(token)) return;
     const current = watermark(vault);
     if (current === null || token > current) watermarks.set(bucketOf(vault), token);
@@ -94,7 +95,8 @@ export function createSessionTokenLedger(): SessionTokenLedger {
     },
     eventAdmitted(vault, token) {
       if (!persistenceEventAdmitted(token, watermark(vault), retired)) return false;
-      adopt(vault, token);
+      // 兼容事件（旧后端 / 无信封）只放行、不参与水位：清空它会复活未退役的旧 token。
+      if (token !== null) adopt(vault, token);
       return true;
     },
     snapshotAdmitted(vault, token) {

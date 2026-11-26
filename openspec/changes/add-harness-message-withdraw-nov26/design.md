@@ -126,7 +126,8 @@ usage/cache_totals/subrun_usage/subrun_runs=撤回时点种子
 - **事件信封带会话令牌**（`session_token`）：`ScopedSink` / `OwnedScopedSink` / title job 在
   构造时定格所属会话；前端在**记账之前**丢弃退役 / 更旧令牌的事件。`subagent_started`、
   `notice`、`title` 与回合事件因此都不会从旧 A 落进 B；新令牌的同一批事件照常上屏。缺令牌
-  （旧载荷 / 单测）按旧后端放行。
+  （旧载荷 / 单测）按旧后端放行，但兼容事件只放行、不参与水位：清空该 vault 的既有水位会让
+  未退役的旧 token 重新通过（K3 复审末尾反例）。水位只由 `retire` 降低 / 清空。
 - **水位按 vault 分账**（K3 复审 P1-1；`src/harness-session-tokens.ts`）：令牌是进程级单调
   分配的，不同 vault 的会话各有各的号。单个全局水位会让「从 token 12 的 A 切到 token 5 的 B」
   之后 B 的合法事件与快照被持续误判为旧会话并丢弃。账本为每个 vault 记一份水位：A 的旧事件
@@ -189,8 +190,9 @@ usage/cache_totals/subrun_usage/subrun_runs=撤回时点种子
 - 事件信封（`events.rs` 1 条新增）：有会话时每条事件带 `session_token`，空态不写该键。
 - 前端（`tests/unit/harness-withdraw-composer.test.ts`，9 条）：实体还原、卡片锚点（行首 /
   中间 / 连续 / 末尾）、成功 / 失败 / >80 字符长名 Skill 位置、合并顺序与光标。
-- 令牌账本（`tests/unit/harness-session-tokens.test.ts`，6 条）：A/B/A（大 token → 小 token 的
-  合法事件与快照落地、A 旧事件仍拒）、B 事件先于快照、空会话快照、退役与全局退役集合。
+- 令牌账本（`tests/unit/harness-session-tokens.test.ts`，8 条）：A/B/A（大 token → 小 token 的
+  合法事件与快照落地、A 旧事件仍拒）、B 事件先于快照、空会话快照、退役与全局退役集合、
+  缺 token 兼容事件不清水位（未退役旧 token 仍拒、快照仍可纠偏）、A/B 交错的兼容事件。
 - 真面板（`tests/visual/scenes/harness-withdraw-message-nov26.spec.ts`，4 条）：直接撤回 /
   工具二次确认 / 派生拒绝 / **旧令牌迟到事件拒收且新令牌照常上屏**。
 - 真机 882：三层判据（transcript 节点在场性翻转、composer 值在场、最新 JSONL `not` + 
