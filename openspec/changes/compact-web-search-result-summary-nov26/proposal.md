@@ -54,6 +54,7 @@ snippet → 整条移除 results），读数在这里算一次即可同时服务
 2. **Web 访问策略与 origin 例外**：默认无批准卡时 Web 工具行改为紧凑形态——running 单行
    （状态 + 纯 query / URL，不显示原始 JSON / 默认参数）；done 显示 query / URL + 第二行结果健康
    摘要（四种形态见 proposal 评审记录）；失败直接显示稳定 code + 人话原因，不显示条数 / 大小。
+   Fetch 重定向时默认行保留原始输入 URL，重定向后的最终 `source.url` 只在默认关闭的详情中。
    provider、attempts、完整 query / URL、截断字段、实际外发与费用、untrusted 移入默认关闭的
    「查看详情」。live 与 restored 同形：恢复行从面板记录持久化的完整 Web 输入恢复 query / URL，
    不再把失败摘要当参数；旧留存缺输入 / 读数时安全降级为空，不显示条数 / 大小；Ask 待决卡不变。

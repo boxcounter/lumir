@@ -262,6 +262,14 @@ pub fn audit_metadata(
         .or_else(|| input.get("url"))
         .cloned()
         .unwrap_or(serde_json::Value::Null);
+    // 原始调用输入与「实际提交 / 最终 URL」分开：`url` 仍是 source.url（Fetch 重定向后
+    // 是最终 B），`input_url` 只取调用 arguments 的原始 A。默认行用 A，详情用 B
+    //（评审 P1-2）；两者都由后端一次投影，前端不得自行猜。
+    let input_url = input
+        .get("url")
+        .filter(|value| !value.is_null())
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     let attempts = output
         .get("attempts")
         .and_then(serde_json::Value::as_u64)
@@ -276,6 +284,7 @@ pub fn audit_metadata(
         "operation": operation,
         "query": query,
         "url": url,
+        "input_url": input_url,
         "provider": output.get("provider").cloned().unwrap_or(serde_json::Value::Null),
         "provider_id": output.get("provider_id").cloned().unwrap_or(serde_json::Value::Null),
         "attempts": attempts,
@@ -440,6 +449,23 @@ mod tests {
                 "{operation:?} attempts={attempts}"
             );
         }
+    }
+
+    #[test]
+    fn audit_metadata_separates_original_input_url_from_final_source_url() {
+        let output = serde_json::json!({
+            "operation": "fetch",
+            "provider": "deepseek",
+            "provider_id": "deepseek-work",
+            "attempts": 1,
+            "truncated": false,
+            "truncated_fields": [],
+            "source": {"url": "https://final.example/b", "title": ""},
+        });
+        let input = serde_json::json!({"url": "https://origin.example/a"});
+        let audit = audit_metadata(WebOperation::Fetch, &output, &input);
+        assert_eq!(audit["url"], "https://final.example/b");
+        assert_eq!(audit["input_url"], "https://origin.example/a");
     }
 
     #[test]

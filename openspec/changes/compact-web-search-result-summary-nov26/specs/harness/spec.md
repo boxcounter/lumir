@@ -350,15 +350,18 @@ Search 的 permission subject SHALL 为完整 query；Fetch 的 subject SHALL �
 （scheme + host + 有效 port），origin 规范化 SHALL 小写 scheme / host、省略默认 port、保留非默认 port，
 且不含 userinfo / path / query / fragment。默认无批准卡时，Web 工具行 SHALL 默认紧凑：运行中单行
 显示状态与纯 query（Fetch 为纯 URL），MUST NOT 显示原始 arguments JSON 或默认参数；完成后默认
-显示 query（Fetch 为 URL），Search 成功另有第二行结果健康摘要——正常为 `N 条结果 · 文本 X`，
+显示 query（Fetch 为 URL）；Fetch 的默认行 URL SHALL 是调用 arguments 的原始输入 URL，重定向后的
+最终 `source.url` SHALL 只在默认关闭的「查看详情」中呈现，MUST NOT 覆盖默认行。Search 成功另有
+第二行结果健康摘要——正常为 `N 条结果 · 文本 X`，
 字段截断追加 `· 已截断`，`truncated_fields` 含 `results` 时为 `保留 N 条结果 · 文本 X · 已截断`，
 真正成功的空结果为 `0 条结果 · 搜索成功`（英文同义双语；N 与 X 的口径见「统一 Web 搜索与抓取
 工具」条）。失败时直接显示稳定错误码与人话原因，MUST NOT 显示条数或文本大小。provider id、
 attempts、完整 query / URL、截断字段、实际外发与费用、`trust:"untrusted"` SHALL 全部保留在默认
 关闭的「查看详情」中，可展开完整回看；MUST NOT 删除事件 / 面板记录 / JSONL / 安全元数据。Ask
 待决卡的完整预览信息不变。live 事件与快照 / 会话恢复两条路径 SHALL 同形同默认态：恢复行的
-query / URL SHALL 从该调用的持久化输入（同一份 arguments，完整不截断）恢复，MUST NOT 把失败
-摘要（`状态 · code: message`）当参数；旧留存缺该输入时 SHALL 安全降级为空、MUST NOT 伪造。
+query / URL SHALL 从该调用的持久化输入（同一份 arguments，完整不截断；Fetch 为原始输入
+URL）恢复，MUST NOT 把失败摘要（`状态 · code: message`）或最终 `source.url` 当默认行参数；
+旧留存缺该输入时 SHALL 安全降级为空、MUST NOT 伪造。
 旧留存缺结果读数时 SHALL 不显示条数与文本大小（MUST NOT 补零）。
 `harness.permissions.deny` 中的 `web_fetch(origin)` SHALL 在初始调用与每跳重定向重新判定。
 
@@ -412,3 +415,9 @@ host，再检查目标 origin deny；未封禁才继续 DNS / 连接 / 内容类
 - **WHEN** 同一 Web 调用分别经 live 事件与快照 / 会话恢复重建
 - **THEN** 两者工具行（含默认行可见的 query / URL）、第二行健康摘要、详情入口与默认关闭态一致；
   旧留存缺输入 / 读数时不显示 query / URL / 条数 / 大小（MUST NOT 伪造）
+
+#### Scenario: Fetch 重定向的原始输入与最终 URL
+
+- **WHEN** Fetch 从原始 URL A 重定向到最终 URL B 后成功或失败
+- **THEN** live、快照恢复与 JSONL 恢复的默认行都显示原始 A；展开「查看详情」后显示最终 B 与
+  其余审计事实；默认行 MUST NOT 被最终 B 覆盖

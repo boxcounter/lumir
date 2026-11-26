@@ -131,7 +131,10 @@ live（`tool_call done` 的 `web` 载荷）与 restored（`tool` 面板记录的
 
 恢复行的参数格不能只靠 `summary`：失败记录的 `summary` 是 `状态 · code: message`，不是参数；
 JSONL 恢复的 `summary` 虽是纯 query / URL，但旧实现用只接受 JSON 的 `humanizeToolArgsStrict`
-解析，于是两条恢复路径都丢参数（评审 P1-1）。修法是把**完整 Web 输入**随面板工具记录持久化：
+解析，于是两条恢复路径都丢参数（评审 P1-1）。另外 Fetch 重定向后审计里的 `url` / `source.url`
+是最终 B，不是调用 arguments 的原始 A；默认行 MUST 显示 A，B 只进详情（评审 P1-2）。因此审计
+投影把两者分开：`url` 仍是实际提交 / 最终 `source.url`，`input_url` 只取调用 arguments 的
+原始输入 URL；live done 的参数格用 `input_url`，详情用 `url`。修法是把**完整 Web 输入**随面板工具记录持久化：
 `PanelMessage.web_input = { query } | { url }`，由 `finish_call` 从同一份 arguments 写入
 （JSONL 恢复在 `harness.rs` 用同一份 arguments 重建）。恢复行按「`web_input` → 信封审计的
 query / URL → 参数摘要（`toolArgsText`）」取值，失败摘要永远不会被当成参数；旧记录缺
@@ -169,7 +172,8 @@ provider / attempts / truncated fields / 外发 / untrusted 渲染。不做迁�
 - 前端单测（DOM）：单 Web 调用不出摘要；两个真实调用 + 两个审计仍显示 2；组展开后审计仍默认
   关闭；健康摘要四形态；失败不显示条数 / 大小；旧记录降级；live 与 restored 同形；
   **真实生产形状的失败恢复**（快照错误摘要 + `web_input`、JSONL 纯参数摘要、旧记录缺
-  `web_input`，query 与 fetch URL 都覆盖）；secret-canary 不因详情展开而上屏；Ask 待决卡不变。
+  `web_input`，query 与 fetch URL 都覆盖）；**Fetch 重定向 A≠B 的 live / 快照 / JSONL 同形**
+  （默认行 A、详情 B）；secret-canary 不因详情展开而上屏；Ask 待决卡不变。
 - 视觉结构（m384）：默认收起 / 展开后内容完整 / 计数不变量；不新增像素基线。
 - 真机（本轮不执行，只改场景期望）：869 / 871 / 872 单调用不再有组摘要，需点「查看详情」看
   审计；873 / 876 两条真实调用仍折叠为 2；870 Ask 不变。

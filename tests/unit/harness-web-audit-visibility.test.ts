@@ -1250,7 +1250,7 @@ test("旧快照失败记录（无 web_input）：参数格安全降级，不把�
   assertNoMatch(audit.textContent, /synthetic/, "旧记录不伪造 query");
 });
 
-test("旧快照 Fetch 失败记录：信封里的 source.url 是可恢复的可信输入", async () => {
+test("旧快照 Fetch 失败记录：默认行安全降级为空，source.url 只在详情", async () => {
   const { mount } = await mountPanel(() =>
     restoredSnapshot({
       name: "web_fetch",
@@ -1259,8 +1259,10 @@ test("旧快照 Fetch 失败记录：信封里的 source.url 是可恢复的可�
       text: JSON.stringify(FETCH_FAILURE_ENVELOPE),
     }),
   );
-  assert.equal(argsCell(mount), "https://example.com/a");
-  assertAuditUnitAfterRow(mount);
+  assert.equal(argsCell(mount), "", "旧记录没有原始输入时不得用最终 source.url 冒充");
+  const { audit, toggle } = assertAuditUnitAfterRow(mount);
+  toggle.fire("click");
+  assert.match(audit.textContent, /https:\/\/example\.com\/a/);
 });
 
 test("live 失败与快照失败同形：默认行参数格一致，详情都默认关闭", async () => {
@@ -1373,4 +1375,117 @@ test("live done 与恢复行在长 query 上同形：都取完整输入，不靠
   );
   assert.equal(argsCell(live), longQuery);
   assert.equal(argsCell(restored.mount), longQuery);
+});
+
+// ── Fetch 重定向：默认行原始 A，详情最终 B（评审 P1-2）────────────────────────
+//
+// `audit.url` 是实际提交 / 最终 source.url（重定向后是 B），`audit.input_url` 是调用
+// arguments 的原始 A；恢复行的 `web_input` 也是 A。默认行 MUST 显示 A，B 只进默认关闭的详情。
+
+const REDIRECT_ORIGIN = "https://origin.example/a";
+const REDIRECT_FINAL = "https://final.example/b";
+
+function redirectAudit(code: "web_http_error" | null = null): Record<string, unknown> {
+  return {
+    operation: "fetch",
+    query: null,
+    url: REDIRECT_FINAL,
+    input_url: REDIRECT_ORIGIN,
+    provider: "deepseek",
+    provider_id: "deepseek-work",
+    attempts: 1,
+    cost_per_1000_success_cny: 5,
+    local_precheck: true,
+    provider_fetch: true,
+    trust: "untrusted",
+    truncated: false,
+    truncated_fields: [],
+    code,
+    result_count: null,
+    result_text_bytes: null,
+  };
+}
+
+function redirectEnvelope(code: "web_http_error" | null = null): Record<string, unknown> {
+  return {
+    ...FETCH_SUCCESS_ENVELOPE,
+    ok: code === null,
+    ...(code === null ? {} : { code, message: "redirect target failed" }),
+    source: { ...FETCH_SUCCESS_ENVELOPE.source, url: REDIRECT_FINAL },
+  };
+}
+
+test("Fetch 重定向成功：live / 快照 / JSONL 默认行都显示原始 A，详情保留最终 B", async () => {
+  const live = await mountDone("web_fetch", REDIRECT_ORIGIN, redirectAudit());
+  const snapshot = await mountPanel(() =>
+    restoredSnapshot({
+      name: "web_fetch",
+      summary: REDIRECT_ORIGIN,
+      status: "done",
+      text: JSON.stringify(redirectEnvelope()),
+      web_input: { url: REDIRECT_ORIGIN },
+    }),
+  );
+  const jsonl = await mountPanel(() =>
+    restoredSnapshot({
+      name: "web_fetch",
+      summary: REDIRECT_ORIGIN,
+      status: "done",
+      text: JSON.stringify(redirectEnvelope()),
+      // 旧 JSONL 没有 web_input：仍从纯参数摘要恢复原始 A。
+    }),
+  );
+  for (const [label, mount] of [
+    ["live", live],
+    ["snapshot", snapshot.mount],
+    ["jsonl", jsonl.mount],
+  ] as const) {
+    assert.equal(argsCell(mount), REDIRECT_ORIGIN, `${label} 默认行必须是原始 A`);
+    const row = toolsBlock(mount).querySelector(".lumir-hp-tool-row");
+    assert.ok(row !== null);
+    assertNoMatch(row.textContent, /final\.example/, `${label} 默认行不得出现最终 B`);
+    const { audit, toggle } = assertAuditUnitAfterRow(mount);
+    toggle.fire("click");
+    assert.match(audit.textContent, /https:\/\/final\.example\/b/, `${label} 详情必须保留最终 B`);
+  }
+});
+
+test("Fetch 重定向失败：默认行仍是原始 A，详情保留最终 B", async () => {
+  const live = await mountDone(
+    "web_fetch",
+    REDIRECT_ORIGIN,
+    redirectAudit("web_http_error"),
+    "error · web_http_error: redirect target failed",
+  );
+  const snapshot = await mountPanel(() =>
+    restoredSnapshot({
+      name: "web_fetch",
+      summary: "error · web_http_error: redirect target failed",
+      status: "error",
+      text: JSON.stringify(redirectEnvelope("web_http_error")),
+      web_input: { url: REDIRECT_ORIGIN },
+    }),
+  );
+  const jsonl = await mountPanel(() =>
+    restoredSnapshot({
+      name: "web_fetch",
+      summary: REDIRECT_ORIGIN,
+      status: "error",
+      text: JSON.stringify(redirectEnvelope("web_http_error")),
+      web_input: { url: REDIRECT_ORIGIN },
+    }),
+  );
+  for (const [label, mount] of [
+    ["live", live],
+    ["snapshot", snapshot.mount],
+    ["jsonl", jsonl.mount],
+  ] as const) {
+    assert.equal(argsCell(mount), REDIRECT_ORIGIN, `${label} 默认行必须是原始 A`);
+    const row = toolsBlock(mount).querySelector(".lumir-hp-tool-row");
+    assert.ok(row !== null);
+    assertNoMatch(row.textContent, /final\.example/, `${label} 默认行不得出现最终 B`);
+    const { audit, toggle } = assertAuditUnitAfterRow(mount);
+    toggle.fire("click");
+    assert.match(audit.textContent, /https:\/\/final\.example\/b/, `${label} 详情必须保留最终 B`);
+  }
 });

@@ -21,7 +21,8 @@
 - [x] 1.3 前端 DOM：单 Web 调用不出组摘要；两个真实调用 + 两个审计仍显示 2；组展开后审计仍默认
       关闭；健康摘要四形态；失败不显示条数 / 大小；旧记录降级；live 与 restored 同形；
       真实生产形状失败恢复（快照错误摘要 + web_input / JSONL 纯参数摘要 / 旧记录缺键，query 与
-      fetch URL）；secret-canary 不上屏；Ask 待决卡不变
+      fetch URL）；Fetch 重定向 A≠B 的 live / 快照 / JSONL 同形（默认行 A、详情 B）；
+      secret-canary 不上屏；Ask 待决卡不变
 - [x] 1.4 视觉结构（m384）：默认紧凑 + 详情默认关闭 + 展开完整 + 计数不变量
 - [x] 1.5 在 master 代码上跑 1.1–1.4，把失败输出落
       `.local/missions/compact-web-search-result-summary-nov26/red/`
@@ -31,7 +32,9 @@
 - [x] 2.1 `WebEnvelope` 加 `result_count: Option<u32>` / `result_text_bytes: Option<u64>`；
       ts-rs 重导出 `src/bindings/WebEnvelope.ts`
 - [x] 2.2 `budget::search_success` 在全部裁剪后单一一次计算读数；非 Search / 失败保持 None
-- [x] 2.3 `output::audit_metadata` 透传两个读数（缺键 → JSON null）
+- [x] 2.3 `output::audit_metadata` 透传两个读数（缺键 → JSON null）；另投影 `input_url`（调用
+      arguments 的原始 URL）与 `url`（实际提交 / 最终 `source.url`）分开，默认行用 `input_url`、
+      详情用 `url`
 - [x] 2.4 Web 工具参数摘要：`web_search` → 纯 query、`web_fetch` → 纯 URL；live started / 面板
       持久化 / JSONL 恢复三个调用点同源；面板工具记录另持久化完整 `web_input`（不截断），
       快照 / JSONL 恢复共用
@@ -43,7 +46,8 @@
 - [x] 3.2 `src/web-audit.ts`：审计投影加两个可空读数（缺失 / 非法 → null，不 `?? 0`）
 - [x] 3.3 `src/harness-panel.ts`：Web 附属单元（健康摘要 + 默认关闭的「查看详情」），live / restored
       共用；审计单元不进 `rows`，组折叠与展开只动可见性、不改各详情展开态；恢复失败行从
-      `PanelMessage.web_input` / 审计输入 / 参数摘要取 query / URL，不把失败摘要当参数
+      `PanelMessage.web_input` / 审计输入 / 参数摘要取 query / URL，不把失败摘要当参数；
+      默认行取原始输入 URL（`input_url` / `web_input`），详情保留最终 `source.url`
 - [x] 3.4 Web 失败行尾注剥状态前缀，live 与 restored 同形；非 Web 不变
 - [x] 3.5 `applyLabels` 重渲附属单元（保留展开态），新增文案随语言切换
 - [x] 3.6 `src/harness-panel.css`：第二行 / 详情入口样式，复用既有 token；不改普通工具行 padding；

@@ -266,6 +266,7 @@ test("面板 Web 输入：完整 query / URL 的宽容解析与审计补全", ()
     truncated: false,
     truncated_fields: [],
     code: "web_provider_unconfigured",
+    input_url: null,
     result_count: null,
     result_text_bytes: null,
   };

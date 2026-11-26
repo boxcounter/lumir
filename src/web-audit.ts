@@ -4,6 +4,9 @@ export interface WebAuditMetadata {
   operation: WebOperation;
   query: string | null;
   url: string | null;
+  /** 调用 arguments 里的原始 URL（Fetch）；与 `url`（实际提交 / 最终 source.url）分开。
+   *  `null` = 非 Fetch / 未提供 / 旧记录。 */
+  input_url: string | null;
   provider: string | null;
   provider_id: string | null;
   attempts: number;
@@ -28,6 +31,7 @@ export function parseWebAudit(value: unknown): WebAuditMetadata | undefined {
   if (operation === undefined) return undefined;
   if (!nullableString(raw.query) || !nullableString(raw.url)) return undefined;
   if (!nullableString(raw.provider) || !nullableString(raw.provider_id)) return undefined;
+  if (!nullableString(raw.input_url)) return undefined;
   if (!Number.isInteger(raw.attempts) || (raw.attempts as number) < 0) return undefined;
   if (raw.cost_per_1000_success_cny !== 5) return undefined;
   if (typeof raw.local_precheck !== "boolean" || typeof raw.provider_fetch !== "boolean") return undefined;
@@ -54,6 +58,7 @@ export function parseWebAudit(value: unknown): WebAuditMetadata | undefined {
     truncated: raw.truncated,
     truncated_fields: raw.truncated_fields as string[],
     code,
+    input_url: (raw.input_url as string | null | undefined) ?? null,
     // 两个读数各自独立降级：一个非法不连带丢掉另一个合法值；缺键同样归 null。
     result_count: failed ? null : nonNegativeInteger(raw.result_count),
     result_text_bytes: failed ? null : nonNegativeInteger(raw.result_text_bytes),
@@ -88,6 +93,7 @@ export function webAuditFromEnvelope(value: unknown): WebAuditMetadata | undefin
     truncated: raw.truncated,
     truncated_fields: raw.truncated_fields,
     code: (raw.code as string | null | undefined) ?? null,
+    input_url: raw.input_url,
     result_count: raw.result_count,
     result_text_bytes: raw.result_text_bytes,
   });
@@ -137,7 +143,9 @@ export function withWebPanelInput(
   if (audit === undefined || input === undefined) return audit;
   const query = audit.query !== null && audit.query !== "" ? audit.query : input.query;
   const url = audit.url !== null && audit.url !== "" ? audit.url : input.url;
-  return { ...audit, query, url };
+  const inputUrl =
+    audit.input_url !== null && audit.input_url !== "" ? audit.input_url : input.url;
+  return { ...audit, query, url, input_url: inputUrl };
 }
 
 /** 默认行应显示的 Web 输入：持久化完整输入 → 审计投影 → 空串（旧记录安全降级）。
@@ -149,6 +157,8 @@ export function webInputText(
   if (input?.query !== null && input?.query !== undefined) return input.query;
   if (input?.url !== null && input?.url !== undefined) return input.url;
   if (audit?.operation === "search" && audit.query !== null) return audit.query;
-  if (audit?.operation === "fetch" && audit.url !== null) return audit.url;
+  if (audit?.operation === "fetch" && audit.input_url !== null) return audit.input_url;
+  // 不回落到 `audit.url`：Fetch 的 url 是实际提交 / 最终 source.url，重定向后是 B；
+  // 默认行 MUST 显示原始输入 A（评审 P1-2），最终 URL 只进默认关闭的详情。
   return "";
 }
