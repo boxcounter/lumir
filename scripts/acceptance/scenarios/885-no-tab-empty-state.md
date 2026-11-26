@@ -7,15 +7,18 @@
 # tests/visual/scenes/no-tab-empty-state-nov27.spec.ts；真机像素归 Alex 过目，不在本场景判红）。
 # 首启 tips / 老用户 D107 覆盖层收窄的判据同样在视觉场景；本场景不伪造首启状态。
 #
-# 未执行记录（2026-11-27）：本 change 的验收动作按指示只跑 `--check`，真机未执行——真机时段
-# 由主会话串行安排；届时若行号 / 光标读数与截图不符，按 FAIL 处理并回报，MUST NOT 先改断言。
+# 2026-11-27 真机首跑：`open goto-line-long.md` 等待「第 1 行」60s 超时。证据
+# `.local/acceptance/2026-11-27-ux-goal/885-no-tab-empty-state/` 的 AX 快照显示文档其实已装载
+# （AXTextArea 全文在场、标签选中），只是 fixture 以 `## 段一` 开头、没有「第 1 行」这一行——
+# 是场景 marker 写错，不是 tips 遮挡 / 打开意图 / fixture 或窗口状态 / 产品回归。marker 改为
+# fixture 实有的 `段一`；本批只跑 `--check`，真机待主会话重排。
 id: "885-no-tab-empty-state"
 item: 885
 tier: full
 title: 无 TAB 空态：单 pane scratch 无行号但可输入；分栏空 pane 无行号、键入无效、引导在场
 fixtures: [goto-line-long.md]
 open: goto-line-long.md
-marker: "第 1 行"
+marker: "段一"
 config:
   lineNumbers: "on"
   keys: { F2: "pane.split" }
@@ -24,7 +27,7 @@ steps:
     do: settle
     expect:
       - label: 文档已装载（正观测）
-        editor: { has: "第 1 行：填充段落" }
+        editor: { has: "第 2 行：填充段落" }
       - shot: 01-有文档-on-档
 
   - name: 关掉最后一个标签，回到单 pane scratch
@@ -55,10 +58,10 @@ steps:
   - name: 重新打开文档：gutter 同帧恢复
     do: open
     file: goto-line-long.md
-    marker: "第 1 行"
+    marker: "段一"
     expect:
       - label: 文档回到前台
-        editor: { has: "第 1 行：填充段落" }
+        editor: { has: "第 2 行：填充段落" }
       - shot: 04-重开文档-gutter-恢复
 
   - name: 分栏得到空 pane（F2 由本场景 config 绑定）
