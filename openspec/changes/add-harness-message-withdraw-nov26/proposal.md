@@ -66,8 +66,9 @@ harness 的对话面板没有用户消息的删除 / 编辑 / 重发入口：发
    不能越过扫描（`harness_withdraw_resume_in_flight`）。
 5. **composer 回填**：被撤回的用户消息项（wire content parts）按其序列化文本回填——文本
    （剥掉自动注入的「当前编辑器上下文」节）、引用卡 / 消息摘录卡 / 图片引用、**全部显式
-   Skill 名**（成功与被拒 / 不存在都在：名单取 `lumir_skill_trace` + `lumir_skill` part，
-   去重保序；正文不回填），光标落在原文末尾；当前输入非空时按「原文在前、当前输入在后」
+   Skill 名**（成功与被拒 / 不存在都在：名单取 `lumir_skill_trace` 的完整原名 `raw_name` 与
+   `lumir_skill` part，去重保序；展示名截断不兼任恢复协议，旧记录缺原名时回落展示名并安全
+   降级；正文不回填），光标落在原文末尾；当前输入非空时按「原文在前、当前输入在后」
    合并，不丢用户正在打的字。B 的 `assembly` 读失败 / 缺键时拒绝撤回（`harness_withdraw_read_failed`），
    不伪装成空装配后删 A。
 6. **来源闸**：只对本进程发起的交互轮 / 重试轮开放（`TurnOrigin` 记在会话内存态）；cron /
@@ -76,7 +77,9 @@ harness 的对话面板没有用户消息的删除 / 编辑 / 重发入口：发
    返回；文案明确「撤回不会撤销这些操作」。工具副作用本身不回滚。
 8. **旧会话事件封闭**：`harness:event` 信封新增 `session_token`（在回合 / 任务开始时定格）；
    前端在记账前按与 `persistence` 相同的准入丢弃退役 / 更旧令牌的事件（含 `subagent_started` /
-   `notice` / `title`）。后端写父会话的通知插入与投递标记比较 hub 的 `parent_token`，A→B 后旧
+   `notice` / `title`）。令牌水位**按 vault 分账**（`src/harness-session-tokens.ts`）：不同 vault
+   的令牌大小互不相干，切到 token 更小的 vault 时其事件 / 快照先接纳、旧 vault 的旧事件仍拒；
+   退役集合全局生效。后端写父会话的通知插入与投递标记比较 hub 的 `parent_token`，A→B 后旧
    hub 的迟到写入一律放弃（blocked 分支回滚 delivered 标记）。
 9. **会话清单**：A 删除后只剩 B 一行；B 的 `last_activity_ts` 因谱系断链（dangling parent）回落
    自身创建时刻。B 的会话名在首条真实请求前取自 `withdraw_seed` 的首条用户消息。

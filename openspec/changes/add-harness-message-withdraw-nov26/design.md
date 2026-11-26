@@ -124,10 +124,14 @@ usage/cache_totals/subrun_usage/subrun_runs=撤回时点种子
   的 `parent_token` 与当前会话令牌，不符即放弃（blocked 分支随后回滚 delivered 标记）；
   `record_subrun_*` / `park_approval` 的既有令牌复核不变。
 - **事件信封带会话令牌**（`session_token`）：`ScopedSink` / `OwnedScopedSink` / title job 在
-  构造时定格所属会话；前端在**记账之前**用与 `persistence` 相同的准入
-  （`persistenceEventAdmitted`）丢弃退役 / 更旧令牌的事件。`subagent_started`、`notice`、
-  `title` 与回合事件因此都不会从旧 A 落进 B；新令牌的同一批事件照常上屏。缺令牌（旧载荷 /
-  单测）按旧后端放行。
+  构造时定格所属会话；前端在**记账之前**丢弃退役 / 更旧令牌的事件。`subagent_started`、
+  `notice`、`title` 与回合事件因此都不会从旧 A 落进 B；新令牌的同一批事件照常上屏。缺令牌
+  （旧载荷 / 单测）按旧后端放行。
+- **水位按 vault 分账**（K3 复审 P1-1；`src/harness-session-tokens.ts`）：令牌是进程级单调
+  分配的，不同 vault 的会话各有各的号。单个全局水位会让「从 token 12 的 A 切到 token 5 的 B」
+  之后 B 的合法事件与快照被持续误判为旧会话并丢弃。账本为每个 vault 记一份水位：A 的旧事件
+  仍按 A 的水位拒绝，B 的水位为空时先接纳它的首条事件 / 快照（`persistence` 快照可纠偏），
+  退役集合仍全局生效（令牌进程内唯一）。
 
 ## 8. 前端
 
@@ -147,6 +151,10 @@ usage/cache_totals/subrun_usage/subrun_runs=撤回时点种子
   `persistenceEventAdmitted`）；退役 / 更旧的令牌整条丢弃，新令牌事件照常上屏。
 - **Skill 名单**：后端 `withdrawn_composer` 先取 `lumir_skill_trace`（成功 / 被拒 / 不存在的
   全部显式选择）再补 `lumir_skill` part 名，去重保序；前端按 `/name` 首次出现定位。
+  trace 的 `name` 是**展示名**（`truncate_summary`，>80 字符截断 + `…`），新增的 `raw_name`
+  携带完整原名（K3 复审 P2-1）——撤回复原用 `raw_name`，旧记录缺键时回落展示名并安全降级
+  （前端找不到 `/name` 即不还原，不从 `…` 猜测）。`raw_name` 随 `lumir_skill_trace` 整块在
+  wire 前剥除，Skill 正文与模型可见内容不变。
 
 ## 9. 错误码
 
@@ -168,18 +176,21 @@ usage/cache_totals/subrun_usage/subrun_runs=撤回时点种子
 
 ## 10. 判据（测试与证据）
 
-- Rust（`harness/withdraw_tests.rs`，16 条）：前缀 / 面板截断；A 删除 + B 唯一 + seed 不含被
+- Rust（`harness/withdraw_tests.rs`，18 条）：前缀 / 面板截断；A 删除 + B 唯一 + seed 不含被
   撤回文本；切走再恢复 B 得到同一前缀；两段式确认零副作用；busy / 待批拒绝；来源闸拒绝；
   派生拒绝（含参数）；删除失败回滚 B 且 A 仍是当前会话；**尾部后台通知拒绝（零变化）**；
   **不可读派生候选 fail closed**；**独立 Runtime 恢复占用期间拒绝、释放后恢复可用**；
-  **双故障报 rollback_incomplete**；**失败 / 被拒 Skill 从 trace 恢复并去重**；**装配记录
-  不可读 fail closed**；composer 素材（图片 / Skill / 剥上下文节）；标题 / 用量种子 /
-  `withdrawable` 归零；重复点击幂等；会话令牌变化。
+  **双故障报 rollback_incomplete**；**失败 / 被拒 Skill 从 trace 恢复并去重**；**>80 字符
+  成功 / 失败 Skill 用 `raw_name` 复原、旧记录回落展示名**；**装配记录不可读 fail closed**；
+  composer 素材（图片 / Skill / 剥上下文节）；标题 / 用量种子 / `withdrawable` 归零；重复
+  点击幂等；会话令牌变化。
 - 子代理（`subagents.rs` 1 条新增）：blocked 分支「已标 delivered、尚未 insert」窗口里父会话
   被换掉 → 通知不写新会话、delivered 回滚、pending 保留。
 - 事件信封（`events.rs` 1 条新增）：有会话时每条事件带 `session_token`，空态不写该键。
-- 前端（`tests/unit/harness-withdraw-composer.test.ts`，8 条）：实体还原、卡片锚点（行首 /
-  中间 / 连续 / 末尾）、成功与失败 Skill 位置、合并顺序与光标。
+- 前端（`tests/unit/harness-withdraw-composer.test.ts`，9 条）：实体还原、卡片锚点（行首 /
+  中间 / 连续 / 末尾）、成功 / 失败 / >80 字符长名 Skill 位置、合并顺序与光标。
+- 令牌账本（`tests/unit/harness-session-tokens.test.ts`，6 条）：A/B/A（大 token → 小 token 的
+  合法事件与快照落地、A 旧事件仍拒）、B 事件先于快照、空会话快照、退役与全局退役集合。
 - 真面板（`tests/visual/scenes/harness-withdraw-message-nov26.spec.ts`，4 条）：直接撤回 /
   工具二次确认 / 派生拒绝 / **旧令牌迟到事件拒收且新令牌照常上屏**。
 - 真机 882：三层判据（transcript 节点在场性翻转、composer 值在场、最新 JSONL `not` + 

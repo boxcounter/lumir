@@ -259,10 +259,27 @@ test("restoreSnapshot：in_flight 只在进入档位被读（对账档连读都�
   }
 });
 
+test("会话令牌按事件所属 vault 分账（K3 复审 P1-1）", () => {
+  const stale = functionBodyOf(PANEL_SOURCE, "sessionEventStale");
+  assert.match(
+    stale,
+    /typeof event\.vault === "string" \? event\.vault : currentVault/,
+    "准入必须按**事件所属 vault** 取水位，而不是当前视图的 vault",
+  );
+  assert.match(stale, /sessionTokens\.eventAdmitted\(vault, token\)/, "水位账本按 vault 判定");
+  assertNoMatch(stale, /persistenceSessionToken\s*=/, "MUST NOT 退回单例水位");
+  assertNoMatch(stale, /retiredPersistenceTokens/, "MUST NOT 退回全局水位变量");
+  // 快照落地也走同一个账本（切到 token 更小的 vault 时靠本 vault 的空水位接纳）。
+  const snapshot = functionBodyOf(PANEL_SOURCE, "applyPersistenceSnapshot");
+  assert.match(snapshot, /sessionTokens\.snapshotAdmitted\(currentVault, token\)/);
+});
+
 test("同源恢复 no-op 只关浮层，发生在任何视图复位与 token 更换之前", () => {
   const noop = RESUME.indexOf("if (info.switched === false)");
   const reset = RESUME.indexOf("resetView(");
-  const adopt = RESUME.indexOf("persistenceSessionToken = persistenceSessionTokenOf");
+  const adopt = RESUME.indexOf(
+    "sessionTokens.adopt(actionVault, persistenceSessionTokenOf(info.session_token))",
+  );
   assert.ok(noop >= 0, "必须显式处理 switched=false");
   assert.ok(noop < reset && noop < adopt, "no-op 必须先于 resetView 与新 token 采纳返回");
   assert.match(RESUME.slice(noop, reset), /setSessPop\(false\);\s*return;/);

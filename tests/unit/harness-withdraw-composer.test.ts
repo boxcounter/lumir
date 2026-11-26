@@ -93,6 +93,19 @@ test("失败 / 被拒的显式 Skill 同样还原：按名字定位、保持后�
   ]);
 });
 
+test("超过 80 字符的显式 Skill 名（成功与被拒）也按 `/name` 还原", () => {
+  // K3 复审 P2-1：后端从 trace 的 `raw_name` 取完整原名（展示名被截到 80 字符 + `…`）。
+  // 前端按完整 `/name` 定位——名字长度不是过滤条件（isSkillName 只限字符集）。
+  const longOk = `a${"b".repeat(119)}`;
+  const longFailed = `c${"d".repeat(119)}`;
+  const text = `用 /${longOk} 和 /${longFailed} 看看`;
+  const content = composerContentFromMessage(text, [longOk, longFailed]);
+  assert.deepEqual(content.skills, [
+    { name: longOk, from: 2 },
+    { name: longFailed, from: longOk.length + 6 },
+  ]);
+});
+
 test("与当前输入合并：原文在前、当前在后（补换行），锚点与光标随原文长度平移", () => {
   const restored = composerContentFromMessage(
     projectDelivery([

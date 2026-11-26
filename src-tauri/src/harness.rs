@@ -1357,7 +1357,15 @@ fn withdrawn_composer(item: &serde_json::Value) -> session::WithdrawnComposer {
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(|trace| trace["name"].as_str());
+        .filter_map(|trace| {
+            // **完整原名**优先（新记录）：展示名被 `truncate_summary` 截到 80 字符 + `…`，
+            // 不能兼任恢复协议——长名的失败 / 被拒选择只有 trace 能提供原名（K3 P2-1）。
+            // 旧记录缺 `raw_name` ⇒ 回落展示名：前端按 `/name` 找不到即安全降级，不从 `…` 猜。
+            trace["raw_name"]
+                .as_str()
+                .filter(|name| !name.is_empty())
+                .or_else(|| trace["name"].as_str())
+        });
     let part_names = content
         .as_array()
         .into_iter()

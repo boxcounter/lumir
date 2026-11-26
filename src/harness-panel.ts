@@ -3776,43 +3776,17 @@ export function persistenceStickyDue(
   return historyNow && !shown.has(vault ?? "");
 }
 
-/** `session_token` 的宽容解析：缺失 / 非数字 / <=0 = 旧后端或无会话（`null`）。
- *  新后端的事件与快照都带这个逻辑会话身份。 */
-export function persistenceSessionTokenOf(raw: unknown): number | null {
-  return typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : null;
-}
-
-/** 事件准入：旧逻辑会话的迟到事件 MUST NOT 复活告警。
- *
- *  - 旧后端没有 `session_token`（`null`）⇒ 放行（兼容读取，不误报）；
- *  - 已作废（显式新会话 / 从历史恢复 / 重置）的 token ⇒ 丢弃；
- *  - 当前无 token（新会话尚未建立 / 空态）⇒ 放行并接纳该 token（新会话的首条事件）；
- *  - 否则只接纳同一或更新的 token（token 由后端单调分配；压缩轮换沿用同一 token）。
- */
-export function persistenceEventAdmitted(
-  token: number | null,
-  current: number | null,
-  retired: ReadonlySet<number>,
-): boolean {
-  if (token === null) return true;
-  if (retired.has(token)) return false;
-  if (current === null) return true;
-  return token >= current;
-}
-
-/** 快照准入（复审 P1）：空会话快照（token `null`）只能在当前也没有 token 时落地；
- *  已退役或更旧的 token 快照不得覆盖已接纳的新 token。快照是地板，但**不能把更新的
- *  事件状态盖回旧值**——必要时由调用方丢弃并重读。 */
-export function persistenceSnapshotAdmitted(
-  token: number | null,
-  current: number | null,
-  retired: ReadonlySet<number>,
-): boolean {
-  if (token === null) return current === null;
-  if (retired.has(token)) return false;
-  if (current === null) return true;
-  return token >= current;
-}
+// 会话令牌准入的三条纯函数与「按 vault 分账」的水位账本在独立模块（change
+// add-harness-message-withdraw-nov26 / K3 复审 P1-1）：单例水位会让切到 token 更小的 vault 后
+// 的合法事件被持续误判。这里只消费，并保留原有导出面（`harness-persistence.test.ts` 与既有
+// 调用方按原路径取用）。
+import {
+  createSessionTokenLedger,
+  persistenceEventAdmitted,
+  persistenceSessionTokenOf,
+  persistenceSnapshotAdmitted,
+} from "./harness-session-tokens";
+export { persistenceEventAdmitted, persistenceSessionTokenOf, persistenceSnapshotAdmitted };
 
 export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const { shell, editor } = deps;
@@ -4220,12 +4194,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   ): boolean {
     if (eventMarkAtRequest !== persistenceEventRevision) return false;
     const token = persistenceSessionTokenOf(rawToken);
-    if (!persistenceSnapshotAdmitted(token, persistenceSessionToken, retiredPersistenceTokens)) {
+    // 快照按**当前 vault** 的水位准入：切到 token 更小的 vault 时它自己的水位为空，快照直接
+    // 落地并立为该 vault 的地板（K3 复审 P1-1：单例水位会让这一步被误拒，且无法自行纠偏）。
+    if (!sessionTokens.snapshotAdmitted(currentVault, token)) {
       return false;
     }
-    // 快照是权威：该 token 若曾被本地标成作废（例如切回同一会话），以快照为准。
-    if (token !== null) retiredPersistenceTokens.delete(token);
-    persistenceSessionToken = token;
     applyPersistence(persistenceViewOf(rawPersistence));
     return true;
   }
@@ -4255,10 +4228,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /** 显式「新会话」/ 从历史恢复：旧逻辑会话的 token、健康读数与「已提示」标记一并作废。
    *  后端新会话本身从空健康起算，这里只清渲染面与一次性提示的节流键。 */
   function resetPersistenceView(): void {
-    if (persistenceSessionToken !== null) {
-      retiredPersistenceTokens.add(persistenceSessionToken);
-    }
-    persistenceSessionToken = null;
+    sessionTokens.retire(currentVault);
     persistenceView = {
       state: "ok",
       severity: null,
@@ -4498,10 +4468,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     gap: false,
   };
   let persistenceLineHidden = true;
-  /** 当前逻辑会话身份（后端 `state.session_token` / 事件 envelope 的同名字段）。 */
-  let persistenceSessionToken: number | null = null;
-  /** 已作废的逻辑会话 token：显式新会话 / 从历史恢复 / 重置后，旧会话的迟到事件丢弃。 */
-  const retiredPersistenceTokens = new Set<number>();
+  /** 逻辑会话令牌账本（按 vault 分账 + 全局退役集合）：当前会话身份与旧事件准入共用它。 */
+  const sessionTokens = createSessionTokenLedger();
   /** 只取 persistence 的轻量快照请求世代（重置 / 恢复后的完整快照为地板）。 */
   let persistenceSnapshotSeq = 0;
   /** 已接纳的 persistence 事件序号：快照请求在结束后若发现期间有新事件，说明快照可能
@@ -7140,12 +7108,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   /** 撤回成功：重放 B 的面板、换持久化身份、把被撤回的原文交回 composer。 */
   function applyWithdraw(info: SessionWithdrawInfo, actionVault: string | null): void {
-    const previousToken = persistenceSessionToken;
-    if (previousToken !== null) retiredPersistenceTokens.add(previousToken);
+    sessionTokens.retire(actionVault);
+    sessionTokens.adopt(actionVault, persistenceSessionTokenOf(info.session_token));
     persistenceSnapshotSeq += 1;
     resetView({ clearActivityFor: actionVault });
     preserveComposerAcrossSessionSwitch();
-    persistenceSessionToken = persistenceSessionTokenOf(info.session_token);
     historyStickyShown.delete(currentVault ?? "");
     hidePersistenceLine();
     fetchPersistenceSnapshot();
@@ -9955,15 +9922,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    * 当前水位。缺令牌（旧后端 / 单测）放行。与 `persistence` 事件共用同一条准入函数。
    */
   function sessionEventStale(event: HarnessEvent): boolean {
-    if (!inCurrentVault(event.vault, currentVault)) return false;
+    // 按**事件所属 vault** 的水位判定：每个 vault 只跟自己的会话比，跨 vault 的令牌大小互不
+    // 相干（K3 复审 P1-1）。没有该 vault 的水位（刚切过去 / 新会话首事件）⇒ 先接纳。
+    const vault = typeof event.vault === "string" ? event.vault : currentVault;
     const token = persistenceSessionTokenOf(event.session_token);
-    if (!persistenceEventAdmitted(token, persistenceSessionToken, retiredPersistenceTokens)) {
-      return true;
-    }
-    if (token !== null && (persistenceSessionToken === null || token > persistenceSessionToken)) {
-      persistenceSessionToken = token;
-    }
-    return false;
+    return !sessionTokens.eventAdmitted(vault, token);
   }
 
   function handleEvent(event: HarnessEvent): void {
@@ -10106,11 +10069,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 留存健康跃迁（change add-persistence-health-status-nov23）：先按**逻辑会话身份**
         // 准入——旧会话（显式新会话 / 恢复 / 重置之前）的迟到事件不得复活告警；再按两维读数
         // 就地更新状态行与首次 history sticky。事件与快照同键同值，解析走同一份。
-        const token = persistenceSessionTokenOf(event.session_token);
-        if (!persistenceEventAdmitted(token, persistenceSessionToken, retiredPersistenceTokens)) {
+        if (!sessionTokens.eventAdmitted(vault, persistenceSessionTokenOf(event.session_token))) {
           return;
         }
-        if (token !== null) persistenceSessionToken = token;
         persistenceEventRevision += 1;
         applyPersistence(persistenceViewOf(event));
         return;
@@ -11621,12 +11582,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   function resumeSession(entry: SessionEntry): void {
     const actionVault = currentVault;
     const actionToken = viewGeneration;
-    const previousToken = persistenceSessionToken;
     harnessResumeSession(entry.sessionId)
       .then((info) => {
         if (actionVault !== null && (actionVault !== currentVault || actionToken !== viewGeneration)) {
           if (info.switched !== false) {
-            if (previousToken !== null) retiredPersistenceTokens.add(previousToken);
+            sessionTokens.retire(actionVault);
             activity.reset(actionVault);
           }
           return;
@@ -11635,13 +11595,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           setSessPop(false);
           return;
         }
-        if (previousToken !== null) retiredPersistenceTokens.add(previousToken);
+        sessionTokens.retire(actionVault);
+        sessionTokens.adopt(actionVault, persistenceSessionTokenOf(info.session_token));
         persistenceSnapshotSeq += 1;
         resetView({ clearActivityFor: actionVault });
         // 输入区保留（change preserve-composer-across-sessions-nov26）：恢复只换消息列表与会话名，
         // 并作废切换前的在途草稿恢复，避免迟到的读回改写保留的输入区。
         preserveComposerAcrossSessionSwitch();
-        persistenceSessionToken = persistenceSessionTokenOf(info.session_token);
         historyStickyShown.delete(currentVault ?? "");
         hidePersistenceLine();
         fetchPersistenceSnapshot();

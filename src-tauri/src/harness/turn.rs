@@ -632,7 +632,14 @@ pub(crate) const SKILL_TRACE_FIELD: &str = "lumir_skill_trace";
 /// 每条后续请求进入留存，正文会把它变成第二份 Skill 全文副本。
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ExplicitSkillTrace {
+    /// **展示名**（面板行 / 事件摘要用）：`truncate_summary` 截到 80 字符 + `…`。
     pub name: String,
+    /// **完整原始名**（机器可读，change add-harness-message-withdraw-nov26 的 K3 复审 P2-1）：
+    /// 显式选择可能失败（不存在 / 被拒 / 非法），此时只有 trace 能提供名字；展示名可能被截断，
+    /// 不能兼任恢复协议。`lumir_skill` part 只在成功时存在，因此失败的长名只能靠这里保真。
+    /// 旧记录缺该键 ⇒ 空串，读取方回落 `name` 并安全降级（不从 `…` 猜测）。
+    #[serde(default)]
+    pub raw_name: String,
     /// `done` / `denied` / `error`——与 [`PanelMessage::status`] 的细分终态同一集合。
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -710,6 +717,7 @@ pub(crate) fn explicit_skill_panel_message(trace: &ExplicitSkillTrace) -> PanelM
 /// 成功但取不到正文字符串是防御分支（加载器契约被破坏）：按 `skill_content_missing` 留失败
 /// 痕迹，MUST NOT 静默跳过——「选了一个 Skill 却什么都没发生」正是本 change 要消灭的形态。
 fn explicit_skill_trace_from_output(
+    raw_name: &str,
     name: &str,
     output: &ToolOutput,
     ts: u64,
@@ -721,6 +729,7 @@ fn explicit_skill_trace_from_output(
                 Some(content.to_string()),
                 ExplicitSkillTrace {
                     name: name.to_string(),
+                    raw_name: raw_name.to_string(),
                     status: status.to_string(),
                     code: None,
                     message: None,
@@ -732,12 +741,13 @@ fn explicit_skill_trace_from_output(
             "skill_content_missing",
             format!("技能 {name} 的 SKILL.md 没有正文"),
         );
-        return explicit_skill_trace_from_output(name, &missing, ts);
+        return explicit_skill_trace_from_output(raw_name, name, &missing, ts);
     }
     (
         None,
         ExplicitSkillTrace {
             name: name.to_string(),
+            raw_name: raw_name.to_string(),
             status: status.to_string(),
             code: Some(output.value["code"].as_str().unwrap_or("error").to_string()),
             message: Some(output.value["message"].as_str().unwrap_or("").to_string()),
@@ -792,7 +802,7 @@ fn explicit_skill_load<C: RunContext>(
             "skill_name_invalid",
             format!("技能名不合法（必须是 Skill 根下的单段目录名）：{display_name}"),
         );
-        let (_, trace) = explicit_skill_trace_from_output(&display_name, &output, ts);
+        let (_, trace) = explicit_skill_trace_from_output(raw_name, &display_name, &output, ts);
         return (None, trace);
     }
     let Some(skill) = skills.iter().find(|skill| skill.name == raw_name) else {
@@ -808,7 +818,7 @@ fn explicit_skill_load<C: RunContext>(
                 ("skill_not_found", format!("技能 {display_name} 不存在"))
             };
         let output = ToolOutput::err(code, message);
-        let (_, trace) = explicit_skill_trace_from_output(&display_name, &output, ts);
+        let (_, trace) = explicit_skill_trace_from_output(raw_name, &display_name, &output, ts);
         return (None, trace);
     };
     let args = serde_json::json!({"name": raw_name});
@@ -816,7 +826,7 @@ fn explicit_skill_load<C: RunContext>(
     if verdict.decision != Decision::Allow {
         let message = denied_message("skill_load", raw_name, verdict.reason.as_ref());
         let output = ToolOutput::err("permission_denied", message);
-        let (_, trace) = explicit_skill_trace_from_output(&display_name, &output, ts);
+        let (_, trace) = explicit_skill_trace_from_output(raw_name, &display_name, &output, ts);
         return (None, trace);
     }
     if !skill.invocation.valid {
@@ -824,7 +834,7 @@ fn explicit_skill_load<C: RunContext>(
             "skill_invocation_invalid",
             format!("技能 {display_name} 的调用元数据非法"),
         );
-        let (_, trace) = explicit_skill_trace_from_output(&display_name, &output, ts);
+        let (_, trace) = explicit_skill_trace_from_output(raw_name, &display_name, &output, ts);
         return (None, trace);
     }
     if !skill.invocation.user_invocable {
@@ -832,11 +842,11 @@ fn explicit_skill_load<C: RunContext>(
             "skill_user_invocation_disabled",
             format!("技能 {display_name} 不允许用户显式调用"),
         );
-        let (_, trace) = explicit_skill_trace_from_output(&display_name, &output, ts);
+        let (_, trace) = explicit_skill_trace_from_output(raw_name, &display_name, &output, ts);
         return (None, trace);
     }
     let output = tools::load_explicit_skill(skill);
-    let (content, trace) = explicit_skill_trace_from_output(&display_name, &output, ts);
+    let (content, trace) = explicit_skill_trace_from_output(raw_name, &display_name, &output, ts);
     let part = content.map(|content| {
         serde_json::json!({
             "type": "input_text",
@@ -5088,6 +5098,7 @@ mod tests {
         let ts = 42;
         let (content, trace) = explicit_skill_trace_from_output(
             "demo",
+            "demo",
             &ToolOutput::ok(serde_json::json!({"name": "demo", "content": "BODY"})),
             ts,
         );
@@ -5099,6 +5110,7 @@ mod tests {
         // 防御分支：加载器报成功却取不到正文字符串 → 失败痕迹，不静默跳过。
         let (content, trace) = explicit_skill_trace_from_output(
             "demo",
+            "demo",
             &ToolOutput::ok(serde_json::json!({"name": "demo"})),
             ts,
         );
@@ -5108,6 +5120,7 @@ mod tests {
         assert!(trace.message.as_deref().unwrap().contains("没有正文"));
 
         let (content, trace) = explicit_skill_trace_from_output(
+            "demo",
             "demo",
             &ToolOutput::err("skill_read_failed", "读取 SKILL.md 失败"),
             ts,

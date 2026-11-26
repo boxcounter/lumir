@@ -726,3 +726,70 @@ fn withdraw_fails_closed_when_the_assembly_record_is_unreadable() {
         "拒绝时不得创建 B（目录项不是 .jsonl 文件的常规路径，按 1 份文件计）"
     );
 }
+
+/// K3 P2-1：超过 80 字符的显式 Skill 名——成功与被拒都从 trace 的 `raw_name` 取**完整原名**；
+/// 展示名（截断 + `…`）只用于面板行，不兼任恢复协议。
+#[test]
+fn withdraw_restores_long_skill_names_from_trace_raw_name() {
+    let fixture = Fixture::new("long-skills");
+    let long_ok = format!("skill{}", "a".repeat(100));
+    let long_failed = format!("ghost{}", "b".repeat(100));
+    let display_ok = format!("{}…", long_ok.chars().take(80).collect::<String>());
+    let display_failed = format!("{}…", long_failed.chars().take(80).collect::<String>());
+    let item = serde_json::json!({
+        "role": "user",
+        "content": [
+            {"type": "input_text", "text": format!("用 /{long_ok} 和 /{long_failed} 看看")},
+            {"type": "input_text", "text": format!("[已加载 Skill：{long_ok}]\nBODY"), "lumir_skill": long_ok},
+        ],
+        "lumir_skill_trace": [
+            {"name": display_ok, "raw_name": long_ok, "status": "done", "ts": 1},
+            {"name": display_failed, "raw_name": long_failed, "status": "error", "ts": 1, "code": "skill_not_found"},
+        ],
+    });
+    fixture.seed_turn_with_item(item, "用长名 Skill 看看");
+    let info = fixture
+        .runtime
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect("应成功")
+        .info
+        .unwrap();
+    assert_eq!(
+        info.withdrawn.skills,
+        vec![long_ok.clone(), long_failed.clone()],
+        "成功与被拒的长名都必须以完整原名回到 composer（展示名不能冒充）"
+    );
+    assert!(!info.withdrawn.skills.iter().any(|name| name.ends_with('…')));
+}
+
+/// K3 P2-1：旧记录缺 `raw_name` ⇒ 回落展示名（安全降级）；不从 `…` 猜全名，也不伪造。
+#[test]
+fn withdraw_degrades_old_skill_trace_without_raw_name() {
+    let fixture = Fixture::new("old-skills");
+    let item = serde_json::json!({
+        "role": "user",
+        "content": [
+            {"type": "input_text", "text": "用 /ghost-name 看看"},
+        ],
+        "lumir_skill_trace": [
+            {"name": "ghost…", "status": "error", "ts": 1, "code": "skill_not_found"},
+        ],
+    });
+    fixture.seed_turn_with_item(item, "用 /ghost-name 看看");
+    let info = fixture
+        .runtime
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect("应成功")
+        .info
+        .unwrap();
+    assert_eq!(
+        info.withdrawn.skills,
+        vec!["ghost…"],
+        "旧记录只给展示名，原样回落"
+    );
+    assert_ne!(
+        info.withdrawn.skills,
+        vec!["ghost-name"],
+        "不得从省略号猜全名"
+    );
+}

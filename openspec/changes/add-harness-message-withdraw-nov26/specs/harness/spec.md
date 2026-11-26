@@ -18,7 +18,11 @@ JSONL。
 撤回 SHALL 封闭旧会话的事件源：`harness:event` 信封 SHALL 携带**逻辑会话令牌**，面板 SHALL 按与
 `persistence` 相同的准入丢弃退役 / 更旧令牌的事件（含 `subagent_*` / `notice` / `title` 与回合
 事件），旧会话的后台线程 MUST NOT 把行 / 通知 / 标题写进 B 的视图；后端写父会话的通道（通知插入、
-投递标记）MUST 比较中枢建时的父会话令牌，不符即放弃。
+投递标记）MUST 比较中枢建时的父会话令牌，不符即放弃。令牌水位 SHALL **按 vault 分账**：令牌是
+进程级单调分配的，不同 vault 的会话各有各的号，MUST NOT 用单个全局水位——否则从大 token 的 A
+切到小 token 的 B 后，B 的合法事件 / 快照会被持续误判为旧会话（含 `persistence`）。切到尚无水位
+的 vault 时 SHALL 先接纳其首条事件 / 快照，随后按该 vault 自己的水位收紧；已退役令牌的集合仍
+全局生效。
 A 已有任何派生 / 恢复会话（`restored_from` 链能走回 A）时，撤回 MUST 被拒绝并给出明确原因；
 MUST NOT 级联删除这些会话，MUST NOT 静默保留 A。派生检测 SHALL 在动作前与「发布 B 之后、删除 A
 之前」各复核一次（第二次排除 B 自身）。
@@ -52,7 +56,9 @@ A 删除失败时若撤销 B 的发布文件也失败，系统 MUST 显式暴露
 
 composer 回填 SHALL 包含：用户消息的序列化文本（引用卡 / 消息摘录卡 / 图片占位按原交错）、
 图片附件引用、**全部显式 Skill 名**（成功加载与被拒 / 不存在都在，按选择顺序去重——名单来自
-用户项的 `lumir_skill_trace` 与 `lumir_skill` part 两处），光标落在原文末尾；MUST NOT 包含自动
+用户项的 `lumir_skill_trace` 与 `lumir_skill` part 两处），光标落在原文末尾；Skill 名 SHALL 用
+**完整原名**（trace 的展示名可能被截断，MUST NOT 兼任恢复协议；原名随 `lumir_skill_trace` 在
+provider wire 前整体剥除），旧记录缺完整原名时 SHALL 回落展示名并安全降级（MUST NOT 从 `…` 猜测）；MUST NOT 包含自动
 注入的「当前编辑器上下文」节，MUST NOT 包含显式 Skill 的正文（注入内容）。composer 原有内容非空时 SHALL 合并（撤回内容在前、
 当前输入在后），MUST NOT 丢弃任何一边。
 
