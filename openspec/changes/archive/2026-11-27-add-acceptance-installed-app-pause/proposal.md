@@ -93,3 +93,10 @@ dirty 时照样退出，正是丢数据的那条路。
    - `node scripts/openspec-archive-check.mjs --change add-acceptance-installed-app-pause`：**PASS（扫过 1 份 delta，0 条 MODIFIED，对比 0 段，无静默丢段；归档队列 0 项已完成 change 均有唯一条目）**。
    - `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`：**Totals: 44 passed, 0 failed (44 items)**。
    - 归档队列：`docs/backlog.md` 有且仅有一条 `add-acceptance-installed-app-pause` 条目（同批删除一条已归档历史腾行，保持 80 行硬上限）。
+
+### 归档后记录
+
+- 归档提交：`c3d6c3a1272e39b5377f1a19355cd807307c0a3e`（`docs(openspec): archive add-acceptance-installed-app-pause`）。
+- `node scripts/openspec-archive.mjs add-acceptance-installed-app-pause` 实际输出：`Task status: 29/30 tasks`（1 项未完成 = 6.1，放弃理由已就地写明，`--yes` 继续）；`multi-tabs: update` / `+ 1 added`；归档到 `openspec/changes/archive/2026-11-27-add-acceptance-installed-app-pause/`。
+- 包装器修链：`归档后修链 0 处（扫过 4 篇 Markdown / 0 条相对链接）`；`openspec-links: PASS（校验 710 条相对链接，全部可达）`。
+- `node scripts/openspec-archive-check.mjs --archived add-acceptance-installed-app-pause`：**PASS（openspec/changes/archive/2026-11-27-add-acceptance-installed-app-pause：0 条 MODIFIED，对比 0 段；人工恢复 0 段，声明认领 0 段）**，时间 2026-11-27T03:27:19+0800。
