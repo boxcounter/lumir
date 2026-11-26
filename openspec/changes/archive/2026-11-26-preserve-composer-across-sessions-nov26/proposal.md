@@ -127,9 +127,9 @@
    未扩大范围。
 2. **独立评审**：K3 独立复审 **clean / merge**（P1 / P2 / P3 均为 0），绑定 tip
    `08148f2be004c2d86034f0c4a631ee76ae0e84db`，verdict
-   `.local/reviews/preserve-composer-across-sessions-nov26/k3-verdict.md`。该 tip 之后的增量为
-   合并提交 `27458d6f` 与两次场景对齐 `58ab5fd1` / `f5e9205e`（只改
-   `scripts/acceptance/scenarios/*.md`），`src/**` 零改动。
+   `.local/reviews/preserve-composer-across-sessions-nov26/k3-verdict.md`。该 tip 之后的提交为
+   合并提交 `27458d6f`（并入 master；`08148f2b..27458d6f` 对 `src/**` 零改动）与两次场景对齐
+   `58ab5fd1` / `f5e9205e`（只改 `scripts/acceptance/scenarios/*.md`）。
 3. **tasks 完成**：`tasks.md` 全勾（5.1 / 5.2 记录真机与归档结果），无放弃项。
 4. **门禁与真机证据**：
    - quick：`GATE RESULT: 13/13 PASS（SKIP 0）`，日志
@@ -154,7 +154,7 @@
 ### 归档后
 
 - **归档提交**：`6203c5db`（归档目录 + 并入后的 living spec 一起提交；`openspec/specs/harness/spec.md`
-  46 行增 / 少量改写，归档制品按 rename 记录）。
+  numstat **43 增 / 3 删**，归档制品按 rename 记录）。
 - **包装器实际输出**：`Change 'preserve-composer-across-sessions-nov26' archived as
   '2026-11-26-preserve-composer-across-sessions-nov26'.`；`harness: update`（`~ 1 modified`），
   `Totals: + 0, ~ 1, - 0, → 0`。

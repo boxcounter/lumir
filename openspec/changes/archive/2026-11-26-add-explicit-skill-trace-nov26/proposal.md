@@ -76,11 +76,13 @@
    未把 Skill 正文写入痕迹载体，未扩大范围。
 2. **独立评审**：K3 独立复审 **clean / merge**（P1 / P2 / P3 均为 0），绑定 tip
    `b7a63fc5f6351e1142a8660e0bb2776935889a36`，verdict
-   `.local/reviews/add-explicit-skill-trace-nov26/k3-verdict.md`。该 tip 之后的 master 增量只有
-   合并提交 `edf336c9` 与 test-only 提交（`92008fdb` 单测类型收窄、`58ab5fd1` / `f5e9205e`
-   验收场景对齐）；`9cf5d75f..HEAD` 对 `src/**` 与 `src-tauri/**` 零改动，合并冲突的逐文件处置
-   见 `.local/missions/harness-ux-integration-nov26/README.md`。verdict 把「真机 726 + 77、完整
-   视觉、完整 gate 未跑」列为未完成验证，本节第 4 条补齐。
+   `.local/reviews/add-explicit-skill-trace-nov26/k3-verdict.md`。该 tip 之后的 master 增量为
+   合并提交 `edf336c9`（把本 change 并入含作曲家的 master；与 `src/harness-panel.ts` 的集成冲突
+   逐文件处置见 `.local/missions/harness-ux-integration-nov26/README.md`）与 test-only 提交
+   （`92008fdb` 单测类型收窄、`58ab5fd1` / `f5e9205e` 验收场景对齐）；合并后再无产品代码改动
+   （`9cf5d75f..HEAD` 对 `src/**` 与 `src-tauri/**` 零改动），痕迹语义由集成后的全量门禁与真机
+   读数复核。verdict 把「真机 726 + 77、完整视觉、完整 gate 未跑」列为未完成验证，本节第 4 条
+   补齐。
 3. **tasks 完成**：`tasks.md` 全勾（6.6 记录真机结果），无放弃项。
 4. **门禁与真机证据**：
    - quick：`GATE RESULT: 13/13 PASS（SKIP 0）`，日志

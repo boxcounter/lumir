@@ -110,9 +110,12 @@ snippet → 整条移除 results），读数在这里算一次即可同时服务
 2. **独立评审**：K3 终审 **clean / merge**（P1-2 已关闭，无新增 P1 / P2 / P3），绑定 tip
    `e1bbf58a8e437af7886c7b394ba1a4fd4f5b5c59`，verdict
    `.local/reviews/compact-web-search-result-summary-nov26/k3-verdict.md`。该 tip 之后 master 的
-   增量只有合并提交 `9cf5d75f` 与 test-only 提交（`92008fdb` / `58ab5fd1` / `f5e9205e`）；
-   `9cf5d75f..HEAD` 对 `src/**` 与 `src-tauri/**` 零改动。verdict 的「真机 869 / 870 / 871 /
-   872 / 873 / 876、完整视觉、完整 gate 未跑」未完成验证由本节第 4 条补齐。
+   提交为合并提交 `9cf5d75f`（把本 change 并入含作曲家 + Skill 痕迹的 master；`edf336c9..9cf5d75f`
+   与 `e1bbf58a` 的差异是三方集成，逐文件处置见
+   `.local/missions/harness-ux-integration-nov26/README.md`）与 test-only 提交（`92008fdb` /
+   `58ab5fd1` / `f5e9205e`）；合并后再无产品代码改动（`9cf5d75f..HEAD` 对 `src/**` 与
+   `src-tauri/**` 零改动）。verdict 的「真机 869 / 870 / 871 / 872 / 873 / 876、完整视觉、
+   完整 gate 未跑」未完成验证由本节第 4 条补齐。
 3. **tasks 完成**：`tasks.md` 全勾（6.6 记录 backlog 条目、真机读数与节点 2），无放弃项。
 4. **门禁与真机证据**：
    - quick：`GATE RESULT: 13/13 PASS（SKIP 0）`，日志
