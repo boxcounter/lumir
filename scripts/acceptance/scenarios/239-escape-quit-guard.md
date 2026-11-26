@@ -32,17 +32,21 @@ steps:
         file: { path: harness-note.md, unchangedSince: docClean }
       - shot: 01-dirty文档
 
-  - name: 重新记基线（dirty 之后、Esc 之前的正文与磁盘读数）
+  - name: 建立 key window + webview 焦点（在弹框打开前做；弹框打开后 click:true 会点到遮罩）
+    do: focusWindow
+    click: true
+    retries: 4
+    expect:
+      - label: key window 与编辑器焦点已建立（失败即 InfraError，不继续盲发键盘）
+        ax: { focused: "AXTextArea" }
+
+  - name: 重新记基线（key window 建立、光标落定之后、Esc 之前的正文与磁盘读数）
     do: recordEditor
     as: dirtyBase
   - name: 磁盘基线（dirty 之后）
     do: record
     file: harness-note.md
     as: docDirty
-
-  - name: 抢前台（后台注入键盘整批丢键会显著加剧——REVIEW.md「键盘注入丢键」条）
-    do: focusWindow
-    retries: 4
 
   - name: 文档 dirty、没有任何层打开时按 Escape
     do: key
@@ -181,10 +185,14 @@ change `fix-escape-overlay-close-oct24` 的 E6（退出守卫不削弱）+ 设�
 `has "ESC-DIRTY-LINE"` + 磁盘证据复读）。按钮断言按 AX 节点行写 `AXButton (取消)`，
 不用 `/^取消$/` 行锚。
 
-**Escape 的焦点交接（r4 现场）**：⌘Q 打开弹框后，WKWebView 的 AX 焦点已在主按钮，但键盘
-焦点可能还在原生菜单 / 窗口交接；第一下 Escape 会被吃掉，弹框仍在。场景先 `focusWindow`
-再按两下（中间留 200ms）：第二下若弹框已关，无层兜底只 `preventDefault`、不退出应用。
-终态判据仍是「弹框必须关闭」，不把「键没送达」当通过。
+**Escape 的 key-window 前提（r4 / r5 现场）**：r5 的 AX 显示主按钮已 focused、取消按钮可点，
+但连续两下 Escape 都不关——这不是 DOM / 层栈的焦点问题（Chromium 与真 WebKit 引擎的
+`quit-dialog-escape-nov27` 回归都证明打开后 `document.hasFocus() === true`、主按钮持焦、
+Escape 关闭、重复 `quit_blocked` 单弹框）。套件自己的合同写明：`focusWindow` 默认只保证
+**app 在前台**，不保证 **key window**；弹框打开后再 `click:true` 会点到遮罩。因此场景在
+**弹框打开前**用 `focusWindow click:true` 建立 key window + 编辑器焦点，再重记正文基线；
+弹框打开后保留一次默认 `focusWindow` 与两下 Escape 作为焦点交接的兜底。终态仍要求弹框
+关闭，不把「键没送达」当通过。若 r6 在 key window 已建立后仍不关，才按原生键盘投递缺陷升级。
 
 **为什么 ① 的负向判据要留一拍再读**：退出确认弹框由 `app:quit_blocked` 事件触发、经 IPC 与
 DOM 渲染，落到 AX 要几百毫秒；紧贴按键读 AX 的 `not` 断言会恒真（REVIEW.md「读不到当成空」
