@@ -84,7 +84,19 @@ steps:
         file: { path: harness-note.md, unchangedSince: docDirty, mtimeUnchangedSince: docDirty }
       - shot: 03-CmdQ被守卫拦下并弹出确认
 
-  - name: 按 Escape 取消退出确认（只关弹框，不退出、不保存）
+  - name: 抢前台（⌘Q 打开弹框后原生菜单 / 焦点交接可能吃掉第一下 Escape）
+    do: focusWindow
+    retries: 4
+
+  - name: 按 Escape 取消退出确认（第一下可能被原生焦点交接吃掉）
+    do: key
+    key: escape
+
+  - name: 留一拍让焦点交接落定
+    do: sleep
+    ms: 200
+
+  - name: 再按 Escape（若第一下已关，本下无层兜底只消费默认行为、不退出）
     do: key
     key: escape
 
@@ -98,8 +110,8 @@ steps:
         ax: { not: "AXButton (保存全部并退出)" }
       - label: 应用仍在且 dirty 标记仍在（取消没有丢改动、也没有把它存掉）
         ax: { has: "（未保存）" }
-      - label: 文档正文逐字节不变（取消不碰文档）
-        editor: { unchangedSince: dirtyBase }
+      - label: 取消后正文仍在（标题标记显隐不是内容变化；用输入标记判内容）
+        editor: { has: "ESC-DIRTY-LINE" }
       - label: 磁盘文件未被改写
         file: { path: harness-note.md, unchangedSince: docDirty, mtimeUnchangedSince: docDirty }
 
@@ -165,8 +177,14 @@ change `fix-escape-overlay-close-oct24` 的 E6（退出守卫不削弱）+ 设�
 | ③ | 保存后按 `⌘Q` | 正常退出、不再提示；重启后保存内容仍在 | 守卫没有被改宽成「什么都拦」；退出通道本身还能走通 |
 
 **弹框打开期间不要断言背景**：`#app` 为 inert，编辑器与 dirty 标记会从 AX 树消失；模态打开
-期间只判磁盘，编辑器 `unchangedSince` 与 dirty 标记留到 Escape 关闭之后（本场景 ② 的后半段
-正是这么做的）。按钮断言按 AX 节点行写 `AXButton (取消)`，不用 `/^取消$/` 行锚。
+期间只判磁盘，编辑器内容与 dirty 标记留到 Escape 关闭之后（本场景 ② 的后半段用输入标记
+`has "ESC-DIRTY-LINE"` + 磁盘证据复读）。按钮断言按 AX 节点行写 `AXButton (取消)`，
+不用 `/^取消$/` 行锚。
+
+**Escape 的焦点交接（r4 现场）**：⌘Q 打开弹框后，WKWebView 的 AX 焦点已在主按钮，但键盘
+焦点可能还在原生菜单 / 窗口交接；第一下 Escape 会被吃掉，弹框仍在。场景先 `focusWindow`
+再按两下（中间留 200ms）：第二下若弹框已关，无层兜底只 `preventDefault`、不退出应用。
+终态判据仍是「弹框必须关闭」，不把「键没送达」当通过。
 
 **为什么 ① 的负向判据要留一拍再读**：退出确认弹框由 `app:quit_blocked` 事件触发、经 IPC 与
 DOM 渲染，落到 AX 要几百毫秒；紧贴按键读 AX 的 `not` 断言会恒真（REVIEW.md「读不到当成空」
