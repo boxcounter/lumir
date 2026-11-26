@@ -49,30 +49,34 @@ async function stubHarnessState(
     { session_id: "s1759912345678-k3x9ab", first_user_text: "帮我整理这份笔记", ts: 1759912345 },
     { session_id: "s1759912000000-a1b2c3", first_user_text: "旧会话草稿", ts: 1759912000 },
   ],
+  messages: Array<Record<string, unknown>> = [],
 ): Promise<void> {
-  await page.addInitScript((rows) => {
-    const w = window as unknown as Record<string, any>;
-    const invoke = w.__TAURI_INTERNALS__.invoke as (cmd: string, args: unknown) => unknown;
-    w.__deletedSessions = [] as string[];
-    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
-      if (cmd === "harness_state") {
-        return JSON.stringify({
-          messages: [],
-          usage: { ctx_pct: 0, cache_pct_session: 0 },
-          pending_approval: null,
-          warn_ctx_pct: 85,
-        });
-      }
-      if (cmd === "harness_list_sessions") return JSON.stringify(rows);
-      if (cmd === "harness_delete_session") {
-        w.__deletedSessions.push(args.session_id as string);
-        return null;
-      }
-      // 新建会话的成功桩（M350 的幂等语义由 Rust 单测钉住；本层只判界面后果）。
-      if (cmd === "harness_new_session") return null;
-      return invoke(cmd, args);
-    };
-  }, sessions);
+  await page.addInitScript(
+    ({ rows, panelMessages }) => {
+      const w = window as unknown as Record<string, any>;
+      const invoke = w.__TAURI_INTERNALS__.invoke as (cmd: string, args: unknown) => unknown;
+      w.__deletedSessions = [] as string[];
+      w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
+        if (cmd === "harness_state") {
+          return JSON.stringify({
+            messages: panelMessages,
+            usage: { ctx_pct: 0, cache_pct_session: 0 },
+            pending_approval: null,
+            warn_ctx_pct: 85,
+          });
+        }
+        if (cmd === "harness_list_sessions") return JSON.stringify(rows);
+        if (cmd === "harness_delete_session") {
+          w.__deletedSessions.push(args.session_id as string);
+          return null;
+        }
+        // 新建会话的成功桩（M350 的幂等语义由 Rust 单测钉住；本层只判界面后果）。
+        if (cmd === "harness_new_session") return null;
+        return invoke(cmd, args);
+      };
+    },
+    { rows: sessions, panelMessages: messages },
+  );
 }
 
 test("对话面板：pane 口径展开态结构 + 标题栏元素级基线", async ({ page }) => {
@@ -321,4 +325,48 @@ test("新会话幂等（界面后果）：连续点击后空态仍在、无错�
     await expect(nameButton, `第 ${round} 次点击后会话名钮应仍是未命名态`).toHaveText("新会话");
     await expect(newButton, `第 ${round} 次点击后新建钮应仍在`).toHaveAttribute("aria-label", "新会话");
   }
+});
+
+test("显式 Skill 痕迹行：成功带可见终态词「已加载」，失败带原因（评审 P1-1）", async ({ page }) => {
+  // 恢复快照路径的渲染：成功终态词必须是行内可见文本（勾图标 aria-hidden，不承担语义），
+  // 失败行保留原因尾注。live 路径的同一终态词由 726 的 AX 断言覆盖，两条路径共用
+  // `explicitSkillSuccessTail`（单元测试钉住返回值）。
+  await stubTauri(page, VAULT);
+  await stubHarnessState(page, undefined, [
+    { role: "user", text: "question", ts: 1759912345 },
+    {
+      role: "tool",
+      name: "explicit_skill",
+      summary: '{"name":"acc-skill-abc"}',
+      status: "done",
+      ts: 1759912345,
+    },
+    {
+      role: "tool",
+      name: "explicit_skill",
+      summary: '{"name":"ghost"}',
+      status: "error",
+      text: '{"ok":false,"code":"skill_not_found","message":"技能 ghost 不存在"}',
+      ts: 1759912345,
+    },
+  ]);
+  await page.goto("/");
+
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  // 两条工具记录收成一个折叠块：先展开再判行（折叠态行不可见）。
+  await page.locator(".lumir-hp-tool-summary").click();
+
+  const rows = page.locator(".lumir-hp-tool-row");
+  await expect(rows).toHaveCount(2);
+  const ok = rows.nth(0);
+  await expect(ok).toHaveClass(/is-done/);
+  await expect(ok.locator(".lumir-hp-tool-name")).toHaveText("explicit_skill");
+  await expect(ok.locator(".lumir-hp-tool-args")).toHaveText("acc-skill-abc");
+  await expect(ok.locator(".lumir-hp-tool-out")).toHaveText("· 已加载");
+
+  const failed = rows.nth(1);
+  await expect(failed).toHaveClass(/is-fail/);
+  await expect(failed.locator(".lumir-hp-tool-args")).toHaveText("ghost");
+  await expect(failed.locator(".lumir-hp-tool-out")).toContainText("skill_not_found");
 });

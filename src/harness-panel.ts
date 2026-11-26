@@ -1804,7 +1804,7 @@ export function restoredReasoningText(record: unknown): string | null {
 // 上屏（正好是 core 那份成品）——两种形态都可能在，判据见 [`humanizeToolArgs`] 与
 // [`toolArgsText`]（后者是「参数格取哪一份」的取值口径）。
 // 人话化是**展示层提取**（按工具名取关键参数：cli_run=完整命令、vault_*=路径、
-// vault_search=查询词、skill_load=技能名），截断 / 非 JSON / 未知工具一律回落原文，
+// vault_search=查询词、skill_load / explicit_skill=技能名），截断 / 非 JSON / 未知工具一律回落原文，
 // 不伪造。gated 调用的完整参数在 approval_request 载荷里（argv 数组 / diff 头文件名），
 // 到达后取代截断摘要。与上面几层同一条分层纪律：纯函数零 DOM（tests/unit 直接驱动）。
 // ---------------------------------------------------------------------------
@@ -1847,6 +1847,10 @@ function keyArgOf(name: string, args: Record<string, unknown>): string | null {
     case "vault_search":
       return typeof args.query === "string" && args.query !== "" ? args.query : null;
     case "skill_load":
+      return typeof args.name === "string" && args.name !== "" ? args.name : null;
+    // 显式 Skill 痕迹（change add-explicit-skill-trace-nov26）：痕迹行的参数摘要恒为
+    // {"name": <技能名>}（成功与失败同一形态）；工具名与模型自主的 skill_load 区分。
+    case "explicit_skill":
       return typeof args.name === "string" && args.name !== "" ? args.name : null;
     default:
       return null;
@@ -1893,6 +1897,19 @@ export function humanizeToolArgsStrict(name: string, summary: string): string {
 export function toolArgsText(name: string, summary: string): string {
   if (summary === "" || TOOL_FAILED_SUMMARY.test(summary)) return "";
   return humanizeToolArgs(name, summary);
+}
+
+/**
+ * 显式 Skill 痕迹行的**成功终态词**（change add-explicit-skill-trace-nov26 评审 P1-1）：
+ * 痕迹行必须有**可见且 AX 可读**的终态，不能只靠 `aria-hidden` 的勾图标（图标是纯装饰，
+ * 读屏与文本判据都读不到）。失败侧已由失败尾注承担，这里只补成功侧；其余工具行保持既有
+ * 三段式（成功不加尾注）。live 与恢复两条路径共用本函数，两侧不会各写一套终态词。
+ */
+export function explicitSkillSuccessTail(
+  name: string,
+  failed: boolean,
+): string | undefined {
+  return !failed && name === "explicit_skill" ? t("D1029") : undefined;
 }
 
 /** unified diff 的文件名（core diff.rs 头两行 `--- a/{path}` / `+++ b/{path}`；取不到 → null）。 */
@@ -7748,7 +7765,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // （判据「是 JSON 才取参数」），而 M528 起 core 的成品摘要不是 JSON ⇒ 失败行的参数格
         // 整格空掉、命令本体消失（修前的可见性本来就分两半：arguments ≤80 字的调用严格版能
         // 解析出命令、看得见；>80 字的调用原文截断后照样看不见——M528 与这处一并收口）。
-        createToolText(name, toolArgsText(name, args), failed ? summary : undefined, toolPathTargetsOf(name, args)),
+        createToolText(name, toolArgsText(name, args), failed ? summary : explicitSkillSuccessTail(name, failed), toolPathTargetsOf(name, args)),
       );
     } else {
       // 无 running 行（乱序 done / 桩环境）：没有更早的那份摘要可用，done 原文按形状判定。
@@ -7760,7 +7777,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         createToolText(
           name,
           humanizeToolArgsStrict(name, summary),
-          failed ? summary : undefined,
+          failed ? summary : explicitSkillSuccessTail(name, failed),
           toolPathTargetsOf(name, summary),
         ),
       );
@@ -10137,7 +10154,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     row.className = failed ? "lumir-hp-tool-row is-fail" : "lumir-hp-tool-row is-done";
     const tail = failed
       ? (failureTextOf(record) ?? (TOOL_FAILED_SUMMARY.test(summary) ? summary : undefined))
-      : undefined;
+      : explicitSkillSuccessTail(name, failed);
     row.append(
       createToolIcon(failed ? "fail" : "done"),
       createToolText(
