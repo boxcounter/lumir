@@ -401,17 +401,17 @@ steps:
       - label: Alt 对照仍未改编辑器
         editor: { unchangedSince: doc-before-skill-nav }
       - shot: 08-Alt-N-原生组字现场
-  - name: Alt 组字后 Escape 关闭对话面板
+  - name: Alt 组字后 Escape 关闭 Harness 面板
     do: key
     key: escape
     expect:
-      - label: 对话面板已关闭
-        ax: { has: "AXCheckBox (对话面板) Value: 0" }
+      - label: Harness 面板已关闭
+        ax: { has: "AXCheckBox (Harness 面板) Value: 0" }
       - label: Alt 对照候选保持关闭
         ax: { not: "AXList (Select a Skill)" }
-  - name: 重开对话面板，准备 20% 窄 pane 对照
+  - name: 重开 Harness 面板，准备 20% 窄 pane 对照
     do: click
-    target: { role: AXCheckBox, name: "^对话面板$" }
+    target: { role: AXCheckBox, name: "^Harness 面板$" }
 
   - name: 新建会话，seed 已固定文档侧 80% 与 harness 20%
     do: click

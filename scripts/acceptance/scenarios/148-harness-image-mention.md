@@ -213,9 +213,9 @@ steps:
 
   - name: 重启 app（内存会话丢弃——恢复只能从 JSONL + 附件还原）
     do: restart
-  - name: 点标题栏「对话面板」开关重开 harness pane
+  - name: 点标题栏「Harness 面板」开关重开 harness pane
     do: click
-    target: { role: AXCheckBox, name: "对话面板" }
+    target: { role: AXCheckBox, name: "Harness 面板" }
   - name: 等 pane 打开
     do: waitFor
     waitFor:

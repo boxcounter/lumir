@@ -126,8 +126,10 @@ const linkExact = (page: Page, text: string) =>
 const cardLink = (page: Page, text: string) =>
   page.locator(".lumir-hp-tool-row .lumir-hp-pathlink").filter({ hasText: new RegExp(`^${text.replace(/\./g, "\\.")}$`) });
 
+/** 树里打开**另一个**文件：⌘-点击新开标签（change improve-file-open-harness-affordance-nov26
+ *  起普通点击 = 当前标签就地打开；本 spec 的用例都以「另一个标签」为前提）。 */
 async function openTreeFile(page: Page, path: string): Promise<void> {
-  await page.locator(`.ft-row[title="${path}"]`).click();
+  await page.locator(`.ft-row[title="${path}"]`).click({ modifiers: ["Meta"] });
   await expect(page.locator(".tab.is-active .tab-name")).toHaveText(path.split("/").pop() as string);
 }
 

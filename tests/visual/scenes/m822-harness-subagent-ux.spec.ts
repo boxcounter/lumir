@@ -656,5 +656,5 @@ test("子运行待批不改变父会话的阶段行与标题栏状态", async ({
   await expect(page.locator(".lumir-hp-stage")).toHaveText("等待响应…");
   await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
   await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("处理中");
-  await expect(page.locator(".lumir-hp-toggle")).toHaveAttribute("title", "对话面板 · 处理中");
+  await expect(page.locator(".lumir-hp-toggle")).toHaveAttribute("title", "Harness 面板 · 处理中");
 });

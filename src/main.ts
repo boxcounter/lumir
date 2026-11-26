@@ -2889,11 +2889,12 @@ function openImage(path: string, targetPane?: number): boolean {
 // 模式并登记磁盘 revision；image 在下面早于文本装载分流（`openImage`，M629），binary 仍走
 // `loadSessionContent` 里的 D25 分支——两条判定都不在这里重复（`kind` 取 `openKind` 一处分类）。
 //
-// 落点由 intent 决定（M254 起只剩两个取值，预览机制已退场）：
+// 落点由 intent 决定（M254 起只剩两个取值；文件树的普通点击 / ⌘-点击在
+// improve-file-open-harness-affordance-nov26 起分别落到这两个取值）：
 //   - "current"（**默认值**）：当前标签跟随换文档——文档内链接跟随 / 另存为新文件 /
-//     恢复备份三条链路都是「当前这份文档换个落点」，也是「不传就退化成 M149 之前的
-//     行为」这个保守兜底；
-//   - "new"：新开一个标签（单击 / 双击 / ⌘-点击文件树、新建文件后的自动打开、会话恢复）。
+//     恢复备份 / **文件树普通点击**都是「当前这份文档换个落点」，也是「不传就退化成
+//     M149 之前的行为」这个保守兜底；
+//   - "new"：新开一个标签（**文件树 ⌘-点击**、新建文件后的自动打开、快速打开、会话恢复）。
 //
 // `targetPane`（pane 下标，缺省 undefined）是**显式落点**，只有会话恢复批量路径传它（M321）：
 // 命中他 pane 已开的同文件时，落点取这个指定 pane 而不是活跃 pane——恢复期活跃 pane 是后建的
@@ -4365,9 +4366,15 @@ function pickVault(forceNew = false): void {
 }
 
 tree = createFileTree(shell.treeMount, {
-  // 打开文件的落点：树已经不再判定意图（M254）——单击 / 双击 / ⌘-点击一律是「开一个标签」，
-  // 预览机制退场后这三者没有可区分的落点，判定权因此收回装配层一处（"new"）。
-  onOpenFile: (path, kind) => void openFile(path, kind, "new"),
+  // 打开文件的落点：手势 → 意图的判定在树的 `treeOpenIntent` 一处（change
+  // improve-file-open-harness-affordance-nov26）——普通点击 = 当前标签就地打开、
+  // ⌘-点击 = 新开标签并保留当前标签；这里只按意图路由，不再自己读鼠标事件。
+  //
+  // 唯一的例外是**当前标签有未保存修改**：普通点击退回「新开一个」——就地替换会把那份修改
+  // 连同标签一起丢掉，而「打开另一个文件不丢修改、也不弹拦截」是 M149 起的既有口径（save-guard
+  // 场景判的就是它）。判定放在装配层（它持有 editor），树仍只报手势。
+  onOpenFile: (path, kind, intent) =>
+    void openFile(path, kind, intent === "current" && editor.activeSession().dirty ? "new" : intent),
   // 空态按钮（未装载 vault 时唯一入口）与浮层底部的「新增 vault…」同一条链路。
   onOpenVault: () => requestAddVault(),
   // 树头部的常驻入口（形态 A）：展开 / 收起列表浮层。

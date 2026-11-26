@@ -79,7 +79,7 @@ async function stubHarnessState(
   );
 }
 
-test("对话面板：pane 口径展开态结构 + 标题栏元素级基线", async ({ page }) => {
+test("Harness 面板：pane 口径展开态结构 + 标题栏元素级基线", async ({ page }) => {
   await stubTauri(page, VAULT);
   await stubHarnessState(page);
   await page.goto("/");
@@ -94,14 +94,16 @@ test("对话面板：pane 口径展开态结构 + 标题栏元素级基线", asy
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
   // M370 图标化：钮面是原型同款火花 SVG（可见文字 D326 退场），可读身份 = D327 悬停/读屏名。
   await expect(toggle.locator("svg")).toHaveCount(1);
-  await expect(toggle).toHaveAttribute("aria-label", "对话面板");
-  await expect(toggle).toHaveAttribute("title", "对话面板");
+  await expect(toggle).toHaveAttribute("aria-label", "Harness 面板");
+  await expect(toggle).toHaveAttribute("title", "Harness 面板");
 
   await toggle.click();
   // pane 口径的在场性正观测（像素基线的语义锚——基线里到底有什么，断言行说了算）：
   // 面板挂进**旁侧 pane**（dock 列已移除：骨架两列、无 dock-open 类），harness 段随在场
   // 出现在标题栏（会话名缺省「新会话」+ ＋新会话钮），面板无头部栏（.lumir-hp-head 零残留）。
   await expect(panel).toBeVisible();
+  // 面板容器的可访问名与 toggle 同源（D327；change improve-file-open-harness-affordance-nov26）。
+  await expect(panel).toHaveAttribute("aria-label", "Harness 面板");
   await expect(toggle).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".lumir-hp-head")).toHaveCount(0);
   await expect(page.locator(".pane-divider")).toBeVisible();

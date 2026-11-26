@@ -212,7 +212,8 @@ test("切走即取消：A 粘贴→切 B→切回 A，响应不升级", async ({
   await setCursor(page, START.length);
   await pasteText(page, URL);
 
-  await page.locator('.ft-row[title="other.md"]').click();
+  // ⌘-点击新开标签：change improve-file-open-harness-affordance-nov26 起普通点击会就地替换。
+  await page.locator('.ft-row[title="other.md"]').click({ modifiers: ["Meta"] });
   await expect(page.locator(".tab")).toHaveCount(2);
   await switchTab(page, "paste.md");
   await page.waitForTimeout(1000);
@@ -231,7 +232,8 @@ test("响应在 inactive 到达：撤账后切回不升级", async ({ page }) =>
   await setCursor(page, START.length);
   await pasteText(page, URL);
 
-  await page.locator('.ft-row[title="other.md"]').click();
+  // ⌘-点击新开标签：change improve-file-open-harness-affordance-nov26 起普通点击会就地替换。
+  await page.locator('.ft-row[title="other.md"]').click({ modifiers: ["Meta"] });
   await expect(page.locator(".tab")).toHaveCount(2);
   // 让响应在 B 前台时到达（inactive 分支必须只撤 A 的 pending，不碰 B 的 view）。
   await page.waitForTimeout(600);
@@ -247,7 +249,8 @@ test("关闭标签：等待中的响应不写回其他文档", async ({ page }) 
     { "paste.md": START, "other.md": OTHER },
     { urlTitles: { [URL]: TITLE }, urlTitleDelayMs: 800 },
   );
-  await page.locator('.ft-row[title="other.md"]').click();
+  // ⌘-点击新开标签：change improve-file-open-harness-affordance-nov26 起普通点击会就地替换。
+  await page.locator('.ft-row[title="other.md"]').click({ modifiers: ["Meta"] });
   await expect(page.locator(".tab")).toHaveCount(2);
   await switchTab(page, "paste.md");
   await setCursor(page, START.length);

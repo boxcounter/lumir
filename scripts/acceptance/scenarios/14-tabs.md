@@ -26,15 +26,20 @@ steps:
       - label: 输入真的落进文档
         editor: { has: "QQQ" }
 
-  - name: 单击第二个文件——新开一个标签（不再顶掉上一篇）
-    do: open
-    file: tabs-b.md
-    marker: "标签场景 B"
+  # change improve-file-open-harness-affordance-nov26 起普通点击 = 当前标签就地打开，
+  # ⌘-点击才新开标签并保留当前标签。本场景要建立多标签现场，因此用 ⌘-点击；普通点击的
+  # 就地替换与「保留当前标签（内容 / dirty）」判据见场景 880。
+  - name: 拿前台（修饰键点击走真实指针通道，要求 Lumir 是 key window）
+    do: focusWindow
+    retries: 4
+  - name: ⌘-点击 tabs-b（真实指针 + 修饰键通道）
+    do: click
+    target: { role: AXButton, name: "^tabs-b\\.md$", modifiers: ["cmd"] }
     expect:
       - shot: 两个标签
       - label: 第二个文件上屏
         editor: { has: "标签场景 B" }
-      - label: 现在有两个标签（M254 之前单击会复用预览标签就地替换，上一步的输入会连内容一起消失）
+      - label: 现在有两个标签（⌘-点击新开并保留；tabs-a 的 QQQ 仍在它的标签里）
         ax: { count: { pattern: "关闭 ", exact: 2 } }
 
   - name: ⌘1 直达第一个标签
@@ -75,10 +80,9 @@ steps:
       - label: 第二个标签的正文已经不在了
         editor: { not: "标签场景 B" }
 
-  - name: 再开一个标签，把 tabs-a 留在后台
-    do: open
-    file: tabs-long.md
-    marker: "TOP-MARK"
+  - name: ⌘-点击再开一个标签，把 tabs-a 留在后台（普通点击会替换掉当前标签）
+    do: click
+    target: { role: AXButton, name: "^tabs-long\\.md$", modifiers: ["cmd"] }
     expect:
       - shot: 后台标签 + 前台长文
       - label: 长文上屏
@@ -163,17 +167,16 @@ steps:
   # 真机通道读不到标签的 bbox（本套件没有几何断言通道），这条不变量的**判据**在 chromium 层
   # （`tests/visual/scenes/m149-tabs.spec.ts` 的「标签溢出：活跃标签恒完整可见」，含反向配对）；
   # 本场景只留一条**人可读的截图证据**：窄窗 + 三个标签（可视区必然溢出）+ 从第 1 个跳到第 3 个。
-  - name: 凑满三个标签（M254 起每轮 open 都另开一个标签，不再需要先键入把预览态固定住）
+  - name: 凑满三个标签（普通点击会就地替换；多标签现场一律 ⌘-点击）
     do: type
     text: "PIN1"
     expect:
       - label: 输入落进文档（标签随之 dirty）
         editor: { has: "PIN1" }
 
-  - name: 打开第二个文件——另开一个新标签
-    do: open
-    file: callout.md
-    marker: "Callout 场景"
+  - name: ⌘-点击第二个文件——另开一个新标签
+    do: click
+    target: { role: AXButton, name: "^callout\\.md$", modifiers: ["cmd"] }
     expect:
       - label: 两个标签并存
         ax: { count: { pattern: "关闭 ", exact: 2 } }
@@ -185,10 +188,9 @@ steps:
       - label: 输入落进文档
         editor: { has: "PIN2" }
 
-  - name: 打开第三个文件
-    do: open
-    file: plain.md
-    marker: "纯文本基线"
+  - name: ⌘-点击第三个文件
+    do: click
+    target: { role: AXButton, name: "^plain\\.md$", modifiers: ["cmd"] }
     expect:
       - label: 三个标签并存
         ax: { count: { pattern: "关闭 ", exact: 3 } }
@@ -217,9 +219,9 @@ steps:
 标签的**能力面**（会话与切换）在 `src/editor.ts`，**装配面**（标签栏、打开意图、命令）在
 `src/main.ts`。本场景走真机通道，验只有在真实 WKWebView + 真实键盘下才成立的事：
 
-1. **打开语义**：单击树文件直接开一个标签（M254 起不再有预览标签这一形态——那个机制随
-   change `preview-tab-removal` 退场，Alex 2026-09-27 的斜体反馈），再单击别的文件另开一个、
-   关掉全部标签后仍能继续开。
+1. **打开语义**：⌘-点击树文件新开一个标签（change improve-file-open-harness-affordance-nov26
+   起普通点击 = 当前标签就地打开、⌘-点击才新开并保留当前标签；本场景的多标签现场一律用
+   ⌘-点击建立，普通点击的就地替换判据见场景 880），关掉全部标签后仍能继续开。
 2. **键位**：`⌘1` / `⌘2` 直达、`⌃⇥` 循环、`⌘W` 关当前标签（干净直接关、dirty 先确认、
    关掉当前标签后前台交给邻座）。
 3. **外部变更按标签路由**：**后台**标签的文件被外部删除时，浮条点名那一份文档、只影响它
@@ -264,9 +266,10 @@ steps:
 
 ## 没进本场景的其他通道（分工说明，不是漏项）
 
-- **⌘-点击树文件新开固定标签 / 双击固定**：验收套件的 `do: click` 没有修饰键，`target.count`
-  被 `cu.mjs` 丢掉（双击不可表达）。这两条在视觉场景里用
-  `click({ modifiers: ["Meta"] })` / `dblclick()` 覆盖。
+- **普通点击就地替换 / ⌘-点击新开并保留当前标签**：`do: click` 自 M379 起支持
+  `target.modifiers`（真机已可表达），判据落在场景 880；视觉场景
+  （`tests/visual/scenes/m149-tabs.spec.ts`）另用 `click({ modifiers: ["Meta"] })` 补充
+  双击与其它修饰键的矩阵。
 - **原生菜单「关闭」项 → `tab.close`**：`do:` 动作点不到 macOS 菜单栏。菜单手术的结构假设与
   事件载荷由 `src-tauri/src/lib.rs` 的内联测试覆盖（`menu_command_only_covers_our_menu_items`
   对 File / Window 两处 id 各断言一次，与 M131 当年的深度相同）；「菜单事件 → 关标签」这条

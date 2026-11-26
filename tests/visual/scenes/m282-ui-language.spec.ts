@@ -188,3 +188,30 @@ test.describe("en 面：chrome 与预览装饰的英文列", () => {
     expect(await page.locator(".ft-vault").getAttribute("aria-label")).not.toBe(enText);
   });
 });
+
+// harness toggle / 面板的可访问名与悬停提示（change improve-file-open-harness-affordance-nov26
+// 的合同 3）：D327 是唯一真源，两档逐字；运行期语言切换经既有的 `onRelabel` 重绘路径。
+test("harness toggle / 面板的名字跟着语言走：en「Harness pane」、zh「Harness 面板」", async ({ page }) => {
+  await stubTauri(page, { ...VAULT, config: { language: "en" } });
+  await page.goto("/");
+  const toggle = page.locator(".lumir-hp-toggle");
+  await expect(toggle).toHaveAttribute("aria-label", "Harness pane");
+  await expect(toggle).toHaveAttribute("title", "Harness pane");
+
+  // 打开 harness pane：面板容器的可访问名与钮同源（同一句 D327）。
+  await toggle.click();
+  const panel = page.locator(".lumir-harness");
+  await expect(panel).toHaveAttribute("aria-label", "Harness pane");
+  // 反向：旧措辞 MUST NOT 还留在可读身份上。
+  await expect(toggle).not.toHaveAttribute("aria-label", /Chat pane|Chat panel/);
+  await expect(panel).not.toHaveAttribute("aria-label", /Chat pane|Chat panel/);
+
+  // 运行期切到 zh：**开着的面板**即时重绘（onRelabel 的判据）；收起后钮的两处可读身份同为 zh 档。
+  await page.keyboard.press("Meta+Shift+L");
+  await expect(page.locator(".modeline-language")).toHaveText("zh");
+  await expect(panel).toHaveAttribute("aria-label", "Harness 面板");
+  await page.keyboard.press("Meta+Shift+A");
+  await expect(toggle).toHaveAttribute("aria-label", "Harness 面板");
+  await expect(toggle).toHaveAttribute("title", "Harness 面板");
+  await expect(toggle).not.toHaveAttribute("aria-label", /对话面板/);
+});

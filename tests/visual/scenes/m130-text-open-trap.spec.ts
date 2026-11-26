@@ -144,7 +144,9 @@ test("切标签序列（md → code → code → md）下投影与前台会话�
     ["data.csv", "CSV1"],
     ["readme.md", "MD2"],
   ] as const) {
-    await page.locator(`.ft-row[title="${path}"]`).click();
+    // 每个文件各占一个标签（⌘-点击；change improve-file-open-harness-affordance-nov26 起
+    // 普通点击会就地替换当前标签，末段「切回 md 内容仍在」就失去判据）。
+    await page.locator(`.ft-row[title="${path}"]`).click({ modifiers: ["Meta"] });
     await expect(content).not.toContainText(marker);
     await content.click();
     await page.keyboard.type(marker);

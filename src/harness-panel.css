@@ -75,6 +75,13 @@
    图标重叠——取 token 而非写死 5px：间距档最近的两档是 4px / 6px，4px 让点更贴角、离图标更远。 */
 .lumir-hp-toggle {
   position: relative;
+  /* 无标签时的贴右缘（change improve-file-open-harness-affordance-nov26）：标签段
+     `.tabstrip` 在空态是 `hidden`（display:none、不占宽度），弹性行里就只剩 traffic 与
+     本钮——没有弹性项吃空闲宽度时，钮会紧贴 traffic 右缘（左栏宽处），视觉上等于悬在
+     Content pane 左上角上方。`margin-left: auto` 让空闲宽度归到钮的左侧。
+     有标签时标签段 `flex: 1 1 auto` 先吃满空闲宽度（free space = 0），auto margin 解析为 0
+     ——既有落位与像素逐值不变。分栏退让（`[hidden]`）时本钮不参与布局，不受影响。 */
+  margin-left: auto;
 }
 .lumir-hp-toggle-dot {
   position: absolute;

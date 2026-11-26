@@ -4602,6 +4602,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  零新增消费者）。 */
   let chipWatchTimer: number | null = null;
   let watchedSession: unknown = null;
+  /** 看守的第二维：**同一个会话对象**也可能就地换文档（普通点击当前标签 / 链接跟随），
+   *  只比引用会让 chip 停在旧路径（change improve-file-open-harness-affordance-nov26 起
+   *  普通点击走的就是这条路径，m303 的「上下文 chip 随文档切换刷新」即其判据）。 */
+  let watchedPath: string | undefined;
   /** 错误去重（design §6，finding 20261006-tower-bug-harness-pane）：最后一条错误行与
    *  其文案——同文案就地滚回视野，不追加堆叠。 */
   let lastErrorEl: HTMLElement | null = null;
@@ -5774,19 +5778,23 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  以及会话身份看守发现的**文档打开 / 标签切换**（M370——消除「开着文件却显示
    *  Context: none」，旧触发集要等 composer 获焦才刷新）。不挂编辑器选区监听——
    *  「发送前」的核对窗口由这几处覆盖，常挂监听是给编辑器热路径加常驻消费者的反面教材
-   *  （ADR 0002 §6）；看守只比会话**身份**（引用），不比视口内容，滚动不触发。 */
+   *  （ADR 0002 §6）；看守只比会话**身份**（引用 + 路径），不比视口内容，滚动不触发。 */
   function refreshChip(): void {
-    watchedSession = editor.activeSession();
+    const session = editor.activeSession();
+    watchedSession = session;
+    watchedPath = session.path;
     const block = assembleHarnessContext(editor, { skipViewport: composerHasCards() });
     lastChip = block ?? "none";
     applyChip();
   }
 
-  /** 会话身份看守的拍函数（400ms 定时器驱动）：引用变了才重取 chip——重取内 assembly
-   *  读活跃 pane 的 state + 视口切片，只在身份变化那一拍付出，稳态零成本。 */
+  /** 会话身份看守的拍函数（400ms 定时器驱动）：**引用或路径**变了才重取 chip——重取内
+   *  assembly 读活跃 pane 的 state + 视口切片，只在变化那一拍付出，稳态零成本。路径这一维
+   *  不可省：当前标签就地换文档（普通点击 / 链接跟随）不换会话对象，只比引用会让 chip
+   *  停在旧路径（REVIEW.md「断言等价于子串」同族的判据缺口）。 */
   function watchActiveSession(): void {
     const session = editor.activeSession();
-    if (session === watchedSession) return;
+    if (session === watchedSession && session.path === watchedPath) return;
     refreshChip();
   }
 
