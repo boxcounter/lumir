@@ -100,3 +100,19 @@
 5. **规格对账**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS（扫过 14 份 delta / 17 条
    MODIFIED / 262 段 / 无静默丢段；归档队列 1 项已完成 change 有唯一条目）；`validate --all
    --strict` 40 passed / 0 failed；`docs/backlog.md` 归档队列有且仅有一条本 change 条目。
+
+### 归档后
+
+- **归档提交**：`4aa403bf26f59ce6337be722dc329122922d2009`（归档目录 + 并入后的 living spec
+  一起提交；`openspec/specs/harness/spec.md` 新增 70 行）。
+- **包装器实际输出**：`Change 'add-explicit-skill-trace-nov26' archived as
+  '2026-11-26-add-explicit-skill-trace-nov26'.`；`harness: update`（`+ 1 added`），
+  `Totals: + 1, ~ 0, - 0, → 0`。
+- **修链读数**：`归档后修链 0 处（扫过 4 篇 Markdown / 0 条相对链接）`；
+  `openspec-links: PASS（校验 709 条相对链接，全部可达）`。
+- **归档后审计**：`node scripts/openspec-archive-check.mjs --archived
+  add-explicit-skill-trace-nov26` → `PASS（0 条 MODIFIED，对比 0 段；人工恢复 0 段，声明认领
+  0 段）`（2026-11-26）。本 delta 只有 ADDED，审计的 MODIFIED 对账面无可比段落，故另做实质核对：
+  living spec 末条 requirement「显式 Skill 加载痕迹」的 7 条 scenario 与 delta 逐条对应
+  （7/7），无丢段。
+- **docs-check**：归档后复跑 PASS（归档队列随 change 离开活跃区自然核销；backlog 79/80 行）。
