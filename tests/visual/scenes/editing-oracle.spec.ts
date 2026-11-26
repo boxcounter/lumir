@@ -87,6 +87,15 @@ async function setBodyCaret(page: Page, pos: number): Promise<void> {
   }, pos);
 }
 
+async function scrollBodyToEnd(page: Page): Promise<void> {
+  // 块级装饰异步上屏会增大 scrollHeight；一次 scrollTop 赋值不代表末行已进入视口。
+  await expect.poll(async () => page.locator(".cm-content").evaluate((el) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    view.scrollDOM.scrollTop = view.scrollDOM.scrollHeight;
+    return view.visibleRanges.some((range: { to: number }) => range.to >= view.state.doc.length);
+  })).toBe(true);
+}
+
 interface LineRender {
   text: string;
   markerCount: number;
@@ -388,7 +397,7 @@ test("正文 IME：settleStep available 分支不得用旧 state 树（Chromium�
   const doc = "para\n\n".repeat(2000) + "词汇\n- ";
   await openBody(page, "oracle.md", doc);
   await setBodyCaret(page, doc.length);
-  await page.locator(".cm-scroller").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await scrollBodyToEnd(page);
   await expect(page.locator(".cm-line").last()).toContainText("-");
   const probe = await page.locator(".cm-content").evaluate((el, length) => {
     const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
@@ -545,7 +554,7 @@ test("正文 IME：>32KB 文档删空后对照解析跨拍推进并撤掉旧 mar
   // 源码撤掉旧 list marker；不得把旧树判定 build/publish 成结论。
   const doc = "para\n\n".repeat(7500) + "词汇\n- s";
   await openBody(page, "oracle.md", doc);
-  await page.locator(".cm-scroller").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await scrollBodyToEnd(page);
   await expect(page.locator(".cm-lp-list-marker")).toHaveCount(1);
   const probe = await page.locator(".cm-content").evaluate((el, to) => {
     const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
@@ -611,7 +620,7 @@ test("正文 IME：state 同步覆盖收束目标后非文档更新必须改用�
   // 可以独立于截断树保留后续 marker，因此树来源改由 retained / treeLen / tree 内容直接判定。
   const doc = "para\n\n".repeat(7500) + "词汇\n- s\n\n- 后项";
   await openBody(page, "oracle.md", doc);
-  await page.locator(".cm-scroller").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await scrollBodyToEnd(page);
   await expect(page.locator(".cm-lp-list-marker")).toHaveCount(2);
   const cut = doc.length - 7;
   const settled = await page.locator(".cm-content").evaluate((el, position) => {
@@ -700,7 +709,7 @@ test("正文 IME：>32KB 文档的真正空列表项不得被对照解析误删 
   // 对照：同样的长前缀 + 真正空列表项。对照树仍判 list，marker 必须保留。
   const doc = "para\n\n".repeat(7500) + "x\n\n- ";
   await openBody(page, "oracle.md", doc);
-  await page.locator(".cm-scroller").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await scrollBodyToEnd(page);
   await expect(page.locator(".cm-lp-list-marker")).toHaveCount(1);
   const probe = await page.locator(".cm-content").evaluate((el, to) => {
     const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
