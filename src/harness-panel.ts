@@ -4959,6 +4959,22 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  store 内部另有一道世代守它自己的状态，这条守的是**渲染**）。 */
   let draftSeq = 0;
 
+  /**
+   * 会话切换（新建 / 选择 / 恢复 / 重载）保留输入区：只作废在途的草稿恢复，不动 composer。
+   *
+   * change preserve-composer-across-sessions-nov26（Alex 2026-11-26「采纳」）：这些切换 MUST NOT
+   * 复位 composer、MUST NOT 清除盘上草稿——文字 / 卡片 / Skill / 光标 / 撤销历史原样保留，下一次
+   * 发送进入当前选中会话；草稿只在发送成功或用户手动删除时清除。在途读回属于切换前的输入区：
+   * 它落地时会 `resetComposer(loaded)`（新建 `EditorState`、换掉 history），必须整条作废。
+   *
+   * 切 vault **不走这里**：它本来就该换输入区并按自己的 vault 读回草稿（见 `vaultChanged` 与
+   * `restoreDraft`）。作废点也 MUST NOT 放进 `resetView`——`vaultChanged` 随后就要 `restoreDraft()`，
+   * 语义不该依赖调用顺序。
+   */
+  function preserveComposerAcrossSessionSwitch(): void {
+    draftSeq += 1;
+  }
+
   function markDraft(): void {
     const content = composerContentOf(composerView.state);
     draft.schedule(content.text, content.caret, content.cards, content.skills);
@@ -10416,7 +10432,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   /**
-   * 视图复位（换会话 / 切 vault）：清渲染面、换代、复位跟随态与输入区。
+   * 视图复位（换会话 / 切 vault）：清渲染面、换代、复位跟随态与输入区的**发送意图**。
+   *
+   * **输入区内容不在这里处理**：会话切换保留它（`preserveComposerAcrossSessionSwitch`），切 vault
+   * 由 `vaultChanged` 换成本 vault 的草稿。这里只经 `composerIme.reset` 取消旧视图的延迟发送。
    *
    * `clearActivityFor` = **动作发起时捕获的 vault**（design §7）：非 null 时只清该 vault 的
    * 活动记录（换会话即换视图，旧的终态不再属于该视图）；null 时只做视图复位、**不动任何
@@ -10819,8 +10838,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 清空的是**渲染面**：会话真源在 Rust，重置成功后本地视图随之清空；待决批准项随
         // 会话失效，一并撤下（它们的 id 已不属于任何会话）——口径见 resetView 的注释。
         resetView({ clearActivityFor: actionVault });
-        resetComposer();
-        void draft.clear();
+        // 输入区**保留**（change preserve-composer-across-sessions-nov26）：新建会话只换消息列表，
+        // 文字 / 卡片 / Skill / 光标 / 撤销历史与盘上草稿都不动；在途的草稿恢复作废，免得迟到的
+        // 读回把保留下来的内容换成切换前的盘上草稿。下一次发送进入新会话。
+        preserveComposerAcrossSessionSwitch();
         // 新逻辑会话：旧会话的 token 与「已提示」标记作废；完整快照是空健康的地板。
         resetPersistenceView();
         fetchPersistenceSnapshot();
@@ -10912,8 +10933,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 同值的 DOM（独立评审 P1-1b：目标非当前时不得有任何 B 的 DOM 写入）。
     if (!stillCurrent) return;
     resetView({ clearActivityFor: null });
-    resetComposer();
-    void draft.clear();
+    // 输入区**保留**（change preserve-composer-across-sessions-nov26）：重载只重建 transcript
+    // （cron 发起失败回滚 / 打开会话通知），composer 的文字 / 卡片 / Skill / 光标 / 撤销历史与
+    // 盘上草稿都不动；在途的草稿恢复作废，迟到的读回不得覆盖它。
+    preserveComposerAcrossSessionSwitch();
     fetchSnapshot();
   }
 
@@ -11155,6 +11178,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         if (previousToken !== null) retiredPersistenceTokens.add(previousToken);
         persistenceSnapshotSeq += 1;
         resetView({ clearActivityFor: actionVault });
+        // 输入区保留（change preserve-composer-across-sessions-nov26）：恢复只换消息列表与会话名，
+        // 并作废切换前的在途草稿恢复，避免迟到的读回改写保留的输入区。
+        preserveComposerAcrossSessionSwitch();
         persistenceSessionToken = persistenceSessionTokenOf(info.session_token);
         historyStickyShown.delete(currentVault ?? "");
         hidePersistenceLine();
