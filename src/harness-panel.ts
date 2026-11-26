@@ -9947,11 +9947,36 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }
 
+  /**
+   * 事件是否属于**已被替换的旧逻辑会话**（change add-harness-message-withdraw-nov26）。
+   *
+   * 只对当前 vault 的事件做令牌判定：令牌是进程级的，不同 vault 的会话各有号——跨 vault 事件
+   * 只更新它自己那份活动记录（M312 的记账路径），不能被当前 vault 的令牌水位误杀，也不推进
+   * 当前水位。缺令牌（旧后端 / 单测）放行。与 `persistence` 事件共用同一条准入函数。
+   */
+  function sessionEventStale(event: HarnessEvent): boolean {
+    if (!inCurrentVault(event.vault, currentVault)) return false;
+    const token = persistenceSessionTokenOf(event.session_token);
+    if (!persistenceEventAdmitted(token, persistenceSessionToken, retiredPersistenceTokens)) {
+      return true;
+    }
+    if (token !== null && (persistenceSessionToken === null || token > persistenceSessionToken)) {
+      persistenceSessionToken = token;
+    }
+    return false;
+  }
+
   function handleEvent(event: HarnessEvent): void {
     // 归属解析（与既有 `inCurrentVault` 的宽容口径一致）：缺 `vault` 时归当前 vault；当前为
     // null 且事件无 vault ⇒ 丢弃（没有可归属的会话）。
     const vault = typeof event.vault === "string" ? event.vault : currentVault;
     if (vault === null) return;
+    // 会话令牌准入（change add-harness-message-withdraw-nov26）：撤回把 A 换成 B 后，旧 A 的
+    // 后台线程仍可能发出 `subagent_started` / `notice` / `title` / 回合事件。只看 vault 会
+    // 让它们落进 B 的视图（甚至重建任务行）——在**记账之前**按逻辑会话令牌拒收退役 / 更旧的
+    // 令牌；缺令牌 = 旧后端，放行。准入实现见 `sessionEventStale`（只拦当前 vault 的事件：
+    // 跨 vault 事件只更新各自那份记录，不能被当前 vault 的令牌水位误杀）。
+    if (sessionEventStale(event)) return;
     // **先记账**（change extend-harness-activity-across-vaults-nov23 design §5.1）：终态与
     // 自动回合必须在 vault 过滤与轮次闸门**之前**写进按 vault 的 store——否则非当前 vault 的
     // 终态在这里就被丢掉了（本 change 的核心接线）。记录写完后，跨 vault 的事件到此为止：

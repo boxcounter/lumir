@@ -332,11 +332,17 @@ fn run_turn_inner<R: tauri::Runtime>(
     runtime.seed_permissions(&config.permissions);
     // 可跨线程持有的同一出口：子运行与自动唤醒回合在父回合结束后仍要发事件，借用的
     // `&sink` 活不到那时。`ScopedSink` 只借用 inner，故这里再包一层 owned 版本。
+    // 信封令牌在**回合开始时定格**（= 本回合所属逻辑会话）：旧会话的后台线程即使迟到，
+    // 事件也带着旧令牌，前端据此拒收（change add-harness-message-withdraw-nov26）。
+    let turn_token = runtime
+        .with_session(&scope, |s| s.subagent_token())
+        .unwrap_or(0);
     let owned: std::sync::Arc<dyn EventSink> = std::sync::Arc::new(OwnedScopedSink {
         inner: terminal_sink.clone(),
         vault: scope.key(),
+        session_token: turn_token,
     });
-    let sink = events::ScopedSink::new(terminal_sink.as_ref(), scope.key());
+    let sink = events::ScopedSink::new(terminal_sink.as_ref(), scope.key(), turn_token);
     // 会话级 mock 游标（M456）：mock client 每轮重建，游标存在会话上才能让同一会话的第二轮
     // 接着上一轮往下弹（131/133 的「两轮不同 usage」依赖它）。真 provider 的 client 两方法
     // 返回默认值，下面的回写恒 no-op。
@@ -415,7 +421,8 @@ fn run_turn_inner<R: tauri::Runtime>(
             .name("lumir-harness-title".into())
             .spawn(move || {
                 let app_sink = TauriEventSink(title_app);
-                let sink = events::ScopedSink::new(&app_sink, title_scope.key());
+                // 标题事件属于**触发时那个会话**：令牌随 job 定格，换会话后旧事件被前端拒收。
+                let sink = events::ScopedSink::new(&app_sink, title_scope.key(), job.session_token);
                 super::title::run_job(&sink, &title_runtime, &title_scope, job);
             })
         {
@@ -936,6 +943,13 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
                 .and_then(|content| super::attachments::panel_text_of_content(content))
                 .unwrap_or_default();
             turn_user_text = strip_context_section(&panel_text).to_string();
+            // 撤回目标的两份下标在**入队前**取：input 是即将压入的 user 项，panel 是同一条消息
+            // 的 user 行（痕迹行紧随其后）。撤回只认这两个下标——MUST NOT 用「最后一条 role=user」
+            // 反推，后台通知也是 user 项（change add-harness-message-withdraw-nov26）。
+            let withdraw_target = super::session::WithdrawTarget {
+                input: s.input().len(),
+                panel: s.panel_len(),
+            };
             s.push_input(item);
             s.push_panel(PanelMessage {
                 role: "user".into(),
@@ -953,6 +967,7 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
             for trace in &explicit_traces {
                 s.push_panel(explicit_skill_panel_message(trace));
             }
+            s.set_withdraw_target(withdraw_target);
             s.set_current_context(context_section_for_session);
             // 留存口径：user 消息不进 sidecar——它逐字节在下一条 llm_request.messages 里。
         });
@@ -2303,11 +2318,13 @@ fn denied_message(
 struct OwnedScopedSink {
     inner: std::sync::Arc<dyn EventSink>,
     vault: String,
+    /// 定格于回合开始（见 `run_turn` 的 `turn_token`）。
+    session_token: u64,
 }
 
 impl EventSink for OwnedScopedSink {
     fn emit(&self, mut payload: serde_json::Value) {
-        events::stamp_vault(&mut payload, &self.vault);
+        events::stamp_scope(&mut payload, &self.vault, self.session_token);
         self.inner.emit(payload);
     }
 }

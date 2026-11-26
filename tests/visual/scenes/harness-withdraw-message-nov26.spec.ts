@@ -38,6 +38,7 @@ async function setup(page: Page, mode: Mode): Promise<void> {
       const internals = w.__TAURI_INTERNALS__;
       const origInvoke = internals.invoke;
       w.__withdrawCalls = [] as Array<{ confirm: boolean }>;
+      w.__harnessEventHandlerIds = [] as number[];
       const snapshot = {
         messages,
         usage: { ctx_pct: 0, cache_pct_session: 0 },
@@ -77,7 +78,15 @@ async function setup(page: Page, mode: Mode): Promise<void> {
         if (cmd === "harness_skills_list") return [];
         if (cmd === "harness_draft_get") return null;
         if (cmd === "harness_draft_put") return null;
+        if (cmd === "plugin:event|listen" && args.event === "harness:event") {
+          w.__harnessEventHandlerIds.push(args.handler ?? 0);
+        }
         return origInvoke(cmd, args);
+      };
+      w.__fireHarnessEvent = (payload: unknown) => {
+        for (const id of w.__harnessEventHandlerIds) {
+          internals.runCallback(id, { event: "harness:event", id, payload });
+        }
       };
     },
     { mode, messages: MESSAGES, marker: MARKER },
@@ -135,4 +144,47 @@ test("撤回被拒（派生会话）：如实上错误行，消息与 composer �
   await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(1);
   await expect(page.locator(".lumir-hp-composer .cm-content")).toHaveText("");
   await expect(page.locator(".lumir-hp-withdraw-confirm")).toHaveCount(0);
+});
+
+test("旧会话的迟到事件按会话令牌拒收；新令牌的同一批事件照常上屏", async ({ page }) => {
+  await setup(page, "direct");
+  await page.locator(".lumir-hp-msg-user").hover();
+  await page.locator(".lumir-hp-withdraw").click();
+  await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(0);
+  const fire = (payload: Record<string, unknown>) =>
+    page.evaluate((p) => (window as unknown as {
+      __fireHarnessEvent: (payload: unknown) => void;
+    }).__fireHarnessEvent(p), payload);
+  const base = { vault: "/tmp/lumir-withdraw-panel" };
+  const started = (runId: string, description: string) => ({
+    ...base,
+    type: "subagent_started",
+    run_id: runId,
+    segment: 1,
+    agent: "research",
+    description,
+    model: "mock",
+    background: true,
+  });
+  const notice = (runId: string, description: string) => ({
+    ...base,
+    type: "notice",
+    runs: [{ run_id: runId, agent: "research", description, status: "done", summary: "结论" }],
+  });
+
+  // 旧令牌（撤回前的 A）：transcript / 任务区 / 标题都不得被它点亮。
+  await fire({ ...started("r-old", "旧会话的 run"), session_token: 11 });
+  await fire({ ...notice("r-old", "旧会话的通知"), session_token: 11 });
+  await fire({ ...base, type: "title", title: "旧标题", session_token: 11 });
+  await expect(page.locator(".lumir-tp-run")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-notice")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-sname")).not.toHaveText("旧标题");
+
+  // 新令牌（B）：同一批事件照常上屏——证明准入是「按身份」而不是一刀切丢弃。
+  await fire({ ...started("r-new", "新会话的 run"), session_token: 12 });
+  await fire({ ...notice("r-new", "新会话的通知"), session_token: 12 });
+  await fire({ ...base, type: "title", title: "新标题", session_token: 12 });
+  await expect(page.locator(".lumir-tp-run")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-notice")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-sname")).toHaveText("新标题");
 });

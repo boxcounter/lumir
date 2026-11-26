@@ -7,7 +7,9 @@
 - [x] 1.3 `Runtime::withdraw_last_turn`：idle / 来源 / 目标项校验；两段式工具确认；派生初检与发布后复核；建 B 并发布；unlink A；失败就地回滚 B；换入 B 并丢弃 A。
 - [x] 1.4 `resume_session` 与 `first_user_text` 的 `withdraw_seed` 回落（没有 `llm_request` 时）。
 - [x] 1.5 `harness_withdraw` 命令与 `lib.rs` 注册；`SessionWithdrawInfo` / `WithdrawnComposer` / `WithdrawOutcome` 的 ts-rs 导出。
-- [x] 1.6 单元测试 10 条（`harness/withdraw_tests.rs`）：前缀 / 面板截断、A 删除 + B 唯一 + seed 不含被撤回文本、切走再恢复、两段式确认零副作用、busy / 待批拒绝、来源闸、派生拒绝、删除失败回滚、composer 素材、标题 / 用量 / `withdrawable`、重复点击幂等、令牌变化。
+- [x] 1.6 单元测试 16 条（`harness/withdraw_tests.rs`）：前缀 / 面板截断、A 删除 + B 唯一 + seed 不含被撤回文本、切走再恢复、两段式确认零副作用、busy / 待批拒绝、来源闸、派生拒绝、删除失败回滚、尾部通知拒绝、不可读候选 fail closed、恢复占用拒绝、双故障 rollback_incomplete、失败 Skill 恢复、装配读失败、composer 素材、标题 / 用量 / `withdrawable`、重复点击幂等、令牌变化。
+- [x] 1.7 K3 返修：撤回目标改为入队下标（`withdraw_target`）；尾部非交互 user 项拒绝；派生扫描 fail closed；恢复占用表 + 栅栏；装配读失败 fail closed；双故障终态；失败 Skill 从 trace 恢复。
+- [x] 1.8 事件隔离：`session_token` 信封 + 前端全事件准入；`insert_notices_into_session` / `notice_delivered` 校验 hub `parent_token`；子代理中断窗口测试。
 
 ## 2. 前端
 
@@ -16,8 +18,8 @@
 - [x] 2.3 `composerContentFromMessage`（wire 文本 → composer 内容：实体还原、卡片锚点、Skill 位置）；与 `mergeRejectedComposerContent` 共用合并核心的 `mergeWithdrawnComposerContent`。
 - [x] 2.4 撤回成功后的视图换代：重放 B 的面板、persistence token、标题 / 首条消息、读数与任务区刷新、composer 回填 + `markDraft`、toast。
 - [x] 2.5 文案 D1034–D1044（含 6 个错误码）双表同步；撤回钮与确认条样式（非 hover 帧零像素变化）。
-- [x] 2.6 前端单测 7 条（`tests/unit/harness-withdraw-composer.test.ts`）+ `resetView` 调用点矩阵与 i18n 门禁同步更新。
-- [x] 2.7 真面板 chromium 场景 3 条（`tests/visual/scenes/harness-withdraw-message-nov26.spec.ts`：直接撤回 / 工具二次确认 / 派生拒绝），无像素断言、不新增基线。
+- [x] 2.6 前端单测 8 条（`tests/unit/harness-withdraw-composer.test.ts`，含失败 Skill）+ `resetView` 调用点矩阵与 i18n 门禁同步更新。
+- [x] 2.7 真面板 chromium 场景 4 条（`tests/visual/scenes/harness-withdraw-message-nov26.spec.ts`：直接撤回 / 工具二次确认 / 派生拒绝 / 旧令牌迟到事件拒收），无像素断言、不新增基线。
 
 ## 3. 验收场景
 

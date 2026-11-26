@@ -7,11 +7,11 @@
 //!
 //! 两边随同一个动作一起更新，MUST NOT 各自漂移——面板上看到的与模型看到的永远是同一会话。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -805,6 +805,78 @@ pub struct RetrySnapshot {
     pub turn: u64,
 }
 
+/// 进程级「恢复源占用」表与栅栏（change add-harness-message-withdraw-nov26）。
+///
+/// 为什么需要跨 Runtime：无人值守 cron 跑在独立 `Runtime` 上，它的专用会话经 `resume_session`
+/// 恢复——**恢复是惰性发布**（首条真实请求才落盘）。若交互侧撤回只扫盘上文件，独立 Runtime 可以
+/// 先读完 A、撤回扫描看不到尚未发布的派生、撤回删掉 A，随后该 Runtime 仍发布携带被撤回上下文的
+/// 派生文件。这里把「登记恢复 + 读取 A」与「检查派生 + 删除 A」放进同一把栅栏锁，二者线性化：
+/// - 恢复先登记 ⇒ 撤回看到占用，拒绝；
+/// - 撤回先删 A ⇒ 恢复随后读取失败，派生无从产生。
+///
+/// 占用挂在恢复出的 `Session` 上（[`ResumeClaim`]）：会话被丢弃（新会话 / 换会话 / 运行结束）
+/// 即释放；发布之后即使占用仍在也不放宽撤回——盘上的派生文件已由扫描拦住，这里只多一层保守。
+static RESUME_FENCE: Mutex<()> = Mutex::new(());
+static RESUME_CLAIMS: LazyLock<Mutex<HashMap<String, usize>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// 撤回侧持有：从「检查占用 / 扫描派生」到「删除 A」的整段必须与恢复登记互斥。
+pub(crate) fn lock_resume_fence() -> MutexGuard<'static, ()> {
+    RESUME_FENCE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// 当前有多少个会话正在从 `source` 恢复（未发布的也算）。
+pub(crate) fn resume_claim_count(source: &str) -> usize {
+    RESUME_CLAIMS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(source)
+        .copied()
+        .unwrap_or(0)
+}
+
+/// 登记一次「从 `source` 恢复」的占用（在读取源文件**之前**调用）。
+pub(crate) fn claim_resume(source: &str) -> ResumeClaim {
+    let _fence = lock_resume_fence();
+    *RESUME_CLAIMS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .entry(source.to_string())
+        .or_insert(0) += 1;
+    ResumeClaim {
+        source: source.to_string(),
+    }
+}
+
+/// 恢复占用的生命周期令牌：随恢复出的 `Session` 存亡。释放只取占用表锁、**不取栅栏**
+/// （撤回持有栅栏时会 drop 旧会话；这里再取栅栏会自锁）。
+pub(crate) struct ResumeClaim {
+    source: String,
+}
+
+impl Drop for ResumeClaim {
+    fn drop(&mut self) {
+        let mut claims = RESUME_CLAIMS.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(count) = claims.get_mut(&self.source) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                claims.remove(&self.source);
+            }
+        }
+    }
+}
+
+/// 撤回目标（change add-harness-message-withdraw-nov26）：最近一次交互用户消息在两份视角里的
+/// 下标。两份视角同一次入队产生，撤回按它们同时截断——MUST NOT 各用各的反推口径（那正是
+/// 「通知被当成用户消息」的入口）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WithdrawTarget {
+    /// `Session.input` 里的下标（该 user 项的入队位置）。
+    pub input: usize,
+    /// `Session.panel` 里的下标（同一消息的 user 行；痕迹行紧随其后）。
+    pub panel: usize,
+}
+
 /// 一个 vault 的会话。
 pub struct Session {
     root: PathBuf,
@@ -873,6 +945,13 @@ pub struct Session {
     /// 的那一句」。**内存态**：不落盘、不进 wire；重启后会话本就清空，恢复出来的会话回到
     /// `None`（未在本进程发过言 ⇒ 没有可撤回的轮次）。
     last_turn_origin: Option<super::turn::TurnOrigin>,
+    /// 最近一次**交互用户消息**在 `input` / `panel` 里的下标（change 同上）：撤回按它取目标，
+    /// MUST NOT 用「最后一条 role=user」反推——后台通知（blocked / 触顶分支）也是 input 里的
+    /// user 项、panel 里的 notice 行，反推会把通知当目标并错删真实用户轮次。
+    /// `replace_input` / 压缩轮换会让下标失效，一并清零。
+    withdraw_target: Option<WithdrawTarget>,
+    /// 本会话是从哪一份源恢复出来的占用（`None` = 不是恢复出来的）。随会话丢弃释放。
+    resume_claim: Option<ResumeClaim>,
     jsonl: JsonlWriter,
 }
 
@@ -934,6 +1013,8 @@ impl Session {
             subrun_usage: BTreeMap::new(),
             subrun_runs: BTreeMap::new(),
             last_turn_origin: None,
+            withdraw_target: None,
+            resume_claim: None,
             jsonl,
         }
     }
@@ -944,13 +1025,34 @@ impl Session {
         self.last_turn_origin = Some(origin);
     }
 
-    /// 最近一轮是否可撤回（交互发送 / 重试轮）。快照 `withdrawable` 与撤回入口共用这一处
-    /// 判据——MUST NOT 在命令层另写一份 `matches!`（REVIEW.md「同一语义两处真源」条）。
+    /// 记录本轮的撤回目标（`run_turn_core` 在用户消息入队前取下标、入队后写入）。
+    pub fn set_withdraw_target(&mut self, target: WithdrawTarget) {
+        self.withdraw_target = Some(target);
+    }
+
+    /// 本轮撤回目标（没有交互用户消息入队时为 `None`）。
+    pub fn withdraw_target(&self) -> Option<WithdrawTarget> {
+        self.withdraw_target
+    }
+
+    /// 接上「从某源恢复」的占用（`resume_session` 成功换入时调用一次）。
+    pub(crate) fn attach_resume_claim(&mut self, claim: ResumeClaim) {
+        self.resume_claim = Some(claim);
+    }
+
+    /// 最近一轮的来源（命令层用它区分「来源不可撤回」与「没有目标」两类拒绝）。
+    pub fn last_turn_origin(&self) -> Option<super::turn::TurnOrigin> {
+        self.last_turn_origin
+    }
+
+    /// 最近一轮是否可撤回：来源是交互发送 / 重试轮，**且**仍有可寻址的撤回目标（压缩轮换 /
+    /// 历史替换会让目标失效）。快照 `withdrawable` 读它——只做可见性；命令层仍分别校验
+    /// 来源与目标，好给出准确的拒绝原因。
     pub fn withdrawable(&self) -> bool {
         matches!(
             self.last_turn_origin,
             Some(super::turn::TurnOrigin::Interactive | super::turn::TurnOrigin::Retry)
-        )
+        ) && self.withdraw_target.is_some()
     }
 
     /// 缓存计数累计的只读投影（撤回 fork 把它作为新文件的 `session_open` 种子）。
@@ -1184,6 +1286,8 @@ impl Session {
 
     pub fn replace_input(&mut self, items: Vec<serde_json::Value>) {
         self.input = items;
+        // 历史被整体替换（压缩 / 恢复）：旧下标不再指向原项，撤回目标随之失效。
+        self.withdraw_target = None;
     }
 
     /// 面板消息入队（`ts` 由构造点用 [`super::jsonl::unix_secs_now`] 打戳——入会话时刻即构造时刻）。
@@ -1244,6 +1348,8 @@ impl Session {
         self.jsonl = jsonl;
         self.cache_totals = CacheTotals::default();
         self.title_schedule.reset();
+        // 压缩轮换：input 由调用侧整体替换，撤回目标的下标不再成立。
+        self.withdraw_target = None;
         self.title_cursor = 0;
     }
 

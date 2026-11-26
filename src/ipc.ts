@@ -494,6 +494,9 @@ export function onMenuCommand(handler: (command: string) => void): Promise<() =>
  * **宽容解析**：缺字段的事件按「归属未知」放行（纯浏览器桩 / 本 change 之前的载荷形态）。 */
 interface HarnessEventEnvelope {
   vault?: string;
+  /** 发出事件的逻辑会话令牌（change add-harness-message-withdraw-nov26）：撤回把 A 换成 B 后，
+   *  旧 A 的迟到事件带旧令牌，面板按与 `persistence` 相同的准入丢弃。缺键 = 旧后端（放行）。 */
+  session_token?: number;
 }
 
 /** harness:event 的事件载荷（`type` 判别；每类都带信封字段 `vault`）。

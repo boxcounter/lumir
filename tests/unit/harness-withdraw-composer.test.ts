@@ -83,6 +83,16 @@ test("Skill：按 /name 首次出现还原位置，找不到即不伪造", () =>
   assert.deepEqual(content.skills, [{ name: "demo", from: 2 }]);
 });
 
+test("失败 / 被拒的显式 Skill 同样还原：按名字定位、保持后端给的顺序", () => {
+  // 后端（`withdrawn_composer`）现在从 `lumir_skill_trace` 取全部显式选择——成功与被拒都在；
+  // 前端按 `/name` 定位。两者都在正文里时各自成 ref，不因「没加载成功」而丢。
+  const content = composerContentFromMessage("用 /demo 和 /ghost 看看", ["demo", "ghost"]);
+  assert.deepEqual(content.skills, [
+    { name: "demo", from: 2 },
+    { name: "ghost", from: 10 },
+  ]);
+});
+
 test("与当前输入合并：原文在前、当前在后（补换行），锚点与光标随原文长度平移", () => {
   const restored = composerContentFromMessage(
     projectDelivery([

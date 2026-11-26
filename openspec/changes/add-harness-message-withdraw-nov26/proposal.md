@@ -47,25 +47,40 @@ harness 的对话面板没有用户消息的删除 / 编辑 / 重发入口：发
 1. **撤回命令**（`harness_withdraw`）：撤回最近一条用户消息及其后全部轮次。两段式——
    `confirm=false` 时若该轮执行过工具，**什么都不做**、只回执工具名；`confirm=true` 才执行
    （全部校验与派生检测重新复跑）。
+   **目标只认入队时记录的那条交互用户消息**（input / panel 两份下标）；该轮之后混入后台通知
+   （blocked / 触顶分支的 user 项）时拒绝（`harness_withdraw_tail_notice`），不吞通知、不把
+   通知当目标、也不跳过工具确认。
 2. **新逻辑会话 B**：`opened_from=withdraw`、`restored_from=<A>`；**立即发布**（不等首条真实
    请求）。初始记录含 `withdraw_seed`（内存 `input[..i]` 原样搬运，不重新拼装 wire 历史），
    供 `resume_session` 在「没有 llm_request」时回落读取——否则撤回后切走会话再回来，B 会从
    空文件恢复、保留的历史全丢。
 3. **删除 A**：B 发布成功且派生复核通过后，unlink A 的 JSONL；失败则删 B、保留 A，回执
-   `harness_withdraw_delete_failed`，原会话与输入区不变。
+   `harness_withdraw_delete_failed`，原会话与输入区不变。**双故障**（删 A 失败且 B 也清理失败）
+   回执 `harness_withdraw_rollback_incomplete`：A 保留、B 残留，如实暴露「清单可能多一行」，
+   不报干净失败、不声称唯一。
 4. **派生检测**：读每个会话留存首行的 `session_open.restored_from`，`restored_from` 链能走回
    A 的任意文件即「派生会话」。动作前与「发布 B 之后、删除 A 之前」各复核一次（第二次排除 B
-   自己）；命中即拒绝 / 回滚，不级联删除。
+   自己）；命中即拒绝 / 回滚，不级联删除。**扫描 fail closed**：目录项 / 任一留存首行不可读
+   即拒绝（`harness_withdraw_scan_failed`），不跳过候选删 A。**与恢复线性化**：恢复在读取源
+   文件前登记进程级占用，撤回从检查到 unlink 全程持同一把栅栏；独立 Runtime 的未发布恢复因此
+   不能越过扫描（`harness_withdraw_resume_in_flight`）。
 5. **composer 回填**：被撤回的用户消息项（wire content parts）按其序列化文本回填——文本
-   （剥掉自动注入的「当前编辑器上下文」节）、引用卡 / 消息摘录卡 / 图片引用 / 显式 Skill 名，
-   光标落在原文末尾；当前输入非空时按「原文在前、当前输入在后」合并，不丢用户正在打的字。
+   （剥掉自动注入的「当前编辑器上下文」节）、引用卡 / 消息摘录卡 / 图片引用、**全部显式
+   Skill 名**（成功与被拒 / 不存在都在：名单取 `lumir_skill_trace` + `lumir_skill` part，
+   去重保序；正文不回填），光标落在原文末尾；当前输入非空时按「原文在前、当前输入在后」
+   合并，不丢用户正在打的字。B 的 `assembly` 读失败 / 缺键时拒绝撤回（`harness_withdraw_read_failed`），
+   不伪装成空装配后删 A。
 6. **来源闸**：只对本进程发起的交互轮 / 重试轮开放（`TurnOrigin` 记在会话内存态）；cron /
    自动唤醒 / 子运行 / 恢复出来且尚未发言的会话一律拒绝，并给明确原因。
 7. **工具副作用如实告知**：本轮出现过的 `function_call` 工具名（去重、按出现序）随确认回执
    返回；文案明确「撤回不会撤销这些操作」。工具副作用本身不回滚。
-8. **会话清单**：A 删除后只剩 B 一行；B 的 `last_activity_ts` 因谱系断链（dangling parent）回落
+8. **旧会话事件封闭**：`harness:event` 信封新增 `session_token`（在回合 / 任务开始时定格）；
+   前端在记账前按与 `persistence` 相同的准入丢弃退役 / 更旧令牌的事件（含 `subagent_started` /
+   `notice` / `title`）。后端写父会话的通知插入与投递标记比较 hub 的 `parent_token`，A→B 后旧
+   hub 的迟到写入一律放弃（blocked 分支回滚 delivered 标记）。
+9. **会话清单**：A 删除后只剩 B 一行；B 的 `last_activity_ts` 因谱系断链（dangling parent）回落
    自身创建时刻。B 的会话名在首条真实请求前取自 `withdraw_seed` 的首条用户消息。
-9. **规格**：`harness` capability 新增 1 条 requirement（撤回最近一条用户消息），不改既有
+10. **规格**：`harness` capability 新增 1 条 requirement（撤回最近一条用户消息），不改既有
    `会话边界` / `会话本地留存` 的整块正文。
 
 ## Non-goals
@@ -87,9 +102,11 @@ harness 的对话面板没有用户消息的删除 / 编辑 / 重发入口：发
 - **代码**：
   - `src-tauri/src/harness.rs`：`Runtime::withdraw_last_turn`、派生检测、撤回回执类型、
     `harness_withdraw` 命令；`resume_session` / `first_user_text` 的 seed 回落。
-  - `src-tauri/src/harness/session.rs`：`last_turn_origin` / `withdrawable()` / `cache_totals()`
-    / `panel()`；快照 `withdrawable`；`SessionWithdrawInfo` / `WithdrawnComposer` /
-    `WithdrawOutcome`。
+  - `src-tauri/src/harness/session.rs`：`last_turn_origin` / `withdraw_target` / `withdrawable()`
+    / `cache_totals()` / `panel()`；进程级恢复占用表与栅栏（`claim_resume` / `lock_resume_fence`）；
+    快照 `withdrawable`；`SessionWithdrawInfo` / `WithdrawnComposer` / `WithdrawOutcome`。
+  - `src-tauri/src/harness/events.rs` / `turn.rs` / `title.rs` / `subagents.rs`：事件信封的
+    `session_token`；旧 hub 的 `parent_token` 写入闸。
   - `src-tauri/src/harness/jsonl.rs`：`publish_now`、`read_session_open`、
     `withdraw_seed_payload` / `withdraw_seed_messages`。
   - `src-tauri/src/harness/turn.rs`：轮次来源记录。
@@ -98,8 +115,11 @@ harness 的对话面板没有用户消息的删除 / 编辑 / 重发入口：发
     `copy-data.ts`：撤回钮、二次确认条、composer 投影与合并、文案。
 - **视觉**：撤回钮 hover 才显形、落在复制钮左侧；非 hover 帧零像素变化（预期基线不动，仍跑
   本地 `gate.sh visual`）。
-- **验收**：新增真机场景 882（撤回三层判据 + A 删除的 glob 判据）；Rust 单测 10 条、前端单测
-  7 条投影 / 合并用例。
+- **错误码**：`harness_withdraw_not_applicable` / `_tail_notice` / `_nothing` / `_derived_exists` /
+  `_resume_in_flight` / `_scan_failed` / `_read_failed` / `_publish_failed` / `_delete_failed` /
+  `_rollback_incomplete` / `_failed`（文案 D1039–D1049）。
+- **验收**：新增真机场景 882（撤回三层判据 + A 删除的 glob 判据）；Rust 单测 16 条、子代理 1 条、
+  事件信封 1 条、前端单测 8 条、真面板 chromium 4 条。
 
 ## 节点 2（归档前填写）
 

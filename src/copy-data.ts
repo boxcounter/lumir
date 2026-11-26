@@ -3053,6 +3053,26 @@ const COPY_TABLE = {
     zh: "撤回失败：无法发布撤回后的新会话（{reason}）；原会话与输入区均未改变",
     en: "Withdraw failed: the new session could not be published ({reason}); the session and composer are unchanged",
   },
+  D1045: {
+    zh: "有另一个会话正在从它恢复（如 cron 专用会话）；请等这次运行结束后再撤回",
+    en: "Another session is resuming from it (for example a cron session); withdraw after that run finishes",
+  },
+  D1046: {
+    zh: "撤回未完成：原会话已保留，但新建的会话没能清理（清单里可能多出一行，可手动删除）",
+    en: "Withdraw incomplete: the original session is kept, but the new session could not be cleaned up (an extra row may remain; delete it manually)",
+  },
+  D1047: {
+    zh: "无法确认是否还有派生会话（{path} 不可读），为安全起见不撤回；原会话未改动",
+    en: "Cannot verify that no derived session exists ({path} is unreadable), so nothing was withdrawn; the original session is unchanged",
+  },
+  D1048: {
+    zh: "无法读取当前会话的装配记录，撤回已取消；原会话未改动（{reason}）",
+    en: "Could not read the session's assembly record; the withdraw was cancelled and the session is unchanged ({reason})",
+  },
+  D1049: {
+    zh: "本轮之后又到达了后台通知；为避免把通知当成你的消息处理，请先发下一条消息再撤回",
+    en: "A background notice arrived after this turn; send another message first so the notice is not mistaken for yours",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -3083,6 +3103,11 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   harness_withdraw_failed: "D1042",
   harness_withdraw_delete_failed: "D1043",
   harness_withdraw_publish_failed: "D1044",
+  harness_withdraw_resume_in_flight: "D1045",
+  harness_withdraw_rollback_incomplete: "D1046",
+  harness_withdraw_scan_failed: "D1047",
+  harness_withdraw_read_failed: "D1048",
+  harness_withdraw_tail_notice: "D1049",
   vault_not_open: "D159",
   vault_list_failed: "D160",
   config_home_unknown: "D161",

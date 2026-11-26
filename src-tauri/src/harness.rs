@@ -729,6 +729,11 @@ impl Runtime {
                 }
             }
         }
+        // 恢复占用必须在**读取源文件之前**登记（与撤回的「检查派生 + 删除 A」共用一把栅栏锁）：
+        // 否则独立 Runtime（cron 专用会话）可以先读完 A、撤回扫描看不到尚未发布的派生并删掉 A，
+        // 随后这里仍发布携带被撤回上下文的派生文件（change add-harness-message-withdraw-nov26）。
+        // 早期返回（读失败 / 跨 vault / 非法）时局部 guard 随即释放。
+        let claim = session::claim_resume(session_id);
         let path = jsonl::vault_sessions_path(&scope.vault_id)?.join(format!("{session_id}.jsonl"));
         let file = jsonl::read_session_file(&path)?;
         let open = &file.session_open;
@@ -958,6 +963,7 @@ impl Runtime {
         if let Some(title) = &inherited_title {
             new_session.set_title(Some(title.clone()));
         }
+        new_session.attach_resume_claim(claim);
         let new_token = new_session.subagent_token();
         self.guard_unpublished_replacement(scope)?;
         self.inner
@@ -1070,23 +1076,49 @@ impl Runtime {
                 "对话正在处理中；请先停止本轮，再撤回",
             ));
         }
-        if !session.withdrawable() {
+        if !matches!(
+            session.last_turn_origin(),
+            Some(turn::TurnOrigin::Interactive | turn::TurnOrigin::Retry)
+        ) {
             return Err(CommandError::new(
                 "harness_withdraw_not_applicable",
                 "最近一轮不是你在本窗口发出的消息（cron / 自动唤醒 / 恢复出来的历史会话），不能撤回",
             ));
         }
-        // 先整体克隆：`jsonl()` 需要 &mut，而 input 的借用要活到下面构造前缀。
+        // 目标只认**入队时记录的下标**：后台通知（blocked / 触顶分支）同样是 input 里的 user 项，
+        // 按「最后一条 role=user」反推会把通知当作目标并错删真实用户轮次（K3 P1-1）。
         let input = session.input().to_vec();
-        let Some(index) = input
-            .iter()
-            .rposition(|item| item["role"].as_str() == Some("user"))
-        else {
+        let Some(target) = session.withdraw_target() else {
             return Err(CommandError::new(
                 "harness_withdraw_nothing",
-                "当前会话没有可撤回的用户消息",
+                "当前会话没有可撤回的用户消息（历史已被压缩或替换）",
             ));
         };
+        let stale = || {
+            CommandError::new(
+                "harness_withdraw_not_applicable",
+                "撤回目标已失效（会话历史在入队后被替换或压缩），不能撤回",
+            )
+        };
+        let Some(target_item) = input.get(target.input) else {
+            return Err(stale());
+        };
+        if target_item["role"].as_str() != Some("user") {
+            return Err(stale());
+        }
+        // 本轮之后混入了其它 user 项（后台通知 / 自动唤醒通知）⇒ 拒绝：这些通知不是用户
+        // 发出去的消息，删掉它们会把后台结果静默吞掉，还会让工具清单从空切片起算、绕过二次确认。
+        if input
+            .iter()
+            .skip(target.input + 1)
+            .any(|item| item["role"].as_str() == Some("user"))
+        {
+            return Err(CommandError::new(
+                "harness_withdraw_tail_notice",
+                "本轮之后又到达了后台通知；为避免把通知当成你的消息处理，请先发下一条消息再撤回",
+            ));
+        }
+        let index = target.input;
         let tool_names = turn_tool_names(&input[index + 1..]);
         if !confirm && !tool_names.is_empty() {
             return Ok(session::WithdrawOutcome {
@@ -1102,15 +1134,14 @@ impl Runtime {
                 "当前会话还没有留存身份，无法撤回",
             ));
         };
-        let withdrawn = withdrawn_composer(&input[index]);
+        let withdrawn = withdrawn_composer(target_item);
         let prefix = input[..index].to_vec();
         drop(input);
-        // 面板与 input 同源：截到目标用户消息之前（技能痕迹行紧随其后，一并移除）。
-        let kept_panel: Vec<session::PanelMessage> =
-            match session.panel().iter().rposition(|m| m.role == "user") {
-                Some(panel_index) => session.panel()[..panel_index].to_vec(),
-                None => session.panel().to_vec(),
-            };
+        // 面板与 input 同源：按同一目标下标截断（不是「最后一条 role=user」）。
+        let kept_panel: Vec<session::PanelMessage> = match session.panel().get(target.panel) {
+            Some(message) if message.role == "user" => session.panel()[..target.panel].to_vec(),
+            _ => return Err(stale()),
+        };
         let system = session.system().to_string();
         let effort = session.thinking_effort();
         let usage = session.usage();
@@ -1118,19 +1149,43 @@ impl Runtime {
         let subrun_usage = session.subrun_usage().clone();
         let subrun_runs = session.subrun_runs().clone();
         let title = session.title().map(str::to_string);
-        // B 的装配记录沿用 A 的 `assembly`（装配事实的唯一留存处），`system` 用内存值——
-        // 恢复机制同一条纪律：撤回不重新装配系统上下文。
+        // B 的装配记录沿用 A 的 `assembly`。**读失败 / 缺键一律拒绝**：静默置空会造出
+        // 「assembly 缺失的 B」并把 A 永久删除（K3 P2-3）。
         let assembly = jsonl::read_session_open(session.jsonl().path())
-            .ok()
-            .and_then(|open| open.get("assembly").cloned())
-            .unwrap_or_else(|| serde_json::json!([]));
+            .map_err(|error| {
+                CommandError::new(
+                    "harness_withdraw_read_failed",
+                    "无法读取当前会话的装配记录，撤回已取消；原会话未改动",
+                )
+                .param("reason", error.message)
+            })?
+            .get("assembly")
+            .cloned()
+            .filter(serde_json::Value::is_array)
+            .ok_or_else(|| {
+                CommandError::new(
+                    "harness_withdraw_read_failed",
+                    "当前会话的装配记录缺少 assembly，撤回已取消；原会话未改动",
+                )
+                .param("reason", "session_open 缺 assembly")
+            })?;
         let first_user_text = prefix
             .iter()
             .find(|item| item["role"].as_str() == Some("user"))
             .and_then(first_paragraph_text);
 
-        // 派生会话初检：A 有任何一个「从它恢复出来」的会话就拒绝——删除 A 会留下悬空的
-        // 恢复来源；契约不允许级联删除，也不允许静默保留 A。
+        // 栅栏从「检查恢复占用 / 派生」一直持到「删除 A」：与 `resume_session` 的登记互斥，
+        // 独立 Runtime 的恢复因此不可能落在两次扫描之间（K3 P1-3）。释放放在换入 B 之前
+        // （换入会 drop A，A 若本身是恢复出来的会话会在 Drop 里释放占用）。
+        let fence = session::lock_resume_fence();
+        if session::resume_claim_count(&active_id) > 0 {
+            return Err(CommandError::new(
+                "harness_withdraw_resume_in_flight",
+                "有另一个会话正在从它恢复（如 cron 专用会话）；请等这次运行结束后再撤回",
+            ));
+        }
+        // 派生会话初检：A 有任何一个「从它恢复出来」的会话就拒绝；任何不可读候选一律
+        // fail closed（无法排除派生 = 不允许删除 A）。
         let derived = derived_session_ids(scope, &active_id, None)?;
         if !derived.is_empty() {
             return Err(derived_withdraw_error(&derived));
@@ -1192,8 +1247,8 @@ impl Runtime {
         // 先 unlink A、后换入 B：删除失败时 A 的内存态与文件都还在，就地删 B 即可回滚。
         // A 的 writer 仍开着文件也不会阻止 unlink（POSIX）；换入之后 `Drop` 关闭它。
         let after_publish = (|| -> Result<(), CommandError> {
-            // 发布后复核（排除刚建的 B）：初检到此刻之间新冒出来的派生会话（例如并发的 cron
-            // 专用会话恢复了 A）必须拦住。
+            // 发布后复核（排除刚建的 B）：同一把栅栏内，恢复登记不可能插进来；仍复核一次
+            // 兜住「B 发布期间外部进程直接落盘派生文件」这类盘面变化。
             let derived = derived_session_ids(scope, &active_id, Some(&new_id))?;
             if !derived.is_empty() {
                 return Err(derived_withdraw_error(&derived));
@@ -1201,7 +1256,19 @@ impl Runtime {
             let a_path =
                 jsonl::vault_sessions_path(&scope.vault_id)?.join(format!("{active_id}.jsonl"));
             if a_path.exists() {
-                std::fs::remove_file(&a_path).map_err(|error| {
+                #[cfg(test)]
+                let removed =
+                    if FAIL_NEXT_SOURCE_UNLINK.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::PermissionDenied,
+                            "injected source unlink failure",
+                        ))
+                    } else {
+                        std::fs::remove_file(&a_path)
+                    };
+                #[cfg(not(test))]
+                let removed = std::fs::remove_file(&a_path);
+                removed.map_err(|error| {
                     CommandError::new(
                         "harness_withdraw_delete_failed",
                         "撤回失败：无法删除原会话留存；原会话与输入区均未改变",
@@ -1215,9 +1282,22 @@ impl Runtime {
         if let Err(failure) = after_publish {
             drop(new_session);
             let leftover = discard_published_session(&b_path);
-            return Err(with_leftover(failure, leftover));
+            return Err(match leftover {
+                // 回滚成功：A 仍是当前会话，如实报失败原因。
+                None => failure,
+                // 双故障：A 保留但 B 也留在了盘上（清单可能多一行）。这不能用「原会话与输入区
+                // 均未改变」一句话收口——必须显式暴露未完成回滚（K3 P2-1）。
+                Some(path) => CommandError::new(
+                    "harness_withdraw_rollback_incomplete",
+                    "撤回未完成：原会话已保留，但新建的会话没能清理（清单里可能多出一行，可手动删除）",
+                )
+                .param("cause", failure.code.clone())
+                .param("session_id", new_id.clone())
+                .param("path", path),
+            });
         }
 
+        drop(fence);
         sessions.insert(key.clone(), new_session);
         self.inner
             .pending_open
@@ -1258,6 +1338,11 @@ fn turn_tool_names(items: &[serde_json::Value]) -> Vec<String> {
 }
 
 /// 被撤回用户消息 → composer 素材：序列化文本（剥注入的上下文节）+ 显式 Skill 名。
+///
+/// 名字的完整名单在用户项的 `lumir_skill_trace` 上（成功与被拒 / 不存在的显式选择都在）；
+/// `lumir_skill` part 只在成功加载时存在。先按 trace 的原选择序取，再补只出现在 part 上的
+/// 旧记录名字，去重——失败 Skill 撤回后重发仍是显式调用（K3 P2-2）。trace 只给出名字，正文
+/// 不外带（MUST NOT 把已发送的注入正文重新带回 composer / 模型）。
 fn withdrawn_composer(item: &serde_json::Value) -> session::WithdrawnComposer {
     let content = &item["content"];
     let text = match content {
@@ -1267,15 +1352,22 @@ fn withdrawn_composer(item: &serde_json::Value) -> session::WithdrawnComposer {
         }
         _ => String::new(),
     };
-    let skills = content
+    let mut skills: Vec<String> = Vec::new();
+    let trace_names = item[turn::SKILL_TRACE_FIELD]
         .as_array()
-        .map(|parts| {
-            parts
-                .iter()
-                .filter_map(|part| part["lumir_skill"].as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
+        .into_iter()
+        .flatten()
+        .filter_map(|trace| trace["name"].as_str());
+    let part_names = content
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|part| part["lumir_skill"].as_str());
+    for name in trace_names.chain(part_names) {
+        if !skills.iter().any(|existing| existing == name) {
+            skills.push(name.to_string());
+        }
+    }
     session::WithdrawnComposer {
         text: turn::strip_context_section(&text).to_string(),
         skills,
@@ -1285,9 +1377,8 @@ fn withdrawn_composer(item: &serde_json::Value) -> session::WithdrawnComposer {
 /// A 的派生会话：`restored_from` 链上能走回 `target` 的其它留存文件（`exclude` 用于发布 B
 /// 之后的复核——B 自己就带着 `restored_from=A`，不排除就会被自己拦下）。
 ///
-/// 只读每个文件的**首行** `session_open`（完整记录这里不需要）。不可读的文件跳过并留一条
-/// stderr：它本身无法被恢复（`read_session_file` 会失败），不构成可用的派生会话；把它当作
-/// 「可能有派生」会让一份损坏的无关文件永久堵死撤回。
+/// **fail closed**（K3 P1-3）：目录项读失败、任一 `*.jsonl` 首行不可读，一律返回错误而不是
+/// 跳过——对不可逆删除而言「无法排除派生」必须拒绝撤回，宁可挡住也不能错删 A。
 fn derived_session_ids(
     scope: &VaultScope,
     target: &str,
@@ -1299,15 +1390,23 @@ fn derived_session_ids(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => {
             return Err(CommandError::new(
-                "harness_session_unreadable",
-                format!("无法读取会话留存目录 {}：{e}", dir.display()),
+                "harness_withdraw_scan_failed",
+                format!("无法读取会话留存目录 {}，撤回已取消：{e}", dir.display()),
             )
             .param("path", dir.display().to_string())
             .param("reason", e.to_string()))
         }
     };
     let mut parents: HashMap<String, Option<String>> = HashMap::new();
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = entry.map_err(|e| {
+            CommandError::new(
+                "harness_withdraw_scan_failed",
+                format!("无法读取会话留存目录项，撤回已取消：{e}"),
+            )
+            .param("path", dir.display().to_string())
+            .param("reason", e.to_string())
+        })?;
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
             continue;
@@ -1318,22 +1417,23 @@ fn derived_session_ids(
         if id == target || exclude == Some(id.as_str()) {
             continue;
         }
-        match jsonl::read_session_open(&path) {
-            Ok(open) => {
-                let parent = open["restored_from"]
-                    .as_str()
-                    .filter(|parent| !parent.is_empty() && *parent != id)
-                    .map(str::to_string);
-                parents.insert(id, parent);
-            }
-            Err(error) => {
-                eprintln!(
-                    "lumir: 撤回派生检测跳过不可读会话（{}）：{}",
+        let open = jsonl::read_session_open(&path).map_err(|error| {
+            CommandError::new(
+                "harness_withdraw_scan_failed",
+                format!(
+                    "无法确认是否还有派生会话（{} 不可读），撤回已取消：{}",
                     path.display(),
                     error.message
-                );
-            }
-        }
+                ),
+            )
+            .param("path", path.display().to_string())
+            .param("reason", error.message)
+        })?;
+        let parent = open["restored_from"]
+            .as_str()
+            .filter(|parent| !parent.is_empty() && *parent != id)
+            .map(str::to_string);
+        parents.insert(id, parent);
     }
     const MAX_DEPTH: usize = 256;
     let mut derived = Vec::new();
@@ -1368,8 +1468,14 @@ fn derived_withdraw_error(ids: &[String]) -> CommandError {
     .param("sessions", ids.join(","))
 }
 
-/// 回滚时清理 B 的发布文件（best effort）：失败只留一条 stderr，不改变「A 必须保留」的结论。
+/// 回滚时清理 B 的发布文件（best effort）：失败返回残留路径，由调用方升级为
+/// `harness_withdraw_rollback_incomplete`（不允许把「A+B 都在盘上」报成干净失败）。
 fn discard_published_session(path: &std::path::Path) -> Option<String> {
+    #[cfg(test)]
+    if FAIL_NEXT_CLEANUP.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        eprintln!("lumir: 撤回回滚清理新会话失败（注入）：{}", path.display());
+        return Some(path.display().to_string());
+    }
     match std::fs::remove_file(path) {
         Ok(()) => None,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -1380,12 +1486,12 @@ fn discard_published_session(path: &std::path::Path) -> Option<String> {
     }
 }
 
-fn with_leftover(mut error: CommandError, leftover: Option<String>) -> CommandError {
-    if let Some(path) = leftover {
-        error = error.param("leftover_session", path);
-    }
-    error
-}
+/// 测试注入：下一次删 A 失败 / 下一次清理 B 失败（双故障路径的确定性判据）。
+#[cfg(test)]
+static FAIL_NEXT_SOURCE_UNLINK: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(test)]
+static FAIL_NEXT_CLEANUP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// 会话留存归属当前 vault 的判据（恢复 / 列举 / 删除共用一处——同一语义两处真源会漂，
 /// REVIEW.md 「同一语义两处真源」条）。
