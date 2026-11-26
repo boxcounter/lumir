@@ -136,9 +136,9 @@ usage/cache_totals/subrun_usage/subrun_runs=撤回时点种子
 
 ## 8. 前端
 
-- **撤回钮**：最后一条用户消息 hover 浮现（与复制钮同位形，右侧 30px），读屏名 D1034；
-  非 idle 置灰并提示 D1035。可见性由快照 `withdrawable` 决定（只做可见性，判定在后端）。
-- **二次确认**：`needs_confirmation` 时在消息下方插一行确认条（D1036 列工具名 + D1037 / D136），
+- **撤回钮**：最后一条用户消息 hover 浮现（与复制钮同位形，右侧 30px），读屏名 D1052；
+  非 idle 置灰并提示 D1053。可见性由快照 `withdrawable` 决定（只做可见性，判定在后端）。
+- **二次确认**：`needs_confirmation` 时在消息下方插一行确认条（D1054 列工具名 + D1055 / D136），
   确认后以 `confirm=true` 再调一次。
 - **回填**：`composerContentFromMessage(text, skills)` 是 `projectDelivery` 的逆——卡片行拆回
   块、段落还原 XML 实体（`parseQuoteMessage` 本身不还原段落，这里必须补一次，否则改完再发会
@@ -147,7 +147,7 @@ usage/cache_totals/subrun_usage/subrun_runs=撤回时点种子
 - **合并**：`mergeWithdrawnComposerContent` 与发送拒绝的 `mergeRejectedComposerContent` 共用
   同一份核心（原文在前、当前在后；卡片 / Skill 偏移平移），差别只在补一个换行、光标落原文末尾。
 - **成功**：`resetView` + 重放 B 的面板 + 更新 persistence token / 标题 / 首条消息 + 刷新读数与
-  任务区 + `resetComposer(合并结果)` + `markDraft()` + toast D1038。
+  任务区 + `resetComposer(合并结果)` + `markDraft()` + toast D1056。
 - **事件准入**：`handleEvent` 在记账之前按 `session_token` 过滤（与 `persistence` 同一条
   `persistenceEventAdmitted`）；退役 / 更旧的令牌整条丢弃，新令牌事件照常上屏。
 - **Skill 名单**：后端 `withdrawn_composer` 先取 `lumir_skill_trace`（成功 / 被拒 / 不存在的

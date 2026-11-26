@@ -5707,9 +5707,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     for (const pending of pendingApprovals.values()) relabelApproval(pending);
     // 撤回钮 / 确认条同属交互中的 UI：读屏名、悬停提示与按钮文字随语言重取。
     if (withdrawButtonEl !== null) {
-      withdrawButtonEl.textContent = t("D1034");
-      withdrawButtonEl.setAttribute("aria-label", t("D1034"));
-      withdrawButtonEl.title = withdrawButtonEl.disabled ? t("D1035") : t("D1034");
+      withdrawButtonEl.textContent = t("D1052");
+      withdrawButtonEl.setAttribute("aria-label", t("D1052"));
+      withdrawButtonEl.title = withdrawButtonEl.disabled ? t("D1053") : t("D1052");
     }
     if (withdrawConfirmEl !== null) relabelWithdrawConfirm(withdrawConfirmEl);
     // 已决策的终态记录同口径：结果词 / 原因句 / 详情摘要重取文案（正文性质的时间戳由
@@ -6993,7 +6993,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       const busy = currentActivity().phase !== "idle" || withdrawInFlight;
       if (withdrawButtonEl.disabled !== busy) {
         withdrawButtonEl.disabled = busy;
-        withdrawButtonEl.title = busy ? t("D1035") : t("D1034");
+        withdrawButtonEl.title = busy ? t("D1053") : t("D1052");
       }
       return;
     }
@@ -7003,15 +7003,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     btn.type = "button";
     btn.className = "lumir-hp-withdraw";
     btn.disabled = withdrawInFlight;
-    btn.textContent = t("D1034");
-    btn.setAttribute("aria-label", t("D1034"));
+    btn.textContent = t("D1052");
+    btn.setAttribute("aria-label", t("D1052"));
     const busy = currentActivity().phase !== "idle";
     btn.disabled = busy;
-    btn.title = busy ? t("D1035") : t("D1034");
+    btn.title = busy ? t("D1053") : t("D1052");
     btn.addEventListener("click", (event) => {
       event.stopPropagation();
       if (currentActivity().phase !== "idle") {
-        deps.toast(t("D1035"));
+        deps.toast(t("D1053"));
         return;
       }
       void withdrawTurn(false);
@@ -7060,12 +7060,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const note = row.querySelector(".lumir-hp-withdraw-note");
     if (note !== null) {
       const separator = "、"; // i18n-exempt: glyph（顿号是标点分隔符，不是文案；英文档用逗号）
-      note.textContent = t("D1036", {
+      note.textContent = t("D1054", {
         tools: withdrawConfirmTools.join(currentLanguage() === "zh" ? separator : ", "),
       });
     }
     const yes = row.querySelector(".lumir-hp-withdraw-yes");
-    if (yes !== null) yes.textContent = t("D1037");
+    if (yes !== null) yes.textContent = t("D1055");
     const no = row.querySelector(".lumir-hp-withdraw-no");
     if (no !== null) no.textContent = t("D136");
   }
@@ -7081,13 +7081,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const note = document.createElement("span");
     note.className = "lumir-hp-withdraw-note";
     const separator = "、"; // i18n-exempt: glyph（顿号是标点分隔符，不是文案；英文档用逗号）
-    note.textContent = t("D1036", {
+    note.textContent = t("D1054", {
       tools: toolNames.join(currentLanguage() === "zh" ? separator : ", "),
     });
     const yes = document.createElement("button");
     yes.type = "button";
     yes.className = "lumir-hp-withdraw-yes";
-    yes.textContent = t("D1037");
+    yes.textContent = t("D1055");
     const no = document.createElement("button");
     no.type = "button";
     no.className = "lumir-hp-withdraw-no";
@@ -7131,7 +7131,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     resetComposer(mergeWithdrawnComposerContent(restored, composerContentOf(composerView.state)));
     markDraft();
     composerView.focus();
-    deps.toast(t("D1038"));
+    deps.toast(t("D1056"));
   }
 
   // ── transcript 追加 ──────────────────────────────────────────────────────

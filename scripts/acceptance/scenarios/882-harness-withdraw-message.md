@@ -8,7 +8,7 @@
 # 2. composer 面：同一条文本出现在 `AXTextArea` 的值里（撤回前是 present:false——空 composer）；
 # 3. 上下文面：撤回后改发另一句，盘上最新会话文件里**没有**被撤回的文本、且带
 #    `opened_from":"withdraw"`；会话目录里只剩一份 JSONL（A 已物理删除）。
-# 撤回钮 hover 才显形（读屏名 D1034「撤回」）；本场景走套件的 AXPress 点击通道，hover 的视觉
+# 撤回钮 hover 才显形（读屏名 D1052「撤回」）；本场景走套件的 AXPress 点击通道，hover 的视觉
 # 形态不在判据内（属手感，归 Alex）。
 id: "882-harness-withdraw-message"
 item: 882

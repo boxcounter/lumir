@@ -20,7 +20,7 @@
 - [x] 2.2 工具二次确认条（列出工具名 + 不撤销说明）；确认后 `confirm=true` 复调。
 - [x] 2.3 `composerContentFromMessage`（wire 文本 → composer 内容：实体还原、卡片锚点、Skill 位置）；与 `mergeRejectedComposerContent` 共用合并核心的 `mergeWithdrawnComposerContent`。
 - [x] 2.4 撤回成功后的视图换代：重放 B 的面板、persistence token、标题 / 首条消息、读数与任务区刷新、composer 回填 + `markDraft`、toast。
-- [x] 2.5 文案 D1034–D1044（含 6 个错误码）双表同步；撤回钮与确认条样式（非 hover 帧零像素变化）。
+- [x] 2.5 文案 D1052–D1062（含 6 个错误码）双表同步；撤回钮与确认条样式（非 hover 帧零像素变化）。
 - [x] 2.6 前端单测 9 条（`tests/unit/harness-withdraw-composer.test.ts`，含失败 Skill 与 >80 字符长名）+ `resetView` 调用点矩阵与 i18n 门禁同步更新；令牌账本单测 8 条（`tests/unit/harness-session-tokens.test.ts`，含缺 token 兼容事件与 A/B 交错）。
 - [x] 2.7 真面板 chromium 场景 4 条（`tests/visual/scenes/harness-withdraw-message-nov26.spec.ts`：直接撤回 / 工具二次确认 / 派生拒绝 / 旧令牌迟到事件拒收），无像素断言、不新增基线。
 
