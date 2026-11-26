@@ -199,3 +199,31 @@ test("会话恢复重放：who 行带留存 ts 的时间读数（同日窄相对
   await expect(userWhen).toHaveAttribute("data-when-form", "restored");
   await expect(older).toHaveAttribute("data-when-form", "restored");
 });
+
+test("会话恢复重放：wire 里的编辑器上下文节原样上屏（726 恢复判据的浏览器守卫）", async ({ page }) => {
+  const NOW_S = Math.floor(Date.now() / 1000);
+  const RESTORED = "/tmp-acc\n\n[当前编辑器上下文：\n文件：harness-note.md\n视口（第 1-6 行）]";
+  await openPanel(
+    page,
+    EMPTY_STATE,
+    {
+      list: [{ session_id: "s1759912345678-ctx001", first_user_text: "/tmp-acc", ts: NOW_S - 600 }],
+      info: {
+        session_id: "s1759912345679-ctx002",
+        restored_items: 1,
+        switched: true,
+        messages: [{ role: "user", text: RESTORED, ts: NOW_S - 90 }],
+      },
+    },
+  );
+  await page.locator(".lumir-hp-session").click();
+  const pop = page.locator(".lumir-hp-sesspop");
+  await expect(pop).toBeVisible();
+  await pop.locator(".lumir-hp-sesspop-item").first().click();
+  await expect(pop).toBeHidden();
+  const user = page.locator(".lumir-hp-msg-user").first();
+  await expect(user).toContainText("/tmp-acc");
+  await expect(user).toContainText("当前编辑器上下文：");
+  await expect(user).toContainText("文件：harness-note.md");
+  await expect(user).toContainText("视口（第 1-6 行）");
+});

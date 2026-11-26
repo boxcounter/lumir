@@ -4568,6 +4568,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   composerArea.append(skillMenuEl);
   let skillMenuState: SkillMenuState | null = null;
   let skillCatalog: readonly SkillSummary[] | null = null;
+  /** 上一次指针选意事件的视口坐标。WKWebView 在候选滚动 / 重排后会对**静止指针**补发
+   *  mousemove（clientX/Y 与上次相同，目标却是滚动后的新行）；同坐标不是新的指针移动，
+   *  MUST NOT 据此改游标（C6「hover 不得抹掉游标」的机器口径）。 */
+  let skillPointerX: number | null = null;
+  let skillPointerY: number | null = null;
   let skillCatalogEpoch = 0;
   let skillTokenFrom: number | null = null;
   let skillMenuIntentFrom: number | null = null;
@@ -4683,10 +4688,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     updateSkillMenuHighlight();
   }
 
-  /** 指针选意只认**真实指针移动**（`mousemove`），不认 `mouseenter`：揭示滚动会把另一行搬到
-   *  静止指针下面，`mouseenter` 会在那一刻改掉键盘刚选中的游标（合同 C6「hover 不得抹掉游标」）。
+  /** 指针选意只认**真实指针移动**（`mousemove` 且 `clientX/Y` 相对上次变化），不认 `mouseenter`：
+   *  揭示滚动会把另一行搬到静止指针下面。Chromium 不为此补发事件，WKWebView 会补发一条**同坐标**
+   *  mousemove——只认目标就会在那一刻改掉键盘刚选中的游标（合同 C6「hover 不得抹掉游标」）。
    *  整表只挂一个监听，option 重建时不重复注册。 */
   skillMenuEl.addEventListener("mousemove", (event) => {
+    if (event.clientX === skillPointerX && event.clientY === skillPointerY) return;
+    skillPointerX = event.clientX;
+    skillPointerY = event.clientY;
     const target = event.target;
     if (!(target instanceof Element)) return;
     const option = target.closest(".lumir-hp-skill-option");
@@ -4863,7 +4872,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   function selectSkillMenuItem(index?: number): void {
     if (skillMenuState === null) return;
     if (index !== undefined) {
-      // 指针点击本身就是显式选择：同一次动作里先武装游标，再走与键盘同一个接受路径。
+      // 指针点击先按落点更新游标，再走与键盘同一个接受路径（高亮即接受）。
       const next = hoverSkillHighlight(skillMenuState, index);
       if (next !== skillMenuState) {
         skillMenuState = next;
@@ -10729,7 +10738,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       return;
     }
     if (mod) return;
-    // 武装只接受**无修饰**的 Enter / Tab（change delta「武装时无修饰的 Enter / Tab」）：
+    // 接受只认**无修饰**的 Enter / Tab（C4「有效高亮即接受」）：
     // Shift+Enter 换行、Shift+Tab 焦点回退、Alt 组合保持原义（C7）。
     if (skillMenuState !== null && skillMenuState.armed &&
         !event.shiftKey && !event.altKey &&
