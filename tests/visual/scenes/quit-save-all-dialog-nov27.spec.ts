@@ -7,14 +7,13 @@
 // 纯逻辑（保存 → 复查 → 退出、代次、单飞、退出被拒）归 `tests/unit/quit-flow.test.ts`；
 // 后端复核归 `src-tauri/src/commands.rs` 单测；真机整链路归场景 884（本轮不执行）。
 //
-// **像素基线待批**：本 mission 的新场景还没有经 Alex 过目的基线（基线更新是人肉裁决点，
-// tests/visual/README.md），因此这里不调 `expectScreenshot`——候选截图由
-// `LUMIR_QUIT_DIALOG_CANDIDATES=<dir>` 显式开启，mission 报告附上后另起一批补像素断言。
+// **像素基线**：三主题整页截图已由主会话代 Alex 自审批准（2026-11-27，light / dark / eink
+// 均居中、主次按钮明确、无丢弃修改），正式基线经 `scripts/visual/run.sh --update` 生成；
+// 本文件不再提供候选截图旁路。
 
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { expectScreenshot } from "./expect-screenshot";
 import { DEMO_VAULT, fireQuitBlocked, stubTauri, type VaultFixture } from "./tauri-stub";
 
 const DOC = "# 退出确认\n\nQDLG-ALPHA 合成文档，只给弹框一个背景。\n";
@@ -95,8 +94,6 @@ async function setTheme(page: Page, theme: "light" | "dark" | "eink"): Promise<v
   }, theme);
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe(theme);
 }
-
-const CANDIDATE_DIR = process.env.LUMIR_QUIT_DIALOG_CANDIDATES;
 
 test("dirty 时 quit_blocked 弹出居中模态：文字 / 两条动作 / 无丢弃 / 背景 inert / 初始焦点", async ({ page }) => {
   await stubTauri(page, VAULT);
@@ -367,7 +364,7 @@ test("三主题 token：遮罩 / 卡片 / 主次按钮逐值对账（eink 1.4px�
   }
 });
 
-test("视觉候选：三主题整页截图（仅显式开启时写出，不更新基线）", async ({ page }) => {
+test("三主题整页基线：退出确认弹框（light / dark / eink）", async ({ page }) => {
   await stubTauri(page, VAULT);
   await stubAppQuit(page);
   await page.goto("/");
@@ -377,12 +374,6 @@ test("视觉候选：三主题整页截图（仅显式开启时写出，不更�
   for (const theme of ["light", "dark", "eink"] as const) {
     await setTheme(page, theme);
     await expect(page.locator(".lumir-quit-card")).toBeVisible();
-    if (CANDIDATE_DIR !== undefined && CANDIDATE_DIR !== "") {
-      mkdirSync(CANDIDATE_DIR, { recursive: true });
-      await page.screenshot({
-        path: join(CANDIDATE_DIR, `quit-dialog-${theme}.png`),
-        animations: "disabled",
-      });
-    }
+    await expectScreenshot(page, `quit-dialog-${theme}.png`);
   }
 });

@@ -41,5 +41,5 @@
 
 - [ ] 6.1 真实 WKWebView 下的整链路真机验收：dirty → ⌘Q / 关窗 → 居中弹框；保存全部并退出 → 原 pid 消失；保存失败 / 冲突 → 弹框留场且错误可见；取消 / Escape → 留场且内容逐字节不变；干净 ⌘Q → 无弹框。理由：本轮 mission 明确不执行真机，归下批真机窗口。
 - [ ] 6.2 场景 884 与 239 的真机 PASS（需要先构建含本 change 的 app）。
-- [ ] 6.3 视觉基线：三主题候选经 Alex 过目后另起一批补像素断言与基线（基线更新是人肉裁决点）。
+- [x] 6.3 视觉基线：三主题候选经主会话代 Alex 自审批准（2026-11-27）；已用 `scripts/visual/run.sh --update scenes/quit-save-all-dialog-nov27.spec.ts` 生成三张正式基线，其余基线不动。
 - [ ] 6.4 独立终审（非作者 reviewer clean / merge）与归档放行；归档时在 `docs/backlog.md` 归档跟踪队列落条目。理由：本 mission 明确「不要归档」。

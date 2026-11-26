@@ -55,8 +55,9 @@ Alex 2026-11-27 的需求：**退出前提醒改用弹框**。因为未保存时
     卡片 / 按钮层级、三主题 token、焦点圈定 / Escape / 背景 inert / 重复事件不叠弹。
   - 真机场景：`scripts/acceptance/scenarios/884-quit-save-all-dialog.md`（本轮只写场景，
     **不执行真机**）。
-- **视觉候选**：新增三主题截图候选放主仓 `.local/missions/add-quit-save-all-dialog-nov27/`，
-  **不自行更新像素基线**（基线更新是人肉裁决点）。
+- **视觉基线**：三主题整页截图候选经主会话代 Alex 自审批准（2026-11-27：light / dark / eink
+  均居中、主次按钮明确、无丢弃修改），用 `scripts/visual/run.sh --update` 生成三张正式基线；
+  其余基线不动。
 
 ## Non-goals
 

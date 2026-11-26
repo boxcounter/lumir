@@ -177,7 +177,7 @@ saving / quitting ──取消 / Escape / 点遮罩──► 忽略（不关闭�
 | Rust | `quit_allowed`：dirty=true 拒绝（稳定 code），dirty=false 放行 | `src-tauri/src/commands.rs` 单测 |
 | 视觉 / 结构（chromium + IPC stub） | 居中遮罩、卡片 / 按钮层级、三主题 token、焦点初始 / Tab 圈定 / Escape / inert / 焦点还原 / 重复事件单弹框 / 保存中禁用 / 失败留场 | `tests/visual/scenes/quit-save-all-dialog-nov27.spec.ts` |
 | 真机（本轮不执行） | 真实 ⌘Q / 关窗 → 弹框；保存全部并退出 → 原 pid 消失；保存失败 → 仍在；取消 → 仍在且内容不变；干净 ⌘Q 无弹框 | `scripts/acceptance/scenarios/884-quit-save-all-dialog.md` + 更新 239 |
-| 视觉候选 | 三主题整页截图 | `.local/missions/add-quit-save-all-dialog-nov27/visual-candidates/`（不更新基线） |
+| 视觉基线 | 三主题整页截图（`expectScreenshot`，已批准） | `tests/visual/baselines/quit-save-all-dialog-nov27.spec.ts-snapshots/` |
 
 ## 6. 边界与已知限制
 
