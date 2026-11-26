@@ -23,7 +23,8 @@
 > - 修复审计块被算成另一次工具调用：单 Web 调用不出组摘要，两个真实调用 + 两个审计仍显示 2；
 >   展开组后各审计仍默认关闭。
 >
-> 节点 2（归档评审）：实现完成后按五要件记录。
+> 节点 2（归档评审）：**机器 + 独立评审放行**（`docs/process/openspec-workflow.md`「节点 2 五要件」），
+> 逐要件事实见本文末「归档记录」。
 
 ## Why
 
@@ -98,3 +99,35 @@ snippet → 整条移除 results），读数在这里算一次即可同时服务
 - 测试：Rust 单测（预算读数 / 审计投影 / 摘要）、前端单测（DOM 紧凑形态 / 计数 / live-restored
   一致 / 旧记录降级 / secret canary）、视觉结构断言（m384）、真机场景 869/871/872/873/876 的
   期望改写（本轮只改场景，不执行真机）。
+
+## 归档记录
+
+### 归档前（节点 2 五要件）
+
+1. **方案已批准**：节点 1 为 Alex 2026-11-26 对最终方案回复「Web Search 按推荐」，批准口径逐条
+   见本文头部；实现期只落地该口径（含返修 r1 的 `input_url` / 最终 `source.url` 分离），未改 Web
+   工具 schema、provider、预算与安全判定，未删除任何事件 / 面板记录 / JSONL 字段。
+2. **独立评审**：K3 终审 **clean / merge**（P1-2 已关闭，无新增 P1 / P2 / P3），绑定 tip
+   `e1bbf58a8e437af7886c7b394ba1a4fd4f5b5c59`，verdict
+   `.local/reviews/compact-web-search-result-summary-nov26/k3-verdict.md`。该 tip 之后 master 的
+   增量只有合并提交 `9cf5d75f` 与 test-only 提交（`92008fdb` / `58ab5fd1` / `f5e9205e`）；
+   `9cf5d75f..HEAD` 对 `src/**` 与 `src-tauri/**` 零改动。verdict 的「真机 869 / 870 / 871 /
+   872 / 873 / 876、完整视觉、完整 gate 未跑」未完成验证由本节第 4 条补齐。
+3. **tasks 完成**：`tasks.md` 全勾（6.6 记录 backlog 条目、真机读数与节点 2），无放弃项。
+4. **门禁与真机证据**：
+   - quick：`GATE RESULT: 13/13 PASS（SKIP 0）`，日志
+     `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/harness-ux-integration-nov26/gate-quick-release-0.19.0-r2.log`；
+   - 集成测试：Rust 1382 passed / 0 failed / 6 ignored；前端单测 2075 passed；相关视觉结构 135
+     passed / 1 skipped；
+   - 首轮完整 visual：`GATE RESULT: 14/15 PASS（SKIP 0）`，唯一 FAIL 是当时未修的 `tsc-unit`
+     （既有问题，`92008fdb` 修掉），`visual-regression` PASS（1287s）；
+   - 最终完整 visual：14 个 quick 项全 PASS，`visual-regression` 1839 passed / 1 failed（唯一失败
+     是既有 IME 低频定时用例，与本批改动面无交集），该用例双引擎复跑 2/2 PASS（日志
+     `.local/missions/harness-ux-integration-nov26/gate-visual-release-0.19.0-final.log` 与
+     `ime-low-frequency-release-recheck.log`）；**不声称完整 gate 15/15**；
+   - 真机：869 / 870 / 871 / 872 / 873 / 876 **全 PASS**（14 / 13 / 9 / 9 / 10 / 7 断言），证据
+     `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-26-release-0.19.0/`。
+5. **规格对账**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS（扫过 13 份 delta / 17 条
+   MODIFIED / 262 段 / 无静默丢段；归档队列 1 项已完成 change 有唯一条目）；`validate --all
+   --strict` 39 passed / 0 failed；`docs/backlog.md` 归档队列有且仅有一条本 change 条目（80/80 行，
+   与本次删除 3 条已归档旧条目等量抵消）。

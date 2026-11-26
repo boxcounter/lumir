@@ -78,5 +78,8 @@
 - [x] 6.3 `node scripts/acceptance/check-suite.sh 869` 等受影响场景 `--check` 通过
 - [x] 6.4 绿跑输出落 `.local/missions/compact-web-search-result-summary-nov26/green/`；证据路径可 `ls`
 - [x] 6.5 提交当前分支，返回精确 tip；不归档、不 push / merge，等独立评审
-- [ ] 6.6 tower 在合并时落 `docs/backlog.md` 归档跟踪条目并勾选本项（backlog 当前 80 行硬上限，
-      本 mission 不擅自改台账；未勾选 = change 未完成，不触发归档队列判据）
+- [x] 6.6 tower 在合并时落 `docs/backlog.md` 归档跟踪条目并勾选本项（backlog 当时 80 行硬上限，
+      本 mission 未擅自改台账）——发布批补记（超出原任务范围的两项事实）：① 真机 869 / 870 /
+      871 / 872 / 873 / 876 全部 **PASS**（首轮即绿，断言数 14 / 13 / 9 / 9 / 10 / 7，证据
+      `.local/acceptance/2026-11-26-release-0.19.0/`）；② 节点 2 五要件齐后归档（记录见 proposal
+      「归档记录」）。腾行方式：删除 3 条已归档旧队列条目（git 历史保留），总行数守 80 上限。

@@ -303,8 +303,9 @@ deny > 既有硬层 > `web_access.approval`，deny 永远优先；Web 不使用 
 
 - **WHEN** `harness.web_access.approval` 缺省为 `allow_all`，模型在三种权限模式中的任一种调用
   `web_search` 或 `web_fetch`
-- **THEN** 调用不进入批准闸而直接执行，工具行 / 结果保留完整 query / URL、provider、费用与
-  untrusted 审计；若目标命中 `web_fetch(origin)` deny 或其它硬边界，仍按对应错误拒绝且不产生请求
+- **THEN** 调用不进入批准闸而直接执行，工具行保留 query / URL；provider、费用与 untrusted 审计
+  保留在默认关闭的「查看详情」中（呈现口径见「Web 访问策略与 origin 例外」条）；若目标命中
+  `web_fetch(origin)` deny 或其它硬边界，仍按对应错误拒绝且不产生请求
 
 ### Requirement: 批准闸呈现与决策后收敛
 
@@ -349,7 +350,8 @@ DeepSeek 抓取」的双路外发与计费说明。provider 尚未解析成功�
 不伪造 `"deepseek"` 为配置 id。Web 卡不生成专用持久 allow / 免问动作；origin deny 只在设置与
 权限规则中管理。批准或拒绝后，待决字段、说明与动作 SHALL 按本条统一终态折叠，只保留工具名 +
 决策结果 + 相对时间；完整 query / URL 与决策摘要 SHALL 可在展开详情中回看，不以待决按钮或置灰
-动作残留。默认 Allow 的工具行 / 结果 SHALL 保留同样的输入、provider、费用与 untrusted 审计。
+动作残留。默认 Allow 的工具行 / 结果 SHALL 与决策后同形：紧凑行 + 默认关闭的「查看详情」；
+输入、provider、费用与 untrusted 审计 SHALL 保留在该详情中，MUST NOT 以「常驻显示」为默认态。
 
 #### Scenario: diff 行高亮覆盖整行文本
 
@@ -413,8 +415,8 @@ DeepSeek 抓取」的双路外发与计费说明。provider 尚未解析成功�
 #### Scenario: 默认 Allow 不产生批准卡且审计仍在
 
 - **WHEN** `harness.web_access.approval` 缺省为 `allow_all`，模型连续调用 Search / Fetch
-- **THEN** 不产生逐次批准卡或 Web 专用持久 allow 动作，调用直接执行；工具行 / 结果仍保留完整
-  query / URL、provider、费用与 `trust:"untrusted"`
+- **THEN** 不产生逐次批准卡或 Web 专用持久 allow 动作，调用直接执行；工具行保留 query / URL，
+  provider、费用与 `trust:"untrusted"` 保留在默认关闭的「查看详情」中
 
 ### Requirement: 上下文用量显示与触顶处理
 
@@ -1479,7 +1481,10 @@ harness 的浮层（模型 chip 的 provider 浮层、标题栏 harness 段的�
 
 ### Requirement: 工具调用呈现
 
-工具调用 SHALL 以步骤清单形态呈现于当前 agent 消息内（hairline 夹区、独立于消息正文）：运行中的调用 SHALL 显示运行中行（脉冲指示 + 调用名），完成的调用 SHALL 翻为完成行（✓ 图标 + 结果摘要）；同一轮次的多次调用 SHALL 累积为有序多行清单。轮次结束后，含两行及以上的清单 SHALL 折叠为一行摘要（「N 个工具调用 · 全部完成」），摘要 SHALL 可点击展开回看全部步骤行；单行清单 SHALL 保持展开。快照恢复的历史轮次 SHALL 按同口径重建清单与折叠态。
+工具调用 SHALL 以步骤清单形态呈现于当前 agent 消息内（hairline 夹区、独立于消息正文）：运行中的调用 SHALL 显示运行中行（脉冲指示 + 调用名），完成的调用 SHALL 翻为完成行（✓ 图标 + 结果摘要）；同一轮次的多次调用 SHALL 累积为有序多行清单。轮次结束后，含两行及以上的清单 SHALL 折叠为一行摘要（「N 个工具调用 · 全部完成」），摘要 SHALL 可点击展开回看全部步骤行；单行清单 SHALL 保持展开。快照恢复的历史轮次 SHALL 按同口径重建清单与折叠态。组摘要的计数 SHALL 只计真实工具调用行；
+Web 调用的结果健康摘要与默认关闭的审计详情 SHALL 作为该调用的附属内容，MUST NOT 计为另一次
+调用、MUST NOT 影响单行 / 多行判定。点击摘要展开回看时，各调用的审计详情 SHALL 保持默认关闭
+（组开合 MUST NOT 改写各详情自身的展开态）。
 
 #### Scenario: 进行中清单
 
@@ -1495,6 +1500,11 @@ harness 的浮层（模型 chip 的 provider 浮层、标题栏 harness 段的�
 
 - **WHEN** 一轮只含一次工具调用的轮次结束
 - **THEN** 该步骤行保持展开可见，不出现摘要行
+
+#### Scenario: Web 审计不计入调用数
+
+- **WHEN** 一轮内只有一次 Web 工具调用，或先后发生两次真实工具调用且每次各带一个审计详情
+- **THEN** 单调用不出现组摘要；两次调用仍折叠为「2 个工具调用」；展开组后各审计详情仍默认关闭
 
 ### Requirement: 思考过程呈现
 
@@ -4482,7 +4492,12 @@ clamp；`need_content` 缺省 `false`。`web_fetch` 输入 SHALL 仅含 1–8192
 MUST NOT 暴露 API Key、provider、base URL、超时、重试、响应上限或任意 HTTP header。
 
 统一信封 SHALL 含 `ok` / `provider` / `provider_id` / `operation` / `attempts` / `local_precheck` /
-`trust` / `truncated` / `truncated_fields`。`local_precheck` SHALL 记录 Fetch 是否**实际执行过**
+`trust` / `truncated` / `truncated_fields`，并 SHALL 另含两个可空结果读数 `result_count` /
+`result_text_bytes`。成功 Search 的两个读数 SHALL 在预算裁剪全部完成后由后端**单一一次**计算：
+`result_count` = 实际回送模型的结果条数（不是 provider 原始条数、不是请求的 `count`）；
+`result_text_bytes` = 最终保留各结果的 title / snippet / summary / content 各字符串 UTF-8 字节数
+之和（不含 URL / site / date / authority / query 与 JSON 结构开销，不是网页大小或网络流量）。
+非 Search 成功、失败、缺读数时两键 SHALL 为 null，MUST NOT 以 0 冒充空结果。`local_precheck` SHALL 记录 Fetch 是否**实际执行过**
 本地预检：未配置、配置非法、参数非法、权限拒绝等未进入 executor 的路径为 `false`；进入 executor
 后无论预检成功、失败还是取消均为 `true`。审计 MUST NOT 仅按 `operation=fetch` 推断该值。`provider` / `provider_id` SHALL 为 `string | null`：只有 provider
 解析成功才填 `"deepseek"` 与实际配置映射键；未配置、配置歧义、自定义 base URL 及解析前的参数 /
@@ -4563,6 +4578,13 @@ URL / date / authority / provider MUST NOT 被裁剪。任何字段或数组被�
 - **THEN** 只有进入 executor 的 Fetch 审计 `local_precheck=true`；`provider_fetch` 只在
   `attempts>0` 时为 true；deny / 未配置的审计两个布尔均为 false，MUST NOT 按 operation 恒猜
 
+#### Scenario: 结果读数按预算裁剪后的实际回送计算
+
+- **WHEN** Search 返回的结果被字段截断、聚合裁剪或整条移除
+- **THEN** `result_count` 等于最终仍回送模型的结果条数，`result_text_bytes` 等于这些结果的
+  title / snippet / summary / content 的 UTF-8 字节和；真正成功的空结果为 `0` 而不是 null，
+  失败 / 非 Search 成功为 null（MUST NOT 以 0 冒充）
+
 ### Requirement: Web 访问策略与 origin 例外
 
 `harness.web_access.approval` 缺省为 `allow_all`，`web_search` / `web_fetch` SHALL 在所有权限模式中
@@ -4572,8 +4594,21 @@ URL / date / authority / provider MUST NOT 被裁剪。任何字段或数组被�
 
 Search 的 permission subject SHALL 为完整 query；Fetch 的 subject SHALL 为规范化 origin
 （scheme + host + 有效 port），origin 规范化 SHALL 小写 scheme / host、省略默认 port、保留非默认 port，
-且不含 userinfo / path / query / fragment。默认无批准卡时，工具行与结果 SHALL 仍完整展示 query / URL、
-provider id、费用、双路外发与 `trust:"untrusted"`，MUST NOT 只靠 80 字摘要满足可见性。
+且不含 userinfo / path / query / fragment。默认无批准卡时，Web 工具行 SHALL 默认紧凑：运行中单行
+显示状态与纯 query（Fetch 为纯 URL），MUST NOT 显示原始 arguments JSON 或默认参数；完成后默认
+显示 query（Fetch 为 URL）；Fetch 的默认行 URL SHALL 是调用 arguments 的原始输入 URL，重定向后的
+最终 `source.url` SHALL 只在默认关闭的「查看详情」中呈现，MUST NOT 覆盖默认行。Search 成功另有
+第二行结果健康摘要——正常为 `N 条结果 · 文本 X`，
+字段截断追加 `· 已截断`，`truncated_fields` 含 `results` 时为 `保留 N 条结果 · 文本 X · 已截断`，
+真正成功的空结果为 `0 条结果 · 搜索成功`（英文同义双语；N 与 X 的口径见「统一 Web 搜索与抓取
+工具」条）。失败时直接显示稳定错误码与人话原因，MUST NOT 显示条数或文本大小。provider id、
+attempts、完整 query / URL、截断字段、实际外发与费用、`trust:"untrusted"` SHALL 全部保留在默认
+关闭的「查看详情」中，可展开完整回看；MUST NOT 删除事件 / 面板记录 / JSONL / 安全元数据。Ask
+待决卡的完整预览信息不变。live 事件与快照 / 会话恢复两条路径 SHALL 同形同默认态：恢复行的
+query / URL SHALL 从该调用的持久化输入（同一份 arguments，完整不截断；Fetch 为原始输入
+URL）恢复，MUST NOT 把失败摘要（`状态 · code: message`）或最终 `source.url` 当默认行参数；
+旧留存缺该输入时 SHALL 安全降级为空、MUST NOT 伪造。
+旧留存缺结果读数时 SHALL 不显示条数与文本大小（MUST NOT 补零）。
 `harness.permissions.deny` 中的 `web_fetch(origin)` SHALL 在初始调用与每跳重定向重新判定。
 
 跨 origin 重定向不是新工具调用，MUST NOT 另开批准。预检 SHALL 先校验 Location 的 scheme / 凭据 /
@@ -4585,8 +4620,8 @@ host，再检查目标 origin deny；未封禁才继续 DNS / 连接 / 内容类
 #### Scenario: 默认 Allow 不逐次弹卡且审计完整
 
 - **WHEN** approval 缺省为 `allow_all`，模型以不同 query 连续搜索并抓取多个页面
-- **THEN** 所有调用默认直接执行，没有会话范围限制或逐次批准卡；每次工具行 / 结果仍保留完整
-  query / URL、provider、attempts、费用与 untrusted 说明
+- **THEN** 所有调用默认直接执行，没有会话范围限制或逐次批准卡；每次工具行显示 query / URL 与
+  结果健康摘要，provider、attempts、费用与 untrusted 说明保留在默认关闭的「查看详情」中
 
 #### Scenario: origin deny 恢复默认策略
 
@@ -4601,6 +4636,37 @@ host，再检查目标 origin deny；未封禁才继续 DNS / 连接 / 内容类
   封禁目标返回 `permission_denied`，未连接新 origin、未请求 DeepSeek
 - **AND** A → B 全部通过后，提交给 DeepSeek 的 url 与 `source.url` 都是最后一个通过校验的 B URL，
   不得拒绝跨源或继续提交 A URL
+
+#### Scenario: 默认紧凑与详情默认关闭
+
+- **WHEN** allow_all 下一次 Search 成功完成
+- **THEN** 工具行显示 query，第二行显示 `N 条结果 · 文本 X`；详情入口读「查看详情」且
+  `aria-expanded=false`，审计正文不可见；展开后可见 provider / attempts / 完整 query / 截断字段 /
+  外发与费用 / untrusted，再次点击收回
+
+#### Scenario: 空结果、字段截断与结果裁剪
+
+- **WHEN** Search 真正成功但没有结果 / 某字段被截断 / 结果数组被整条移除
+- **THEN** 三种分别显示 `0 条结果 · 搜索成功`、`N 条结果 · 文本 X · 已截断`、
+  `保留 N 条结果 · 文本 X · 已截断`；N 与 X 取预算裁剪后的实际回送值
+
+#### Scenario: 失败不显示条数与大小
+
+- **WHEN** Web 调用以 `web_provider_unconfigured` / `web_http_error` / `permission_denied` 等失败
+- **THEN** 工具行直接显示稳定错误码与人话原因，MUST NOT 出现 `0 条结果` / `0 B` 一类读数；
+  provider / attempts / 外发事实仍可在「查看详情」中回看
+
+#### Scenario: 实时与恢复同形
+
+- **WHEN** 同一 Web 调用分别经 live 事件与快照 / 会话恢复重建
+- **THEN** 两者工具行（含默认行可见的 query / URL）、第二行健康摘要、详情入口与默认关闭态一致；
+  旧留存缺输入 / 读数时不显示 query / URL / 条数 / 大小（MUST NOT 伪造）
+
+#### Scenario: Fetch 重定向的原始输入与最终 URL
+
+- **WHEN** Fetch 从原始 URL A 重定向到最终 URL B 后成功或失败
+- **THEN** live、快照恢复与 JSONL 恢复的默认行都显示原始 A；展开「查看详情」后显示最终 B 与
+  其余审计事实；默认行 MUST NOT 被最终 B 覆盖
 
 ### Requirement: DeepSeek Web provider 与隐私
 
