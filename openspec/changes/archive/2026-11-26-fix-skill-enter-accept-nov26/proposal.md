@@ -95,4 +95,15 @@
 
 ### 归档后
 
-（归档完成后补：归档提交、包装器输出、修链读数与 `--archived` PASS 读数。）
+- **归档提交**：`4ce50ceb836a9d9bbd7278794ef968298e8dd316`
+  （归档目录 + 并入后的 living spec 一起提交）。
+- **包装器实际输出**：`Change 'fix-skill-enter-accept-nov26' archived as
+  '2026-11-26-fix-skill-enter-accept-nov26'.`；`harness: update`（`+ 1 added` / `~ 1 modified` /
+  `- 1 removed`），`Totals: + 1, ~ 1, - 1, → 0`。
+- **修链读数**：`归档后修链 2 处（扫过 3 篇 Markdown / 2 条相对链接）`——归档副本
+  `specs/harness/spec.md:5` / `:6` 的 `../../../../../docs/...` → `../../../../../../docs/...`；
+  `openspec-links: PASS（校验 707 条相对链接，全部可达）`。
+- **归档后审计**：`node scripts/openspec-archive-check.mjs --archived fix-skill-enter-accept-nov26`
+  → `PASS（openspec/changes/archive/2026-11-26-fix-skill-enter-accept-nov26：1 条 MODIFIED，
+  对比 16 段；人工恢复 0 段，声明认领 0 段）`（2026-11-26）。
+- **docs-check**：归档后复跑 PASS（归档队列随 change 离开活跃区自然核销；backlog 保持 80 行上限）。
