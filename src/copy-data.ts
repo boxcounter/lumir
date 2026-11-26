@@ -3020,6 +3020,70 @@ const COPY_TABLE = {
   },
   // 并发 / 重复触发保存全部：前一次屏障还在跑，第二次不开新代次（单飞），给一条中性提示。
   D1051: { zh: "正在保存全部更改", en: "Saving all changes" },
+  D1052: {
+    zh: "撤回",
+    en: "Withdraw",
+  },
+  D1053: {
+    zh: "先停止本轮，再撤回",
+    en: "Stop this turn first, then withdraw",
+  },
+  D1054: {
+    zh: "本轮已执行：{tools}；撤回不会撤销这些操作。",
+    en: "This turn ran: {tools}. Withdrawing will not undo them.",
+  },
+  D1055: {
+    zh: "确认撤回",
+    en: "Withdraw anyway",
+  },
+  D1056: {
+    zh: "已撤回；原文已回到输入区，可编辑后重新发送",
+    en: "Withdrawn; the message is back in the composer for editing",
+  },
+  D1057: {
+    zh: "该会话还有派生出来的会话（{sessions}），不能撤回；请先处理这些会话后再试",
+    en: "This session has derived sessions ({sessions}) and cannot be withdrawn; handle them first",
+  },
+  D1058: {
+    zh: "最近一轮不是你在本窗口发出的消息，不能撤回",
+    en: "The latest turn was not sent from this window, so it cannot be withdrawn",
+  },
+  D1059: {
+    zh: "当前会话没有可撤回的用户消息",
+    en: "This session has no user message to withdraw",
+  },
+  D1060: {
+    zh: "当前会话还没有留存身份，无法撤回",
+    en: "This session has no retention identity yet and cannot be withdrawn",
+  },
+  D1061: {
+    zh: "撤回失败：无法删除原会话留存；原会话与输入区均未改变",
+    en: "Withdraw failed: the original session could not be deleted; the session and composer are unchanged",
+  },
+  D1062: {
+    zh: "撤回失败：无法发布撤回后的新会话（{reason}）；原会话与输入区均未改变",
+    en: "Withdraw failed: the new session could not be published ({reason}); the session and composer are unchanged",
+  },
+  D1063: {
+    zh: "有另一个会话正在从它恢复（如 cron 专用会话）；请等这次运行结束后再撤回",
+    en: "Another session is resuming from it (for example a cron session); withdraw after that run finishes",
+  },
+  D1064: {
+    zh: "撤回未完成：原会话已保留，但新建的会话没能清理（清单里可能多出一行，可手动删除）",
+    en: "Withdraw incomplete: the original session is kept, but the new session could not be cleaned up (an extra row may remain; delete it manually)",
+  },
+  D1065: {
+    zh: "无法确认是否还有派生会话（{path} 不可读），为安全起见不撤回；原会话未改动",
+    en: "Cannot verify that no derived session exists ({path} is unreadable), so nothing was withdrawn; the original session is unchanged",
+  },
+  D1066: {
+    zh: "无法读取当前会话的装配记录，撤回已取消；原会话未改动（{reason}）",
+    en: "Could not read the session's assembly record; the withdraw was cancelled and the session is unchanged ({reason})",
+  },
+  D1067: {
+    zh: "本轮之后又到达了后台通知；为避免把通知当成你的消息处理，请先发下一条消息再撤回",
+    en: "A background notice arrived after this turn; send another message first so the notice is not mistaken for yours",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -3044,6 +3108,17 @@ export const COPY: Record<CopyKey, CopyEntry> = COPY_TABLE;
  */
 export const ERROR_COPY: Record<string, CopyKey> = {
   harness_skills_invalid: "D982",
+  harness_withdraw_derived_exists: "D1057",
+  harness_withdraw_not_applicable: "D1058",
+  harness_withdraw_nothing: "D1059",
+  harness_withdraw_failed: "D1060",
+  harness_withdraw_delete_failed: "D1061",
+  harness_withdraw_publish_failed: "D1062",
+  harness_withdraw_resume_in_flight: "D1063",
+  harness_withdraw_rollback_incomplete: "D1064",
+  harness_withdraw_scan_failed: "D1065",
+  harness_withdraw_read_failed: "D1066",
+  harness_withdraw_tail_notice: "D1067",
   vault_not_open: "D159",
   vault_list_failed: "D160",
   config_home_unknown: "D161",

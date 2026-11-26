@@ -332,11 +332,17 @@ fn run_turn_inner<R: tauri::Runtime>(
     runtime.seed_permissions(&config.permissions);
     // 可跨线程持有的同一出口：子运行与自动唤醒回合在父回合结束后仍要发事件，借用的
     // `&sink` 活不到那时。`ScopedSink` 只借用 inner，故这里再包一层 owned 版本。
+    // 信封令牌在**回合开始时定格**（= 本回合所属逻辑会话）：旧会话的后台线程即使迟到，
+    // 事件也带着旧令牌，前端据此拒收（change add-harness-message-withdraw-nov26）。
+    let turn_token = runtime
+        .with_session(&scope, |s| s.subagent_token())
+        .unwrap_or(0);
     let owned: std::sync::Arc<dyn EventSink> = std::sync::Arc::new(OwnedScopedSink {
         inner: terminal_sink.clone(),
         vault: scope.key(),
+        session_token: turn_token,
     });
-    let sink = events::ScopedSink::new(terminal_sink.as_ref(), scope.key());
+    let sink = events::ScopedSink::new(terminal_sink.as_ref(), scope.key(), turn_token);
     // 会话级 mock 游标（M456）：mock client 每轮重建，游标存在会话上才能让同一会话的第二轮
     // 接着上一轮往下弹（131/133 的「两轮不同 usage」依赖它）。真 provider 的 client 两方法
     // 返回默认值，下面的回写恒 no-op。
@@ -415,7 +421,8 @@ fn run_turn_inner<R: tauri::Runtime>(
             .name("lumir-harness-title".into())
             .spawn(move || {
                 let app_sink = TauriEventSink(title_app);
-                let sink = events::ScopedSink::new(&app_sink, title_scope.key());
+                // 标题事件属于**触发时那个会话**：令牌随 job 定格，换会话后旧事件被前端拒收。
+                let sink = events::ScopedSink::new(&app_sink, title_scope.key(), job.session_token);
                 super::title::run_job(&sink, &title_runtime, &title_scope, job);
             })
         {
@@ -625,7 +632,14 @@ pub(crate) const SKILL_TRACE_FIELD: &str = "lumir_skill_trace";
 /// 每条后续请求进入留存，正文会把它变成第二份 Skill 全文副本。
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ExplicitSkillTrace {
+    /// **展示名**（面板行 / 事件摘要用）：`truncate_summary` 截到 80 字符 + `…`。
     pub name: String,
+    /// **完整原始名**（机器可读，change add-harness-message-withdraw-nov26 的 K3 复审 P2-1）：
+    /// 显式选择可能失败（不存在 / 被拒 / 非法），此时只有 trace 能提供名字；展示名可能被截断，
+    /// 不能兼任恢复协议。`lumir_skill` part 只在成功时存在，因此失败的长名只能靠这里保真。
+    /// 旧记录缺该键 ⇒ 空串，读取方回落 `name` 并安全降级（不从 `…` 猜测）。
+    #[serde(default)]
+    pub raw_name: String,
     /// `done` / `denied` / `error`——与 [`PanelMessage::status`] 的细分终态同一集合。
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -703,6 +717,7 @@ pub(crate) fn explicit_skill_panel_message(trace: &ExplicitSkillTrace) -> PanelM
 /// 成功但取不到正文字符串是防御分支（加载器契约被破坏）：按 `skill_content_missing` 留失败
 /// 痕迹，MUST NOT 静默跳过——「选了一个 Skill 却什么都没发生」正是本 change 要消灭的形态。
 fn explicit_skill_trace_from_output(
+    raw_name: &str,
     name: &str,
     output: &ToolOutput,
     ts: u64,
@@ -714,6 +729,7 @@ fn explicit_skill_trace_from_output(
                 Some(content.to_string()),
                 ExplicitSkillTrace {
                     name: name.to_string(),
+                    raw_name: raw_name.to_string(),
                     status: status.to_string(),
                     code: None,
                     message: None,
@@ -725,12 +741,13 @@ fn explicit_skill_trace_from_output(
             "skill_content_missing",
             format!("技能 {name} 的 SKILL.md 没有正文"),
         );
-        return explicit_skill_trace_from_output(name, &missing, ts);
+        return explicit_skill_trace_from_output(raw_name, name, &missing, ts);
     }
     (
         None,
         ExplicitSkillTrace {
             name: name.to_string(),
+            raw_name: raw_name.to_string(),
             status: status.to_string(),
             code: Some(output.value["code"].as_str().unwrap_or("error").to_string()),
             message: Some(output.value["message"].as_str().unwrap_or("").to_string()),
@@ -785,7 +802,7 @@ fn explicit_skill_load<C: RunContext>(
             "skill_name_invalid",
             format!("技能名不合法（必须是 Skill 根下的单段目录名）：{display_name}"),
         );
-        let (_, trace) = explicit_skill_trace_from_output(&display_name, &output, ts);
+        let (_, trace) = explicit_skill_trace_from_output(raw_name, &display_name, &output, ts);
         return (None, trace);
     }
     let Some(skill) = skills.iter().find(|skill| skill.name == raw_name) else {
@@ -801,7 +818,7 @@ fn explicit_skill_load<C: RunContext>(
                 ("skill_not_found", format!("技能 {display_name} 不存在"))
             };
         let output = ToolOutput::err(code, message);
-        let (_, trace) = explicit_skill_trace_from_output(&display_name, &output, ts);
+        let (_, trace) = explicit_skill_trace_from_output(raw_name, &display_name, &output, ts);
         return (None, trace);
     };
     let args = serde_json::json!({"name": raw_name});
@@ -809,7 +826,7 @@ fn explicit_skill_load<C: RunContext>(
     if verdict.decision != Decision::Allow {
         let message = denied_message("skill_load", raw_name, verdict.reason.as_ref());
         let output = ToolOutput::err("permission_denied", message);
-        let (_, trace) = explicit_skill_trace_from_output(&display_name, &output, ts);
+        let (_, trace) = explicit_skill_trace_from_output(raw_name, &display_name, &output, ts);
         return (None, trace);
     }
     if !skill.invocation.valid {
@@ -817,7 +834,7 @@ fn explicit_skill_load<C: RunContext>(
             "skill_invocation_invalid",
             format!("技能 {display_name} 的调用元数据非法"),
         );
-        let (_, trace) = explicit_skill_trace_from_output(&display_name, &output, ts);
+        let (_, trace) = explicit_skill_trace_from_output(raw_name, &display_name, &output, ts);
         return (None, trace);
     }
     if !skill.invocation.user_invocable {
@@ -825,11 +842,11 @@ fn explicit_skill_load<C: RunContext>(
             "skill_user_invocation_disabled",
             format!("技能 {display_name} 不允许用户显式调用"),
         );
-        let (_, trace) = explicit_skill_trace_from_output(&display_name, &output, ts);
+        let (_, trace) = explicit_skill_trace_from_output(raw_name, &display_name, &output, ts);
         return (None, trace);
     }
     let output = tools::load_explicit_skill(skill);
-    let (content, trace) = explicit_skill_trace_from_output(&display_name, &output, ts);
+    let (content, trace) = explicit_skill_trace_from_output(raw_name, &display_name, &output, ts);
     let part = content.map(|content| {
         serde_json::json!({
             "type": "input_text",
@@ -896,6 +913,10 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
         TurnInput::Preloaded { user_text } => preloaded = Some(user_text),
         TurnInput::Resume { user_text } => resumed_user_text = Some(user_text),
     }
+    // 轮次来源（change add-harness-message-withdraw-nov26）：撤回入口只对交互发送 / 重试轮
+    // 开放。记在**轮次真正开跑**的这一刻——起线程失败不会走到这里，因此不会把上一轮的来源
+    // 冒充成这一轮。
+    let _ = ctx.with_session(|s| s.set_last_turn_origin(origin));
     // user 消息入队（LLM 侧 + 面板侧 + JSONL + 上下文节记录，压缩重注入用）。
     // 上下文节由调用侧从 ContextBlock **同一次生成**并传入（装配与存储同源，M309）——
     // 不再从拼好的 message 里重解析（正文含 `\n\n[` 时会串味）。投递 parts 与面板文本是
@@ -932,6 +953,13 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
                 .and_then(|content| super::attachments::panel_text_of_content(content))
                 .unwrap_or_default();
             turn_user_text = strip_context_section(&panel_text).to_string();
+            // 撤回目标的两份下标在**入队前**取：input 是即将压入的 user 项，panel 是同一条消息
+            // 的 user 行（痕迹行紧随其后）。撤回只认这两个下标——MUST NOT 用「最后一条 role=user」
+            // 反推，后台通知也是 user 项（change add-harness-message-withdraw-nov26）。
+            let withdraw_target = super::session::WithdrawTarget {
+                input: s.input().len(),
+                panel: s.panel_len(),
+            };
             s.push_input(item);
             s.push_panel(PanelMessage {
                 role: "user".into(),
@@ -949,6 +977,7 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
             for trace in &explicit_traces {
                 s.push_panel(explicit_skill_panel_message(trace));
             }
+            s.set_withdraw_target(withdraw_target);
             s.set_current_context(context_section_for_session);
             // 留存口径：user 消息不进 sidecar——它逐字节在下一条 llm_request.messages 里。
         });
@@ -2299,11 +2328,13 @@ fn denied_message(
 struct OwnedScopedSink {
     inner: std::sync::Arc<dyn EventSink>,
     vault: String,
+    /// 定格于回合开始（见 `run_turn` 的 `turn_token`）。
+    session_token: u64,
 }
 
 impl EventSink for OwnedScopedSink {
     fn emit(&self, mut payload: serde_json::Value) {
-        events::stamp_vault(&mut payload, &self.vault);
+        events::stamp_scope(&mut payload, &self.vault, self.session_token);
         self.inner.emit(payload);
     }
 }
@@ -5067,6 +5098,7 @@ mod tests {
         let ts = 42;
         let (content, trace) = explicit_skill_trace_from_output(
             "demo",
+            "demo",
             &ToolOutput::ok(serde_json::json!({"name": "demo", "content": "BODY"})),
             ts,
         );
@@ -5078,6 +5110,7 @@ mod tests {
         // 防御分支：加载器报成功却取不到正文字符串 → 失败痕迹，不静默跳过。
         let (content, trace) = explicit_skill_trace_from_output(
             "demo",
+            "demo",
             &ToolOutput::ok(serde_json::json!({"name": "demo"})),
             ts,
         );
@@ -5087,6 +5120,7 @@ mod tests {
         assert!(trace.message.as_deref().unwrap().contains("没有正文"));
 
         let (content, trace) = explicit_skill_trace_from_output(
+            "demo",
             "demo",
             &ToolOutput::err("skill_read_failed", "读取 SKILL.md 失败"),
             ts,

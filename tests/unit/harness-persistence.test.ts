@@ -238,7 +238,7 @@ test("接线：新会话重置、恢复以完整快照为地板，切 vault 只�
     PANEL_SOURCE.indexOf("// 会话名下拉：展开/收起浮层"),
   );
   assert.ok(
-    resume.includes("persistenceSessionToken = persistenceSessionTokenOf(info.session_token)"),
+    resume.includes("sessionTokens.adopt(actionVault, persistenceSessionTokenOf(info.session_token))"),
     "恢复必须采纳回执里的新逻辑会话 token",
   );
   assert.ok(

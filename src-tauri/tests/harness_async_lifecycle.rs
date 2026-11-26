@@ -197,7 +197,7 @@ fn drive_turn(
 fn complete_text_turn(runtime: &Runtime, scope: &VaultScope, config: &HarnessConfig, text: &str) {
     runtime.acquire_turn(scope, config).unwrap();
     let sink = CollectSink::default();
-    let scoped = events::ScopedSink::new(&sink, scope.key());
+    let scoped = events::ScopedSink::new(&sink, scope.key(), 0);
     let mut client = ScriptedClient::new(vec![ScriptStep::Text(text.to_string())]);
     drive_turn(&scoped, runtime, scope, config, "前置回合", &mut client);
     runtime.release_turn(scope);
@@ -298,7 +298,7 @@ fn scoped_worker(
     let scope = scope.clone();
     let config = config.clone();
     std::thread::spawn(move || {
-        let scoped = events::ScopedSink::new(&sink, scope.key());
+        let scoped = events::ScopedSink::new(&sink, scope.key(), 0);
         let mut client = client;
         drive_turn(&scoped, &runtime, &scope, &config, "问题", &mut client);
     })
@@ -478,6 +478,7 @@ fn duplicate_stop_requests_emit_a_single_terminal() {
 /// 这里只冻结同一形状，便于把句柄「带过」轮换 / 切 vault 的边界做对抗。
 fn title_job_for(runtime: &Runtime, scope: &VaultScope, config: &HarnessConfig) -> TitleJob {
     TitleJob {
+        session_token: 0,
         trigger: TitleTrigger::FirstTurn,
         vault_key: scope.key(),
         session_id: runtime
@@ -509,7 +510,7 @@ fn title_job_lands_on_the_session_it_was_created_for() {
     let job = title_job_for(&runtime, &scope, &config);
 
     let sink = CollectSink::default();
-    let scoped = events::ScopedSink::new(&sink, scope.key());
+    let scoped = events::ScopedSink::new(&sink, scope.key(), 0);
     title::run_job_with_client(
         &scoped,
         &runtime,
@@ -543,7 +544,7 @@ fn stale_title_job_cannot_rename_a_rotated_session() {
     assert_ne!(current, stale_id, "轮换之后会话 id 必须变化");
 
     let sink = CollectSink::default();
-    let scoped = events::ScopedSink::new(&sink, scope.key());
+    let scoped = events::ScopedSink::new(&sink, scope.key(), 0);
     title::run_job_with_client(
         &scoped,
         &runtime,
@@ -576,7 +577,7 @@ fn stale_title_job_cannot_rename_a_foreign_vault() {
     complete_text_turn(&runtime, &scope_b, &config, "B 的回答。");
 
     let sink = CollectSink::default();
-    let scoped = events::ScopedSink::new(&sink, scope_b.key());
+    let scoped = events::ScopedSink::new(&sink, scope_b.key(), 0);
     title::run_job_with_client(
         &scoped,
         &runtime,
@@ -640,7 +641,7 @@ fn withdrawn_approval_rejects_late_decisions_and_never_touches_the_next_turn() {
         let scope = scope.clone();
         let config = config.clone();
         std::thread::spawn(move || {
-            let scoped = events::ScopedSink::new(&sink, scope.key());
+            let scoped = events::ScopedSink::new(&sink, scope.key(), 0);
             drive_turn(
                 &scoped,
                 &runtime,
@@ -690,7 +691,7 @@ fn withdrawn_approval_rejects_late_decisions_and_never_touches_the_next_turn() {
         let scope = scope.clone();
         let config = config.clone();
         std::thread::spawn(move || {
-            let scoped = events::ScopedSink::new(&sink, scope.key());
+            let scoped = events::ScopedSink::new(&sink, scope.key(), 0);
             drive_turn(
                 &scoped,
                 &runtime,
@@ -757,7 +758,7 @@ fn interrupted_stream_then_retry_starts_from_a_clean_turn() {
     // 第一轮：流中途断开（半截正文 + 错误）。
     runtime.acquire_turn(&scope, &config).unwrap();
     {
-        let scoped = events::ScopedSink::new(&sink, scope.key());
+        let scoped = events::ScopedSink::new(&sink, scope.key(), 0);
         let mut client = ScriptedClient::new(vec![ScriptStep::Interrupted(
             "只流到一半的句子。".to_string(),
             "harness_stream_interrupted".to_string(),
@@ -777,7 +778,7 @@ fn interrupted_stream_then_retry_starts_from_a_clean_turn() {
     // 第二轮（用户重试）：干净完成。
     runtime.acquire_turn(&scope, &config).unwrap();
     {
-        let scoped = events::ScopedSink::new(&sink, scope.key());
+        let scoped = events::ScopedSink::new(&sink, scope.key(), 0);
         let mut client = ScriptedClient::new(vec![ScriptStep::Text("重试成功。".to_string())]);
         drive_turn(&scoped, &runtime, &scope, &config, "重试", &mut client);
     }

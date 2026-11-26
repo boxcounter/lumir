@@ -630,6 +630,8 @@ pub struct TitleJob {
     pub naming_enabled: bool,
     /// mock 标题队列的起点（会话级游标，见 `Session::title_cursor`）。
     pub mock_start: usize,
+    /// 触发时的逻辑会话令牌（事件信封用：标题事件在锁外发出，换会话后由前端按令牌拒收）。
+    pub session_token: u64,
 }
 
 /// 一次轮完成后的触发判定 + 素材装配（在会话锁内调用，纯内存、不起线程）。
@@ -663,6 +665,7 @@ pub fn job_after_turn(
                 target: config.title_target(&config.provider),
                 naming_enabled: config.session_naming.enabled,
                 mock_start: session.title_cursor(),
+                session_token: session.subagent_token(),
             })
         })
         .ok()
@@ -978,6 +981,9 @@ mod tests {
             target: config.title_target(&config.provider),
             naming_enabled: config.session_naming.enabled,
             mock_start,
+            session_token: runtime
+                .with_session(scope, |session| session.subagent_token())
+                .unwrap_or(0),
         }
     }
 

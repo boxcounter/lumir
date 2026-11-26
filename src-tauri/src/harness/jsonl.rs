@@ -23,7 +23,7 @@
 
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 
@@ -525,6 +525,15 @@ impl RestorePublishError {
     }
 }
 
+/// 发布错误的信封化（撤回路径要把失败如实回执给用户；健康上报路径仍走 `fail`）。
+fn publish_error(error: RestorePublishError) -> CommandError {
+    CommandError::new(
+        "harness_withdraw_publish_failed",
+        format!("发布撤回后的新会话失败（{}）：{}", error.code, error.error),
+    )
+    .param("reason", error.error.to_string())
+}
+
 /// 一个逻辑会话的留存句柄。append-only；首行恒为 `session_open`（构造时给定，
 /// **惰性**落到第一条记录时写入——从未记录的会话不落文件）。
 pub struct JsonlWriter {
@@ -704,6 +713,48 @@ impl JsonlWriter {
                 &error.error.to_string(),
             );
         }
+    }
+
+    /// **立即发布**一份尚未写入任何 `llm_request` 的恢复文件（change
+    /// add-harness-message-withdraw-nov26）：撤回 fork 的 B 必须落盘才能扛住「切走会话再回来」，
+    /// 而它此刻还没有真实请求可触发惰性发布。写入 `session_open` + 全部 `initial_records`
+    /// （撤回种子、标题继承），随后文件转入常规追加模式——其后的 `record` 与全新文件同路。
+    ///
+    /// 与 [`Self::try_publish_pending`] 的区别是**错误必须上抛**：撤回要靠它判断 B 是否真的
+    /// 存在，失败时原会话 A 一个字节都不能动。发布失败时句柄保持原状（`restore` 仍在，
+    /// `pending_open` 未清），调用方可安全丢弃。
+    pub fn publish_now(&mut self) -> Result<(), CommandError> {
+        let Some(restore) = self.restore.as_mut() else {
+            return Ok(());
+        };
+        if restore.activated {
+            self.publish_restore().map_err(publish_error)?;
+            return Ok(());
+        }
+        let mut buffer = Vec::with_capacity(restore.initial_records.len() + 1);
+        let mut push = |payload: &serde_json::Value| -> Result<(), CommandError> {
+            let line = serde_json::to_string(&serde_json::json!({
+                "ts": unix_secs_now(),
+                "payload": payload,
+            }))
+            .map_err(|e| {
+                CommandError::new(
+                    "harness_withdraw_publish_failed",
+                    format!("撤回会话序列化失败：{e}"),
+                )
+                .param("reason", e.to_string())
+            })?;
+            buffer.push(line);
+            Ok(())
+        };
+        push(&restore.session_open)?;
+        for record in &restore.initial_records {
+            push(record)?;
+        }
+        restore.buffer = buffer;
+        restore.activated = true;
+        self.publish_restore().map_err(publish_error)?;
+        Ok(())
     }
 
     /// 追加一条记录。首条记录先把挂起的 `session_open` 写出（**写成功后才丢弃挂起行**）。
@@ -1149,6 +1200,81 @@ pub fn read_session_file(path: &Path) -> Result<SessionFile, CommandError> {
         records,
         record_ts,
     })
+}
+
+/// 只读一份会话留存的**首行** `session_open`（完整记录的一次廉价投影）：派生会话扫描与撤回
+/// fork 的 `assembly` 取值只需要它，不为此整文件读一遍。
+pub fn read_session_open(path: &Path) -> Result<serde_json::Value, CommandError> {
+    let file = std::fs::File::open(path).map_err(|e| {
+        CommandError::new(
+            "harness_session_unreadable",
+            format!("会话留存不可读（{}）：{e}", path.display()),
+        )
+        .param("path", path.display().to_string())
+        .param("reason", e.to_string())
+    })?;
+    let mut first = String::new();
+    let mut reader = BufReader::new(file);
+    loop {
+        first.clear();
+        let read = reader.read_line(&mut first).map_err(|e| {
+            CommandError::new(
+                "harness_session_unreadable",
+                format!("会话留存不可读（{}）：{e}", path.display()),
+            )
+            .param("path", path.display().to_string())
+            .param("reason", e.to_string())
+        })?;
+        if read == 0 {
+            return Err(CommandError::new(
+                "harness_session_invalid",
+                format!("会话留存是空文件（{}）", path.display()),
+            )
+            .param("path", path.display().to_string()));
+        }
+        if !first.trim().is_empty() {
+            break;
+        }
+    }
+    let envelope: serde_json::Value = serde_json::from_str(first.trim()).map_err(|e| {
+        CommandError::new(
+            "harness_session_invalid",
+            format!("会话留存首行不是合法 JSON（{}）：{e}", path.display()),
+        )
+        .param("path", path.display().to_string())
+    })?;
+    let payload = envelope["payload"].clone();
+    if payload["kind"] != "session_open" {
+        return Err(CommandError::new(
+            "harness_session_invalid",
+            format!("会话留存首行不是 session_open（{}）", path.display()),
+        )
+        .param("path", path.display().to_string()));
+    }
+    Ok(payload)
+}
+
+/// 撤回 fork 文件里承载前缀历史的记录 kind（change add-harness-message-withdraw-nov26）。
+/// 它不是一次真实请求：`resume_session` 在「没有 llm_request」时回落读它，`first_user_text`
+/// 同理——两条读路径共用本常量与 [`withdraw_seed_messages`]，不各写一份字面量。
+pub const WITHDRAW_SEED_KIND: &str = "withdraw_seed";
+
+/// 构造 `withdraw_seed` 载荷：`messages` 是撤回时点的内存 `input[..i]` 原样切片（不重拼）。
+pub fn withdraw_seed_payload(messages: &[serde_json::Value]) -> serde_json::Value {
+    serde_json::json!({
+        "kind": WITHDRAW_SEED_KIND,
+        "messages": messages,
+    })
+}
+
+/// 文件里最后一条 `withdraw_seed` 的 messages（无则 `None`）。last-wins：同一文件理论上只有
+/// 一条，取最后一条与「恢复取最后一条请求」同口径。
+pub fn withdraw_seed_messages(records: &[serde_json::Value]) -> Option<Vec<serde_json::Value>> {
+    records
+        .iter()
+        .rev()
+        .find(|record| record["kind"] == WITHDRAW_SEED_KIND)
+        .and_then(|record| record["messages"].as_array().cloned())
 }
 
 /// **有效标题的唯一读取口径**（change add-session-auto-naming，design D6 / D7）：文件内最后一条
