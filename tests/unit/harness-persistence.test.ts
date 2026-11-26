@@ -228,9 +228,14 @@ test("接线：事件分支与快照路径走同一份解析（U4 / U6）", () =
 });
 
 test("接线：新会话重置、恢复以完整快照为地板，切 vault 只藏行不清健康（U10 / U11 / P1-3）", () => {
-  assert.equal(
-    occurrenceCount(PANEL_SOURCE, "resetPersistenceView();"),
-    1,
+  // 重置只在新会话一处调用；恢复路径只在**发起时捕获的**旧会话身份上退役，MUST NOT 在回执
+  // 落地时退役当前水位（那会把先于回执到达的新会话 token 记进退役集，见 V6）。
+  const newSession = PANEL_SOURCE.slice(
+    PANEL_SOURCE.indexOf("function startNewSession("),
+    PANEL_SOURCE.indexOf("segNew.addEventListener"),
+  );
+  assert.ok(
+    newSession.includes("resetPersistenceView(previousToken);"),
     "resetPersistenceView 只应在 startNewSession 调用（恢复路径 MUST NOT 在回执里清告警）",
   );
   const resume = PANEL_SOURCE.slice(
@@ -240,6 +245,18 @@ test("接线：新会话重置、恢复以完整快照为地板，切 vault 只�
   assert.ok(
     resume.includes("sessionTokens.adopt(actionVault, persistenceSessionTokenOf(info.session_token))"),
     "恢复必须采纳回执里的新逻辑会话 token",
+  );
+  assert.ok(
+    resume.includes("const previousToken = sessionTokens.watermark(actionVault);"),
+    "旧会话身份必须在恢复发起时定格",
+  );
+  assert.ok(
+    resume.includes("sessionTokens.retire(actionVault, previousToken);"),
+    "回执 / 迟到旧回包只退役发起时捕获的旧 token",
+  );
+  assert.ok(
+    !resume.includes("sessionTokens.retire(actionVault);"),
+    "恢复 MUST NOT 按回执落地时的水位退役（会退役新会话自己的 token）",
   );
   assert.ok(
     resume.includes("fetchPersistenceSnapshot();"),

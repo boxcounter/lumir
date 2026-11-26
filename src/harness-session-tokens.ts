@@ -50,8 +50,9 @@ export function persistenceSnapshotAdmitted(
 export interface SessionTokenLedger {
   /** 该 vault 的已接纳水位（`null` = 还没有可信会话）。 */
   watermark(vault: string | null): number | null;
-  /** 显式新会话 / 恢复 / 撤回：把该 vault 当前水位记入退役集合并清空。 */
-  retire(vault: string | null): void;
+  /** 显式新会话 / 恢复 / 撤回：把**动作发起时**捕获的 token（缺省 = 当前水位）记入退役集合；
+   *  仅当它仍是该 vault 的水位时才清空水位。 */
+  retire(vault: string | null, token?: number | null): void;
   /** 采纳一个 token（只在更大或水位为空时推进；退役 token 与 `null` 都不采纳——
    *  水位只由 `retire` 降低或清空）。 */
   adopt(vault: string | null, token: number | null): void;
@@ -88,10 +89,14 @@ export function createSessionTokenLedger(): SessionTokenLedger {
   return {
     watermark,
     adopt,
-    retire(vault) {
-      const current = watermark(vault);
-      if (current !== null) retired.add(current);
-      watermarks.set(bucketOf(vault), null);
+    retire(vault, token = watermark(vault)) {
+      // 显式给了 token = 动作发起时捕获的旧会话身份。回执 / 迟到的旧回包落地时，水位可能已被
+      // **新会话自己的事件**推进到新 token（恢复的写失败事件先于 Promise 回执，见
+      // persistence-health-nov23 的 V6）：此时清空水位会把新 token 也挡在「已退役」之外，
+      // 新会话自己的快照永远落不了地。只有捕获值仍是水位时才清空。
+      if (token === null) return;
+      retired.add(token);
+      if (watermark(vault) === token) watermarks.set(bucketOf(vault), null);
     },
     eventAdmitted(vault, token) {
       if (!persistenceEventAdmitted(token, watermark(vault), retired)) return false;
