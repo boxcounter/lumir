@@ -4,7 +4,9 @@
 #
 # 判据分三层，每层都有区分度：
 # 1. 显示面：撤回后 transcript 不再有该消息（`node` 按 AXStaticText 判在场性——正文里的字符串
-#    不是节点，`ax.has/not` 会命中 composer 的值，没有区分度）；
+#    不是节点，`ax.has/not` 会命中 composer 的值，没有区分度；**编辑器内部文本**（`AXTextArea`
+#    的后代 `AXStaticText`，Composer 的 CodeMirror 正文也会出现在这里）同样不算节点，否则原文
+#    一旦回到 composer，本判据恒红——真机 2026-11-27 的 882 现场；
 # 2. composer 面：同一条文本出现在 `AXTextArea` 的值里（撤回前是 present:false——空 composer）；
 # 3. 上下文面：撤回后改发另一句，盘上最新会话文件里**没有**被撤回的文本、且带
 #    `opened_from":"withdraw"`；会话目录里只剩一份 JSONL（A 已物理删除）。

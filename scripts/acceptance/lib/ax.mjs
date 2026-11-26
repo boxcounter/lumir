@@ -161,6 +161,30 @@ export function nodeName(n) {
 }
 
 /**
+ * 编辑器内部文本（AXTextArea 的后代）不是独立的 UI 节点。
+ *
+ * CodeMirror / textarea 把正文拆成 `AXStaticText` 子节点（真机 dump：
+ * `[224] AXTextArea = "q882-WITHDRAW"` 下面挂 `[226] AXStaticText = "q882-WITHDRAW"`），
+ * 同一串文字既在正文里也在编辑器的 value 里——节点在场性断言对它没有区分度：真机 882 的
+ * 「撤回后 transcript 不再显示该消息」因此恒红（命中的是 composer 里的原文）。编辑器内容
+ * 一律经 `AXTextArea` 自己的 value 判，不从子节点判。
+ *
+ * 判据是**祖先链**（文档序 + depth）：往前找第一个 depth 更小的节点即父节点；父节点是
+ * `AXTextArea`，或继续向上找到 `AXTextArea` 祖先，即为编辑器内部文本。
+ */
+export function hasEditorAncestor(nodes, node) {
+  let depth = node.depth;
+  for (let i = nodes.indexOf(node) - 1; i >= 0; i -= 1) {
+    const candidate = nodes[i];
+    if (candidate.depth >= depth) continue;
+    if (candidate.role === "AXTextArea") return true;
+    depth = candidate.depth;
+    if (depth === 0) break;
+  }
+  return false;
+}
+
+/**
  * 按 role / name 正则 / 索引找节点。
  * name 依次匹配 title、label、value；任一命中即算。nth 用于取第 n 个（0 起）。
  */
