@@ -152,7 +152,11 @@ steps:
 
   - name: 点 composer 卡片下方的空白输入区建立焦点（点卡片会按既定语义跳回正文）
     do: clickInNode
-    target: { role: AXTextArea, name: "问点什么|preserve878", dy: 0.9 }
+    target: { role: AXTextArea, name: "问点什么|preserve878" }
+    dy: 0.9
+    expect:
+      - label: 编辑器没有拿到焦点（点到卡片会跳回正文并选中引用行）
+        ax: { not: "/AXTextArea = \"Harness 验收笔记.*\\(focused\\)/" }
 
   - name: 发送保留下来的问题（下一次发送进入当前选中会话）
     do: key
