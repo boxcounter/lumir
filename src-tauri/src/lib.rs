@@ -156,6 +156,9 @@ pub fn run() {
             commands::fs_file_mtime,
             commands::document_save,
             commands::document_set_dirty,
+            // 受控退出（change add-quit-save-all-dialog-nov27）：退出确认弹框「保存全部并退出」
+            // 在保存屏障成功后调用；命令内复核 dirty 镜像，仍脏即拒绝（前端不能绕过退出守卫）。
+            commands::app_quit,
             commands::log_event,
             commands::open_external_url,
             commands::fetch_url_title,

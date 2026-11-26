@@ -34,6 +34,7 @@ import {
   fsTrashEntry,
   fsWriteAttachment,
   fetchUrlTitle,
+  appQuit,
   documentSetDirty,
   isCommandError,
   onAttachmentNaming,
@@ -59,6 +60,7 @@ import type { RemovedVault } from "./bindings/RemovedVault";
 import type { SemanticNameTask } from "./paste-image";
 import { createSaveController, SAVE_GUARD_TOAST_CLASS } from "./save-controller";
 import { createSaveAllBarrier, initialSaveAllLog } from "./save-all";
+import { createQuitDialog } from "./quit-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getName, getVersion } from "@tauri-apps/api/app";
@@ -3848,6 +3850,24 @@ const saveAll = createSaveAllBarrier({
   toastBusy: () => toast(t("D1051")),
 });
 
+/**
+ * 退出前的保存全部确认弹框（change add-quit-save-all-dialog-nov27）：后端退出守卫拦截
+ * ⌘Q / 关窗后 emit `app:quit_blocked`，这里把它变成居中模态——旧路径的右下角 sticky toast
+ * 在用户视线之外（焦点在左上角编辑器），已整条切断。
+ *
+ * 保存复用上面同一条 `saveAll` 屏障（`document.save-all` / 菜单 / 弹框三条入口同一实现，
+ * REVIEW.md『同一语义两处真源』条）；退出只走受控的 `app_quit`（后端复核 dirty 镜像）。
+ * `anyDirty` 与屏障的依赖同源：全部 pane 的任一会话。
+ */
+const quitDialog = createQuitDialog({
+  mount: document.body,
+  inertRoot: app,
+  saveAll: () => saveAll.run(),
+  anyDirty: () => editor.sessions().some((session) => session.dirty),
+  quit: () => appQuit(),
+  restoreFocus: () => editor.focusPreservingReadingPosition(),
+});
+
 const commands: CommandRuntime = {
   ...editor.commands,
   ...composerTextFaceCommands(),
@@ -4363,9 +4383,9 @@ editor.onDocChanged(() => syncModelineMeta());
 syncBackendDirty();
 
 // 退出/关窗被 dirty 守卫拦截时必须可见（M101）：后端 prevent_exit/prevent_close
-// 本身无任何界面表现，前端收到事件要给出可理解的提示。sticky：拦截提示不得
-// 在用户看到前自动消隐（守卫反馈要持续可见，点击浮条关闭）。
-onQuitBlocked(() => save.showQuitBlocked()).catch(() => {});
+// 本身无任何界面表现。change add-quit-save-all-dialog-nov27 起由**居中模态**承担（旧右下角
+// sticky toast 在用户视线外）：说明 + 「保存全部并退出」/「取消」，重复事件不叠弹。
+onQuitBlocked(() => quitDialog.open()).catch(() => {});
 let tree!: ReturnType<typeof createFileTree>;
 
 // ---------------------------------------------------------------------------

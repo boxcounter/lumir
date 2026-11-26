@@ -1162,6 +1162,33 @@ pub fn document_set_dirty(
     Ok(())
 }
 
+/// 受控退出的守卫判据（change add-quit-save-all-dialog-nov27）：dirty 镜像仍为 true 时拒绝。
+/// 抽成纯函数是让单测直接驱动两档——命令本体里的 `app.exit(0)` 需要真实 AppHandle，无 DOM/
+/// 无窗口的单测跑不到；判据留在可测的这一层，命令只做「判据 + 退出」两步。
+pub fn quit_allowed(state: &DirtyState) -> Result<(), CommandError> {
+    if state.is_dirty() {
+        return Err(CommandError::new(
+            "quit_blocked_dirty",
+            "仍有未保存的修改，未退出",
+        ));
+    }
+    Ok(())
+}
+
+/// 受控退出（change add-quit-save-all-dialog-nov27）：前端「保存全部并退出」在保存屏障成功
+/// 且本地复查无新 dirty 之后调用。命令内 MUST 复核 dirty 镜像——前端 MUST NOT 凭任意字符串
+/// 命令绕过退出守卫；镜像仍为 true 时返回 `quit_blocked_dirty`，前端留在弹框内、不自动重试。
+/// 复核通过后 `app.exit(0)` 仍会经过 `RunEvent::ExitRequested` 的既有守卫（此时镜像为 false）。
+#[tauri::command]
+pub fn app_quit(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, DirtyState>,
+) -> Result<(), CommandError> {
+    quit_allowed(&state)?;
+    app.exit(0);
+    Ok(())
+}
+
 /// 前端诊断事件统一入口（change add-diagnostics-logging）：前端不自行写日志文件，
 /// 关键事件（渲染失败、保存冲突、崩溃备份、config warning、慢回调采样、外部修改命中）
 /// 全部经这一条命令交给 Rust 侧落盘。
@@ -1814,6 +1841,19 @@ mod tests {
         assert!(state.is_dirty());
         state.set(false);
         assert!(!state.is_dirty());
+    }
+
+    /// 受控退出的守卫（change add-quit-save-all-dialog-nov27）：镜像仍 dirty 时必须拒绝，
+    /// 且拒绝码是稳定标识（前端据此留在弹框内）；镜像清干净后才放行。前端传不了别的命令
+    /// 字符串来绕过——`app_quit` 自己调这份判据。
+    #[test]
+    fn quit_allowed_blocks_dirty_and_passes_clean() {
+        let state = DirtyState::default();
+        state.set(true);
+        let err = quit_allowed(&state).expect_err("dirty 镜像必须拒绝退出");
+        assert_eq!(err.code, "quit_blocked_dirty");
+        state.set(false);
+        assert!(quit_allowed(&state).is_ok(), "清干净后应放行");
     }
 
     /// 外链 scheme 白名单（M144）：白名单内的 scheme 大小写不敏感归一到规范写法，

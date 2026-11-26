@@ -527,10 +527,6 @@ const COPY_TABLE = {
     zh: "当前文档有未保存修改，无法{action}；请先保存（Cmd+S）",
     en: "This document has unsaved changes, so it can't {action}; save first (Cmd+S)",
   },
-  D232: {
-    zh: "当前有未保存修改，无法退出；请先保存（Cmd+S）",
-    en: "There are unsaved changes, so quitting is blocked; save first (Cmd+S)",
-  },
   D233: {
     zh: "当前没有打开的文件，无法保存；修改仍在编辑器内（按 Cmd+Z 可撤销）",
     en: "No file is open, so there's nothing to save; your changes are still in the editor (Cmd+Z undoes them)",
@@ -3084,6 +3080,32 @@ const COPY_TABLE = {
     zh: "本轮之后又到达了后台通知；为避免把通知当成你的消息处理，请先发下一条消息再撤回",
     en: "A background notice arrived after this turn; send another message first so the notice is not mistaken for yours",
   },
+  // 退出前的保存全部确认弹框（change add-quit-save-all-dialog-nov27）。旧路径是右下角 sticky
+  // toast（D232），用户视线在左上角看不到；本组是居中模态的标题 / 说明 / 主按钮与三条状态行。
+  // 「取消」复用 D136，不新造一条同义文案。
+  D1068: { zh: "有未保存的修改", en: "Unsaved changes" },
+  D1069: {
+    zh: "退出前需要先保存全部修改。保存失败时不会退出。",
+    en: "Save all changes before quitting. If saving fails, Lumir won't quit.",
+  },
+  D1070: { zh: "保存全部并退出", en: "Save All and Quit" },
+  D1071: {
+    zh: "正在保存全部更改，完成后将退出",
+    en: "Saving all changes; Lumir will quit when done",
+  },
+  D1072: {
+    zh: "未能保存全部更改，退出已取消；请处理提示后重试",
+    en: "Couldn't save all changes, so Lumir didn't quit. Follow the prompts and try again.",
+  },
+  D1073: {
+    zh: "保存后又出现了新的修改，退出已取消；请重试",
+    en: "Changes appeared after saving, so Lumir didn't quit. Try again.",
+  },
+  D1074: {
+    zh: "退出请求未被受理，应用未退出；请重试",
+    en: "The quit request wasn't accepted; Lumir is still open. Try again.",
+  },
+  D1075: { zh: "正在退出", en: "Quitting" },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -3107,6 +3129,10 @@ export const COPY: Record<CopyKey, CopyEntry> = COPY_TABLE;
  *（细节措辞有损失，是 D6(a) 的明账）——因此模板只使用该 code **全部**构造点都提供的占位名。
  */
 export const ERROR_COPY: Record<string, CopyKey> = {
+  // 受控退出被后端复核拒绝（change add-quit-save-all-dialog-nov27）：与弹框的失败状态行
+  // 同一条文案（D1074，无占位）；前端弹框直接渲染状态行，这里满足「每个 CommandError code
+  // 都有文案」的完整性门禁与未知调用方的兜底。
+  quit_blocked_dirty: "D1074",
   harness_skills_invalid: "D982",
   harness_withdraw_derived_exists: "D1057",
   harness_withdraw_not_applicable: "D1058",

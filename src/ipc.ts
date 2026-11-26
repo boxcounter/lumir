@@ -163,6 +163,13 @@ export function onQuitBlocked(handler: () => void): Promise<() => void> {
   return listen("app:quit_blocked", () => handler());
 }
 
+/** 受控退出（change add-quit-save-all-dialog-nov27）：保存全部成功后由用户显式请求退出。
+ *  后端 `app_quit` 会复核 dirty 镜像为 false 才真正退出；仍 dirty 时返回 `quit_blocked_dirty`。
+ *  MUST NOT 用合成键盘事件 / Apple Event 替代本命令。 */
+export function appQuit(): Promise<void> {
+  return invoke<void>("app_quit");
+}
+
 /**
  * 订阅「启动恢复已结束」事件（M159，change startup-restore-off-main-thread）；
  * 返回退订函数。**无载荷**：它只是唤醒信号，让前端去拉一次权威状态（`vaultCurrent`）
