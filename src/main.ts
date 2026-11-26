@@ -57,7 +57,7 @@ import type { NamingOutcome } from "./bindings/NamingOutcome";
 import type { RemovedVault } from "./bindings/RemovedVault";
 import type { SemanticNameTask } from "./paste-image";
 import { createSaveController, SAVE_GUARD_TOAST_CLASS } from "./save-controller";
-import { createSaveAllBarrier } from "./save-all";
+import { createSaveAllBarrier, initialSaveAllLog } from "./save-all";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getName, getVersion } from "@tauri-apps/api/app";
@@ -3786,21 +3786,22 @@ function composerTextFaceCommands(): Partial<Record<CommandId, CommandRunner>> {
 let pushedDirty: boolean | undefined;
 
 /**
- * 保存全部的机器可读状态标记（change add-acceptance-installed-app-pause）：文本形如
- * `save-all#<generation> <running|ok|failed|busy>`，**视觉隐藏、AX 可达**。
+ * 保存全部的机器可读**状态日志**（change add-acceptance-installed-app-pause）：文本形如
+ * `save-all-log s0:g0:idle s1:g1:running s2:g1:ok`，**视觉隐藏、AX 可达**。
  *
- * 为什么需要它：成功 toast（D1035）只活 3.5s，验收通道若只认文本，会把上一次保存的旧 toast
- * 当成这一次的完成信号（K3 P1-3）。这个标记带**操作代次**：每次真正开始的保存全部加一代，
- * 并发触发的第二次不增加代次、只把同一代次标成 `busy`。验收通道读取触发前的代次，只接受
- * 「代次更大且 ok」的标记；旧信号、并发信号、失败都不可能让它提前放行。
+ * 为什么需要它（K3 P1-3 第二轮）：成功 toast（D1035）只活 3.5s，且每次成功都同一句文本；
+ * 只看文本或只看「代次更大」都会让旧信号 / 跨代信号提前放行。日志是**追加**的：每次命令调用
+ * 都留下 seq、操作代次与状态（running / ok / failed / busy）。验收通道在触发前读基线，触发后
+ * 必须看到第一条新记录是 running 并锁定它的代次，随后只接受**同代次 ok**；无归属的更高代 ok、
+ * busy 被别代 ok 覆盖都不成立。
  *
- * 视觉隐藏不改变任何像素（inline 样式，不占布局），也不进 toast / 文案表——它是机器标记，
+ * 视觉隐藏不改变任何像素（inline 样式，不占布局），也不进 toast / 文案表——它是机器日志，
  * 不是用户文案。
  */
 const saveAllMarker = document.createElement("span");
 saveAllMarker.style.cssText =
   "position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;";
-saveAllMarker.textContent = "save-all#0 idle";
+saveAllMarker.textContent = initialSaveAllLog();
 document.body.append(saveAllMarker);
 
 /** 把后端 dirty 镜像 await 同步为 `dirty`；失败时清掉本地镜像缓存，让下一次同步重推。
@@ -3823,7 +3824,7 @@ async function pushDirtyMirror(dirty: boolean): Promise<void> {
  *     后两者的返回值是**真实落盘**（后端磁盘写失败 resolve false，warning 已记）。
  *   - `anyDirty`：全部 pane 的任一会话。
  *   - `syncDirty`：awaited `document_set_dirty`；失败即屏障失败。
- *   - `marker`：机器可读的代次标记（验收通道的唯一成功判据）。
+ *   - `log`：机器可读的操作归属日志（验收通道的唯一成功判据）。
  *   - toast：用户可读的成功 / 失败 / 并发提示（D1035 / D1036 / D1037）。
  *
  * 只读会话（`external`）没有保存落点，但结构上不可能 dirty；图片会话同理（saveAllDirty 跳过）。
@@ -3834,8 +3835,8 @@ const saveAll = createSaveAllBarrier({
   flushPositions: () => readingPositions.flush(),
   anyDirty: () => editor.sessions().some((session) => session.dirty),
   syncDirty: (dirty) => pushDirtyMirror(dirty),
-  marker: (state, generation) => {
-    saveAllMarker.textContent = `save-all#${generation} ${state}`;
+  log: (text) => {
+    saveAllMarker.textContent = text;
   },
   toastSuccess: () => toast(t("D1035"), [], false, "success"),
   toastFailure: () => toast(t("D1036")),

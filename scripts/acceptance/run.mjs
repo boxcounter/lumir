@@ -66,7 +66,7 @@ import {
   pauseFailureExitCode,
   pauseClosingNote,
   quitInstalledByCmdQ,
-  readSaveAllMarker,
+  readSaveAllLog,
   registerActiveRunner,
   releasePauseLock,
   runInstalledPause,
@@ -588,7 +588,7 @@ async function runPausePhase() {
     productId: productBundleId(),
     readBundleId: (appPath) => readBundleId(appPath),
     activate: (pid) => activateByPid({ pid }).then(() => undefined),
-    readMarker: (pid) => readSaveAllMarker({ pid, readState }),
+    readLog: (pid) => readSaveAllLog({ pid, readState }),
     triggerSaveAll: async (pid) => {
       const client = await ensureCu();
       await triggerSaveAllMenuItem({
@@ -597,8 +597,13 @@ async function runPausePhase() {
         click: (targetPid, index) => client.click(targetPid, { index }),
       });
     },
-    waitSaveAll: (pid, baselineGeneration) =>
-      waitSaveAllCompletion({ pid, readState, baselineGeneration }),
+    waitSaveAll: (pid, baseline) =>
+      waitSaveAllCompletion({
+        pid,
+        readState,
+        baselineSeq: baseline.seq,
+        baselineGeneration: baseline.generation,
+      }),
     quit: async (pid) => {
       const client = await ensureCu();
       return quitInstalledByCmdQ({

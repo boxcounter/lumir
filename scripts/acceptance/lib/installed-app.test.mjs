@@ -6,14 +6,15 @@
 //
 // 重点钉住的三条「不安全的成功」形态（REVIEW.md「断言等价于子串」「读不到当成空」条）：
 //   1. **保存前绝不 ⌘Q**：屏障失败 / 超时 / AX 空树时，quit 一次都不能被调用；
-//   2. **旧完成信号不是本次成功**：完成标记带操作代次，只接受触发前代次之后的新标记；
-//      同一代次的旧 ok、并发 busy、缺标记 / 空树 / 超时都判失败；
+//   2. **完成信号必须归属到本次操作**：触发后先锁定第一条新 running 的准确代次，只接受同代次
+//      ok；旧 ok、跨代 ok、busy（后来被别代 ok 覆盖）、缺日志 / 空树 / 超时都判失败；
 //   3. **锁/登记只释放自己的 session**：别人的活锁不删、别人的登记不删。
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { formatSaveAllLog, initialSaveAllLog } from "../../../src/save-all.ts";
 import {
   activateByPid,
   acquirePauseLock,
@@ -27,10 +28,12 @@ import {
   pauseClosingNote,
   PauseFailed,
   PauseRefused,
-  parseSaveAllMarker,
+  parseSaveAllLog,
+  parseSaveAllLogText,
   pauseFailureExitCode,
   quitInstalledByCmdQ,
-  readSaveAllMarker,
+  readSaveAllLog,
+  saveAllBaseline,
   registerActiveRunner,
   releasePauseLock,
   runInstalledPause,
@@ -235,15 +238,17 @@ function pauseHarness({ waitError = null, verifyErrorAt = null, baselineRunning 
       return target;
     },
     activate: async (pid) => void calls.push(`activate-${pid}`),
-    readMarker: async (pid) => {
-      calls.push(`marker-${pid}`);
-      return { generation: 3, state: baselineRunning ? "running" : "ok" };
+    readLog: async (pid) => {
+      calls.push(`log-${pid}`);
+      return {
+        records: [{ seq: 2, generation: 3, state: baselineRunning ? "running" : "ok" }],
+      };
     },
     triggerSaveAll: async (pid) => void calls.push(`trigger-${pid}`),
-    waitSaveAll: async (pid, baselineGeneration) => {
-      calls.push(`wait-${pid}-${baselineGeneration}`);
+    waitSaveAll: async (pid, baseline) => {
+      calls.push(`wait-${pid}-${baseline.seq}-${baseline.generation}`);
       if (waitError) throw waitError;
-      return { generation: baselineGeneration + 1, reads: 3 };
+      return { seq: baseline.seq + 2, generation: baseline.generation + 1, reads: 3 };
     },
     quit: async (pid) => {
       calls.push(`quit-${pid}`);
@@ -264,9 +269,9 @@ test("编排：顺序 = 复核 → 激活 → 菜单屏障 → 完成信号 → 
     "list",
     "verify-1",
     `activate-${PID}`,
-    `marker-${PID}`,
+    `log-${PID}`,
     `trigger-${PID}`,
-    `wait-${PID}-3`,
+    `wait-${PID}-2-3`,
     "list",
     "verify-2",
     `quit-${PID}`,
@@ -366,77 +371,103 @@ test("第二次调用：安装版已关闭 → not-running，零副作用（不 
 });
 
 // ---------------------------------------------------------------------------
-// 完成信号：按**操作代次**判定；旧 toast / 旧标记 / 并发 busy / 空树 / 超时都不是成功
+// 完成信号：由**本次操作的第一条新 running** 归属；旧 / 跨代 / busy / 空树 / 超时都不是成功
 // ---------------------------------------------------------------------------
 
 const axWith = (line) => `- app: X\n- pid: ${PID}\n\`\`\`\n${line}\n\`\`\``;
-const markerAx = (generation, state) => axWith(`- [7] AXStaticText = "save-all#${generation} ${state}"`);
+const logAx = (body) => axWith(`- [7] AXStaticText = "save-all-log ${body}"`);
+const logRecords = (body) => parseSaveAllLogText(`save-all-log ${body}`);
 
-test("标记解析：只认 AXStaticText 的精确形态；正文（AXTextArea）里同形的字不算", () => {
-  assert.deepEqual(parseSaveAllMarker([{ role: "AXStaticText", title: "save-all#4 ok" }]), {
-    generation: 4,
-    state: "ok",
+test("日志解析：seq 连续、代次不回退；形态不符 / seq 断裂 / AXTextArea 里同形文本都不算", () => {
+  assert.deepEqual(logRecords("s0:g0:idle s1:g1:running s2:g1:ok"), {
+    records: [
+      { seq: 0, generation: 0, state: "idle" },
+      { seq: 1, generation: 1, state: "running" },
+      { seq: 2, generation: 1, state: "ok" },
+    ],
+    raw: "save-all-log s0:g0:idle s1:g1:running s2:g1:ok",
   });
-  assert.equal(parseSaveAllMarker([{ role: "AXTextArea", title: "save-all#4 ok" }]), null);
-  assert.equal(parseSaveAllMarker([{ role: "AXStaticText", title: "save-all#x ok" }]), null);
+  assert.equal(parseSaveAllLogText("save-all-log s0:g0:idle s2:g1:ok"), null, "seq 断裂");
+  assert.equal(parseSaveAllLogText("save-all-log s0:g2:idle s1:g1:ok"), null, "代次回退");
+  assert.equal(parseSaveAllLog([{ role: "AXTextArea", title: "save-all-log s0:g0:idle" }]), null);
 });
 
-test("完成信号：触发前代次 3，出现 save-all#4 ok → 成功（本次操作的新标记）", async () => {
-  const result = await waitSaveAllCompletion({
-    pid: PID,
-    baselineGeneration: 3,
-    readState: async () => markerAx(4, "ok"),
-  });
-  assert.deepEqual(result, { generation: 4, reads: 1 });
-});
-
-test("完成信号：旧 toast（D1035 文本）+ 同一代次的旧 ok 不得放行（K3 P1-3）", async () => {
-  // 上一次保存留下的成功 toast 还在（3.5s），标记仍是 #3 ok；本次触发前代次也是 3。
-  const oldToastAndMarker = axWith(
-    '- [5] AXStaticText = "已保存全部更改"\n- [7] AXStaticText = "save-all#3 ok"',
-  );
+test("归属：基线 g3 时直接出现 g5 ok → 不得放行（无归属的更高代完成信号）", async () => {
+  // 基线 s1/g3 ok；触发后日志直接多了一条 g5 ok（没有本次操作的 running）。
   await assert.rejects(
     () =>
       waitSaveAllCompletion({
         pid: PID,
+        baselineSeq: 1,
         baselineGeneration: 3,
         timeoutMs: 30,
         everyMs: 5,
-        readState: async () => oldToastAndMarker,
+        readState: async () => logAx("s0:g0:idle s1:g3:ok s2:g5:ok"),
       }),
-    /同一代次的旧信号不算数/,
+    /不是本次操作的 running/,
   );
 });
 
-test("完成信号：本次代次的 failed → 失败（不 ⌘Q、不跑批）", async () => {
+test("归属：本次触发被 busy 拒绝、之后别的代次 ok 覆盖不上（K3 反例）", async () => {
+  // 基线 s1/g3；触发后：g4 running（另一个操作在跑）、g4 busy（本次触发被单飞拒绝）、
+  // g4 ok（那个操作完成）。只看「有 ok」或「代次更大」会误放行。
   await assert.rejects(
     () =>
       waitSaveAllCompletion({
         pid: PID,
+        baselineSeq: 1,
         baselineGeneration: 3,
-        readState: async () => markerAx(4, "failed"),
+        readState: async () => logAx("s0:g0:idle s1:g3:ok s2:g4:running s3:g4:busy s4:g4:ok"),
       }),
-    /保存屏障报告失败/,
+    /被并发 \/ 重复触发拒绝/,
   );
 });
 
-test("完成信号：busy（并发 / 重复触发被单飞拒绝）→ 立即失败，即使代次未变", async () => {
+test("归属：锁定 g4 后出现 g5 ok → 跨代冒充失败", async () => {
   await assert.rejects(
     () =>
       waitSaveAllCompletion({
         pid: PID,
+        baselineSeq: 1,
         baselineGeneration: 3,
-        readState: async () => markerAx(3, "busy"),
+        readState: async () => logAx("s0:g0:idle s1:g3:ok s2:g4:running s3:g5:ok"),
       }),
-    /被并发触发拒绝/,
+    /完成信号代次 g5 与本次操作 g4 不一致/,
   );
 });
 
-test("完成信号：本次代次先 running 后 ok → 成功（不会把 running 当失败）", async () => {
-  const responses = [markerAx(4, "running"), markerAx(4, "ok")];
+test("归属：首个新 running 的代次必须紧接基线（不连续即失败）", async () => {
+  await assert.rejects(
+    () =>
+      waitSaveAllCompletion({
+        pid: PID,
+        baselineSeq: 1,
+        baselineGeneration: 3,
+        readState: async () => logAx("s0:g0:idle s1:g3:ok s2:g5:running s3:g5:ok"),
+      }),
+    /代次不连续/,
+  );
+});
+
+test("归属：本次 running g4 + ok g4 → 成功；快速完成（一次读到完整序列）同样成立", async () => {
+  const result = await waitSaveAllCompletion({
+    pid: PID,
+    baselineSeq: 1,
+    baselineGeneration: 3,
+    readState: async () => logAx("s0:g0:idle s1:g3:ok s2:g4:running s3:g4:ok"),
+  });
+  assert.deepEqual(result, { generation: 4, seq: 3, reads: 1 });
+});
+
+test("归属：running 与 ok 分两次读到 → 仍然成功", async () => {
+  const responses = [
+    logAx("s0:g0:idle s1:g3:ok s2:g4:running"),
+    logAx("s0:g0:idle s1:g3:ok s2:g4:running s3:g4:ok"),
+  ];
   let index = 0;
   const result = await waitSaveAllCompletion({
     pid: PID,
+    baselineSeq: 1,
     baselineGeneration: 3,
     everyMs: 1,
     readState: async () => responses[Math.min(index++, responses.length - 1)],
@@ -445,18 +476,45 @@ test("完成信号：本次代次先 running 后 ok → 成功（不会把 runni
   assert.equal(result.reads, 2);
 });
 
-test("完成信号：空 AX 树 → PauseFailed（不可读 ≠ 成功）", async () => {
-  await assert.rejects(
-    () => waitSaveAllCompletion({ pid: PID, baselineGeneration: 3, readState: async () => "" }),
-    /AX 树为空/,
-  );
-});
-
-test("完成信号：AX 读失败 → PauseFailed（不把通道故障当成功）", async () => {
+test("归属：同一代次的旧 ok 不得放行（基线之后没有新记录 → 超时）", async () => {
   await assert.rejects(
     () =>
       waitSaveAllCompletion({
         pid: PID,
+        baselineSeq: 1,
+        baselineGeneration: 3,
+        timeoutMs: 30,
+        everyMs: 5,
+        // 上一次保存的旧 toast 仍在 AX 里；日志没有新记录。
+        readState: async () =>
+          axWith(
+            '- [5] AXStaticText = "已保存全部更改"\n- [7] AXStaticText = "save-all-log s0:g0:idle s1:g3:ok"',
+          ),
+      }),
+    /等本次保存全部完成超时/,
+  );
+});
+
+test("归属：失败 / 超时 / 缺日志 / 空树 / 读失败都不是成功", async () => {
+  await assert.rejects(
+    () =>
+      waitSaveAllCompletion({
+        pid: PID,
+        baselineSeq: 1,
+        baselineGeneration: 3,
+        readState: async () => logAx("s0:g0:idle s1:g3:ok s2:g4:running s3:g4:failed"),
+      }),
+    /保存屏障报告失败/,
+  );
+  await assert.rejects(
+    () => waitSaveAllCompletion({ pid: PID, baselineSeq: 1, baselineGeneration: 3, readState: async () => "" }),
+    /AX 树为空/,
+  );
+  await assert.rejects(
+    () =>
+      waitSaveAllCompletion({
+        pid: PID,
+        baselineSeq: 1,
         baselineGeneration: 3,
         readState: async () => {
           throw new Error("MCP 超时");
@@ -464,21 +522,49 @@ test("完成信号：AX 读失败 → PauseFailed（不把通道故障当成功�
       }),
     /读安装版 AX 失败/,
   );
-});
-
-test("完成信号：缺失状态标记 → PauseFailed（没有标记就无法绑定本次操作）", async () => {
   await assert.rejects(
     () =>
       waitSaveAllCompletion({
         pid: PID,
+        baselineSeq: 1,
         baselineGeneration: 3,
         readState: async () => axWith('- [5] AXStaticText = "已保存全部更改"'),
       }),
-    /找不到保存全部状态标记/,
+    /找不到可解析的保存全部状态日志/,
+  );
+});
+
+test("跨层格式对账：产品 formatSaveAllLog / initialSaveAllLog 与验收解析器逐条一致", () => {
+  // 格式是产品 ↔ 验收的跨层契约：两边各有一份字面量，这里用产品格式化器生成、验收解析器回读，
+  // 任一侧改格式（前缀 / seq / 代次 / 状态词）都会在这里变红。
+  const text = formatSaveAllLog([
+    { seq: 0, generation: 0, state: "idle" },
+    { seq: 1, generation: 1, state: "running" },
+    { seq: 2, generation: 1, state: "busy" },
+    { seq: 3, generation: 2, state: "ok" },
+  ]);
+  assert.deepEqual(parseSaveAllLogText(text), {
+    records: [
+      { seq: 0, generation: 0, state: "idle" },
+      { seq: 1, generation: 1, state: "running" },
+      { seq: 2, generation: 1, state: "busy" },
+      { seq: 3, generation: 2, state: "ok" },
+    ],
+    raw: text,
+  });
+  assert.deepEqual(parseSaveAllLogText(initialSaveAllLog()).records, [
+    { seq: 0, generation: 0, state: "idle" },
+  ]);
+});
+
+test("基线：取最后一条记录；running 判为「已有保存在跑」；readSaveAllLog 缺日志即失败", async () => {
+  assert.deepEqual(
+    saveAllBaseline(logRecords("s0:g0:idle s1:g1:running")),
+    { seq: 1, generation: 1, state: "running" },
   );
   await assert.rejects(
-    () => readSaveAllMarker({ pid: PID, readState: async () => axWith("- [5] AXStaticText = x") }),
-    /找不到保存全部状态标记/,
+    () => readSaveAllLog({ pid: PID, readState: async () => axWith("- [5] AXStaticText = x") }),
+    /找不到可解析的保存全部状态日志/,
   );
 });
 

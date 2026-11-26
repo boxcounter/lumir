@@ -36,15 +36,35 @@ export const PAUSE_LOCK = "/tmp/lumir-acceptance-installed-pause.lock";
 /** 活动 runner 登记目录：每条真跑批一个 `<pid>.json`，暂停据此判断「同机有没有别人在跑」。 */
 export const RUNNER_REGISTRY_DIR = "/tmp/lumir-acceptance-runners";
 
-/** 保存全部的**机器可读状态标记**（产品 `src/save-all.ts` 维护）：`save-all#<代次> <状态>`。
+/** 保存全部的**机器可读状态日志**（产品 `src/save-all.ts` 维护）：`save-all-log s<seq>:g<代次>:<状态> …`。
  *
- *  为什么不用 toast 文本当判据（K3 P1-3）：toast 只活 3.5s，且每次成功都发同一句文本——验收
- *  通道若只认文本，会把上一次保存的旧 toast（或并发第二次触发的 toast）当成这一次的完成信号。
- *  标记带**操作代次**：验收通道读取触发前的代次，只接受「代次更大且状态 ok」的标记；旧信号、
- *  并发 busy、失败都不可能让它提前放行。标记是视觉隐藏的机器面（`main.ts` 的 saveAllMarker），
- *  与用户可读 toast 并存但彼此独立。
+ *  为什么是日志而不是单个状态值（K3 第二轮 P1-3）：单值只能看到「当前」，验收通道无法区分
+ *  「本次触发的完成」与「上一次 / 别的并发操作的完成」。日志是**追加**的：每次命令调用都留下
+ *  seq、操作代次与状态（running / ok / failed / busy）。验收通道在触发前读基线，触发后必须
+ *  看到第一条新记录是 running 并锁定它的代次，随后只接受**同代次 ok**；无归属的更高代 ok、
+ *  busy 被别代 ok 覆盖都不成立。屏障可能在第一次轮询前就跑完——日志仍保留完整序列。
  */
-export const SAVE_ALL_MARKER_RE = /^save-all#(\d+) (idle|running|ok|failed|busy)$/;
+export const SAVE_ALL_LOG_PREFIX = "save-all-log";
+const SAVE_ALL_LOG_NODE_RE = /^save-all-log(?: s\d+:g\d+:(?:idle|running|ok|failed|busy))+$/;
+const SAVE_ALL_LOG_TOKEN_RE = /^s(\d+):g(\d+):(idle|running|ok|failed|busy)$/;
+
+/** 解析日志文本；形态不符 / seq 不连续 / 代次回退回 null（调用方必须显式判失败，不猜）。 */
+export function parseSaveAllLogText(text) {
+  const raw = String(text ?? "").trim();
+  if (!SAVE_ALL_LOG_NODE_RE.test(raw)) return null;
+  const tokens = raw.slice(SAVE_ALL_LOG_PREFIX.length).trim().split(/\s+/);
+  const records = [];
+  for (const token of tokens) {
+    const match = SAVE_ALL_LOG_TOKEN_RE.exec(token);
+    if (!match) return null;
+    records.push({ seq: Number(match[1]), generation: Number(match[2]), state: match[3] });
+  }
+  for (let i = 1; i < records.length; i++) {
+    if (records[i].seq !== records[i - 1].seq + 1) return null;
+    if (records[i].generation < records[i - 1].generation) return null;
+  }
+  return { records, raw };
+}
 
 /** `etime` 反推的 startedAt 只有秒级精度：两次复核之间允许 2s 的读数漂移，超出即视为
  *  「pid 被复用 / 换了进程」。 */
@@ -617,49 +637,60 @@ export async function triggerSaveAllMenuItem({
   return { reads: menuBar.reads + item.reads };
 }
 
-/** 从 AX 节点里解析保存全部状态标记；找不到 / 形态不符回 null（不猜）。 */
-export function parseSaveAllMarker(nodes) {
-  // 标记是视觉隐藏的 span：WKWebView 可能把它暴露成 AXStaticText，也可能挂在 AXGroup 的
-  // label 上——两种都收；正文（AXTextArea）里恰好写着同形文本**不算**（它不是标记节点）。
+/** 从 AX 节点里取状态日志：标记是视觉隐藏 span，WKWebView 可能暴露成 AXStaticText 或 AXGroup
+ *  的 label；正文（AXTextArea）里恰好写着同形文本**不算**。 */
+export function parseSaveAllLog(nodes) {
   const candidate =
-    findNode(nodes, { role: "AXStaticText", name: SAVE_ALL_MARKER_RE }) ??
+    findNode(nodes, { role: "AXStaticText", name: SAVE_ALL_LOG_NODE_RE }) ??
     nodes.find((node) => {
       if (node.role !== "AXGroup") return false;
       const text = String(node.label ?? node.title ?? "").trim();
-      return SAVE_ALL_MARKER_RE.test(text);
+      return SAVE_ALL_LOG_NODE_RE.test(text);
     });
   if (!candidate) return null;
-  const text = String(candidate.title ?? candidate.label ?? candidate.value ?? "").trim();
-  const match = SAVE_ALL_MARKER_RE.exec(text);
-  return match ? { generation: Number(match[1]), state: match[2] } : null;
+  return parseSaveAllLogText(String(candidate.title ?? candidate.label ?? candidate.value ?? ""));
 }
 
-/** 读一次当前标记；读不到 / 形态不符即 `PauseFailed`（没有标记就没法把完成信号绑定到本次操作）。 */
-export async function readSaveAllMarker({ pid, readState } = {}) {
-  const text = await readAxOrFail(readState, pid, "save-all-marker");
-  const nodes = axNodesOrFail(text, "save-all-marker");
-  const marker = parseSaveAllMarker(nodes);
-  if (!marker) {
+/** 读一次状态日志；读不到 / 形态不符即 `PauseFailed`（没有日志就无法把完成信号归属到本次操作）。 */
+export async function readSaveAllLog({ pid, readState } = {}) {
+  const text = await readAxOrFail(readState, pid, "save-all-log");
+  const nodes = axNodesOrFail(text, "save-all-log");
+  const log = parseSaveAllLog(nodes);
+  if (!log) {
     throw new PauseFailed(
-      "安装版 AX 里找不到保存全部状态标记（save-all#N …）——无法把完成信号绑定到本次操作，不⌘Q、不跑批",
+      "安装版 AX 里找不到可解析的保存全部状态日志（save-all-log …）——无法把完成信号归属到本次操作，不⌘Q、不跑批",
     );
   }
-  return marker;
+  return log;
+}
+
+/** 触发前基线：最后一条记录的 seq / 代次 / 状态（状态 running 表示已有保存在跑）。 */
+export function saveAllBaseline(log) {
+  const records = log?.records;
+  if (!Array.isArray(records) || records.length === 0) {
+    throw new PauseFailed("保存全部状态日志为空——无法取得触发前基线，不⌘Q、不跑批");
+  }
+  const last = records[records.length - 1];
+  return { seq: last.seq, generation: last.generation, state: last.state };
 }
 
 /**
- * 等**本次操作**的保存全部完成（K3 P1-3）：只接受代次大于 `baselineGeneration` 的标记。
+ * 等**本次操作**的保存全部完成（K3 第二轮 P1-3）：必须先把完成信号归属到本次触发。
  *
- * 判据：
- *   - 触发前代次（baseline）由调用方在**点菜单之前**读取；同一代次的旧 `ok` / `failed` 一律
- *     不算数（继续等到超时），因此上一次保存留下的旧信号不可能放行。
- *   - 代次更大且 `ok` → 成功；代次更大且 `failed` → 失败；代次更大且 `running` → 继续等。
- *   - `busy`（并发 / 重复触发被单飞拒绝）→ 立即失败，不等待、不把别人的成功当自己的。
- *   - 空树 / 读失败 / 缺标记 / 超时 → 失败（不可读 ≠ 成功）。
+ * 判据（顺序敏感）：
+ *   1. 触发后，日志里**第一条新记录**（seq > 基线 seq）必须是 `running`；否则（直接出现
+ *      `ok` / `failed` / `busy`，或更高代 ok）→ 失败：没有可归属的本次操作。
+ *   2. 该 running 的代次必须恰为 `基线代次 + 1`（代次不连续 = 不是紧接着本次触发的操作）。
+ *   3. 锁定 G = 该 running 的代次；只接受 **G 的 ok**。其它代次的 ok 一律失败（跨代冒充）。
+ *   4. 序列里出现任何 `busy` / `failed` → 失败（并发被拒 / 保存失败；后来的别代 ok 覆盖不掉）。
+ *   5. 空树 / 读失败 / 缺日志 / 日志已滚动到基线之后 / 超时 → 失败。
+ *
+ * 快速完成（第一次轮询就只看到 running + ok）仍然成立：日志是追加的，running 记录不会丢。
  */
 export async function waitSaveAllCompletion({
   pid,
   readState,
+  baselineSeq,
   baselineGeneration,
   timeoutMs = 20_000,
   everyMs = 300,
@@ -668,37 +699,74 @@ export async function waitSaveAllCompletion({
 } = {}) {
   const deadline = now() + timeoutMs;
   let reads = 0;
-  let last = null;
+  let lastLog = null;
   for (;;) {
     const text = await readAxOrFail(readState, pid, "save-all-completion");
     reads += 1;
     const nodes = axNodesOrFail(text, `save-all-completion（第 ${reads} 次读取）`);
-    const marker = parseSaveAllMarker(nodes);
-    if (!marker) {
+    const log = parseSaveAllLog(nodes);
+    if (!log) {
       throw new PauseFailed(
-        "安装版 AX 里找不到保存全部状态标记（save-all#N …）——无法把完成信号绑定到本次操作，不⌘Q、不跑批",
+        "安装版 AX 里找不到可解析的保存全部状态日志（save-all-log …）——无法把完成信号归属到本次操作，不⌘Q、不跑批",
       );
     }
-    last = marker;
-    if (marker.state === "busy") {
+    lastLog = log;
+    const { records } = log;
+    if (records[0].seq > baselineSeq) {
       throw new PauseFailed(
-        `保存全部被并发触发拒绝（busy#${marker.generation}，触发前代次 ${baselineGeneration}）——` +
-          "单飞不开新代次，本次没有属于它的完成信号；不⌘Q、不跑批",
+        `状态日志已滚动到基线之后（基线 seq ${baselineSeq}，最早 ${records[0].seq}）——无法证明本次操作与完成信号的连续性，不⌘Q、不跑批`,
       );
     }
-    if (marker.generation > baselineGeneration) {
-      if (marker.state === "ok") return { generation: marker.generation, reads };
-      if (marker.state === "failed") {
+    const fresh = records.filter((record) => record.seq > baselineSeq);
+    if (fresh.length > 0) {
+      const first = fresh[0];
+      if (first.state !== "running") {
         throw new PauseFailed(
-          `保存屏障报告失败（save-all#${marker.generation} failed，触发前代次 ${baselineGeneration}）——不⌘Q、不跑批`,
+          `触发后第一条新记录是 g${first.generation} ${first.state}，不是本次操作的 running——` +
+            "不得把无归属的完成信号当成本次成功，不⌘Q、不跑批",
         );
+      }
+      if (first.generation !== baselineGeneration + 1) {
+        throw new PauseFailed(
+          `本次操作的代次不连续（基线 g${baselineGeneration}，首个新 running g${first.generation}）——` +
+            "无法归属到本次触发，不⌘Q、不跑批",
+        );
+      }
+      const lockedGeneration = first.generation;
+      for (const record of fresh.slice(1)) {
+        if (record.state === "busy") {
+          throw new PauseFailed(
+            `本次触发被并发 / 重复触发拒绝（g${record.generation} busy，锁定代次 g${lockedGeneration}）——` +
+              "单飞不开新代次，本次没有属于它的完成信号；不⌘Q、不跑批",
+          );
+        }
+        if (record.state === "failed") {
+          throw new PauseFailed(
+            `保存屏障报告失败（g${record.generation} failed，锁定代次 g${lockedGeneration}）——不⌘Q、不跑批`,
+          );
+        }
+        if (record.state === "running" && record.generation !== lockedGeneration) {
+          throw new PauseFailed(
+            `日志出现非本次代次的 running（g${record.generation}，锁定 g${lockedGeneration}）——无法归属，不⌘Q、不跑批`,
+          );
+        }
+        if (record.state === "ok") {
+          if (record.generation !== lockedGeneration) {
+            throw new PauseFailed(
+              `完成信号代次 g${record.generation} 与本次操作 g${lockedGeneration} 不一致——` +
+                "不得跨代冒充成功，不⌘Q、不跑批",
+            );
+          }
+          return { generation: lockedGeneration, seq: record.seq, reads };
+        }
       }
     }
     if (now() >= deadline) {
+      const last = lastLog.records[lastLog.records.length - 1];
       throw new PauseFailed(
-        `等本次保存全部完成超时（${timeoutMs}ms，${reads} 次读取；触发前代次 ${baselineGeneration}，` +
-          `最后标记 ${last ? `save-all#${last.generation} ${last.state}` : "无"}）——` +
-          "同一代次的旧信号不算数，不⌘Q、不跑批",
+        `等本次保存全部完成超时（${timeoutMs}ms，${reads} 次读取；基线 s${baselineSeq}/g${baselineGeneration}，` +
+          `最后记录 s${last.seq}/g${last.generation} ${last.state}）——` +
+          "不得把旧 / 跨代信号当成本次成功，不⌘Q、不跑批",
       );
     }
     await sleepFn(everyMs);
@@ -762,7 +830,7 @@ export async function runInstalledPause({
   realpath = realpathSync,
   verifyTarget = verifyInstalledTarget,
   activate,
-  readMarker,
+  readLog,
   triggerSaveAll,
   waitSaveAll,
   quit,
@@ -814,23 +882,24 @@ export async function runInstalledPause({
     state.touched = true;
     await phase("activate", `result=ok pid=${target.pid}`);
 
-    // 触发前读取代次基线：只接受比它更大的完成标记（K3 P1-3）。基线本身正在跑（running）
-    // 说明另一次保存全部在途——不并发触发，直接停手。
-    const baseline = await readMarker(target.pid);
+    // 触发前读状态日志基线（K3 第二轮 P1-3）：触发后必须由**第一条新 running** 归属本次操作，
+    // 只接受同代次 ok。基线本身正在跑（running）说明另一次保存全部在途——不并发触发。
+    const baseline = saveAllBaseline(await readLog(target.pid));
     await phase(
       "save-all-baseline",
-      `result=ok pid=${target.pid} generation=${baseline.generation} state=${baseline.state}`,
+      `result=ok pid=${target.pid} seq=${baseline.seq} generation=${baseline.generation} state=${baseline.state}`,
     );
     if (baseline.state === "running") {
       throw new PauseFailed(
-        `触发前已有保存全部在跑（save-all#${baseline.generation} running）——不并发触发，不⌘Q、不跑批`,
+        `触发前已有保存全部在跑（g${baseline.generation} running）——不并发触发，不⌘Q、不跑批`,
       );
     }
     await triggerSaveAll(target.pid);
-    const signal = await waitSaveAll(target.pid, baseline.generation);
+    const signal = await waitSaveAll(target.pid, baseline);
     await phase(
       "save-all",
-      `result=ok pid=${target.pid} generation=${signal?.generation ?? "?"} baseline=${baseline.generation} reads=${signal?.reads ?? 0}`,
+      `result=ok pid=${target.pid} seq=${signal?.seq ?? "?"} generation=${signal?.generation ?? "?"} ` +
+        `baselineSeq=${baseline.seq} baselineGeneration=${baseline.generation} reads=${signal?.reads ?? 0}`,
     );
 
     await reverify("before-quit");

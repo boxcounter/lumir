@@ -15,8 +15,8 @@ steps:
     waitFor:
       has: ["/AXRadioButton \\(tabs-a\\.md\\)/"]
     expect:
-      - label: 保存全部代次初始态
-        node: { role: AXStaticText, name: "^save-all#0 idle$", present: true }
+      - label: 保存全部状态日志初始态
+        node: { role: AXStaticText, name: "^save-all-log s0:g0:idle$", present: true }
 
   - name: 制造标签会话目录的真实写失败（权限 0500）
     do: envChmod
@@ -47,14 +47,14 @@ steps:
   - name: 等本次代次的失败标记（会话 flush 真实失败 → 不得出现 ok）
     do: waitFor
     waitFor:
-      has: ["save-all#1 failed"]
+      has: ["s2:g1:failed"]
     timeoutMs: 15000
     expect:
       - shot: 会话 flush 失败之后
-      - label: 本次代次是 failed（不是 ok）
-        node: { role: AXStaticText, name: "^save-all#1 failed$", present: true }
-      - label: 成功标记 MUST NOT 出现
-        node: { role: AXStaticText, name: "^save-all#1 ok$", present: false }
+      - label: 日志是本次操作的 running → failed（没有 ok）
+        node: { role: AXStaticText, name: "^save-all-log s0:g0:idle s1:g1:running s2:g1:failed$", present: true }
+      - label: 成功记录 MUST NOT 出现
+        node: { role: AXStaticText, name: "^save-all-log .*g1:ok", present: false }
       - label: 文档本身确实已保存（失败点在会话 flush，不是 saveAllDirty）
         file: { path: tabs-a.md, has: "SAVEALL-FAIL" }
 
@@ -75,13 +75,13 @@ steps:
   - name: 等第二次的完成标记
     do: waitFor
     waitFor:
-      has: ["save-all#2 ok"]
+      has: ["s4:g2:ok"]
     timeoutMs: 15000
     expect:
-      - label: 第二次是新的代次且成功（同一代次的旧 failed 不放行）
-        node: { role: AXStaticText, name: "^save-all#2 ok$", present: true }
-      - label: 第一次的 failed 不得被当成成功
-        node: { role: AXStaticText, name: "^save-all#1 failed$", present: false }
+      - label: 第二次是新的代次且成功（g1 failed 不覆盖、g2 running → ok）
+        node: { role: AXStaticText, name: "^save-all-log s0:g0:idle s1:g1:running s2:g1:failed s3:g2:running s4:g2:ok$", present: true }
+      - label: 第一次的 failed 仍留在日志里（不得被后来的 ok 覆盖）
+        node: { role: AXStaticText, name: "^save-all-log .*s2:g1:failed", present: true }
 ---
 
 **判据说明（K3 P1-1 / P1-3）**
@@ -89,8 +89,9 @@ steps:
 - `envChmod` 把隔离配置下的 `vault-sessions/` 收紧到 0500，制造**真实磁盘写失败**。产品的
   `vault_session_put` 会记 warning 并返回 `false`；保存全部屏障据此判失败——不会因为「只打了
   warning」就发成功终态。
-- 判据是**代次标记**（`save-all#1 failed` / `save-all#2 ok` 的节点级精确形态），不是 toast 文本：
-  第一次失败后旧 toast 仍在场，第二次必须靠**代次加一**才算成功。
+- 判据是**归属日志**（`s2:g1:failed` / `s4:g2:ok` 所在的完整日志，节点级精确形态），不是 toast
+  文本：第一次失败后旧 toast 仍在场，第二次必须由新的 running g2 归属、且同代次 ok 才算成功；
+  第一次的 failed 仍保留在日志里。
 - 文档本身已保存（`file.has`），把「失败点确实在会话 flush」与「saveAllDirty 没跑」区分开。
 - 阅读位置写失败 / 后端镜像同步失败 / 同步等待期间的新 dirty / 并发触发由 `tests/unit/save-all.test.ts`
   覆盖（界面上无法从外部合成这几种现场）。

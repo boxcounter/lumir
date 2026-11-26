@@ -569,7 +569,6 @@ mod tests {
         );
     }
 
-    #[test]
     /// P1-1（K3 verdict）：真实磁盘写失败必须从 `put` 路径如实返回 `false`，不能只打 warning
     /// 后回 `true`——否则「保存全部」的屏障会在未落盘时发成功终态。
     #[test]
@@ -589,6 +588,7 @@ mod tests {
         assert!(!failed_dir.join("b.json").exists(), "失败不得留下半份文件");
     }
 
+    #[test]
     fn write_failure_is_reported_and_leaves_other_sessions_intact() {
         let dir = TempDir::new();
         let first = single(&["a.md"], Some("a.md"));

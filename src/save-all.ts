@@ -1,15 +1,45 @@
-// 「保存全部」的屏障与**操作代次**（change add-acceptance-installed-app-pause）。
+// 「保存全部」的屏障与**操作归属日志**（change add-acceptance-installed-app-pause）。
 //
 // 为什么必须是一个独立模块而不是 main.ts 里的一段：保存全部是验收通道的**退出许可**——
 // 它必须能被无 DOM、无 Tauri 的单测覆盖失败链与竞态（会话 / 阅读位置真实写失败、后端镜像
-// 同步失败、await 期间出现新 dirty、并发触发）。装配层只注入真实依赖与 toast / 状态标记。
+// 同步失败、await 期间出现新 dirty、并发触发）。装配层只注入真实依赖与 toast / 状态日志。
 //
-// 成功终态的**机器判据**不是 toast 文本，而是 `marker` 写出的状态标记：
-//   `save-all#<generation> <running|ok|failed|busy>`
-// 每次真正开始的保存全部都会把 generation 加一；并发触发不增加代次，只把状态置为 `busy`
-// （同一代次）。验收通道读取**触发前**的代次，只接受「代次更大且状态为 ok」的标记——旧的
-// 成功提示（3.5s toast）与并发的第二次触发因此都不可能让它提前放行。
-export type SaveAllMarkerState = "running" | "ok" | "failed" | "busy";
+// 成功终态的**机器判据**不是 toast 文本，而是 `log` 写出的状态日志。每次命令调用都留下一条
+// 记录（带单调 seq、操作代次与状态），例如：
+//   `save-all-log s0:g0:idle s1:g1:running s2:g1:ok`
+//
+// 为什么是**日志**而不是单个状态值（K3 第二轮 P1-3）：
+//   - 验收通道触发前读基线（最后一条记录的 seq / 代次），触发后必须看到**第一条新记录是
+//     running**，并锁定它的代次 G；随后只接受**同代次 G 的 ok**。无归属的更高代 ok（如基线 3
+//     直接出现 g5 ok）、别的代次的 ok 覆盖 busy/failed，都不可能被当成本次成功。
+//   - `busy` 与 `failed` 是**追加**的记录，不会被后来的 ok 覆盖；验收通道按顺序看到它们即失败。
+//   - 屏障可能在验收通道第一次轮询前就跑完；日志仍保留 `running → ok` 的完整序列，快速完成
+//     因此仍可归属（不靠猜）。
+export type SaveAllLogState = "idle" | "running" | "ok" | "failed" | "busy";
+
+export interface SaveAllRecord {
+  /** 单调递增的记录序号（跨命令调用不重置）。 */
+  seq: number;
+  /** 操作代次：每次真正开始的保存全部加一；busy 复用当前代次（不开启新操作）。 */
+  generation: number;
+  state: SaveAllLogState;
+}
+
+/** 日志前缀与容量：容量只需覆盖最近几次操作——验收通道在触发前刚读过基线，一次操作最多
+ *  追加 2 条记录。格式与 `scripts/acceptance/lib/installed-app.mjs` 的解析器是同一约定
+ *  （两边各有一份字面量；`tests/unit/save-all.test.ts` 用验收解析器回读产品日志做跨层对账）。 */
+export const SAVE_ALL_LOG_PREFIX = "save-all-log";
+export const SAVE_ALL_LOG_LIMIT = 12;
+
+export function formatSaveAllLog(records: readonly SaveAllRecord[]): string {
+  const body = records.map((record) => `s${record.seq}:g${record.generation}:${record.state}`).join(" ");
+  return `${SAVE_ALL_LOG_PREFIX} ${body}`;
+}
+
+/** 启动时的初始日志（验收通道的基线必须是可读的 idle，而不是「没有日志」）。 */
+export function initialSaveAllLog(): string {
+  return formatSaveAllLog([{ seq: 0, generation: 0, state: "idle" }]);
+}
 
 export interface SaveAllBarrierDeps {
   /** 保存全部脏标签；false = 至少一条没闭环（冲突 / 写失败 / 无落盘基准）。 */
@@ -22,8 +52,8 @@ export interface SaveAllBarrierDeps {
   anyDirty(): boolean;
   /** 把后端退出守卫的 dirty 镜像同步为 `dirty`，await 到命令回包；reject = 同步失败。 */
   syncDirty(dirty: boolean): Promise<void>;
-  /** 写给验收通道读的状态标记（视觉隐藏、AX 可达）；见文件头。 */
-  marker(state: SaveAllMarkerState, generation: number): void;
+  /** 写给验收通道读的状态日志（视觉隐藏、AX 可达）。 */
+  log(text: string): void;
   /** 用户可读的成功 / 失败 / 并发提示（既有 toast 文案）。 */
   toastSuccess(): void;
   toastFailure(): void;
@@ -35,26 +65,37 @@ export interface SaveAllBarrier {
   run(): Promise<boolean>;
   generation(): number;
   isRunning(): boolean;
+  /** 当前日志文本（测试与诊断用；与 `log` 回调收到的内容同源）。 */
+  logText(): string;
 }
 
 export function createSaveAllBarrier(deps: SaveAllBarrierDeps): SaveAllBarrier {
   let generation = 0;
+  let seq = 0;
   let running = false;
+  const records: SaveAllRecord[] = [{ seq: 0, generation: 0, state: "idle" }];
+
+  const push = (state: SaveAllLogState, gen: number): void => {
+    seq += 1;
+    records.push({ seq, generation: gen, state });
+    while (records.length > SAVE_ALL_LOG_LIMIT) records.shift();
+    deps.log(formatSaveAllLog(records));
+  };
 
   async function run(): Promise<boolean> {
     if (running) {
-      // 单飞：并发 / 重复触发**不开新代次**，也不排队——把状态标成同一代次的 busy，让验收
-      // 通道立刻判失败（而不是等一个不属于它的完成信号），用户侧给一句「正在保存」。
-      deps.marker("busy", generation);
+      // 单飞：并发 / 重复触发**不开新代次**，只追加一条 busy（同一代次）。日志是追加的，
+      // 后来的成功不会覆盖它——验收通道按顺序看到 busy 即判失败。
+      push("busy", generation);
       deps.toastBusy();
       return false;
     }
     running = true;
     generation += 1;
     const gen = generation;
-    deps.marker("running", gen);
+    push("running", gen);
     const fail = (): false => {
-      deps.marker("failed", gen);
+      push("failed", gen);
       deps.toastFailure();
       return false;
     };
@@ -83,7 +124,7 @@ export function createSaveAllBarrier(deps: SaveAllBarrierDeps): SaveAllBarrier {
         return fail();
       }
 
-      deps.marker("ok", gen);
+      push("ok", gen);
       deps.toastSuccess();
       return true;
     } finally {
@@ -91,5 +132,10 @@ export function createSaveAllBarrier(deps: SaveAllBarrierDeps): SaveAllBarrier {
     }
   }
 
-  return { run, generation: () => generation, isRunning: () => running };
+  return {
+    run,
+    generation: () => generation,
+    isRunning: () => running,
+    logText: () => formatSaveAllLog(records),
+  };
 }

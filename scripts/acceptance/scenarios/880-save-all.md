@@ -18,8 +18,8 @@ steps:
       - shot: 恢复后的标签条
       - label: 前台是 tabs-a
         editor: { has: "标签场景 A" }
-      - label: 保存全部代次初始态（save-all#0 idle；本场景之前的操作没有触发过保存全部）
-        node: { role: AXStaticText, name: "^save-all#0 idle$", present: true }
+      - label: 保存全部状态日志初始态（save-all-log s0:g0:idle；本场景之前没有触发过保存全部）
+        node: { role: AXStaticText, name: "^save-all-log s0:g0:idle$", present: true }
 
   - name: 在第一个标签里键入（制造脏标签 A）
     do: type
@@ -58,19 +58,19 @@ steps:
     do: click
     target: { role: AXMenuItem, name: "^Save All$" }
 
-  - name: 等**本次代次**的保存全部完成标记（K3 P1-3：只认 save-all#1 ok，不认旧 toast 文本）
+  - name: 等**本次操作**的保存全部归属日志（K3 第二轮 P1-3：锁定 g1 running → 同代次 ok）
     do: waitFor
     waitFor:
-      has: ["save-all#1 ok"]
+      has: ["s2:g1:ok"]
     timeoutMs: 15000
     expect:
       - shot: 保存全部之后
-      - label: 本次操作的完成标记是节点级精确形态（不是全树子串）
-        node: { role: AXStaticText, name: "^save-all#1 ok$", present: true }
-      - label: 旧代次 / 并发 busy / 失败态 MUST NOT 作为本次成功判据
-        node: { role: AXStaticText, name: "^save-all#1 busy$", present: false }
-      - label: 失败标记 MUST NOT 出现
-        node: { role: AXStaticText, name: "^save-all#1 failed$", present: false }
+      - label: 日志完整且节点级精确（s1:g1:running → s2:g1:ok；不是全树子串，也不是旧 toast）
+        node: { role: AXStaticText, name: "^save-all-log s0:g0:idle s1:g1:running s2:g1:ok$", present: true }
+      - label: 本次操作不得留下失败记录
+        node: { role: AXStaticText, name: "^save-all-log .*g1:failed", present: false }
+      - label: 本次操作不得被 busy 拒绝
+        node: { role: AXStaticText, name: "^save-all-log .*g1:busy", present: false }
 
   - name: 两个标签的内容都真的落进了 vault（磁盘判据，不是「dirty 点消失」）
     do: settle
@@ -90,10 +90,11 @@ steps:
 - 这条场景守的是产品侧「保存全部」能力的真机链路：原生 **File → Save All** 菜单项（不带
   accelerator，默认不占键位）经 `MENU_COMMAND_EVENT` 回到命令层的 `document.save-all`，
   由保存屏障依次完成「保存全部脏标签 → 标签会话 flush → 阅读位置 flush → 后端 dirty 镜像同步」。
-- **正向完成信号是判据本体**（K3 P1-3）：产品在视觉隐藏、AX 可达的节点里维护
-  `save-all#<代次> <running|ok|failed|busy>`；只有屏障全绿才写 `ok`。验收通道（`--pause-installed`）
-  读取触发前的代次，只接受「代次更大且 ok」的标记，旧 toast 文本 / 同一代次的旧信号 / 并发
-  busy 都不可能让它放行。场景里因此用 `node` 精确断言 `save-all#1 ok`，不再用 `ax.has` 子串。
+- **正向完成信号是判据本体**（K3 第二轮 P1-3）：产品在视觉隐藏、AX 可达的节点里维护**追加式**
+  状态日志 `save-all-log s<seq>:g<代次>:<状态> …`；只有屏障全绿才追加 `ok`。验收通道
+  （`--pause-installed`）读触发前基线，触发后必须见到第一条新记录是 running 并锁定其代次，
+  只接受**同代次 ok**；旧 ok、跨代 ok、busy 被别代 ok 覆盖都不成立。场景里因此用 `node`
+  精确断言完整日志序列，不再用 `ax.has` 子串。
 - **磁盘判据不可省**：完成信号可能被将来的改动改成「无错误即成功」，两个 fixture 的
   `file.has` 把「内容真的落盘」钉死。
 - 会话 / 阅读位置 / 后端镜像写失败与竞态由机器测试覆盖：`tests/unit/save-all.test.ts`
