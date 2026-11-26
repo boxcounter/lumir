@@ -1848,6 +1848,10 @@ function keyArgOf(name: string, args: Record<string, unknown>): string | null {
       return typeof args.query === "string" && args.query !== "" ? args.query : null;
     case "skill_load":
       return typeof args.name === "string" && args.name !== "" ? args.name : null;
+    // 显式 Skill 痕迹（change add-explicit-skill-trace-nov26）：痕迹行的参数摘要恒为
+    // {"name": <技能名>}（成功与失败同一形态）；工具名与模型自主的 skill_load 区分。
+    case "explicit_skill":
+      return typeof args.name === "string" && args.name !== "" ? args.name : null;
     default:
       return null;
   }

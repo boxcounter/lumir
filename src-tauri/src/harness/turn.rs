@@ -610,99 +610,246 @@ impl TurnOrigin {
 
 pub const EXPLICIT_SKILL_HEADER_PREFIX: &str = "[已加载 Skill：";
 
+/// 显式 Skill 痕迹的工具名（change add-explicit-skill-trace-nov26）：与模型自主调用的
+/// `skill_load` 区分——痕迹行的工具名本身就是「这是用户显式选择的」这一事实，不靠文案附注。
+pub(crate) const EXPLICIT_SKILL_TRACE_TOOL: &str = "explicit_skill";
+
+/// 显式痕迹数组挂在**用户消息项**上的本地字段名（wire 前剥离，见
+/// [`super::attachments::expand_image_refs_from`]）。与 `lumir_skill`（part 级）同族：
+/// 只活在会话 input 与留存面，provider 永不看见。
+pub(crate) const SKILL_TRACE_FIELD: &str = "lumir_skill_trace";
+
+/// 一条显式 Skill 的痕迹（面板工具行的唯一数据源，live 与恢复共用）。
+///
+/// 字段刻意只留「名称 / 终态 / 错误码 / 人话原因 / 入队时刻」——**正文不放进来**：痕迹要能随
+/// 每条后续请求进入留存，正文会把它变成第二份 Skill 全文副本。
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ExplicitSkillTrace {
+    pub name: String,
+    /// `done` / `denied` / `error`——与 [`PanelMessage::status`] 的细分终态同一集合。
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// 入队时刻（UNIX 秒）：live 面板行与恢复重建行取同一个值，不各打一次戳。
+    #[serde(default)]
+    pub ts: u64,
+}
+
 fn explicit_skill_text(name: &str, content: &str) -> String {
     format!("{EXPLICIT_SKILL_HEADER_PREFIX}{name}]\n{content}")
 }
 
-fn emit_explicit_skill_error<C: RunContext>(ctx: &mut C, name: &str, output: ToolOutput) {
-    let call_id = format!("explicit-skill-{name}");
-    let summary = format!("name: {name}");
+/// 工具结果的细分终态（`PanelMessage.status` 用）：done / denied / rejected / error。
+/// 普通工具收尾与显式痕迹共用——同一映射两处各写一遍必然漂（REVIEW.md「同一语义两处真源」条）。
+fn tool_status_of(output: &ToolOutput) -> &'static str {
+    if output.succeeded() {
+        return "done";
+    }
+    match output.value["code"].as_str() {
+        Some("permission_denied") => "denied",
+        Some("approval_rejected") => "rejected",
+        _ => "error",
+    }
+}
+
+/// 成功终态摘要的唯一字面量（普通工具行与显式痕迹行共用）。
+const TOOL_SUCCESS_SUMMARY: &str = "成功";
+
+/// 失败终态摘要：`状态 · 错误码: 消息（≤ SUMMARY_LIMIT）`。普通工具行（[`summarize_result`]）
+/// 与显式痕迹行（[`emit_explicit_skill_trace`]）共用同一格式。
+fn summarize_failure(status: &str, code: &str, message: &str) -> String {
+    format!(
+        "{status} · {code}: {}",
+        message.chars().take(SUMMARY_LIMIT).collect::<String>()
+    )
+}
+
+/// 显式痕迹行的参数摘要：与既有工具行同形的 JSON（前端 `keyArgOf` 按工具名取技能名）。
+/// 失败行**也**用它——恢复路径失败行的参数格走严格版人话化，摘要若是失败形状就会整格空掉、
+/// 技能名消失；失败详情另走面板记录的 `text`（工具输出 JSON）。
+fn explicit_skill_args_summary(name: &str) -> String {
+    serde_json::json!({"name": name}).to_string()
+}
+
+/// 痕迹项 → 面板消息（live 与恢复**唯一**的映射出口）：名称、参数摘要、终态、输出 JSON 与
+/// 时刻全部由痕迹项派生，恢复侧不另算一套。
+pub(crate) fn explicit_skill_panel_message(trace: &ExplicitSkillTrace) -> PanelMessage {
+    let failed = trace.status != "done";
+    let text = failed.then(|| {
+        serde_json::json!({
+            "ok": false,
+            "code": trace.code.as_deref().unwrap_or("error"),
+            "message": trace.message.as_deref().unwrap_or(""),
+        })
+        .to_string()
+    });
+    PanelMessage {
+        role: "tool".into(),
+        text,
+        reasoning: None,
+        summary: Some(explicit_skill_args_summary(&trace.name)),
+        name: Some(EXPLICIT_SKILL_TRACE_TOOL.into()),
+        status: Some(trace.status.clone()),
+        decision: None,
+        ts: trace.ts,
+    }
+}
+
+/// 执行期加载结果 →（成功时的正文, 痕迹项）。
+///
+/// 成功但取不到正文字符串是防御分支（加载器契约被破坏）：按 `skill_content_missing` 留失败
+/// 痕迹，MUST NOT 静默跳过——「选了一个 Skill 却什么都没发生」正是本 change 要消灭的形态。
+fn explicit_skill_trace_from_output(
+    name: &str,
+    output: &ToolOutput,
+    ts: u64,
+) -> (Option<String>, ExplicitSkillTrace) {
+    let status = tool_status_of(output);
+    if status == "done" {
+        if let Some(content) = output.value["content"].as_str() {
+            return (
+                Some(content.to_string()),
+                ExplicitSkillTrace {
+                    name: name.to_string(),
+                    status: status.to_string(),
+                    code: None,
+                    message: None,
+                    ts,
+                },
+            );
+        }
+        let missing = ToolOutput::err(
+            "skill_content_missing",
+            format!("技能 {name} 的 SKILL.md 没有正文"),
+        );
+        return explicit_skill_trace_from_output(name, &missing, ts);
+    }
+    (
+        None,
+        ExplicitSkillTrace {
+            name: name.to_string(),
+            status: status.to_string(),
+            code: Some(output.value["code"].as_str().unwrap_or("error").to_string()),
+            message: Some(output.value["message"].as_str().unwrap_or("").to_string()),
+            ts,
+        },
+    )
+}
+
+/// 显式痕迹的 live 事件（started + done，call_id 绑定同一行）。摘要走与普通工具行同一份
+/// [`summarize_failure`] / [`TOOL_SUCCESS_SUMMARY`]；事件名用 [`EXPLICIT_SKILL_TRACE_TOOL`]。
+fn emit_explicit_skill_trace<C: RunContext>(ctx: &C, trace: &ExplicitSkillTrace) {
+    let call_id = format!("explicit-skill-{}", trace.name);
+    let args = explicit_skill_args_summary(&trace.name);
     ctx.sink().emit(events::tool_call(
-        "skill_load",
+        EXPLICIT_SKILL_TRACE_TOOL,
         "started",
+        &args,
+        &call_id,
+    ));
+    let summary = if trace.status == "done" {
+        TOOL_SUCCESS_SUMMARY.to_string()
+    } else {
+        summarize_failure(
+            &trace.status,
+            trace.code.as_deref().unwrap_or("error"),
+            trace.message.as_deref().unwrap_or(""),
+        )
+    };
+    ctx.sink().emit(events::tool_call(
+        EXPLICIT_SKILL_TRACE_TOOL,
+        "done",
         &summary,
         &call_id,
     ));
-    let status = if output.value["code"].as_str() == Some("permission_denied") {
-        "denied"
-    } else {
-        "error"
-    };
-    let result_summary = summarize_result(status, &output);
-    ctx.sink().emit(events::tool_call(
-        "skill_load",
-        "done",
-        &result_summary,
-        &call_id,
-    ));
-    let _ = ctx.with_session(|session| {
-        session.push_panel(PanelMessage {
-            role: "tool".into(),
-            text: Some(output.value.to_string()),
-            summary: Some(result_summary),
-            name: Some("skill_load".into()),
-            status: Some(status.into()),
-            reasoning: None,
-            decision: None,
-            ts: jsonl::unix_secs_now(),
-        });
-    });
 }
 
+/// 单个显式名字的执行期加载：grammar → 当回合发现结果 → 权限 → 入口策略 → 正文加载。
+/// 任何一步失败都产出失败痕迹（原因取既有错误码 / 文案），成功产出正文 part + 成功痕迹。
+/// 权限判定与加载器调用顺序与既有实现一致，MUST NOT 扩大权限。
+fn explicit_skill_load<C: RunContext>(
+    ctx: &C,
+    skills: &[super::context::SkillEntry],
+    raw_name: &str,
+    ts: u64,
+) -> (Option<serde_json::Value>, ExplicitSkillTrace) {
+    // 面板 / 留存里的名字有界（防止畸形请求把超长串带进每条请求的记录）；加载判定仍用原文。
+    let name = truncate_summary(raw_name);
+    if !super::context::explicit_skill_name_valid(raw_name) {
+        let output = ToolOutput::err(
+            "skill_name_invalid",
+            format!("技能名不合法（必须是 Skill 根下的单段目录名）：{name}"),
+        );
+        let (_, trace) = explicit_skill_trace_from_output(&name, &output, ts);
+        return (None, trace);
+    }
+    let Some(skill) = skills.iter().find(|skill| skill.name == raw_name) else {
+        let output = ToolOutput::err("skill_not_found", format!("技能 {name} 不存在"));
+        let (_, trace) = explicit_skill_trace_from_output(&name, &output, ts);
+        return (None, trace);
+    };
+    let args = serde_json::json!({"name": raw_name});
+    let verdict = ctx.decide("skill_load", raw_name, &args);
+    if verdict.decision != Decision::Allow {
+        let message = denied_message("skill_load", raw_name, verdict.reason.as_ref());
+        let output = ToolOutput::err("permission_denied", message);
+        let (_, trace) = explicit_skill_trace_from_output(&name, &output, ts);
+        return (None, trace);
+    }
+    if !skill.invocation.valid {
+        let output = ToolOutput::err(
+            "skill_invocation_invalid",
+            format!("技能 {name} 的调用元数据非法"),
+        );
+        let (_, trace) = explicit_skill_trace_from_output(&name, &output, ts);
+        return (None, trace);
+    }
+    if !skill.invocation.user_invocable {
+        let output = ToolOutput::err(
+            "skill_user_invocation_disabled",
+            format!("技能 {name} 不允许用户显式调用"),
+        );
+        let (_, trace) = explicit_skill_trace_from_output(&name, &output, ts);
+        return (None, trace);
+    }
+    let output = tools::load_explicit_skill(skill);
+    let (content, trace) = explicit_skill_trace_from_output(&name, &output, ts);
+    let part = content.map(|content| {
+        serde_json::json!({
+            "type": "input_text",
+            "text": explicit_skill_text(&name, &content),
+            "lumir_skill": name,
+        })
+    });
+    (part, trace)
+}
+
+/// 显式选择的执行期处理：产出入队 part（成功的正文）与**每个名字一条**痕迹项。
+///
+/// 去重按原始名字先到先得（含 grammar 非法的名字——重复选择不再刷行）；痕迹项顺序 = 发送
+/// 元数据里各名字首次出现的顺序。`ts` 取一次（同一回合的痕迹共用入队时刻）。
 fn explicit_skill_parts<C: RunContext>(
-    ctx: &mut C,
+    ctx: &C,
     skills: &[super::context::SkillEntry],
     names: &[String],
-) -> Vec<serde_json::Value> {
+) -> (Vec<serde_json::Value>, Vec<ExplicitSkillTrace>) {
+    let ts = jsonl::unix_secs_now();
     let mut seen = std::collections::HashSet::new();
     let mut parts = Vec::new();
+    let mut traces = Vec::new();
     for name in names {
-        if !super::context::explicit_skill_name_valid(name) || !seen.insert(name.clone()) {
+        if !seen.insert(name.as_str()) {
             continue;
         }
-        let Some(skill) = skills.iter().find(|skill| skill.name == *name) else {
-            continue;
-        };
-        let args = serde_json::json!({"name": name});
-        let verdict = ctx.decide("skill_load", name, &args);
-        if verdict.decision != Decision::Allow {
-            let message = denied_message("skill_load", name, verdict.reason.as_ref());
-            emit_explicit_skill_error(ctx, name, ToolOutput::err("permission_denied", message));
-            continue;
+        let (part, trace) = explicit_skill_load(ctx, skills, name, ts);
+        if let Some(part) = part {
+            parts.push(part);
         }
-        if !skill.invocation.valid {
-            emit_explicit_skill_error(
-                ctx,
-                name,
-                ToolOutput::err(
-                    "skill_invocation_invalid",
-                    format!("技能 {name} 的调用元数据非法"),
-                ),
-            );
-            continue;
-        }
-        if !skill.invocation.user_invocable {
-            emit_explicit_skill_error(
-                ctx,
-                name,
-                ToolOutput::err(
-                    "skill_user_invocation_disabled",
-                    format!("技能 {name} 不允许用户显式调用"),
-                ),
-            );
-            continue;
-        }
-        let output = tools::load_explicit_skill(skill);
-        let Some(content) = output.value["content"].as_str() else {
-            continue;
-        };
-        parts.push(serde_json::json!({
-            "type": "input_text",
-            "text": explicit_skill_text(name, content),
-            "lumir_skill": name,
-        }));
+        traces.push(trace);
     }
-    parts
+    (parts, traces)
 }
 
 pub(crate) fn run_turn_core_with_mode<C: RunContext>(
@@ -749,7 +896,9 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
     let root = ctx.vault_root().to_path_buf();
     let skills = super::context::discover_skills(&root);
     if let Some(parts) = parts {
-        let explicit_parts = explicit_skill_parts(ctx, &skills, &skill_names);
+        let (explicit_parts, explicit_traces) = explicit_skill_parts(ctx, &skills, &skill_names);
+        // 事件在入队成功之后发（与面板行的相对次序无关，但失败发送不留下幽灵事件）。
+        let traces_for_events = explicit_traces.clone();
         let context_section_for_session = context_section.clone();
         let enqueue = ctx.with_session(|s| {
             let parts =
@@ -757,6 +906,12 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
             let mut item = super::attachments::user_item_of_parts(&parts);
             if let Some(content) = item["content"].as_array_mut() {
                 content.extend(explicit_parts);
+            }
+            if !explicit_traces.is_empty() {
+                // 痕迹随消息进 input / llm_request.messages（wire 前由 attachments 剥离）：
+                // 它只描述「哪个名字、成没成、为什么」，正文不在其中。
+                item[SKILL_TRACE_FIELD] =
+                    serde_json::to_value(&explicit_traces).unwrap_or_default();
             }
             let panel_text = item["content"]
                 .as_array()
@@ -774,12 +929,20 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
                 decision: None,
                 ts: jsonl::unix_secs_now(),
             });
+            // 痕迹行紧跟用户消息（live 与恢复同一顺序）：行的构造走 `explicit_skill_panel_message`
+            // 单一出口，恢复路径从同一份痕迹数组重建。
+            for trace in &explicit_traces {
+                s.push_panel(explicit_skill_panel_message(trace));
+            }
             s.set_current_context(context_section_for_session);
             // 留存口径：user 消息不进 sidecar——它逐字节在下一条 llm_request.messages 里。
         });
         if let Err(e) = enqueue {
             emit_terminal(ctx, events::error(&e.code, &e.message));
             return None;
+        }
+        for trace in &traces_for_events {
+            emit_explicit_skill_trace(ctx, trace);
         }
     }
     // 中断标注的 base：本轮起点（user 消息已入队）——`abort_turn` 只在此后的消息里
@@ -1655,15 +1818,8 @@ fn finish_call<C: RunContext>(
     gate_decision: Option<&'static str>,
 ) -> (serde_json::Value, serde_json::Value) {
     // 细分终态（面板快照 PanelMessage.status 用）：done / denied / rejected / error。
-    let status = if output.succeeded() {
-        "done"
-    } else {
-        match output.value["code"].as_str() {
-            Some("permission_denied") => "denied",
-            Some("approval_rejected") => "rejected",
-            _ => "error",
-        }
-    };
+    // 与显式 Skill 痕迹共用同一映射（`tool_status_of`）。
+    let status = tool_status_of(&output);
     // 事件 status 只发契约内的 started|done（m303 面板按非 done 即 started 归并——
     // 发细分值会产生永不完结的「正在执行」幻影行）；细分状态放 summary（D344 展示）。
     let result_summary = summarize_result(status, &output);
@@ -2057,17 +2213,12 @@ fn format_argv(argv: &[String]) -> String {
 /// `status` 是面板快照层的细分值（done/denied/rejected/error）。
 fn summarize_result(status: &str, output: &ToolOutput) -> String {
     if output.succeeded() {
-        "成功".to_string()
+        TOOL_SUCCESS_SUMMARY.to_string()
     } else {
-        format!(
-            "{status} · {}: {}",
+        summarize_failure(
+            status,
             output.value["code"].as_str().unwrap_or("error"),
-            output.value["message"]
-                .as_str()
-                .unwrap_or("")
-                .chars()
-                .take(SUMMARY_LIMIT)
-                .collect::<String>()
+            output.value["message"].as_str().unwrap_or(""),
         )
     }
 }
@@ -4122,6 +4273,7 @@ mod tests {
             ("default", ""),
             ("user-only", "disable-model-invocation: true\n"),
             ("model-only", "user-invocable: false\n"),
+            ("denied-skill", ""),
             ("invalid", "user-invocable: yes\n"),
         ] {
             let dir = root.join(".agents/skills").join(skill);
@@ -4136,6 +4288,17 @@ mod tests {
         std::fs::write(
             root.join(".agents/skills/too-large/SKILL.md"),
             "x".repeat(201 * 1024),
+        )
+        .unwrap();
+        // 显式痕迹的失败面（change add-explicit-skill-trace-nov26）：
+        // - `no-file`：目录在、SKILL.md 缺席 → 发现期即不在索引里（skill_not_found）；
+        // - `unreadable`：SKILL.md 不是合法 UTF-8 → 用户显式选择的执行期读取失败
+        //   （skill_read_failed；发现期按既有口径吞掉读取错误、条目仍在索引里）。
+        std::fs::create_dir_all(root.join(".agents/skills/no-file")).unwrap();
+        std::fs::create_dir_all(root.join(".agents/skills/unreadable")).unwrap();
+        std::fs::write(
+            root.join(".agents/skills/unreadable/SKILL.md"),
+            [0xF0, 0x28, 0x8C, 0x28],
         )
         .unwrap();
         let policy = IgnorePolicy::load(
@@ -4411,6 +4574,492 @@ mod tests {
         assert!(
             wire.contains("UNIQUE-BODY-model-only"),
             "旧自动工具结果仍保留在历史"
+        );
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    /// 显式 Skill 痕迹（change add-explicit-skill-trace-nov26）：live 面板 / 会话 input / 事件 /
+    /// provider wire 四个面上的可核对事实。
+    ///
+    /// 判据的区分度：痕迹行必须是**用户消息之后**、工具名 `explicit_skill` 的独立记录；
+    /// 失败行必须带具体错误码（旧实现只对权限 / 元数据 / 禁手动三类的 live 事件留痕，其余静默）；
+    /// `lumir_skill_trace` 必须进留存但**不进 wire**（与 `lumir_skill` 同一剥离点）。
+    fn trace_rows(
+        messages: &[session::PanelMessage],
+    ) -> Vec<(String, String, String, Option<String>, u64)> {
+        messages
+            .iter()
+            .filter(|message| {
+                message.role == "tool" && message.name.as_deref() == Some("explicit_skill")
+            })
+            .map(|message| {
+                (
+                    message.name.clone().unwrap_or_default(),
+                    message.status.clone().unwrap_or_default(),
+                    message.summary.clone().unwrap_or_default(),
+                    message.text.clone(),
+                    message.ts,
+                )
+            })
+            .collect()
+    }
+
+    fn trace_args_name(summary: &str) -> String {
+        serde_json::from_str::<serde_json::Value>(summary)
+            .ok()
+            .and_then(|value| value["name"].as_str().map(str::to_string))
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn explicit_skill_trace_covers_success_and_every_failure_class() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("trace-classes");
+        let mut config = fixture.config.clone();
+        config.permissions.deny = vec!["skill_load(denied-skill)".to_string()];
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&fixture.scope, &config).unwrap();
+        let mut client =
+            llm::MockClient::from_str(r#"{"responses":[{"text":"done"}]}"#, "skill-trace").unwrap();
+        let _counter_lock = tools::skill_content_test_lock();
+        tools::reset_skill_content_load_count();
+        let sink = Collect::default();
+        let seen = sink.0.clone();
+        let names = vec![
+            "default".to_string(),
+            "user-only".to_string(),
+            "denied-skill".to_string(),
+            "model-only".to_string(),
+            "invalid".to_string(),
+            "too-large".to_string(),
+            "no-file".to_string(),
+            "bad grammar".to_string(),
+            "unreadable".to_string(),
+            "default".to_string(),
+        ];
+        run_turn_for_with_skills(
+            &sink,
+            &runtime,
+            &fixture.scope,
+            &config,
+            "question",
+            None,
+            names,
+            &mut client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert_eq!(
+            tools::skill_content_load_count(),
+            4,
+            "执行期加载器被调用 4 次（default / user-only / too-large 与 unreadable 各一次；后两者失败但仍是真实调用）"
+        );
+
+        let input = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let user = input.iter().find(|item| item["role"] == "user").unwrap();
+        let traces = user["lumir_skill_trace"]
+            .as_array()
+            .expect("用户消息必须带显式痕迹数组");
+        let trace_names: Vec<&str> = traces
+            .iter()
+            .map(|trace| trace["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            trace_names,
+            vec![
+                "default",
+                "user-only",
+                "denied-skill",
+                "model-only",
+                "invalid",
+                "too-large",
+                "no-file",
+                "bad grammar",
+                "unreadable",
+            ],
+            "同名重复只留一次，顺序按发送元数据"
+        );
+        let trace_of = |name: &str| traces.iter().find(|trace| trace["name"] == name).unwrap();
+        assert_eq!(trace_of("default")["status"], "done");
+        assert_eq!(trace_of("user-only")["status"], "done");
+        assert_eq!(trace_of("denied-skill")["status"], "denied");
+        assert_eq!(trace_of("denied-skill")["code"], "permission_denied");
+        assert!(trace_of("denied-skill")["message"]
+            .as_str()
+            .unwrap()
+            .contains("skill_load(denied-skill)"));
+        assert_eq!(
+            trace_of("model-only")["code"],
+            "skill_user_invocation_disabled"
+        );
+        assert_eq!(trace_of("invalid")["code"], "skill_invocation_invalid");
+        assert_eq!(trace_of("too-large")["code"], "skill_too_large");
+        assert_eq!(trace_of("no-file")["code"], "skill_not_found");
+        assert_eq!(trace_of("bad grammar")["code"], "skill_name_invalid");
+        assert_eq!(trace_of("unreadable")["code"], "skill_read_failed");
+        assert!(
+            !user["lumir_skill_trace"]
+                .to_string()
+                .contains("UNIQUE-BODY"),
+            "痕迹数组不得含 Skill 正文"
+        );
+
+        let parts = user["content"].as_array().unwrap();
+        assert_eq!(
+            parts
+                .iter()
+                .filter(|part| part.get("lumir_skill").is_some())
+                .count(),
+            2,
+            "失败项不注入正文 part"
+        );
+        assert_eq!(
+            super::super::attachments::panel_text_of_content(parts).unwrap(),
+            "question"
+        );
+        let material = super::super::title::material(&input, None);
+        assert!(!material.contains("UNIQUE-BODY"));
+
+        let events = seen.lock().unwrap().clone();
+        let trace_events: Vec<&serde_json::Value> = events
+            .iter()
+            .filter(|event| event["type"] == "tool_call" && event["name"] == "explicit_skill")
+            .collect();
+        assert_eq!(trace_events.len(), 18, "每个痕迹一个 started + 一个 done");
+        let done_of = |name: &str| {
+            trace_events
+                .iter()
+                .find(|event| {
+                    event["status"] == "done"
+                        && event["call_id"] == format!("explicit-skill-{name}")
+                })
+                .copied()
+                .unwrap()
+        };
+        assert!(done_of("default")["summary"]
+            .as_str()
+            .unwrap()
+            .contains("成功"));
+        assert!(done_of("model-only")["summary"]
+            .as_str()
+            .unwrap()
+            .contains("skill_user_invocation_disabled"));
+        assert!(done_of("bad grammar")["summary"]
+            .as_str()
+            .unwrap()
+            .contains("skill_name_invalid"));
+
+        let messages = runtime.snapshot(&fixture.scope, &fixture.config).messages;
+        let rows = trace_rows(&messages);
+        assert_eq!(rows.len(), 9);
+        let user_at = messages.iter().position(|m| m.role == "user").unwrap();
+        let first_row_at = messages
+            .iter()
+            .position(|m| m.role == "tool" && m.name.as_deref() == Some("explicit_skill"))
+            .unwrap();
+        assert!(first_row_at > user_at, "痕迹行必须排在自己的用户消息之后");
+        let row_of = |name: &str| {
+            rows.iter()
+                .find(|(_, _, summary, _, _)| trace_args_name(summary) == name)
+                .unwrap()
+        };
+        assert_eq!(row_of("default").1, "done");
+        assert_eq!(row_of("denied-skill").1, "denied");
+        assert!(row_of("denied-skill")
+            .3
+            .as_deref()
+            .unwrap()
+            .contains("permission_denied"));
+        assert_eq!(row_of("model-only").1, "error");
+        assert!(row_of("model-only")
+            .3
+            .as_deref()
+            .unwrap()
+            .contains("skill_user_invocation_disabled"));
+        assert_eq!(row_of("unreadable").1, "error");
+
+        let wire = serde_json::to_string(client.received_inputs()).unwrap();
+        assert!(
+            !wire.contains("lumir_skill_trace"),
+            "痕迹字段必须在 wire 前剥离"
+        );
+        assert!(!wire.contains("lumir_skill"), "本地标记沿用既有剥离口径");
+        for code in [
+            "skill_user_invocation_disabled",
+            "skill_invocation_invalid",
+            "skill_too_large",
+            "skill_not_found",
+            "skill_name_invalid",
+            "skill_read_failed",
+            "permission_denied",
+        ] {
+            assert!(!wire.contains(code), "失败原因不得进入 wire：{code}");
+        }
+        assert!(wire.contains("UNIQUE-BODY-default"));
+        assert!(wire.contains("UNIQUE-BODY-user-only"));
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn explicit_skill_trace_restores_live_rows_without_reload_or_duplicates() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("trace-restore");
+        let runtime = Runtime::default();
+        runtime
+            .acquire_turn(&fixture.scope, &fixture.config)
+            .unwrap();
+        let mut client =
+            llm::MockClient::from_str(r#"{"responses":[{"text":"done"}]}"#, "skill-trace-restore")
+                .unwrap();
+        let _counter_lock = tools::skill_content_test_lock();
+        tools::reset_skill_content_load_count();
+        run_turn_for_with_skills(
+            &NullSink,
+            &runtime,
+            &fixture.scope,
+            &fixture.config,
+            "question",
+            None,
+            vec!["default".into(), "model-only".into(), "missing".into()],
+            &mut client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert_eq!(tools::skill_content_load_count(), 1);
+        let live_rows = trace_rows(&runtime.snapshot(&fixture.scope, &fixture.config).messages);
+        assert_eq!(live_rows.len(), 3);
+        let source_input = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let source_id = runtime.current_session_id(&fixture.scope).unwrap();
+        runtime.new_session(&fixture.scope).unwrap();
+        let resumed = runtime
+            .resume_session(&fixture.scope, &fixture.config, &source_id)
+            .unwrap();
+        assert!(resumed.restored_items > 0);
+        let restored_messages = runtime.snapshot(&fixture.scope, &fixture.config).messages;
+        assert_eq!(
+            trace_rows(&restored_messages),
+            live_rows,
+            "恢复必须逐值重建同一批痕迹行（名称 / 终态 / 参数 / 输出 / 时刻）"
+        );
+        assert_eq!(trace_rows(&restored_messages).len(), 3, "恢复不得重复留痕");
+        assert_eq!(tools::skill_content_load_count(), 1, "恢复不得重新加载正文");
+        let restored_input = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        assert_eq!(restored_input, source_input);
+        assert_eq!(
+            restored_messages
+                .iter()
+                .filter(|message| message.role == "user")
+                .count(),
+            1,
+            "用户消息不重复"
+        );
+        assert!(!serde_json::to_string(&restored_messages)
+            .unwrap()
+            .contains("UNIQUE-BODY"));
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn explicit_skill_trace_retry_does_not_reload_or_duplicate() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("trace-retry");
+        let runtime = Runtime::default();
+        runtime
+            .acquire_turn(&fixture.scope, &fixture.config)
+            .unwrap();
+        let mut client =
+            llm::MockClient::from_str(r#"{"responses":[{"text":"done"}]}"#, "skill-trace-retry")
+                .unwrap();
+        let _counter_lock = tools::skill_content_test_lock();
+        tools::reset_skill_content_load_count();
+        run_turn_for_with_skills(
+            &NullSink,
+            &runtime,
+            &fixture.scope,
+            &fixture.config,
+            "question",
+            None,
+            vec!["default".into(), "missing".into()],
+            &mut client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert_eq!(tools::skill_content_load_count(), 1);
+        let before = trace_rows(&runtime.snapshot(&fixture.scope, &fixture.config).messages);
+        assert_eq!(before.len(), 2);
+
+        let mut retry_client = llm::MockClient::from_str(
+            r#"{"responses":[{"text":"retry-done"}]}"#,
+            "skill-trace-retry-2",
+        )
+        .unwrap();
+        run_turn_resume_for(
+            &NullSink,
+            &runtime,
+            &fixture.scope,
+            &fixture.config,
+            "question".into(),
+            &mut retry_client,
+        );
+        assert_eq!(tools::skill_content_load_count(), 1, "重试不重新加载");
+        let after = trace_rows(&runtime.snapshot(&fixture.scope, &fixture.config).messages);
+        assert_eq!(after, before, "重试不追加、不改写痕迹行");
+        let processed = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let user = processed
+            .iter()
+            .find(|item| item["role"] == "user")
+            .unwrap();
+        assert_eq!(
+            user["lumir_skill_trace"].as_array().unwrap().len(),
+            2,
+            "重试不重复写痕迹数组"
+        );
+
+        let source_id = runtime.current_session_id(&fixture.scope).unwrap();
+        runtime.new_session(&fixture.scope).unwrap();
+        runtime
+            .resume_session(&fixture.scope, &fixture.config, &source_id)
+            .unwrap();
+        assert_eq!(
+            trace_rows(&runtime.snapshot(&fixture.scope, &fixture.config).messages),
+            before,
+            "重试后恢复仍只有每名字一行"
+        );
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn explicit_skill_trace_leaves_automatic_skill_load_alone() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("trace-auto");
+        let runtime = Runtime::default();
+        runtime
+            .acquire_turn(&fixture.scope, &fixture.config)
+            .unwrap();
+        let mut client = llm::MockClient::from_str(
+            r#"{"responses":[
+              {"tool_calls":[{"id":"auto-model-only","name":"skill_load","arguments":"{\"name\":\"model-only\"}"}]},
+              {"text":"done"}
+            ]}"#,
+            "skill-trace-auto",
+        )
+        .unwrap();
+        let _counter_lock = tools::skill_content_test_lock();
+        tools::reset_skill_content_load_count();
+        let sink = Collect::default();
+        let seen = sink.0.clone();
+        run_turn_for_with_skills(
+            &sink,
+            &runtime,
+            &fixture.scope,
+            &fixture.config,
+            "question",
+            None,
+            vec!["default".into()],
+            &mut client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert_eq!(tools::skill_content_load_count(), 2);
+        let input = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let persisted = serde_json::to_string(&input).unwrap();
+        assert!(persisted.contains("UNIQUE-BODY-default"));
+        assert!(persisted.contains("UNIQUE-BODY-model-only"));
+        let messages = runtime.snapshot(&fixture.scope, &fixture.config).messages;
+        assert_eq!(trace_rows(&messages).len(), 1, "自动调用不产生显式痕迹");
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.role == "tool"
+                    && message.name.as_deref() == Some("skill_load"))
+        );
+        let events = seen.lock().unwrap().clone();
+        let explicit_events = events
+            .iter()
+            .filter(|event| event["type"] == "tool_call" && event["name"] == "explicit_skill")
+            .count();
+        assert_eq!(explicit_events, 2, "只有显式那一个名字发痕迹事件");
+        let auto_events = events
+            .iter()
+            .filter(|event| event["type"] == "tool_call" && event["name"] == "skill_load")
+            .count();
+        assert_eq!(auto_events, 2, "自动入口的 started/done 不回归");
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn explicit_skill_trace_maps_loader_outputs_including_missing_content() {
+        let ts = 42;
+        let (content, trace) = explicit_skill_trace_from_output(
+            "demo",
+            &ToolOutput::ok(serde_json::json!({"name": "demo", "content": "BODY"})),
+            ts,
+        );
+        assert_eq!(content.as_deref(), Some("BODY"));
+        assert_eq!(trace.status, "done");
+        assert_eq!(trace.code, None);
+        assert_eq!(trace.ts, ts);
+
+        // 防御分支：加载器报成功却取不到正文字符串 → 失败痕迹，不静默跳过。
+        let (content, trace) = explicit_skill_trace_from_output(
+            "demo",
+            &ToolOutput::ok(serde_json::json!({"name": "demo"})),
+            ts,
+        );
+        assert!(content.is_none());
+        assert_eq!(trace.status, "error");
+        assert_eq!(trace.code.as_deref(), Some("skill_content_missing"));
+        assert!(trace.message.as_deref().unwrap().contains("没有正文"));
+
+        let (content, trace) = explicit_skill_trace_from_output(
+            "demo",
+            &ToolOutput::err("skill_read_failed", "读取 SKILL.md 失败"),
+            ts,
+        );
+        assert!(content.is_none());
+        assert_eq!(trace.status, "error");
+        assert_eq!(trace.code.as_deref(), Some("skill_read_failed"));
+        assert_eq!(trace.message.as_deref(), Some("读取 SKILL.md 失败"));
+    }
+
+    #[test]
+    fn plain_turn_without_explicit_skills_has_no_trace_field() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("trace-plain");
+        let runtime = Runtime::default();
+        runtime
+            .acquire_turn(&fixture.scope, &fixture.config)
+            .unwrap();
+        let mut client =
+            llm::MockClient::from_str(r#"{"responses":[{"text":"done"}]}"#, "skill-trace-plain")
+                .unwrap();
+        run_turn_for(
+            &NullSink,
+            &runtime,
+            &fixture.scope,
+            &fixture.config,
+            "question",
+            None,
+            &mut client,
+        );
+        runtime.release_turn(&fixture.scope);
+        let input = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let user = input.iter().find(|item| item["role"] == "user").unwrap();
+        assert!(
+            user.get("lumir_skill_trace").is_none(),
+            "普通消息不得带空的痕迹字段"
+        );
+        assert_eq!(
+            trace_rows(&runtime.snapshot(&fixture.scope, &fixture.config).messages).len(),
+            0
         );
         let _ = std::fs::remove_dir_all(&fixture.root);
     }
