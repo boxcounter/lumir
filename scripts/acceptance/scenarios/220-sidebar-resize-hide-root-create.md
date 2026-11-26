@@ -98,9 +98,10 @@ steps:
         editor: { has: "SIDEBAR-MARK" }
       - label: 注入的串到位（判据有区分度：出现次数口径由 runner 把关）
         editor: { has: "probe" }
-  - name: 撤销这次键入（把文档退回基线，后续步骤与 teardown 仍在干净状态上判）
+  - name: 逐字符撤销这次键入（把文档退回基线，后续步骤与 teardown 仍在干净状态上判）
     do: keys
-    keys: ["cmd+z"]
+    # 输入是五次独立按键；一次 ⌘Z 实测只撤销最后一个字符，留下 p，需要与注入次数相同的五次。
+    keys: ["cmd+z", "cmd+z", "cmd+z", "cmd+z", "cmd+z"]
     expect:
       # 不能用 `editor.not "probe"`：AXTextArea 的值含 CodeMirror 的标题块，fixture 文件名
       # `sidebar-probe` 本身就在里面，负向判据永远不成立。改为与键入前的整篇逐字节回比。
