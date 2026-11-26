@@ -19,7 +19,7 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { expectScreenshot } from "./expect-screenshot";
 import { DEMO_VAULT, stubTauri } from "./tauri-stub";
-import type { VaultFixture } from "./tauri-stub";
+import type { StubOptions, VaultFixture } from "./tauri-stub";
 
 /** 与桩侧 fixture 同值（桩模拟后端，场景断言前端渲染结果——两边各写一份是刻意的：
  *  场景断言的是「前端把后端给的值如实显示出来」，共享变量会让「桩变了场景跟着变」恒真）。
@@ -28,8 +28,12 @@ import type { VaultFixture } from "./tauri-stub";
 const NAME = "Lumir";
 const VERSION = "9.9.9";
 
-async function open(page: Page, vault: VaultFixture | null = DEMO_VAULT): Promise<void> {
-  await stubTauri(page, vault);
+async function open(
+  page: Page,
+  vault: VaultFixture | null = DEMO_VAULT,
+  options?: StubOptions,
+): Promise<void> {
+  await stubTauri(page, vault, options);
   await page.goto("/");
   await expect(page.locator(".titlebar-identity")).toBeVisible();
 }
@@ -50,7 +54,9 @@ async function tokenValue(page: Page, property: "color" | "font-weight" | "font-
 }
 
 test("空态主界面：标识块在场、三段文案、在 traffic 灯区内（系统按钮旁）", async ({ page }) => {
-  await open(page, null); // 未打开 vault 的空态
+  // 「未打开 vault 的空态」是**非首启**（last_vault 失效）：真首启（last_vault === null）会停在
+  // 启动态首启模式，#startup 不撤下，本场景拍的就不是空态主界面。
+  await open(page, null, { lastVault: "/mock/missing-vault" });
   const block = page.locator(".titlebar-identity");
   await expect(page.locator(".ti-name")).toHaveText(NAME);
   await expect(page.locator(".ti-sep")).toHaveText("·");
