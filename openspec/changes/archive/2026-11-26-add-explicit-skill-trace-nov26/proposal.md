@@ -10,6 +10,9 @@
 > 恢复历史后痕迹仍存在；不改变 Skill 权限、加载、内容注入逻辑；自动 `skill_load` 既有表现保持
 > 不变。
 
+> 节点 2（归档评审）：**机器 + 独立评审放行**（`docs/process/openspec-workflow.md`「节点 2 五要件」），
+> 逐要件事实见本文末「归档记录」。
+
 ## Why
 
 用户显式选择 Skill 后，面板今天**没有一条可核对的记录**：
@@ -63,3 +66,37 @@
   `src/harness-panel.ts`（`explicit_skill` 参数格人话化）、对应 Rust / 前端单测与验收场景 726。
 - 关联约束：不触及性能合同与「不改写源文件」铁律；不新增持久化文件，痕迹随既有会话留存
   （JSONL）走。
+
+## 归档记录
+
+### 归档前（节点 2 五要件）
+
+1. **方案已批准**：节点 1 为 Alex 2026-11-26 对「显式 Skill 留下可见痕迹」回复「采纳」，范围见
+   本文头部；实现期（含返修 r1 的 P1-1 / P2-1 / P2-2 / P2-3 收口）未注册新工具、未改权限判定、
+   未把 Skill 正文写入痕迹载体，未扩大范围。
+2. **独立评审**：K3 独立复审 **clean / merge**（P1 / P2 / P3 均为 0），绑定 tip
+   `b7a63fc5f6351e1142a8660e0bb2776935889a36`，verdict
+   `.local/reviews/add-explicit-skill-trace-nov26/k3-verdict.md`。该 tip 之后的 master 增量只有
+   合并提交 `edf336c9` 与 test-only 提交（`92008fdb` 单测类型收窄、`58ab5fd1` / `f5e9205e`
+   验收场景对齐）；`9cf5d75f..HEAD` 对 `src/**` 与 `src-tauri/**` 零改动，合并冲突的逐文件处置
+   见 `.local/missions/harness-ux-integration-nov26/README.md`。verdict 把「真机 726 + 77、完整
+   视觉、完整 gate 未跑」列为未完成验证，本节第 4 条补齐。
+3. **tasks 完成**：`tasks.md` 全勾（6.6 记录真机结果），无放弃项。
+4. **门禁与真机证据**：
+   - quick：`GATE RESULT: 13/13 PASS（SKIP 0）`，日志
+     `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/harness-ux-integration-nov26/gate-quick-release-0.19.0-r2.log`；
+   - 集成测试：Rust 1382 passed / 0 failed / 6 ignored；前端单测 2075 passed；相关视觉结构 135
+     passed / 1 skipped；
+   - 首轮完整 visual：`GATE RESULT: 14/15 PASS（SKIP 0）`，唯一 FAIL 是当时未修的 `tsc-unit`
+     （既有问题，`92008fdb` 修掉），`visual-regression` PASS（1287s）；
+   - 最终完整 visual：14 个 quick 项全 PASS，`visual-regression` 1839 passed / 1 failed（唯一失败
+     是既有 IME 低频定时用例，与本批改动面无交集），该用例双引擎复跑 2/2 PASS（日志见
+     `.local/missions/harness-ux-integration-nov26/gate-visual-release-0.19.0-final.log` 与
+     `ime-low-frequency-release-recheck.log`）；**不声称完整 gate 15/15**；
+   - 真机：77 **PASS**（8 断言，首轮）与 726 **r2 PASS**（51 断言、36.5s）；726 首轮 FAIL
+     （51 断言 / 2 失）经场景期望对齐真实行为后转绿（`58ab5fd1`，产品代码零改动）。证据
+     `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-26-release-0.19.0/` 与
+     `-r2/`。
+5. **规格对账**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS（扫过 14 份 delta / 17 条
+   MODIFIED / 262 段 / 无静默丢段；归档队列 1 项已完成 change 有唯一条目）；`validate --all
+   --strict` 40 passed / 0 failed；`docs/backlog.md` 归档队列有且仅有一条本 change 条目。

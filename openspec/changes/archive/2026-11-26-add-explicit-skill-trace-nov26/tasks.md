@@ -43,7 +43,10 @@
 - [x] 6.3 相关视觉结构断言（`LUMIR_VISUAL_STRUCTURAL=1`）与 `tests/visual` tsc
 - [x] 6.4 `scripts/docs-check.sh`
 - [x] 6.5 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`
-- [ ] 6.6 真机验收场景 726 + 77（**本轮未执行**：mission 明令本轮不执行真机操作；场景静态契约已通过，行为面等待独立真机批次）
+- [x] 6.6 真机验收场景 726 + 77：实现批不执行真机；发布批补跑——首轮 77 **PASS**（8 断言）、
+      726 FAIL（51 断言 / 2 失），按真实行为对齐场景期望（`58ab5fd1`，产品代码零改动）后 726 r2
+      **PASS**（51 断言、36.5s）。证据 `.local/acceptance/2026-11-26-release-0.19.0/`（77）与
+      `.local/acceptance/2026-11-26-release-0.19.0-r2/`（726）
 
 ## 7. 独立评审返修（verdict: needs-changes → 返修）
 
