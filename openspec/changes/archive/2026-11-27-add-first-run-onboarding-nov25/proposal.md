@@ -155,4 +155,16 @@ content pane 显示真实功能与快捷键 tips，去掉当前的新建文件�
    399 段，0 静默丢段；队列条目唯一）；`validate --all --strict` 45 passed / 0 failed；归档队列
    有且仅有一条本 change 条目。
 
-**归档后**：ARCHIVE_PLACEHOLDER
+**归档后（2026-11-27）**：
+
+- 归档提交：`955e74ab`（`chore(openspec): archive add-first-run-onboarding-nov25`）。
+- 包装器输出：`Totals: + 2, ~ 5, - 0, → 0`；
+  `Change 'add-first-run-onboarding-nov25' archived as '2026-11-27-add-first-run-onboarding-nov25'.`
+- 修链：归档 delta 1 处（`specs/app-startup/spec.md` 的 `../../../archive/...` →
+  `../../../../archive/...`）；living `openspec/specs/app-startup/spec.md` 的同一段落改为内联
+  代码路径（与归档 delta 文本一致，供 `--archived` 逐段对账），`scripts/openspec-links.sh`
+  710 条相对链接全部可达。
+- `node scripts/openspec-archive-check.mjs --archived add-first-run-onboarding-nov25`：
+  `PASS（openspec/changes/archive/2026-11-27-add-first-run-onboarding-nov25：5 条 MODIFIED，
+  对比 57 段；人工恢复 0 段，声明认领 0 段）`（2026-11-27）。
+- `validate --all --strict`：45 passed / 0 failed；`docs-check` PASS。
