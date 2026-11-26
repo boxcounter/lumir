@@ -684,7 +684,16 @@ function renderAllTabStrips(): void {
     // 与 dirty（onDirty 重绘）全部汇到这里，别处不另埋钩子。「有无标签」按带路径的会话现查实例
     // 会话表——与标签条的 visibleTabsOf 同一定义，不读账本（账本会登记 path=undefined 的空会话）。
     const hasTabs = editor.sessions().some((session) => session.path !== undefined);
+    // 行号 gutter 的 per-pane 输入（change fix-no-tab-empty-state-nov27）：无带路径标签的文档
+    // pane 不显示行号（含 ⌥G 临时 gutter）。这是 `renderAllTabStrips` 既有 hasTabs 的复用，
+    // 判据合成在 src/line-numbers.ts 的 `gutterVisible`（唯一来源），这里只负责把值喂进去。
+    editor.setPaneHasTabs(hasTabs);
     const foreground = editor.activeSession();
+    // 结构性只读的两个来源：分栏态空 pane 的输入闸门（M329）与首启 tips 在场（change
+    // add-first-run-onboarding-nov25）。它们只影响呈现（不画插入光标），输入拒收仍由
+    // `setSessionEditable` 的 editable 维度承担；分栏前 dirty scratch 豁免照旧（paneBlocksInput
+    // 为假 ⇒ structural 为假 ⇒ 光标保留）。
+    const structuralReadOnly = paneBlocksInput(split, hasTabs, foreground.dirty) || firstRunTipsVisible;
     // 分栏态空 pane 的空会话置只读（M329）：view 层拒收输入 + changeFilter 兜底，结构性不可
     // 编辑；打开 / 新建文件后 hasTabs 转真，这里按 isEditablePath 复原——幂等早退，稳态零成本。
     // 「空」的三维与引导水印**同一条口径**（`paneBlocksInput`）：`foreground.dirty` 这一维是
@@ -699,9 +708,8 @@ function renderAllTabStrips(): void {
     // 路径 `view.dispatch` 合法；实测「分栏后在草稿里 ⌘Z 回基线」：闸门如期施加、零报错。
     editor.setSessionEditable(
       foreground,
-      !paneBlocksInput(split, hasTabs, foreground.dirty) &&
-        isEditablePath(foreground.path) &&
-        !firstRunTipsVisible,
+      !structuralReadOnly && isEditablePath(foreground.path),
+      structuralReadOnly,
     );
     assembly.guideEl!.hidden =
       !emptyPaneGuideVisible(
@@ -1098,11 +1106,12 @@ const editor: EditorHandle = {
   // 可编辑性是**逐实例**的（藏在各 pane 自己的 modeCompartment 里），因此按属主 pane 路由——
   // 与 reloadSession / closeSession 同一条会话级路由口径。装配层点对点的调用走
   // `assembly.handle.setSessionEditable`（不用本复合句柄）；这一条只是接口完整性的实现。
-  setSessionEditable: (session, editable) => {
+  setSessionEditable: (session, editable, structuralReadOnly = false) => {
     const owner = paneEntryOfSession(session)?.[1].handle;
     ((owner?.kind === "doc" ? owner.editor : undefined) ?? activeEditor()).setSessionEditable(
       session,
       editable,
+      structuralReadOnly,
     );
   },
   activateSession: (session) => {
@@ -1145,6 +1154,10 @@ const editor: EditorHandle = {
   setGotoLinePrompt: (prompt) => forEachEditor((handle) => handle.setGotoLinePrompt(prompt)),
   setGutterCopy: (port) => forEachEditor((handle) => handle.setGutterCopy(port)),
   setLineNumbers: (on) => forEachEditor((handle) => handle.setLineNumbers(on)),
+  // per-pane 输入（change fix-no-tab-empty-state-nov27）：装配层在 renderAllTabStrips 按 pane
+  // 点对点调用 `assembly.handle.setPaneHasTabs`；这一条只是接口完整性的直转（活跃 pane），
+  // 不得被当作「一次设置全部 pane」的广播入口。
+  setPaneHasTabs: (hasTabs) => activeEditor().setPaneHasTabs(hasTabs),
   setGotoLineGutterVisible: (visible) =>
     forEachEditor((handle) => handle.setGotoLineGutterVisible(visible)),
   refreshPreview: () => forEachEditor((handle) => handle.refreshPreview()),
@@ -1702,20 +1715,39 @@ createSidebarDrag({
 // 不回写它：窗口恢复后侧栏自动回到用户拖出来的宽度。
 window.addEventListener("resize", () => applySidebarWidth(sidebarWidthIntent));
 
-// 编辑器区域的"暂不支持预览 / 错误提示"覆盖层：显示提示时藏起编辑器本体。
+// 编辑器区域的"暂不支持预览 / 错误提示"覆盖层：显示提示时藏起**该 doc pane** 的编辑器本体。
 //
 // M317 2.6：提示**点名跟随活跃 pane**——`showNotice` 的文案由打开动作给的 path 派生（打开 /
-// 重载的落点就是活跃 pane），隐藏的是 `editor.view.dom`（活跃 pane 的前台视图）。覆盖层是
-// `shell.editor` 上的 `inset: 0` 整块遮罩，双 pane 下会临时盖住两栏（转瞬即逝的装载提示），
-// 单 pane 常态逐像素不变；跨 pane 的批量提示（切 vault 守卫）维持既有「数量 + 当前 vault」
-// 口径，取的是全部 pane 的 dirty 并集（save.vaultSwitchBlock），逐路径键控不变。
+// 重载的落点就是活跃 pane）。change fix-no-tab-empty-state-nov27 起覆盖层也**挂进活跃 doc
+// pane 的挂载元素**（原来挂 `shell.editorRow`、`inset:0` 会盖住 harness / composer）：它只覆盖
+// 自己那个 pane，harness 面板与 composer 仍在场且可输入；切换活跃 pane 时由 `placeNotice`
+// 在同一同步点换宿主。跨 pane 的批量提示（切 vault 守卫）维持既有「数量 + 当前 vault」口径，
+// 取的是全部 pane 的 dirty 并集（save.vaultSwitchBlock），逐路径键控不变。
 const notice = document.createElement("div");
 notice.className = "editor-notice";
 notice.hidden = true;
-// 挂进 pane 行盒（change add-persistence-health-status-nov23）：`.pane-editor` 改为纵向两段后，
-// 遮罩要盖的是**正文区**（pane 行），不是顶部健康横幅；同时保持在 pane 之后的 DOM 顺序，
-// 分栏时 harness / 文档 pane 仍在遮罩之上（与改动前 `.pane-editor` 的层序一致）。
+// 初态挂在 pane 行盒（change add-persistence-health-status-nov23 的层序前提）；首次显示时由
+// `placeNotice` 移进活跃 doc pane 的 `.editor-pane`——那里是 `position: relative` 的定位包含块，
+// `inset:0` 因此只覆盖该 pane。保持 hidden 时位置不影响任何像素。
 shell.editorRow.append(notice);
+
+/** 覆盖层当前藏起的编辑器（`view.dom.style.display = "none"` 的施加对象）。覆盖层换宿主 /
+ *  撤下时 MUST 由这里恢复，不能按「当时的活跃 pane」现取——活跃 pane 可能已经变了。 */
+let noticeHostEditor: EditorHandle | null = null;
+
+/** 把覆盖层放到**活跃 doc pane** 里并藏起它的编辑器。幂等；未显示时是空操作。 */
+function placeNotice(): void {
+  if (notice.hidden) return;
+  const pane = activeDocPane();
+  const assembly = paneAssemblies.get(pane.id);
+  const mountEl = assembly?.mountEl ?? shell.editorPane;
+  if (notice.parentElement !== mountEl) mountEl.append(notice);
+  const next = assembly?.handle.kind === "doc" ? assembly.handle.editor : null;
+  if (noticeHostEditor === next) return;
+  if (noticeHostEditor !== null) noticeHostEditor.view.dom.style.display = "";
+  noticeHostEditor = next;
+  if (noticeHostEditor !== null) noticeHostEditor.view.dom.style.display = "none";
+}
 
 /** 空 vault 首入态的重绘钩子（语言切换后按当前语言重新取值）：undefined = 当前提示不是空态。 */
 let relabelNotice: (() => void) | undefined;
@@ -1736,7 +1768,7 @@ function renderNotice(text: string, action?: { label: string; run: () => void })
     notice.append(button);
   }
   notice.hidden = false;
-  editor.view.dom.style.display = "none";
+  placeNotice();
   widthDrag.setVisible(false); // 空态 / 覆盖层在：栏宽手柄 MUST NOT 出现（spec「空态无手柄」）
 }
 
@@ -1789,7 +1821,10 @@ function showEditor() {
   if (firstRunTipsVisible) hideFirstRunTips();
   relabelNotice = undefined;
   notice.hidden = true;
-  editor.view.dom.style.display = "";
+  if (noticeHostEditor !== null) {
+    noticeHostEditor.view.dom.style.display = "";
+    noticeHostEditor = null;
+  }
   widthDrag.setVisible(true);
 }
 
@@ -2895,6 +2930,9 @@ function syncActiveDocument({ passiveOverlayClose = false }: DocumentSwitchOptio
   // 开 / 关 / 移动标签与实例内部建会话都汇到这里。
   reconcilePaneLedger();
   renderAllTabStrips();
+  // 覆盖层跟随活跃 doc pane（change fix-no-tab-empty-state-nov27）：只在它可见时动作，
+  // 换宿主 / 恢复旧 pane 的编辑器都在 placeNotice 里一次完成。
+  placeNotice();
   // 标签集合 / 顺序 / 激活项变化后防抖落盘会话（M163）。挂在这个唯一同步点上：切标签、
   // 开文件、关标签都会经过它，别处不必各埋一个「记得写会话」的钩子。
   switcher.sessionChanged();

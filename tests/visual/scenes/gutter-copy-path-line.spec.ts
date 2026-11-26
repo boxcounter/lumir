@@ -283,13 +283,17 @@ test("剪贴板被拒：失败 toast、不显示成功、剪贴板与文档都�
   expect(after.scrollTop).toBe(before.scrollTop);
 });
 
-test("无路径：关闭最后标签后右键，失败 toast 与 console 诊断各一次，剪贴板不变", async ({ page, context }) => {
+test("关闭最后标签：无标签 pane 不显示 gutter，原位置右键不复制不反馈；重开文档恢复", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await openVaultDoc(page, MD_PATH, { line_numbers: "on" });
   await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+  const gutter = await page.locator(".cm-lineNumbers").boundingBox();
+  expect(gutter).not.toBeNull();
   await page.locator(".tab-close").click();
   await expect(page.locator(".tab-open")).toHaveCount(0);
-  await expect(page.locator(".cm-lineNumbers")).toBeVisible(); // 空文档继承 md 模式 + always 档
+  // change fix-no-tab-empty-state-nov27：on 档全局开关不覆盖「该 pane 无带路径标签」这一维
+  // ——空文档不出行号（原来这里断言「空文档继承 md 模式 + always 档」有 gutter，合同已改）。
+  await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
   await expect(page.locator(".modeline-path")).toHaveText("无当前文件");
   await page.evaluate(() => navigator.clipboard.writeText("SENTINEL-NO-PATH"));
 
@@ -298,12 +302,17 @@ test("无路径：关闭最后标签后右键，失败 toast 与 console 诊断�
     if (message.type() === "warning" && message.text().includes("复制")) warnings.push(message.text());
   });
 
-  await rightClickLine(page, 1);
-  await expect(page.locator(".lumir-toast").filter({ hasText: "复制失败" })).toHaveCount(1);
+  // 原 gutter 位置现在是正文区左缘：没有 gutter 就没有本手势（不复制、不反馈、不诊断）。
+  await page.mouse.click(gutter!.x + 2, gutter!.y + 4, { button: "right" });
+  await expect(page.locator(".lumir-toast").filter({ hasText: "复制失败" })).toHaveCount(0);
   await expect(page.locator(".lumir-toast").filter({ hasText: "已复制" })).toHaveCount(0);
   expect(await clipboard(page)).toBe("SENTINEL-NO-PATH");
-  await expect.poll(() => warnings.length).toBe(1);
-  expect(warnings[0]).toContain("无当前文件");
+  expect(warnings).toHaveLength(0);
+
+  // 有带路径标签进入后，同一开关按配置恢复（同帧同步点在 renderAllTabStrips）。
+  await page.locator(`.ft-row[title="${MD_PATH}"]`).click();
+  await expect(page.locator(".modeline-path")).toHaveText(MD_PATH);
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible();
 });
 
 test("frontmatter replace 块与后续正文：块首行复制 1，正文复制实际源行号", async ({ page, context }) => {

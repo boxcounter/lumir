@@ -6,15 +6,29 @@
 // 放进本模块（tests/unit/line-numbers.test.ts 在这一层跑），不进装配层 src/main.ts。
 //
 // 分层（REVIEW.md「同一语义两处真源」条）：
-//   - 本模块：当前值的只读口径、取反、以及两条可见文案；
+//   - 本模块：当前值的只读口径、取反、gutter 在场判据的纯函数、以及两条可见文案；
 //   - src/main.ts 的 `applyLineNumbers`：**唯一施加点**——写 `data-line-numbers`、把同一值写给
 //     全部文档 pane 的编辑器、刷新 modeline 指示钮；启动装配与运行期切换都经它；
 //   - src/main.ts 的 `toggleLineNumbers`：**唯一切换路径**——命令（⌘⇧N）与 modeline 行号钮
 //     直接调它，不另存第三份「当前开关」状态；
-//   - src/editor.ts 的 `setLineNumbers`：编辑器实例态的唯一写入者（gutter 在场判据在那边）。
+//   - src/editor.ts 的 `setLineNumbers` / `setPaneHasTabs`：编辑器实例态的唯一写入者；gutter
+//     的在场面只经 `gutterVisible` 判一次。
 
 import type { LineNumbers } from "./bindings/LineNumbers";
 import { t } from "./copy";
+
+/**
+ * 行号 gutter 是否在场（change fix-no-tab-empty-state-nov27）：全局开关 / ⌥G 临时档之外，
+ * 还要求**该文档 pane 有带路径标签**。没有标签的空态（含单 pane 未命名 scratch）不显示行号
+ * ——空编辑器上挂一列「1」既无信息量，又与「按键无反应」的只读/可编辑歧义叠在一起。
+ *
+ * `hasTabs` 是 per-pane 输入（装配层 `renderAllTabStrips` 的既有 `hasTabs`，与标签条 /
+ * 空 pane 引导同一定义），本函数是唯一把三者合起来的判据；`src/editor.ts` 的
+ * `gutterExtensions()` 直接消费它，别处 MUST NOT 另写一份表达式。
+ */
+export function gutterVisible(hasTabs: boolean, lineNumbersOn: boolean, gotoGutterVisible: boolean): boolean {
+  return hasTabs && (lineNumbersOn || gotoGutterVisible);
+}
 
 /**
  * 从根元素读运行期当前开关（唯一生效面 = `<html data-line-numbers>`）。

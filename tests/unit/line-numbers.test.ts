@@ -9,6 +9,7 @@ import {
   LINE_NUMBERS_INDICATOR_LABEL,
   LINE_NUMBERS_SAVE_FAILED_TEXT,
   currentLineNumbers,
+  gutterVisible,
   nextLineNumbers,
 } from "../../src/line-numbers.ts";
 
@@ -37,6 +38,21 @@ test("nextLineNumbers：两档互转；null（未施加）按默认 off 取反�
   assert.notEqual(nextLineNumbers(null), "off", "未施加时 MUST NOT 空转回 off");
   // 连续两次取反回到原点——开关是二元的，没有第三档。
   assert.equal(nextLineNumbers(nextLineNumbers("on")), "on");
+});
+
+test("gutterVisible：无标签压过 on / ⌥G 两个开关；有标签时按开关与临时档", () => {
+  // 有区分度的四格（change fix-no-tab-empty-state-nov27）：
+  // ① 默认 off、无标签 → 不在场；② 持久 on、无标签 → **仍不在场**（本 change 的核心格，
+  //    只改开关或只改 hasTabs 都不会让这条变绿）；③ 有标签 + on → 在场；④ 无标签 + ⌥G
+  //    临时档 → 也不在场（临时 gutter 同样受 per-pane 约束）。
+  assert.equal(gutterVisible(false, false, false), false);
+  assert.equal(gutterVisible(false, true, false), false, "无标签时 on 档 MUST NOT 出 gutter");
+  assert.equal(gutterVisible(true, false, false), false);
+  assert.equal(gutterVisible(true, true, false), true);
+  assert.equal(gutterVisible(true, false, true), true, "off 档的 ⌥G 临时 gutter 在有标签时仍在场");
+  assert.equal(gutterVisible(false, false, true), false, "无标签时 ⌥G 临时 gutter MUST NOT 出现");
+  // 反向判据：把 hasTabs 置真而其余不变，结果必须翻面——证明此维真的参与判定，不是被忽略。
+  assert.notEqual(gutterVisible(true, true, false), gutterVisible(false, true, false));
 });
 
 test("文案 D974：指示钮的悬停提示 / 读屏名逐字等于 deck 模板，读数不译文", () => {

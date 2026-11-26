@@ -987,9 +987,11 @@ body {
   background-color: var(--code-bg);
 }
 /* 空 pane 引导（M322，文案 D369）：pane 在场但零标签时正文区的水印层——绝对定位盖在该
-   pane 的编辑器之上（**透明底**：光标与键入内容透得出；前台未命名文档是 dirty 草稿时引导
-   让位，谓词在 pane-layout 的 emptyPaneGuideVisible）。常驻 mountEl 内、`hidden` 切换在场 /
-   离场，单 pane 恒隐——单 pane 常态逐像素不变（构造上零影响）。只消费既有 token。 */
+   pane 的编辑器之上（**透明底**：底下的 scratch 在可编辑豁免档仍透得出；前台未命名文档是
+   dirty 草稿时引导让位，谓词在 pane-layout 的 emptyPaneGuideVisible）。指针用 `default`
+   而不是 `text`：分栏空 pane 的正文是结构性只读，`text` 光标会暗示「这里能打字」。
+   常驻 mountEl 内、`hidden` 切换在场 / 离场，单 pane 恒隐——单 pane 常态逐像素不变
+   （构造上零影响）。只消费既有 token。 */
 .pane-empty-guide {
   position: absolute;
   inset: 0;
@@ -1001,11 +1003,20 @@ body {
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
   color: var(--text-3);
-  cursor: text;
+  cursor: default;
 }
 /* display:flex 会盖掉 UA 的 [hidden] 规则，显式补回（同 .titlebar-identity / .editor-notice） */
 .pane-empty-guide[hidden] {
   display: none;
+}
+/* 结构性只读前台（分栏空 pane / 首启 tips，change fix-no-tab-empty-state-nov27）不画 CM 插入
+   光标：类由 src/editor.ts 的 `modeExtensions` 按会话 `structuralReadOnly` 挂在 `.cm-editor`
+   外层（随 mode Compartment 重配）。只隐藏**光标层**——`.cm-selectionLayer` 不受影响，只读
+   内容仍可选中复制；`tabindex` / `aria-readonly` 与焦点归还不改（点击仍激活 pane）。MUST NOT
+   用 `:has()` 从 `contenteditable=false` 反推：vault 外只读会话同是 contenteditable=false，
+   但不在「结构性只读」范围内、仍保留光标。 */
+.cm-editor.lumir-structural-readonly .cm-cursorLayer {
+  visibility: hidden;
 }
 /* 摘录浮动钮（M344，change add-harness-quote-cards design §5，文案 D370）：编辑器选区在场时的
    「摘录到对话」瞬态钮——挂在 .editor-pane（position:relative）里绝对定位、选区右下，选区

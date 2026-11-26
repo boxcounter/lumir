@@ -56,6 +56,7 @@ import { createInvokeAttachmentProvider, codeLanguageOfPath, collectImageRefs, f
 import type { AttachmentProvider, ImageQuoteHandler, ImageRef } from "./preview/attachments";
 import { bindingHighlight } from "./code-identifiers";
 import { remapPathAfterRename } from "./tree";
+import { gutterVisible } from "./line-numbers";
 import { LANGUAGES, TOKEN_GROUPS, tokenClassOf } from "./preview/code";
 import type { CommandRunner, EditorCommandId } from "./keys";
 import { isWidgetKeyTarget } from "./keys";
@@ -1251,6 +1252,20 @@ export interface EditorSession {
    */
   editable: boolean;
   /**
+   * 该会话的前台是否是**结构性只读**的呈现态（change fix-no-tab-empty-state-nov27）：
+   * 分栏态空 pane 的输入闸门（M329）与首启 tips 在场时的空白草稿（change
+   * add-first-run-onboarding-nov25）都属这一类。它与 `editable` 不是同一维：
+   *  - `editable === false` 还可能是 vault 外只读会话 / 图片（非文本）会话——那些不是
+   *    「结构性」只读，本标志对它们恒假；结构只读只是 `editable === false` 的一个子集。
+   *  - 本标志只服务**呈现**：结构性只读前台不画 CM 插入光标（`modeExtensions` 在
+   *    `.cm-editor` 上挂 `lumir-structural-readonly`，样式隐藏 `.cm-cursorLayer`）。
+   *    点击仍可聚焦 / 激活 pane，只读内容仍可选中复制，tabindex 与焦点归还不改。
+   *  - 值由装配层在唯一同步点 `renderAllTabStrips` 经 `setSessionEditable` 的第三参写入；
+   *    单 pane 可编辑 scratch、分栏前 dirty scratch 豁免、打开文档后的恢复都在这条写入
+   *    路径上，不存在第二处改判。
+   */
+  structuralReadOnly: boolean;
+  /**
    * 是否是**vault 外只读会话**（change quick-open-file-oct23 的 D2 倾向侧）。
    *
    * **全生命周期不变**，只在创建点定死（`EditorHandle.createExternalSession`）。它是「这个
@@ -1441,10 +1456,21 @@ export interface EditorHandle {
    * 调用方按会话对象传，只有本实例的会话有意义）。前台会话立刻经 dispatch 生效（投影与
    * `aria-readonly` 同步），后台会话只换代它的 state（与 `reconfigureWrap` 等既有分流同形）。
    *
+   * 第三参 `structuralReadOnly`（change fix-no-tab-empty-state-nov27）是该只读状态的**呈现
+   * 维度**：为真时前台不画 CM 插入光标（见 `EditorSession.structuralReadOnly` 的注释）。
+   * 它与 `editable` 一起比较、一起重配——只翻一个会让「可编辑但无光标」或「只读却有光标」
+   * 的假态残留。
+   *
    * 条款居所（living spec）：`openspec/specs/pane-layout/spec.md` 的「分栏态空 pane 不接受
    * 文本输入」——本条是实现只读的那个运行期入口。
    */
-  setSessionEditable(session: EditorSession, editable: boolean): void;
+  setSessionEditable(session: EditorSession, editable: boolean, structuralReadOnly?: boolean): void;
+  /** 设置本实例所属文档 pane 是否有**带路径标签**（change fix-no-tab-empty-state-nov27）：
+   *  行号 gutter 的在场判据之一（`src/line-numbers.ts` 的 `gutterVisible`，唯一判据）。装配层
+   *  在 `renderAllTabStrips` 把既有 `hasTabs` 逐 pane 喂进来；无标签的空态（含单 pane 未命名
+   *  scratch）不显示行号，⌥G 的临时 gutter 同样受此约束。打开 / 新建带路径文件后 hasTabs 转真，
+   *  同一同步点按配置恢复。值没变时是空操作；新建会话直接读当前实例值。 */
+  setPaneHasTabs(hasTabs: boolean): void;
   /**
    * 改名后就地 remap 打开中的会话路径（M244 裁决点 5，菜单发起的重命名专用）：
    * `from` 单个会话替换、`from/` 子树全部前缀替换。**只改路径**——内容、选区、滚动
@@ -1896,6 +1922,14 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
    * `on` 档下这个标志被忽略（gutter 已常驻）。
    */
   let gotoGutterVisible = false;
+  /**
+   * 本实例所属文档 pane 是否有**带路径标签**（change fix-no-tab-empty-state-nov27）：gutter
+   * 在场判据的第三个维度，由装配层在 `renderAllTabStrips` 逐 pane 经 `setPaneHasTabs` 写入。
+   * 初值 `false`——没有任何标签的空态（含单 pane 未命名 scratch）不显示行号；打开 / 新建带
+   * 路径文件后同一同步点转真，按配置恢复。`setLineNumbers` / `setGotoLineGutterVisible` 的
+   * 重配都会读它，⌥G 的临时 gutter 因此同样受约束。
+   */
+  let paneHasTabs = false;
   const readyListeners = new Set<EditorReadyListener>();
   let readyPath: string | undefined;
   let readyRequestId: number | undefined;
@@ -2051,7 +2085,12 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     view.dom.ownerDocument.getSelection()?.removeAllRanges();
   }
 
-  function modeExtensions(mode: EditorMode, path: string | undefined, editable: boolean): Extension[] {
+  function modeExtensions(
+    mode: EditorMode,
+    path: string | undefined,
+    editable: boolean,
+    structuralReadOnly: boolean,
+  ): Extension[] {
     // 编辑器内核键位：Enter 走自动缩进 / markup 续行；裸 marker 行的 Backspace 先于上游
     // 删除命令接管。命令体在 `src/enter-indent.ts`（单独模块的理由见那里），这里只装配。
     const markupKeymap = Prec.highest(
@@ -2226,6 +2265,15 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       EditorState.readOnly.of(!editable),
       EditorView.contentAttributes.of({ tabindex: "0", "aria-readonly": String(!editable) }),
     ];
+    // 结构性只读的**呈现**标记（change fix-no-tab-empty-state-nov27）：挂在 `.cm-editor`
+    // 外层，`src/style.css` 的 `.lumir-structural-readonly .cm-cursorLayer { visibility:
+    // hidden }` 只隐藏插入光标层——选区层不受影响，只读内容仍可选中复制；tabindex 与焦点
+    // 归还也不改。MUST NOT 用 `:has()` 从 `contenteditable=false` 反推：vault 外只读会话
+    // 同样是 contenteditable=false，但它们不在「结构性只读」的范围内（仍保留光标）。
+    // 标记装进 mode 这个 Compartment：切会话 / 可编辑性翻面时与 editability 同一批重配。
+    const structuralPresentation: Extension[] = structuralReadOnly
+      ? [EditorView.editorAttributes.of({ class: "lumir-structural-readonly" })]
+      : [];
     // 行号可见面（M281，change goto-line-command；change global-line-numbers-toggle-nov23 起
     // md 与只读 code **共用同一个开关、同一个判据**）：装 / 卸一律走 `gutterCompartment`
     // （不重配 modeCompartment，避免连带重建 live preview），见 `gutterExtensions`。
@@ -2239,6 +2287,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     return mode === "md"
       ? [
           ...editability,
+          ...structuralPresentation,
           ...highlight,
           baseTheme,
           livePreview(previewContext),
@@ -2248,7 +2297,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           // M836 / M854 / M855：原生删除与键入的回读闸门（见函数组注释；只 md 有 replace 装饰）。
           nativeEditGate,
         ]
-      : [...editability, ...highlight, baseTheme, codeTokenTheme, codeBindingTheme, gutterCompartment.of(gutterExtensions()), highlightActiveLine(), markupKeymap, codeGraphemeBackspaceGate];
+      : [...editability, ...structuralPresentation, ...highlight, baseTheme, codeTokenTheme, codeBindingTheme, gutterCompartment.of(gutterExtensions()), highlightActiveLine(), markupKeymap, codeGraphemeBackspaceGate];
   }
 
   /** 行号 gutter 的**唯一装配点**（两模式共用）：md 与 code 分支都经 `gutterExtensions()`
@@ -2287,10 +2336,13 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   }
 
   /** 行号 gutter 的**在场判据的唯一来源**（REVIEW.md「同一语义两处真源」条——别处 MUST NOT
-   *  自行判断）。md 与只读 code 共用它：持久开关 `lineNumbersOn` 常驻，或（`off` 档下）跳转
-   *  输入条打开期间临时在场。收起输入条时 `gotoGutterVisible` 先被置回 false，再重配。 */
+   *  自行判断）。md 与只读 code 共用它，三个维度合成一次判断（纯函数在 `src/line-numbers.ts`
+   *  的 `gutterVisible`）：持久开关 `lineNumbersOn` 常驻、或（`off` 档下）跳转输入条打开期间
+   *  临时在场；两者都只在**该 pane 有带路径标签**时成立（change fix-no-tab-empty-state-nov27
+   *  ——无标签空态不出行号，⌥G 临时档也不例外）。收起输入条时 `gotoGutterVisible` 先被置回
+   *  false，再重配。 */
   function gutterExtensions(): Extension {
-    return lineNumbersOn || gotoGutterVisible ? lineNumberGutterExtensions() : [];
+    return gutterVisible(paneHasTabs, lineNumbersOn, gotoGutterVisible) ? lineNumberGutterExtensions() : [];
   }
 
   /** 把 gutter 的在场状态重配到**全部会话**（md 与 code 一视同仁；照 `reconfigureWrap` 的既有
@@ -2311,9 +2363,14 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
    * state 重建都取当前值）。视图层可编辑性装在**模式**这个 Compartment 里（它与模式同批
    * 装载/重配，见 modeExtensions），因此这里随 mode 一起传下去。
    */
-  function modeAndWrapEffects(mode: EditorMode, path: string | undefined, editable: boolean): StateEffect<unknown>[] {
+  function modeAndWrapEffects(
+    mode: EditorMode,
+    path: string | undefined,
+    editable: boolean,
+    structuralReadOnly: boolean,
+  ): StateEffect<unknown>[] {
     return [
-      modeCompartment.reconfigure(modeExtensions(mode, path, editable)),
+      modeCompartment.reconfigure(modeExtensions(mode, path, editable, structuralReadOnly)),
       linkSuggestRefresh.of(null),
       wrapCompartment.reconfigure(wrapExtensions(mode, wrap)),
     ];
@@ -2515,9 +2572,14 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
    *  `currentEditable`）都**逐实例**——只共享 compartment 的定位 token 不够，内容要换成目标实例
    *  现取的。`state.update({ effects })` 不带 changes ⇒ 不制造撤销事件、不重新解析；history 是
    *  模块级 StateField，reconfigure 不丢撤销栈。 */
-  function rebindEffects(mode: EditorMode, path: string | undefined, editable: boolean): StateEffect<unknown>[] {
+  function rebindEffects(
+    mode: EditorMode,
+    path: string | undefined,
+    editable: boolean,
+    structuralReadOnly: boolean,
+  ): StateEffect<unknown>[] {
     return [
-      ...modeAndWrapEffects(mode, path, editable),
+      ...modeAndWrapEffects(mode, path, editable, structuralReadOnly),
       baseCompartment.reconfigure(baseExtensions()),
       linkSuggestCompartment.reconfigure(linkSuggest),
     ];
@@ -2528,7 +2590,14 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
    * 对象）：撤销史 / 语法树 / 搜索查询都是 StateField，必须逐会话独立，否则标签之间
    * 会共享一个撤销栈。创建期扩展逐条有据，见下面各段注释。
    */
-  function sessionState(doc: string, path: string | undefined, mode: EditorMode, editable: boolean, settings: WrapSettings): EditorState {
+  function sessionState(
+    doc: string,
+    path: string | undefined,
+    mode: EditorMode,
+    editable: boolean,
+    settings: WrapSettings,
+    structuralReadOnly = false,
+  ): EditorState {
     return EditorState.create({
       doc,
       extensions: [
@@ -2584,7 +2653,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         // 范围经 setLineHighlight 效果设置 / 清除。同样装在模式无关的基础层，md / code 与只读
         // 会话都生效；生命周期（计时 / 替换 / 切标签 / 关闭会话）归本模块的会话内核。
         lineHighlightExtension,
-        modeCompartment.of(modeExtensions(mode, path, editable)),
+        modeCompartment.of(modeExtensions(mode, path, editable, structuralReadOnly)),
         // 基础层（changeFilter + updateListener）：绑实例闭包，收进模块级共享的 baseCompartment，
         // 由 adoptSession 用目标实例的闭包重配（见 baseExtensions / rebindEffects 的 P1-1 说明）。
         baseCompartment.of(baseExtensions()),
@@ -2619,6 +2688,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       loaded,
       mode,
       editable,
+      structuralReadOnly: false,
       external,
       cleanDoc: doc,
       dirty: false,
@@ -2658,6 +2728,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       loaded,
       mode: "image",
       editable: false,
+      structuralReadOnly: false,
       external: false,
       cleanDoc: "",
       dirty: false,
@@ -2921,14 +2992,21 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
    * 而「打开新文件后面板与查询仍在」是 M139 以来的既有行为（见 src/search.ts 的
    * panel 注释）。后台会话的重载同理，只是派生完不往 view 上派发。
    */
-  function loadedState(state: EditorState, doc: string, mode: EditorMode, path: string | undefined, editable: boolean): EditorState {
+  function loadedState(
+    state: EditorState,
+    doc: string,
+    mode: EditorMode,
+    path: string | undefined,
+    editable: boolean,
+    structuralReadOnly: boolean,
+  ): EditorState {
     const next = state.update({
       changes: { from: 0, to: state.doc.length, insert: doc },
       selection: { anchor: 0 },
       // 模式（含视图层可编辑性）与折行两个 Compartment 一起重配（M180）：装载可能把会话
       // 从 md 换成 code，代码块内容级 class 的有无取决于 mode，只重配模式会留下它。
       // 整篇重载同时撤清取标题 pending：旧区间锚在一份已被替换的正文上，没有可升级的语义。
-      effects: [...modeAndWrapEffects(mode, path, editable), ...clearPendingUrlTitleEffects(state)],
+      effects: [...modeAndWrapEffects(mode, path, editable, structuralReadOnly), ...clearPendingUrlTitleEffects(state)],
       annotations: [trustedLoad.of(true), Transaction.addToHistory.of(false)],
     }).state;
     // C3：初始光标放到 frontmatter 之后的第一条正文行（md 专属；code 模式没有 properties
@@ -3170,7 +3248,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       syncProjection();
       // 模式（含视图层可编辑性）与折行一起重配：代码块内容级 class 只在 md 模式有意义
       //（见 modeAndWrapEffects）。可编辑性不随模式漂移，取会话上那一份（active.editable）。
-      view.dispatch({ effects: modeAndWrapEffects(mode, active.path, active.editable) });
+      view.dispatch({ effects: modeAndWrapEffects(mode, active.path, active.editable, active.structuralReadOnly) });
       if (mode !== "md") closeLinkSuggestion(view);
       // C3（change cursor-visibility-oct23）：切到 md 之后若编辑器仍聚焦，边界光标会显形
       //（code 模式下没有 frontmatter 检测场，normalizer 自然 no-op）。
@@ -3258,6 +3336,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       session.path = path;
       session.mode = mode;
       session.editable = editable;
+      // 内容进来了就退出结构性只读（change fix-no-tab-empty-state-nov27）：空 pane 装载文档 /
+      // 恢复备份后按路径与 dirty 的真实值重新裁决；装配层的同一同步点随后会再算一次（幂等）。
+      // MUST NOT 让上一帧的空态标记留到有内容的文档上——那会隐藏一个本应可见的可编辑光标。
+      session.structuralReadOnly = false;
       // 内容进来了（壳会话的「填充」这一步也走这里，M283）：`loaded` 置真之后按需装载不再触发。
       session.loaded = true;
       session.cleanDoc = doc;
@@ -3273,7 +3355,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       if (session !== active) {
         // 后台会话（外部变更自动重载 / 恢复备份）：只换代它的 state，不碰 view，
         // 也不发装载阶段事件——那些事件的消费者（视觉门禁截图、诊断日志）看的是前台。
-        session.state = loadedState(session.state, doc, mode, path, editable);
+        session.state = loadedState(session.state, doc, mode, path, editable, session.structuralReadOnly);
         setSessionDirty(session, false);
         return;
       }
@@ -3294,7 +3376,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           // 滚动复位用直接赋值而非 scrollIntoView 效果：后者带 scrollMargin，文档
           // 溢出视口时会把 pos 0 对齐到视口顶而主动下滚，页首 padding 被顶出画。
           selection: { anchor: 0 },
-          effects: [...modeAndWrapEffects(mode, path, editable), ...clearPendingUrlTitleEffects(view.state)],
+          effects: [...modeAndWrapEffects(mode, path, editable, session.structuralReadOnly), ...clearPendingUrlTitleEffects(view.state)],
         });
         // 新装载的文档从篇首开始：这里用直接赋值而不是 scrollIntoView 效果（M110 真实
         // 桌面缺陷排查）——后者带 scrollMargin，文档溢出视口时会把 pos 0 对齐到视口顶而
@@ -3371,21 +3453,24 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           syncProjection();
           view.dispatch({
             effects: [
-              ...(modeChanged ? modeAndWrapEffects(mode, next, editable) : []),
+              ...(modeChanged ? modeAndWrapEffects(mode, next, editable, session.structuralReadOnly) : []),
               previewRefresh.of(null),
             ],
           });
         } else if (modeChanged) {
           session.state = session.state.update({
-            effects: modeAndWrapEffects(mode, next, editable),
+            effects: modeAndWrapEffects(mode, next, editable, session.structuralReadOnly),
           }).state;
         }
       }
       return remapped;
     },
-    setSessionEditable(session, editable) {
+    setSessionEditable(session, editable, structuralReadOnly = false) {
       // 幂等：装配层在唯一的同步点上每次重算（稳态下绝大多数调用在这里早退）。
-      if (session.editable === editable) return;
+      // 两个维度一起比较——structuralReadOnly 从真翻假（打开文档 / tips 撤下）时
+      // editable 可能仍为 false（例如落到一份 vault 外只读文档），只比 editable 会漏掉
+      // 光标标记的翻面。
+      if (session.editable === editable && session.structuralReadOnly === structuralReadOnly) return;
       if (!sessions.includes(session)) return; // 防御性：不属于本实例的会话忽略
       // vault 外只读会话是**结构性只读**（change quick-open-file-oct23 的 D2）：可编辑性在
       // 创建点定死，运行期没有改判路径（本入口只服务「分栏态空 pane 的输入闸门」那一条）。
@@ -3394,11 +3479,17 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // 也没有可重配的文本面。这里守住而不是让下面喂 "image" 给 modeAndWrapEffects。
       if (!isDocSession(session)) return;
       session.editable = editable;
+      session.structuralReadOnly = structuralReadOnly;
       // 视图层与 dispatch 层**同判据一起翻**（changeFilter 读的 currentEditable 是前台会话的
       // 投影）：只翻视图层会得到「contenteditable 在场但按键在 dispatch 层被吞」的假可编辑
       // 编辑器（反例注释在 modeExtensions 与 baseExtensions）。可编辑性装在 mode 那个
       // Compartment 里，所以复用 modeAndWrapEffects（折行随同重配，幂等）。
-      const effects = modeAndWrapEffects(textModeOf(session.mode), session.path, editable);
+      const effects = modeAndWrapEffects(
+        textModeOf(session.mode),
+        session.path,
+        editable,
+        structuralReadOnly,
+      );
       if (session === active) {
         syncProjection();
         view.dispatch({ effects });
@@ -3451,7 +3542,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         return;
       }
       session.state = session.state.update({
-        effects: rebindEffects(textModeOf(session.mode), session.path, session.editable),
+        effects: rebindEffects(textModeOf(session.mode), session.path, session.editable, session.structuralReadOnly),
       }).state;
       sessions.push(session);
     },
@@ -3555,6 +3646,15 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       lineNumbersOn = on;
       // 真正切换时才重配，并立即生效到**全部会话、两种模式**（新建会话在 sessionState 里直接
       // 读当前值，因此也天然跟上；后台会话经 `session.state.update` 换新 state）。
+      reconfigureGutter();
+    },
+    setPaneHasTabs(hasTabs: boolean) {
+      // 幂等：稳态下装配层每个同步点都会重算一次，值没变时 MUST NOT 派发事务
+      //（reconfigure 会让 CM 全量重测量，扰动滚动 / 阅读位置，理由同 setLineNumbers）。
+      if (paneHasTabs === hasTabs) return;
+      paneHasTabs = hasTabs;
+      // 与开关切换共用同一条重配路径：全部会话、两种模式一起翻；⌥G 的临时 gutter
+      // 也读这个实例值，因此无标签时同样被压掉（见 gutterExtensions）。
       reconfigureGutter();
     },
     setGotoLineGutterVisible(visible: boolean) {
