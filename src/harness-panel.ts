@@ -1804,7 +1804,7 @@ export function restoredReasoningText(record: unknown): string | null {
 // 上屏（正好是 core 那份成品）——两种形态都可能在，判据见 [`humanizeToolArgs`] 与
 // [`toolArgsText`]（后者是「参数格取哪一份」的取值口径）。
 // 人话化是**展示层提取**（按工具名取关键参数：cli_run=完整命令、vault_*=路径、
-// vault_search=查询词、skill_load=技能名），截断 / 非 JSON / 未知工具一律回落原文，
+// vault_search=查询词、skill_load / explicit_skill=技能名），截断 / 非 JSON / 未知工具一律回落原文，
 // 不伪造。gated 调用的完整参数在 approval_request 载荷里（argv 数组 / diff 头文件名），
 // 到达后取代截断摘要。与上面几层同一条分层纪律：纯函数零 DOM（tests/unit 直接驱动）。
 // ---------------------------------------------------------------------------
