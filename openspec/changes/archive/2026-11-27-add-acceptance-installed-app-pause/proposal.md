@@ -77,3 +77,19 @@ dirty 时照样退出，正是丢数据的那条路。
   check-suite.sh,COVERAGE.md,scenarios/880-save-all.md,lib/installed-app.mjs,lib/installed-app.test.mjs}`。
 - 关联约束：不改写源文件（本 change 只读展示用户文档）；仓库信息卫生（安装版阶段的证据不含真实
   vault / 标签 / 正文）；「变更默认直接切断」（恢复范围整段删除，不留兼容层）。
+
+## 节点 2：归档放行记录（2026-11-27）
+
+**机器 + 独立评审放行（五要件）**：
+
+1. **方案已批准**：Alex 2026-11-26 节点 1「没有其他异议，请你安排」，并明确「退出后就不需要恢复了，如果我需要用安装版我会自己启动」；实现期删除全部恢复范围（自动重开 / LaunchServices / 工作区指纹 / `--recover-installed` / 恢复失败处理），未静默扩 scope。
+2. **独立 reviewer clean / merge**：K3 终审对 `08cec340ede45171aff6b37be23c4c45dcb035c7` 判 **clean / merge**，评审文件 `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/add-acceptance-installed-app-pause/k3-verdict.md`；此前 needs-changes 轮（`7d2afb2a` / `aa11e11d`）已逐条闭环，无新的 P1 / P2 / P3。
+3. **tasks 完成 / 放弃理由**：`tasks.md` 29/30 已勾；**6.1 放弃 / 转后续**（真实 `/Applications/Lumir.app` 的暂停整链路未执行——本批真机只覆盖 880 / 880b 的 Save All 链路，暂停通道保持「未触碰真实安装版」的边界，留待后续真机窗口，理由就地写在 6.1）。6.2 / 6.3 已回填证据与归档状态。
+4. **要求的门禁与真机证据通过**：
+   - 真机 880 **PASS 17 断言**、880b **PASS 9 断言**（`.local/acceptance/2026-11-27-ux-goal-r4/`，见 `summary.md` 两行；两场 status.txt 均为 PASS）。
+   - 合并后前端 / docs / check-suite PASS；本 worktree 复跑 `bash scripts/acceptance/check-suite.sh` **313/313 PASS（exit 0）**、`bash scripts/docs-check.sh` **PASS**。
+   - 本 change 未动视觉面，不需要像素层门禁。
+5. **规格对账无丢段（归档前读数）**：
+   - `node scripts/openspec-archive-check.mjs --change add-acceptance-installed-app-pause`：**PASS（扫过 1 份 delta，0 条 MODIFIED，对比 0 段，无静默丢段；归档队列 0 项已完成 change 均有唯一条目）**。
+   - `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`：**Totals: 44 passed, 0 failed (44 items)**。
+   - 归档队列：`docs/backlog.md` 有且仅有一条 `add-acceptance-installed-app-pause` 条目（同批删除一条已归档历史腾行，保持 80 行硬上限）。
