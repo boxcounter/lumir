@@ -200,7 +200,8 @@
       首启场景。
 - [x] 8.6 `specs/pane-layout/spec.md` 的 MODIFIED「harness pane」：整条复制；加入首启初始布局
       的唯一例外、无 JSONL / 无 preflight / 不抢焦点 / 布局位照常落盘；新增场景。
-- [ ] 8.7 `evidence.md` 的现状行号在实现后复核；如行号漂移，更新证据而不是改 spec 结论。
+- [x] 8.7 `evidence.md` 的现状行号在实现后复核；如行号漂移，更新证据而不是改 spec 结论。
+      （2026-11-26 集成 master 0.19.0 后按当前工作树复核并更新 §1；集成读数见 §12。）
 
 ## 9. 验证
 
@@ -209,6 +210,10 @@
       如实记录原因，不删别人条目、不为此改本 change 的结论）。
 - [ ] 9.3 `bash scripts/gate.sh quick` 通过；动过视觉代码 / 场景后本地 `bash scripts/gate.sh visual`
       通过（CI 只跑结构层，像素层归本地）。
+      集成 master 后已跑两次完整 `gate.sh visual`：`13/15 PASS（SKIP 0）` exit 1 与
+      `14/15 PASS（SKIP 0）` exit 1；失败均为负载敏感的时序预算（`link-suggest` 16ms、webkit
+      settle 60ms），同断言在其它轮次 / 单用例复跑通过，无产品与像素差异（详见 evidence §12.3）。
+      该项保持未勾：须在机器空闲（无并行 mission 视觉）时重跑取得全绿。
 - [ ] 9.4 真机证据：`877` / `263` PASS；截图与读数落 `.local/acceptance/<日期>/`，报告里给可
       `ls` 的绝对路径。
 - [ ] 9.5 tasks 全部勾选后，在 `docs/backlog.md` 的归档跟踪队列落一条该 change 的记录（实现

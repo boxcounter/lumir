@@ -1,11 +1,12 @@
 # Evidence: add-first-run-onboarding-nov25
 
-本文件是提案期的证据说明，不是 living spec。所有行号取自本 change 的基线 worktree：
+本文件是提案期的证据说明，不是 living spec。§1 的行号已按 2026-11-26 合入 master 0.19.0 后的
+工作树复核（历史提案期行号见 git 历史）；§12 记录集成读数。
 
 - 仓库：`lumir` 主仓
 - worktree：`.local/worktrees/nov25/first-run-onboarding`（相对主仓，git 外）
 - 基线：`origin/master` @ `ab7d6b1b`（2026-11-25；本地 master 落后于 `origin/master`，故直接以
-  `origin/master` 建分支）
+  `origin/master` 建分支）；集成：`origin/master` @ `7ab15d2e`（0.19.0，2026-11-26）
 - 分支：`feat/first-run-onboarding-nov25`
 - 只读调研原卷：会话任务目录下的 `output.log`（git 外，不落库；路径见提交说明 / tower 会话）
 
@@ -13,22 +14,22 @@
 
 | 面 | 落点 | 现状口径 |
 |---|---|---|
-| 启动态首帧 | `src/boot.ts:50` 读配置；`:63` `mountStartupSurface`；`:67` 才装载主模块 | 首帧前读一次配置；启动面是 `#startup` 窗口级节点 |
-| 启动态结构 | `src/startup-surface.ts:61` 挂载；`:79` 骨架侧栏；`:90` 内容列；`:102-107` 唯一 D6 按钮 | 骨架 + 产品标记 + 阶段行 + 「打开 vault」 |
+| 启动态首帧 | `src/boot.ts:50` 读配置；`:56` 交接快照；`:66` `mountStartupSurface`；`:70` 才装载主模块 | 首帧前读一次配置；启动面是 `#startup` 窗口级节点 |
+| 启动态结构 | `src/startup-surface.ts:69` 挂载；`:90` 骨架侧栏；`:102` 内容列；`:116` 唯一入口按钮（首启 `D1034` / 非首启 D6） | 骨架 + 产品标记 + 阶段行 + 「打开 vault」 |
 | 启动态布局 | `src/startup-surface.css:32` `.startup-body` 两列；`:76` `.startup-content` 在内容列居中 | 按钮中心是「侧栏右侧内容列的中心」，不是整窗中心 |
 | 撤下判据 | `src/startup-gate.ts` `startupDismissReason` | `degraded` / `tree_ready` / `no_vault` / `timeout` 四选一 |
-| 未打开终态 | `src/main.ts:4571` `refreshVaultStatus`；`src/main.ts:4585` | `startup?.notifyNoVault(); tree.showEmpty(status.notice)` |
+| 未打开终态 | `src/main.ts:4688` `refreshVaultStatus`；`src/main.ts:4703-4704` | `startup?.notifyNoVault(); tree.showEmpty(status.notice)` |
 | 树空态 | `src/tree.ts:1526` `showEmpty`；`:1540` 起建 `.ft-empty` | 左栏 D5 说明 + D6「打开 vault」按钮 |
-| 空 vault 首入态 | `src/main.ts:1724` `showEmptyVaultState` | `.editor-notice` 覆盖层：D107 + D882「新建笔记」 |
-| 覆盖层几何 | `src/main.ts:1689` 挂 `shell.editorRow`；`src/style.css:1406` 起 | `position:absolute; inset:0` + 不透明底，盖住整条 pane 行（含 harness） |
-| 空 pane 引导门 | `src/main.ts:650` `renderAllTabStrips`；`src/main.ts:678` | `guideEl.hidden = !emptyPaneGuideVisible(...)` |
+| 空 vault 首入态 | `src/main.ts:1753` `showEmptyVaultState` | `.editor-notice` 覆盖层：D107 + D882「新建笔记」 |
+| 覆盖层几何 | `src/main.ts:1718` 挂 `shell.editorRow`；`src/style.css:1409` 起 | `position:absolute; inset:0` + 不透明底，盖住整条 pane 行（含 harness） |
+| 空 pane 引导门 | `src/main.ts:676` `renderAllTabStrips`；`src/main.ts:706` | `guideEl.hidden = !emptyPaneGuideVisible(...)` |
 | 空 pane 判据 | `src/pane-layout.ts:91` `paneBlocksInput`；`:103` `emptyPaneGuideVisible` | 分栏 + 无带路径标签 + 前台非 dirty + 已装载 vault |
-| harness 打开 | `src/main.ts:890` `openHarnessPane(focusComposer = true)` | 分栏 + attach + 可选聚焦 + `switcher.sessionChanged()`（`src/main.ts:902`） |
-| harness 空快照 | `src-tauri/src/harness.rs:2324` `harness_state`；`:593` `StateSnapshot::empty` | 无会话返回空快照，纯读 |
-| preflight | `src-tauri/src/harness.rs:1787` / `:2046` | 只在 `harness_send` / `harness_cron_run`，建会话之前 |
+| harness 打开 | `src/main.ts:919` `openHarnessPane(focusComposer = true)` | 分栏 + attach + 可选聚焦 + `switcher.sessionChanged()`（`src/main.ts:902`） |
+| harness 空快照 | `src-tauri/src/harness.rs:2347` `harness_state`；`:593` `StateSnapshot::empty` | 无会话返回空快照，纯读 |
+| preflight | `src-tauri/src/harness.rs:1810` / `:2069` | 只在 `harness_send` / `harness_cron_run`，建会话之前 |
 | 配置快照 | `src/bindings/AppConfig.ts`；`src/config-handoff.ts` | `ConfigSnapshot.config.last_vault: string \| null`；一次性交接 |
-| 文案 deck 末位 | `src/copy-data.ts:2985` D1028；`文案-Copy.md:1006` | 当前末位 **D1028**，不是调研时的 D991 |
-| 验收覆盖表末位 | `scripts/acceptance/COVERAGE.md` 末行 | 876 已占用；下一个空号 **877** |
+| 文案 deck 末位 | `src/copy-data.ts:3028` D1047；`文案-Copy.md:1023` | 当前末位 **D1047**（master 已占 D1029–D1033，首启批集成后顺延为 D1034–D1047；不再是 D991 / D1028） |
+| 验收覆盖表末位 | `scripts/acceptance/COVERAGE.md` 末行 | 300 场景 / 269 item；878（composer 保留）已占用；**877** 为本 change 新增 |
 
 ## 2. 调研结论的采信与更正
 
@@ -262,3 +263,104 @@ Alex 明确批准「首启基线」。按 `tests/visual/README.md` 的基线纪�
   `app-main` / `toc-outline` / `quick-open` / `m149-tabs` / `m293-eink-literal-tokens` /
   `m831` chromium 合计 90/90；webkit-realua 的 `first-run-empty-state` 10/10；`docs-check` PASS。
 - 未跑完整 `gate.sh quick/visual`（主会话在大文档 marker 修复后统一跑）；未归档 / merge / push。
+
+## 12. master 0.19.0 集成（2026-11-26）
+
+分支 `feat/first-run-onboarding-nov25` 以 merge（非 rebase）合入 `origin/master` @
+`7ab15d2e`（0.19.0：composer 跨会话保留、Skill explicit trace、Web Search 紧凑摘要、选择器
+IME / ARIA 等）。集成前 tip `12e4cbb6`，集成合并提交 `e0daed4f`（parents `12e4cbb6` +
+`7ab15d2e`）。首启 change 保持活跃，未归档。
+
+### 12.1 冲突与处置
+
+| 文件 | 冲突 | 处置 |
+|---|---|---|
+| `src/copy-data.ts`、`文案-Copy.md` | master 已占 D1029–D1033（Skill 成功终态「已加载」、Web 搜索健康摘要 D1030–D1033），首启批原用 D1029–D1042 | 首启批整体顺延为 **D1034–D1047**，master 条目逐字保留；`src/startup-surface.ts`（D1034）、`src/first-run-tips.ts`、`tests/unit/first-run-tips.test.ts`、`scripts/acceptance/README.md`、`scripts/acceptance/lib/drive.mjs` 的引用同步重编；deck 的「当前末位」与分配记录改为 D1047 / D1034–D1047 |
+| `scripts/acceptance/COVERAGE.md` | 两侧都在同一行追加新场景（877 vs 878），计数行同改 | 不手改：`node scripts/acceptance/coverage.mjs` 按场景 front-matter 重新生成 → **300 场景 / 269 item**（core 32 / full 258 / bundle 5 / evidence 5），877 与 878 均在表内 |
+| `tests/visual/scenes/editing-oracle.spec.ts` | 两侧为同一 marker 稳定化改动（master `ca5a3d8f` / 分支 `12e4cbb6`，内容一致） | 合并后为单一语义，无重复 helper、无追加改动 |
+
+其余重叠面自动合并，合并后人工复核：`src/style.css`（master 的 selector hover 规则 + 分支的
+`.ft-open-btn` / `.editor-notice-action` 前景 token 各自成立）、`tests/visual/scenes/m831-...`
+（master 的 composer 保留用例 + 分支的 `lastVault` 失效桩）。
+
+合并后的新视觉场景（`harness-composer-session-preserve-nov26`、`selector-aria-ime-nov25`、
+`skill-*`、`list-filter`、`m303` / `m384` / `m460` / `mv-vault-switcher`）审计：均用带 root 的
+fixture（派生非首启）或无 `stubTauri(page, null)`；全仓字面量 `stubTauri(page, null)` 只剩首启用例
+（`first-run-empty-state` / `first-run-onboarding-nov25`）与显式 `lastVault: "/mock/missing-vault"`
+的非首启用例。
+
+**审计遗漏（已修）**：经 helper 间接传 `null` 的场景不在上面的字面量清单里——
+`titlebar-identity.spec.ts` 的 `open(page, null)` 同样落到首启模式，第一次完整门禁才暴露
+（详见 §12.3）；已改为非首启空态桩。审计口径因此以**完整视觉门禁**为准，不以字面量 grep 收口。
+
+### 12.2 首启只读 × composer 跨会话保留
+
+- **只读门只作用于文档 pane**：`renderAllTabStrips` 对 `paneAssemblies` 先跳过非 `doc` 句柄，
+  harness pane 的 composer 从不经过 `setSessionEditable(..., && !firstRunTipsVisible)`；tips 在场
+  时只拒收被遮住的空白草稿，composer 的输入区不受影响。
+- **打开首个文档恢复编辑**：`showEditor()` 统一调 `hideFirstRunTips()` → 清 flag、移除 DOM、
+  重跑 `renderAllTabStrips()`，文档 pane 按既有判据恢复可编辑；不触碰 composer。
+- **正常 vault 的草稿保留不受影响**：`firstRunTipsVisible` 与 `firstRunPending` 只在真正首次启动
+  （启动快照 `last_vault === null`）为真；非首启这两个 flag 始终为假，read-only 门与命令闸门都
+  不参与。master 的 `preserveComposerAcrossSessionSwitch` 只覆盖会话切换（新建 / 选择 / 重载），
+  切 vault 仍按既有路径 `resetComposer` + 换草稿；首启的 `openHarnessPane(false)` 不调
+  `resetComposer` / `draft.clear()`，不建会话 / JSONL、不发 preflight，因此不改变任何 vault 的
+  草稿保留语义。
+- 首启模式命令闸门只拦工作区命令（默认键位 / `applyKeyConfig` 重装 / 原生菜单同一谓词），
+  `#app.inert` 只管首启路径建立的隔离；撤下时只清自己建立的隔离，设置面板的 inert 归设置 owner
+  （既有 P1 回归用例仍覆盖）。
+
+### 12.3 集成后验证（本地）
+
+- `npx tsc --noEmit`：通过。
+- `pnpm --dir tests/visual exec tsc --noEmit`：通过。
+- `pnpm test`：首轮 1 项失败——`tests/unit/link-suggest.test.ts` 的「万文件过滤」16ms 预算测得
+  **84.70ms**（当时 load average 4.47，后台并行跑 tsc / 视觉 tsc）。未改阈值、未删断言；复跑
+  全量 `tests 2083 / pass 2083 / fail 0`（3.2s）。定性为负载下的既有低频时序抖动。
+- `bash scripts/docs-check.sh`：PASS（含归档对账、归档队列、验收场景契约与覆盖表一致、
+  backlog 出口合规、验收套件自测）。
+- `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`：`38 passed / 0 failed`。
+- `node scripts/openspec-archive-check.mjs`：PASS（12 份 delta / 12 条 MODIFIED / 166 段，无静默
+  丢段；归档队列无缺项）。
+- `bash scripts/gate.sh visual`（第一次，集成合并提交 `e0daed4f`）：`GATE RESULT: 13/15 PASS（SKIP 0）`，
+  退出码 1。两个失败：
+  - `unit-tests`：`link-suggest` 万文件过滤 18.99ms > 16ms（同上，负载下既有抖动；同一次门禁
+    之前的一次独立全量 `pnpm test` 为 2083/2083 PASS，且该文件与 master 逐字节相同）；
+  - `visual-regression`：`titlebar-identity.spec.ts:52`「空态主界面」——该场景用
+    `stubTauri(page, null)` 拍老用户空态，真正首启下启动面不撤下，`expectScreenshot` 的撤下门
+    5s 超时（该次 1865 passed / 1 failed / 13 skipped）。属首启视觉桩审计遗漏：§4 的
+    `stubTauri(page, null)` 清单未含该场景。
+- 修复（`3b6776f4`）：该场景改用 `stubTauri(page, null, { lastVault: "/mock/missing-vault" })`
+  的非首启空态；单场景 chromium 8/8 通过，未改基线、未改产品。
+- `bash scripts/gate.sh visual`（第二次，修复后 tip `3b6776f4`）：`GATE RESULT: 14/15 PASS（SKIP 0）`，
+  退出码 1。唯一失败是 `visual-regression` 的 webkit-realua `editing-oracle.spec.ts:1045`
+  「正文 IME 大文档：解析未完成时组合结束走有界恢复并最终补回 marker」——settle 分片 66ms >
+  60ms 预算（13 skipped / 1865 passed）。该用例不在本 change 的改动面内；失败时 load average
+  11.48，并行运行的另一个 mission（`.local/worktrees/nov26/file-open-harness-affordance`）正用
+  `playwright test --workers=4` 跑视觉。该轮结束后单用例复跑先 **2/2 通过**（load 5.8）；收口前
+  同一命令背靠背再跑为 **1 失败（61ms，阈 60）/ 1 通过**（load 6.8）——同一 tip、同一命令的
+  抖动确证。
+- 第三次尝试（同一 tip）：quick 层的 `link-suggest` 万文件过滤再次抖动到 **68.36ms**（load 仍
+  高），未再等待视觉层，由 worker 主动终止；不把这次算作完整门禁读数。
+
+**门禁结论**：两次完整读数（13/15、14/15）的失败全部是**负载敏感的时序预算断言**
+（`link-suggest` 16ms、webkit settle 60ms）；同断言在其他轮次或单用例复跑中通过（`link-suggest`
+在第二次完整运行与一次独立全量 `pnpm test` 均为 2083/2083 PASS；webkit 用例单跑 2/2 PASS）。
+产品断言与像素层无新差异——首轮唯一的产品相关失败 `titlebar-identity` 是视觉桩遗漏，已修并
+单场景 8/8 通过。未改阈值、未删断言、未更新任何基线。**本地门禁未全绿**：须在机器空闲（无
+并行 mission 视觉）时重跑 `bash scripts/gate.sh visual`，取得全绿后方可提交合并请求。
+
+可 `ls` 的证据副本（主仓 `.local`，git 外）：
+`/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/first-run-onboarding-nov25/gate-logs/`
+（两次完整门禁输出、两次视觉回归完整日志、单测日志、`titlebar-identity` 8/8 复跑、
+`editing-oracle:1045` 背靠背复跑）。
+
+### 12.4 集成后仍未完成（不得伪报）
+
+- **真机 877 / 263 未在集成 tip 上重跑**：此前 877 / 263 / 47c / 220 的 PASS 绑定集成前 tip
+  `12e4cbb6`（其时 master 尚为 0.18 线）；合入 0.19.0 后须重跑并落
+  `.local/acceptance/<日期>/`，本文件不把旧 PASS 当作集成后读数。
+- **本地门禁未全绿**：见 §12.3「门禁结论」；须在机器空闲时重跑 `bash scripts/gate.sh visual`。
+- 未更新任何视觉基线（集成未产生新像素差异；若 gate 出现新差异，按人肉裁决点停下送裁）。
+- 未 push / 未归档；旧评审结论绑定旧 tip，集成 tip（`e0daed4f` + `3b6776f4` + 本文档提交）需
+  重新终审。
