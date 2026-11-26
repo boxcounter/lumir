@@ -292,5 +292,5 @@
 | 881 | `881-text-input-select-all-nov26` | 文本输入面的 ⌘A——文件内搜索 / 跳转到行由应用接管（整串替换），正文逐字节不变 | full |
 | 882 | `882-harness-withdraw-message` | 撤回最近一条用户消息：transcript 移除、原文回 composer、新会话 B 唯一且上下文不再含它 | full |
 | 883 | `883-file-open-harness-affordance` | 文件树打开意图（普通点击=当前标签、⌘点击=新标签并保留）与无标签时 Harness 图标贴右缘 / 文案 | full |
-| 884 | `884-quit-save-all-dialog` | 退出前的保存全部确认弹框：⌘Q 弹居中模态、Escape 取消留场、保存失败留场不退出、保存全部并退出落盘 | full |
+| 884 | `884-quit-save-all-dialog` | 退出前的保存全部确认弹框：⌘Q 弹居中模态、取消留场、保存失败留场不退出、保存全部并退出落盘 | full |
 | 885 | `885-no-tab-empty-state` | 无 TAB 空态：单 pane scratch 无行号但可输入；分栏空 pane 无行号、键入无效、引导在场 | full |
