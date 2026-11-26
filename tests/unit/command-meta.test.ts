@@ -49,12 +49,12 @@ test("COMMAND_META：每条标签中英两列都非空，模板参数齐全", ()
   }
 });
 
-test("保存全部：有命令 id / 标签 D1034 / 默认不绑键（无遮挡键位，菜单是鼠标入口）", () => {
+test("保存全部：有命令 id / 标签 D1048 / 默认不绑键（无遮挡键位，菜单是鼠标入口）", () => {
   // change add-acceptance-installed-app-pause：`document.save-all` 必须显式登记为「默认不绑键」——
   // 这既是「有实现、有意不占键位」的签字，也保证不会静默抢走任何物理组合（菜单项同样不带
   // accelerator，见 src-tauri/src/lib.rs 的 add_save_all_item）。
   assert.ok((COMMAND_IDS as readonly string[]).includes("document.save-all"));
-  assert.equal(COMMAND_META["document.save-all"].labelKey, "D1034");
+  assert.equal(COMMAND_META["document.save-all"].labelKey, "D1048");
   assert.ok(KEYLESS_COMMAND_IDS.includes("document.save-all"));
   assert.equal(
     KEY_BINDINGS.some((binding) => binding.command === "document.save-all"),

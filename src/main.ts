@@ -3789,7 +3789,7 @@ let pushedDirty: boolean | undefined;
  * 保存全部的机器可读**状态日志**（change add-acceptance-installed-app-pause）：文本形如
  * `save-all-log s0:g0:idle s1:g1:running s2:g1:ok`，**视觉隐藏、AX 可达**。
  *
- * 为什么需要它（K3 P1-3 第二轮）：成功 toast（D1035）只活 3.5s，且每次成功都同一句文本；
+ * 为什么需要它（K3 P1-3 第二轮）：成功 toast（D1049）只活 3.5s，且每次成功都同一句文本；
  * 只看文本或只看「代次更大」都会让旧信号 / 跨代信号提前放行。日志是**追加**的：每次命令调用
  * 都留下 seq、操作代次与状态（running / ok / failed / busy）。验收通道在触发前读基线，触发后
  * 必须看到第一条新记录是 running 并锁定它的代次，随后只接受**同代次 ok**；无归属的更高代 ok、
@@ -3825,7 +3825,7 @@ async function pushDirtyMirror(dirty: boolean): Promise<void> {
  *   - `anyDirty`：全部 pane 的任一会话。
  *   - `syncDirty`：awaited `document_set_dirty`；失败即屏障失败。
  *   - `log`：机器可读的操作归属日志（验收通道的唯一成功判据）。
- *   - toast：用户可读的成功 / 失败 / 并发提示（D1035 / D1036 / D1037）。
+ *   - toast：用户可读的成功 / 失败 / 并发提示（D1049 / D1050 / D1051）。
  *
  * 只读会话（`external`）没有保存落点，但结构上不可能 dirty；图片会话同理（saveAllDirty 跳过）。
  */
@@ -3838,9 +3838,9 @@ const saveAll = createSaveAllBarrier({
   log: (text) => {
     saveAllMarker.textContent = text;
   },
-  toastSuccess: () => toast(t("D1035"), [], false, "success"),
-  toastFailure: () => toast(t("D1036")),
-  toastBusy: () => toast(t("D1037")),
+  toastSuccess: () => toast(t("D1049"), [], false, "success"),
+  toastFailure: () => toast(t("D1050")),
+  toastBusy: () => toast(t("D1051")),
 });
 
 const commands: CommandRuntime = {

@@ -2,8 +2,8 @@
 
 ## 1. 产品侧：保存全部（命令 / 菜单 / 屏障）
 
-- [x] 1.1 `src/keys.ts`：`document.save-all` 进 `COMMAND_IDS` 并登记 `KEYLESS_COMMAND_IDS`（默认不绑键）；`src/command-meta.ts` 挂 D1034 标签与 `save all` 别名。
-- [x] 1.2 `文案-Copy.md` / `src/copy-data.ts`：D1034 命令标签、D1035 完成终态、D1036 失败终态、D1037 并发提示（中英两列）；deck 末位与分配记录更新。
+- [x] 1.1 `src/keys.ts`：`document.save-all` 进 `COMMAND_IDS` 并登记 `KEYLESS_COMMAND_IDS`（默认不绑键）；`src/command-meta.ts` 挂 D1048 标签与 `save all` 别名。
+- [x] 1.2 `文案-Copy.md` / `src/copy-data.ts`：D1048 命令标签、D1049 完成终态、D1050 失败终态、D1051 并发提示（中英两列）；deck 末位与分配记录更新。
 - [x] 1.3 `src-tauri/src/vault_session.rs` / `reading_position.rs`：两条 put 命令返回 `Ok(true|false)`（磁盘写失败仍记 warning 但如实回 false）；`src/vault-switcher.ts` / `src/reading-position.ts` 的 `flush()` 改返回 `Promise<boolean>`，把后端的 resolved false 原样上抛；既有退出 / 切换调用方保持 `void` 语义。
 - [x] 1.4 新增 `src/save-all.ts`：保存全部屏障 + **追加式状态日志**（`save-all-log s<seq>:g<代次>:<状态>`）+ 单飞；步骤含 saveAllDirty → 会话 flush → 阅读位置 flush → 前置 dirty 复查 → awaited 镜像同步 → **同步后再复查 dirty**（有新 dirty 先恢复镜像 true 再失败）→ 成功标记。`src/main.ts` 只装配真实依赖、隐藏标记元素与 toast，`document.save-all` / `MENU_COMMANDS.saveAll` 接到同一实现。
 - [x] 1.5 `src-tauri/src/lib.rs`：File → Save All 原生菜单项（无 accelerator，点击经 `MENU_COMMAND_EVENT`），`menu_command_of` 映射 `saveAll`；结构假设不成立时保留默认菜单并告警。

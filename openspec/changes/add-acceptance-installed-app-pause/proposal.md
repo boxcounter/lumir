@@ -26,8 +26,8 @@ dirty 时照样退出，正是丢数据的那条路。
 - **产品侧：`document.save-all` 命令**（统一命令层，默认不绑键、登记进 `KEYLESS_COMMAND_IDS`）：
   依次执行「保存全部脏标签 → 标签会话真实 flush → 阅读位置真实 flush → 复查无新 dirty →
   后端 dirty 镜像 awaited 同步 → **同步后再次复查 dirty**」，全部成功才向**追加式状态日志**
-  （`save-all-log s<seq>:g<代次>:<状态> …`）追加 `ok` 并给正向终态（D1035），任一步失败追加
-  `failed` 并给失败终态（D1036）且不清 dirty、不冒充成功。验收通道只接受**本次触发第一条新
+  （`save-all-log s<seq>:g<代次>:<状态> …`）追加 `ok` 并给正向终态（D1049），任一步失败追加
+  `failed` 并给失败终态（D1050）且不清 dirty、不冒充成功。验收通道只接受**本次触发第一条新
   running 的同代次 ok**；旧信号 / 跨代 ok / 并发触发（单飞 busy）MUST NOT 提前放行。
 - **产品侧：原生 File → Save All 菜单项**（不带 accelerator；点击经 `MENU_COMMAND_EVENT` 回同一
   命令实现，MUST NOT 另开保存链路）。

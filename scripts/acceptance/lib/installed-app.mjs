@@ -8,7 +8,7 @@
 //   1. 默认行为完全不变：没有 `--pause-installed` 时本模块一行都不执行；
 //   2. 目标只认唯一、canonical 的 `/Applications/Lumir.app` + 产品 bundle id + 可读 pid /
 //      startedAt；dev 实例、验收 bundle、多实例、归属不明一律拒绝（退出码 2、零副作用）；
-//   3. 暂停前必须拿到**保存屏障的正向完成信号**（产品侧 `document.save-all` 的 D1035 toast）；
+//   3. 暂停前必须拿到**保存屏障的正向完成信号**（产品侧 `document.save-all` 的 D1049 toast）；
 //      任一步失败 / 超时 / 新 dirty / AX 不可读都**不 ⌘Q、不跑批**——不得以「没有错误提示 /
 //      AX 空树 / dirty 点消失」冒充成功；
 //   4. 只用按 pid 激活 + 正常 ⌘Q，等**原 pid 消失**；禁止 Apple Event quit、SIGTERM / SIGKILL /

@@ -3009,17 +3009,17 @@ const COPY_TABLE = {
     en: "Kept {count} results · text {size} · truncated",
     enOne: "Kept {count} result · text {size} · truncated",
   },
-  // 保存全部（change add-acceptance-installed-app-pause）：D1034 是命令标签（键位面板 / 菜单
-  // 对应的人类标签），D1035 是屏障全绿后的正向完成信号（必须是一条**正**观测——验收通道
-  // 据此判「保存链路真的跑完」，不得以「没有错误提示」代替），D1036 是任一步失败时的终态提示。
-  D1034: { zh: "保存全部", en: "Save All" },
-  D1035: { zh: "已保存全部更改", en: "All changes saved" },
-  D1036: {
+  // 保存全部（change add-acceptance-installed-app-pause）：D1048 是命令标签（键位面板 / 菜单
+  // 对应的人类标签），D1049 是屏障全绿后的正向完成信号（必须是一条**正**观测——验收通道
+  // 据此判「保存链路真的跑完」，不得以「没有错误提示」代替），D1050 是任一步失败时的终态提示。
+  D1048: { zh: "保存全部", en: "Save All" },
+  D1049: { zh: "已保存全部更改", en: "All changes saved" },
+  D1050: {
     zh: "未能保存全部更改，请按提示处理后重试",
     en: "Couldn't save all changes. Follow the prompts above and try again.",
   },
   // 并发 / 重复触发保存全部：前一次屏障还在跑，第二次不开新代次（单飞），给一条中性提示。
-  D1037: { zh: "正在保存全部更改", en: "Saving all changes" },
+  D1051: { zh: "正在保存全部更改", en: "Saving all changes" },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

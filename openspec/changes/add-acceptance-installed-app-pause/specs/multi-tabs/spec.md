@@ -16,8 +16,8 @@
 隐藏、AX 可达）：每次命令调用 SHALL 追加带单调 seq 的记录，真正开始的保存全部 SHALL 追加 `running`
 并以新代次标记，终态 SHALL 追加 `ok` 或 `failed`，并发被拒的触发 SHALL 追加 `busy`（同一代次）。
 
-只有上述五步全部成功，系统 SHALL 追加 `ok` 并给出正向终态（D1035）；任一步失败 SHALL 追加
-`failed` 并给出失败终态（D1036），MUST NOT 清除任何标签的 dirty、MUST NOT 以「没有错误提示」
+只有上述五步全部成功，系统 SHALL 追加 `ok` 并给出正向终态（D1049）；任一步失败 SHALL 追加
+`failed` 并给出失败终态（D1050），MUST NOT 清除任何标签的 dirty、MUST NOT 以「没有错误提示」
 「界面上的 dirty 点消失」或任何缺失读数冒充成功。外部自动化 SHALL 只接受「触发后第一条新记录为
 running，且随后出现**同代次** ok」作为本次操作成功；无归属的更高代 ok、同一代次的旧 ok、以及被
 其它代次 ok 覆盖的 busy / failed MUST NOT 放行。
