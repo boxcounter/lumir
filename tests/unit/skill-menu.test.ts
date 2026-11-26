@@ -41,114 +41,159 @@ test("grammar 只服务显式入口，过滤禁手动与非法项但保留禁自
   ]);
 });
 
-test("/tmp 仍可显示被动候选且自动视觉高亮唯一项，但前缀不是全名时不武装", () => {
+test("/tmp 有唯一候选时高亮即 armed，Enter 接受 tmp-acc（Alex 2026-11-26 新合同）", () => {
   const tmp = [skill("tmp-acc")];
   for (const text of ["/tmp", "see /tmp", "- /tmp"]) {
     assert.deepEqual(skillTokenAt(text, text.length), { from: text.indexOf("/"), to: 4 + text.indexOf("/"), prefix: "tmp" });
     const state = openSkillMenu(text, text.length, tmp)!;
-    assert.equal(state.highlighted, 0, "唯一候选必须自动成为视觉高亮");
-    assert.equal(state.armed, false, "路径前缀 /tmp 不是全名 tmp-acc，不得武装 Enter");
-    assert.equal(skillSelectionSpec(text, state), null);
+    assert.equal(state.highlighted, 0, "唯一候选必须自动成为高亮");
+    assert.equal(state.armed, true, "有效高亮必须 armed：/tmp 不再享有「不是全名」豁免");
+    const selected = skillSelectionSpec(text, state)!;
+    assert.equal(selected.skill.name, "tmp-acc");
+    assert.equal(selected.changes.from, text.indexOf("/"));
+    assert.equal(selected.changes.to, text.length);
+    assert.equal(selected.changes.insert, "/tmp-acc ");
   }
+  // token 边界不受新合同影响
   assert.equal(skillTokenAt("x/tmp", 5), null);
   assert.deepEqual(skillTokenAt("/tmp", 2), { from: 0, to: 2, prefix: "t" });
   assert.equal(skillTokenAt("/tmp", 5), null);
 });
 
-test("全名逐字相等时自动武装；路径片段不算全名", () => {
-  const state = openSkillMenu("/tmp-acc", 8, [skill("tmp-acc")])!;
-  assert.equal(state.armed, true);
-  assert.equal(state.highlighted, 0);
-  assert.deepEqual(skillSelectionSpec("/tmp-acc", state)?.skill, { name: "tmp-acc", from: 0 });
+test("部分匹配与全名同路：不要求全名即可接受，大小写不匹配则无候选", () => {
+  const full = openSkillMenu("/tmp-acc", 8, [skill("tmp-acc")])!;
+  assert.equal(full.armed, true);
+  assert.equal(full.highlighted, 0);
+  assert.deepEqual(skillSelectionSpec("/tmp-acc", full)?.skill, { name: "tmp-acc", from: 0 });
 
   const partial = openSkillMenu("/tmp-a", 6, [skill("tmp-acc")])!;
-  assert.equal(partial.armed, false);
-  assert.equal(skillSelectionSpec("/tmp-a", partial), null);
-  // grammar / 过滤是大小写敏感的：大小写不匹配时候选根本不出现，谈不上武装
+  assert.equal(partial.armed, true, "部分前缀命中同样按当前高亮接受");
+  assert.equal(skillSelectionSpec("/tmp-a", partial)?.skill.name, "tmp-acc");
+  // grammar / 过滤是大小写敏感的：大小写不匹配时候选根本不出现，谈不上接受
   assert.equal(openSkillMenu("/TMP-ACC", 8, [skill("tmp-acc")]), null);
 });
 
-test("技能全名恰好是 tmp 时，/tmp 按全名规则武装（批准规则的明确边界）", () => {
-  const state = openSkillMenu("/tmp", 4, [skill("tmp")])!;
-  assert.equal(state.armed, true, "token 前缀逐字等于某项全名 → 武装，与名字是否像路径无关");
-  assert.equal(state.highlighted, 0);
-  assert.deepEqual(skillSelectionSpec("/tmp", state)?.changes, { from: 0, to: 4, insert: "/tmp " });
-  assert.deepEqual(skillSelectionSpec("/tmp", state)?.skill, { name: "tmp", from: 0 });
-  // 与更长的 tmp-acc 并存时，全名项仍是被指向的那一项
-  const mixed = openSkillMenu("/tmp", 4, [skill("tmp-acc"), skill("tmp")])!;
-  assert.equal(mixed.armed, true);
-  assert.equal(mixed.items[mixed.highlighted]?.name, "tmp");
-  // 差一个字符就不是全名
-  assert.equal(openSkillMenu("/tm", 3, [skill("tmp")])!.armed, false);
-});
-
-test("查询变化自动视觉高亮首项，并按名字保留上一次高亮", () => {
+test("多个候选默认接受首项；箭头 / 指针改变的是接受目标", () => {
   const opened = openSkillMenu("/acc", 4, catalog)!;
   assert.deepEqual(opened.items.map((item) => item.name), ["acc-skill-abc", "acc-deploy"]);
   assert.equal(opened.highlighted, 0);
-  assert.equal(opened.armed, false);
+  assert.equal(opened.armed, true);
+  assert.equal(skillSelectionSpec("/acc", opened)?.skill.name, "acc-skill-abc");
 
   const moved = moveSkillHighlight(opened, 1);
   assert.equal(moved.highlighted, 1);
   assert.equal(moved.armed, true);
+  assert.equal(skillSelectionSpec("/acc", moved)?.skill.name, "acc-deploy");
 
-  // 键入一个字符：两项仍命中 → 按名字保留 acc-deploy
+  const hovered = hoverSkillHighlight(opened, 1);
+  assert.equal(hovered.highlighted, 1);
+  assert.equal(hovered.armed, true);
+  assert.equal(skillSelectionSpec("/acc", hovered)?.skill.name, "acc-deploy");
+});
+
+test("技能全名恰好是 tmp 时 /tmp 接受该项；/tm 也按高亮接受（不再要求全名）", () => {
+  const state = openSkillMenu("/tmp", 4, [skill("tmp")])!;
+  assert.equal(state.armed, true);
+  assert.equal(state.highlighted, 0);
+  assert.deepEqual(skillSelectionSpec("/tmp", state)?.changes, { from: 0, to: 4, insert: "/tmp " });
+  assert.deepEqual(skillSelectionSpec("/tmp", state)?.skill, { name: "tmp", from: 0 });
+
+  const mixed = openSkillMenu("/tmp", 4, [skill("tmp-acc"), skill("tmp")])!;
+  assert.equal(mixed.armed, true);
+  assert.equal(mixed.items[mixed.highlighted]?.name, "tmp");
+  assert.equal(mixed.items.length, 2, "全名项被指向，不是把前缀相同的项过滤掉");
+
+  assert.equal(openSkillMenu("/tm", 3, [skill("tmp")])!.armed, true);
+  assert.equal(skillSelectionSpec("/tm", openSkillMenu("/tm", 3, [skill("tmp")])!)?.skill.name, "tmp");
+});
+
+test("查询变化自动高亮首项，并按名字保留上一次高亮与接受态", () => {
+  const opened = openSkillMenu("/acc", 4, catalog)!;
+  assert.deepEqual(opened.items.map((item) => item.name), ["acc-skill-abc", "acc-deploy"]);
+  assert.equal(opened.highlighted, 0);
+  assert.equal(opened.armed, true);
+
+  const moved = moveSkillHighlight(opened, 1);
+  // 键入一个字符：两项仍命中 → 按名字保留 acc-deploy，仍是接受态
   const narrowed = syncSkillMenuState(moved, "/acc-", 5, catalog)!;
   assert.equal(narrowed.highlighted, 1);
   assert.equal(narrowed.items[narrowed.highlighted]?.name, "acc-deploy");
-  assert.equal(narrowed.armed, false, "query 变化不得继承 armed");
+  assert.equal(narrowed.armed, true);
+  assert.equal(skillSelectionSpec("/acc-", narrowed)?.skill.name, "acc-deploy");
 
   // 删回原前缀：名字仍然存在 → 依旧保留
   const widened = syncSkillMenuState(narrowed, "/acc", 4, catalog)!;
   assert.equal(widened.highlighted, 1);
   assert.equal(widened.items[widened.highlighted]?.name, "acc-deploy");
+  assert.equal(widened.armed, true);
 });
 
-test("按名字保留失效时回落到首项，且不继承 armed", () => {
+test("按名字保留失效时回落首项，并保持接受态", () => {
   const moved = moveSkillHighlight(openSkillMenu("/acc", 4, catalog)!, 1);
   const filtered = syncSkillMenuState(moved, "/acc-s", 6, catalog)!;
   assert.deepEqual(filtered.items.map((item) => item.name), ["acc-skill-abc"]);
   assert.equal(filtered.highlighted, 0);
-  assert.equal(filtered.armed, false);
+  assert.equal(filtered.armed, true);
+  assert.equal(skillSelectionSpec("/acc-s", filtered)?.skill.name, "acc-skill-abc");
 });
 
-test("全名前缀命中时 query 变化重新武装，并指向该全名项", () => {
+test("全名前缀命中时仍指向该全名项，接受态不依赖全名", () => {
   const narrowed = syncSkillMenuState(openSkillMenu("/acc", 4, catalog), "/acc-deploy", 11, catalog)!;
   assert.deepEqual(narrowed.items.map((item) => item.name), ["acc-deploy"]);
   assert.equal(narrowed.highlighted, 0);
   assert.equal(narrowed.armed, true);
 });
 
-test("异步 catalog 只改高亮：保留按名字的高亮，绝不把 armed 从 false 变成 true", () => {
+test("异步 catalog 迟到只改 items：保留按名字的高亮与接受目标", () => {
   const only = [skill("acc-skill-abc")];
   const opened = openSkillMenu("/acc", 4, only)!;
-  assert.equal(opened.armed, false);
+  assert.equal(opened.armed, true);
   const arrived = syncSkillMenuState(opened, "/acc", 4, catalog)!;
   assert.deepEqual(arrived.items.map((item) => item.name), ["acc-skill-abc", "acc-deploy"]);
   assert.equal(arrived.highlighted, 0);
-  assert.equal(arrived.armed, false, "迟到 catalog 不得让被动态 Enter 变成接受");
+  assert.equal(arrived.armed, true, "迟到 catalog 到达后仍是接受态");
+
+  const moved = moveSkillHighlight(opened, 0);
+  const refreshed = syncSkillMenuState(moved, "/acc", 4, [...catalog, skill("acc-extra")])!;
+  assert.equal(refreshed.items[refreshed.highlighted]?.name, "acc-skill-abc");
+  assert.equal(refreshed.armed, true);
+  assert.equal(skillSelectionSpec("/acc", refreshed)?.skill.name, "acc-skill-abc");
 });
 
-test("异步 catalog 保留已武装的同一名字项；该名字消失时解除武装并回落首项", () => {
+test("异步回包新增与 query 同名的项：同一 token 仍保留当前目标，不改选", () => {
   const moved = moveSkillHighlight(openSkillMenu("/acc", 4, catalog)!, 1);
-  const extra = [...catalog, skill("acc-extra")];
-  const refreshed = syncSkillMenuState(moved, "/acc", 4, extra)!;
+  assert.equal(skillSelectionSpec("/acc", moved)?.skill.name, "acc-deploy");
+  const arrived = syncSkillMenuState(moved, "/acc", 4, [skill("acc"), ...catalog])!;
+  assert.equal(arrived.items[arrived.highlighted]?.name, "acc-deploy", "同 token 的异步回包不得被全名规则改选");
+  assert.equal(arrived.armed, true);
+  assert.equal(skillSelectionSpec("/acc", arrived)?.skill.name, "acc-deploy");
+  // query 变化仍按「全名项 > 保留 > 首项」：新前缀逐字等于全名时指向该全名项
+  const typed = syncSkillMenuState(arrived, "/acc", 4, [skill("acc"), ...catalog])!;
+  const renamed = syncSkillMenuState(typed, "/acc-", 5, [skill("acc"), ...catalog])!;
+  assert.equal(renamed.items[renamed.highlighted]?.name, "acc-deploy", "按名字保留");
+  const full = syncSkillMenuState(renamed, "/acc", 4, [skill("acc"), ...catalog])!;
+  assert.equal(full.items[full.highlighted]?.name, "acc", "query 变化回全名时指向全名项");
+});
+
+test("异步 catalog 重排不得换掉刚接受的目标：按名字保留，selection 指向同一项", () => {
+  const accepted = moveSkillHighlight(openSkillMenu("/acc", 4, catalog)!, 1);
+  assert.equal(skillSelectionSpec("/acc", accepted)?.skill.name, "acc-deploy");
+
+  // 回包把顺序整个翻过来，并在前面插入新项：目标仍必须按名字锁定
+  const reordered = [skill("acc-extra"), skill("acc-deploy"), skill("acc-skill-abc")];
+  const refreshed = syncSkillMenuState(accepted, "/acc", 4, reordered)!;
   assert.equal(refreshed.items[refreshed.highlighted]?.name, "acc-deploy");
   assert.equal(refreshed.armed, true);
+  assert.equal(skillSelectionSpec("/acc", refreshed)?.skill.name, "acc-deploy");
 
+  // 目标消失：回落到首项，接受态仍成立
   const dropped = syncSkillMenuState(refreshed, "/acc", 4, [skill("acc-skill-abc")])!;
-  assert.deepEqual(dropped.items.map((item) => item.name), ["acc-skill-abc"]);
   assert.equal(dropped.highlighted, 0);
-  assert.equal(dropped.armed, false);
+  assert.equal(dropped.items[dropped.highlighted]?.name, "acc-skill-abc");
+  assert.equal(dropped.armed, true);
 });
 
-test("候选首次出现且 token 已是全名时，异步回包按全名规则武装", () => {
-  const state = syncSkillMenuState(null, "/acc-skill-abc", 14, catalog)!;
-  assert.equal(state.armed, true);
-  assert.equal(state.items[state.highlighted]?.name, "acc-skill-abc");
-});
-
-test("同一状态重复同步不重建：sameSkillMenuState 认 token / 游标 / 武装与逐项引用", () => {
+test("同一状态重复同步不重建：sameSkillMenuState 认 token / 游标 / 接受态与逐项引用", () => {
   const opened = openSkillMenu("/acc", 4, catalog)!;
   assert.equal(sameSkillMenuState(opened, syncSkillMenuState(opened, "/acc", 4, catalog)), true);
   assert.equal(sameSkillMenuState(null, null), true);
@@ -159,9 +204,9 @@ test("同一状态重复同步不重建：sameSkillMenuState 认 token / 游标 
   assert.equal(sameSkillMenuState(opened, refreshed), false);
 });
 
-test("方向键从自动高亮项移动，到端停住；导航即武装", () => {
+test("方向键从自动高亮项移动，到端停住；接受态始终成立", () => {
   const opened = openSkillMenu("/acc", 4, catalog)!;
-  assert.equal(opened.armed, false);
+  assert.equal(opened.armed, true);
   const down = moveSkillHighlight(opened, 1);
   assert.equal(down.highlighted, 1);
   assert.equal(down.armed, true);
@@ -171,7 +216,7 @@ test("方向键从自动高亮项移动，到端停住；导航即武装", () =>
   assert.equal(up.armed, true);
 });
 
-test("指针悬停置高亮并武装，越界索引被忽略", () => {
+test("指针悬停置高亮，越界索引被忽略；接受态不变", () => {
   const opened = openSkillMenu("/acc", 4, catalog)!;
   const hovered = hoverSkillHighlight(opened, 1);
   assert.equal(hovered.highlighted, 1);
@@ -194,6 +239,7 @@ test("键盘类型 × 列表长度 × 高亮位置：Ctrl+N/P 与方向键逐步
       const forward = [state.highlighted];
       for (let step = 0; step < length + 2; step += 1) {
         state = moveSkillHighlight(state, skillMenuNavigationDelta(downKey)!);
+        assert.equal(state.armed, true);
         forward.push(state.highlighted);
       }
       assert.deepEqual(
@@ -230,13 +276,46 @@ test("候选导航不接管 Shift/Meta/Alt 组合；无修饰 Ctrl+N/P 仍严格
   assert.equal(skillMenuNavigationDelta({ key: "ArrowDown", ctrlKey: false, metaKey: false, altKey: true }), null);
 });
 
-test("选中只替换当前 token，复用既有尾随空格并产出 ref；未武装时不可选中", () => {
+test("选中只替换当前 token，复用既有尾随空格并产出 ref；部分匹配同样可接受", () => {
   const opened = openSkillMenu("ask /acc", 8, catalog)!;
-  assert.equal(skillSelectionSpec("ask /acc", opened), null, "被动态即使有视觉高亮也不得接受");
-  const selecting = hoverSkillHighlight(opened, 0);
-  const spec = skillSelectionSpec("ask /acc next", selecting);
+  assert.equal(opened.armed, true, "旧口径「被动态即使有视觉高亮也不得接受」已废止");
+  const spec = skillSelectionSpec("ask /acc next", opened);
   assert.notEqual(spec, null);
   assert.deepEqual(spec!.changes, { from: 4, to: 9, insert: "/acc-skill-abc " });
   assert.deepEqual(spec!.skill, { name: "acc-skill-abc", from: 4 });
   assert.deepEqual(spec!.selection, { anchor: 19 });
+});
+
+test("无候选时没有可接受状态：零命中 / 空 catalog / 全被过滤", () => {
+  assert.equal(openSkillMenu("/zzz", 4, catalog), null);
+  assert.equal(openSkillMenu("/acc", 4, []), null);
+  assert.equal(openSkillMenu("/acc", 4, [
+    skill("acc-background", { user_invocable: false }),
+    skill("acc-invalid", { invocation_valid: false, user_invocable: false }),
+  ]), null);
+  assert.equal(openSkillMenu("/acc", 0, catalog), null, "caret 在 token 之外不显示候选");
+});
+
+test("不变量矩阵：任何非空候选状态都 armed（不存在「有游标但未武装」）", () => {
+  const catalogs: Array<Array<ReturnType<typeof skill>>> = [
+    catalog,
+    [skill("tmp-acc")],
+    [skill("tmp")],
+    [skill("in-notes"), skill("in-search")],
+    [],
+  ];
+  const texts = ["/a", "/acc", "/acc-", "/tmp", "/tmp-a", "/in", "/zzz", "ask /acc next"];
+  for (const items of catalogs) {
+    for (const text of texts) {
+      const state = openSkillMenu(text, text.length, items);
+      if (state !== null) {
+        assert.equal(state.armed, true, `${text} / ${items.map((item) => item.name).join(",")}`);
+        assert.ok(state.items.length > 0);
+        assert.ok(state.highlighted >= 0 && state.highlighted < state.items.length);
+        assert.notEqual(skillSelectionSpec(text, state), null);
+      } else {
+        assert.equal(skillSelectionSpec(text, { token: { from: 0, to: 0, prefix: "" }, items: [], highlighted: 0, armed: false }), null);
+      }
+    }
+  }
 });

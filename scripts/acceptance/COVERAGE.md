@@ -276,7 +276,7 @@
 | 865 | `865-wikilink-caret-reveal-nov24` | wikilink 键盘 / 指针进入源码、修饰键旧语义与精确 undo / save | full |
 | 866 | `866-wikilink-suggestion-nov24` | 行内 [[ 候选：过滤 / 键鼠接受 / Escape / 空态 / 特殊扩展名与零隐式写入 | full |
 | 867 | `867-wikilink-suggestion-native-refresh-nov25` | 行内 [[ 候选：原生逐字输入立即打开、query 逐拍同步、逐字删除关闭 | full |
-| 868 | `868-harness-skill-menu-ux-nov25` | Skill 候选：Ctrl+N/P 同方向键、长列表高亮揭示与响应式加宽（change fix-skill-menu-ux-nov25） | full |
+| 868 | `868-harness-skill-menu-ux-nov25` | Skill 候选：高亮即接受（Enter 新合同）、Ctrl+N/P 同方向键、长列表揭示与响应式加宽（change fix-skill-menu-ux-nov25 + fix-skill-enter-accept-nov26） | full |
 | 869 | `869-harness-web-default-audit` | Web 默认无卡审计：未配置 provider 仍显示 query / provider / attempts / untrusted，无批准卡 | full |
 | 870 | `870-harness-web-ask-preview` | Web Ask 预览：完整 URL / origin / provider / 双路外发 / 费用 / untrusted；拒绝不执行 | full |
 | 871 | `871-harness-web-deny` | Web deny：deny 规则直接拒绝、不预检、不请求 provider，审计不写外发说明 | full |

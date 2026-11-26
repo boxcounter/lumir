@@ -15,12 +15,18 @@ const SKILLS = [
   { name: "acc-invalid", description: "非法", source: "vault", user_invocable: false, model_invocable: false, invocation_valid: false },
 ];
 
+const IN_SKILLS = [
+  { name: "in-notes", description: "笔记", source: "vault", user_invocable: true, model_invocable: true, invocation_valid: true },
+  { name: "in-search", description: "搜索", source: "vault", user_invocable: true, model_invocable: true, invocation_valid: true },
+  { name: "in-deploy", description: "部署", source: "vault", user_invocable: true, model_invocable: true, invocation_valid: true },
+];
+
 type Theme = "light" | "dark" | "eink";
 
 async function setup(
   page: Page,
   draft: unknown = null,
-  deferCatalog = false,
+  deferCatalog: boolean | "after-first" = false,
   theme?: Theme,
   catalog: typeof SKILLS = SKILLS,
 ): Promise<void> {
@@ -34,9 +40,9 @@ async function setup(
     w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
       if (cmd === "harness_skills_list") {
         w.__skillCalls += 1;
-        if (deferCatalog) {
+        if (deferCatalog === true || (deferCatalog === "after-first" && w.__skillCalls > 1)) {
           return new Promise((resolve) => {
-            w.__resolveSkills = () => resolve(skills);
+            w.__resolveSkills = (next?: unknown) => resolve(next ?? skills);
           });
         }
         return skills;
@@ -101,23 +107,27 @@ async function composerSnapshot(page: Page) {
   });
 }
 
-test("路径前缀 /tmp 只做视觉预选，Enter 仍发送普通文本且不建 ref", async ({ page }) => {
+test("路径前缀 /tmp 有可见候选时 Enter 接受当前高亮（新合同），再按 Enter 才发送", async ({ page }) => {
   await setup(page);
   const composer = page.locator(".lumir-hp-composer .cm-content");
   const menu = page.locator(".lumir-hp-skill-menu");
   await page.keyboard.type("/tmp");
   await expect(menu).toBeVisible();
   await expect(menu.locator("[role=option]")).toHaveCount(1);
-  // 合同 C4：query 变化自动视觉高亮唯一项；armed 只认显式选择或全名，/tmp 不是 tmp-acc 的全名。
-  await expect(menu).toHaveAttribute("data-armed", "false");
+  // C4「有效高亮即接受」：/tmp 不再享有「不是全名」豁免，唯一候选被高亮即可接受。
+  await expect(menu).toHaveAttribute("data-armed", "true");
   await expect(composer).toHaveAttribute("aria-activedescendant", "lumir-hp-skill-option-0");
   await page.keyboard.press("Enter");
+  await expect(composer).toHaveText("/tmp-acc ");
+  await expect(composer.locator(".lumir-hp-skill-ref")).toHaveCount(1);
+  expect(await sent(page)).toEqual([]);
+  await page.keyboard.press("Enter");
   await expect.poll(async () => (await sent(page)).length).toBe(1);
-  expect((await sent(page))[0].skills_json).toBe("[]");
+  expect((await sent(page))[0].skills_json).toBe('["tmp-acc"]');
   await expect(menu).toBeHidden();
 });
 
-test("键入完整 Skill 名后自动武装，Enter 直接接受（Alex 已批准的全名接受）", async ({ page }) => {
+test("全名命中同样按高亮接受，Enter 直接接受", async ({ page }) => {
   await setup(page);
   const composer = page.locator(".lumir-hp-composer .cm-content");
   const menu = page.locator(".lumir-hp-skill-menu");
@@ -133,6 +143,83 @@ test("键入完整 Skill 名后自动武装，Enter 直接接受（Alex 已批�
   expect(await sent(page)).toEqual([]);
 });
 
+test("多个候选默认接受首项：打开即按当前高亮接受，不发送", async ({ page }) => {
+  await setup(page);
+  const composer = page.locator(".lumir-hp-composer .cm-content");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  await page.mouse.move(10, 10);
+  await page.keyboard.type("/acc");
+  await expect(menu.locator("[role=option]")).toHaveCount(2);
+  // 新合同：不需要先按方向键，也不要求候选唯一；首项高亮即 armed。
+  await expect(menu).toHaveAttribute("data-armed", "true");
+  await expect(composer).toHaveAttribute("aria-activedescendant", "lumir-hp-skill-option-0");
+  await page.keyboard.press("Enter");
+  await expect(composer).toHaveText("/acc-skill-abc ");
+  await expect(composer.locator(".lumir-hp-skill-ref")).toHaveCount(1);
+  expect(await sent(page)).toEqual([]);
+});
+
+test("部分匹配 /in 命中多个候选：不要求全名，Enter 接受当前高亮首项", async ({ page }) => {
+  await setup(page, null, false, undefined, IN_SKILLS);
+  const composer = page.locator(".lumir-hp-composer .cm-content");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  await page.mouse.move(10, 10);
+  await page.keyboard.type("/in");
+  await expect(menu.locator("[role=option]")).toHaveCount(3);
+  await expect(menu.locator(".lumir-hp-skill-name")).toHaveText(["in-notes", "in-search", "in-deploy"]);
+  await expect(menu).toHaveAttribute("data-armed", "true");
+  await expect(composer).toHaveAttribute("aria-activedescendant", "lumir-hp-skill-option-0");
+  await page.keyboard.press("Enter");
+  await expect(composer).toHaveText("/in-notes ");
+  await expect(composer.locator(".lumir-hp-skill-ref")).toHaveCount(1);
+  expect(await sent(page)).toEqual([]);
+});
+
+test("/tmp 无匹配 Skill 时候选不显示：同一路径前缀的两态由候选存在性决定", async ({ page }) => {
+  await setup(page, null, false, undefined, IN_SKILLS);
+  const composer = page.locator(".lumir-hp-composer .cm-content");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  await page.mouse.move(10, 10);
+  await page.keyboard.type("/tmp");
+  await expect(menu).toBeHidden();
+  await page.keyboard.press("Enter");
+  await expect.poll(async () => (await sent(page)).length).toBe(1);
+  expect((await sent(page))[0].skills_json).toBe("[]");
+  await expect(composer).toHaveText("");
+});
+
+test("无匹配候选时 Enter 发送普通文本，不创建 Skill 引用", async ({ page }) => {
+  await setup(page);
+  const composer = page.locator(".lumir-hp-composer .cm-content");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  await page.mouse.move(10, 10);
+  await page.keyboard.type("/zzz");
+  await expect(menu).toBeHidden();
+  await page.keyboard.press("Enter");
+  await expect.poll(async () => (await sent(page)).length).toBe(1);
+  expect((await sent(page))[0].skills_json).toBe("[]");
+  await expect(composer).toHaveText("");
+  await expect(composer.locator(".lumir-hp-skill-ref")).toHaveCount(0);
+});
+
+test("Esc 关闭候选后 Enter 发送原文，不创建 Skill 引用", async ({ page }) => {
+  await setup(page);
+  const composer = page.locator(".lumir-hp-composer .cm-content");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  await page.mouse.move(10, 10);
+  await page.keyboard.type("/acc");
+  await expect(menu).toBeVisible();
+  await expect(menu).toHaveAttribute("data-armed", "true");
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(composer).toHaveText("/acc");
+  await page.keyboard.press("Enter");
+  await expect.poll(async () => (await sent(page)).length).toBe(1);
+  expect((await sent(page))[0].skills_json).toBe("[]");
+  await expect(menu).toBeHidden();
+  await expect(composer.locator(".lumir-hp-skill-ref")).toHaveCount(0);
+});
+
 test("全名之后继续输入普通文本则 token 结束，Enter 回到发送语义", async ({ page }) => {
   await setup(page);
   const composer = page.locator(".lumir-hp-composer .cm-content");
@@ -145,26 +232,29 @@ test("全名之后继续输入普通文本则 token 结束，Enter 回到发送�
   await expect(composer).toHaveText("");
 });
 
-test("Skill 候选被动态不消费 Tab，保留原生焦点遍历且不创建 ref", async ({ page }) => {
+test("候选打开时 Tab 与 Enter 走同一接受路径（高亮即 armed），不发送", async ({ page }) => {
   await setup(page);
   await page.mouse.move(10, 10);
   const composer = page.locator(".lumir-hp-composer .cm-content");
   const menu = page.locator(".lumir-hp-skill-menu");
   await page.keyboard.type("/acc");
   await expect(menu).toBeVisible();
-  await expect(menu).toHaveAttribute("data-armed", "false");
+  await expect(menu).toHaveAttribute("data-armed", "true");
   await expect(composer).toHaveAttribute("aria-activedescendant", "lumir-hp-skill-option-0");
   await page.keyboard.press("Tab");
-  await expect(composer).not.toBeFocused();
+  await expect(composer).toHaveText("/acc-skill-abc ");
+  await expect(composer.locator(".lumir-hp-skill-ref")).toHaveCount(1);
+  await expect(composer).toBeFocused();
   await expect(menu).toBeHidden();
-  await expect(composer).toHaveText("/acc");
-  await expect(composer.locator(".lumir-hp-skill-ref")).toHaveCount(0);
   expect(await sent(page)).toEqual([]);
   const keys = await page.evaluate(() => (window as unknown as { __keyDefaults: any[] }).__keyDefaults);
-  expect(keys.at(-1)).toMatchObject({ key: "Tab", prevented: false });
+  expect(keys.at(-1)).toMatchObject({ key: "Tab", prevented: true });
+  await page.keyboard.press("Enter");
+  await expect.poll(async () => (await sent(page)).length).toBe(1);
+  expect((await sent(page))[0].skills_json).toBe('["acc-skill-abc"]');
 });
 
-test("方向键进入选择态后 Enter 选中并提交当前 ref", async ({ page }) => {
+test("方向键改变接受目标后 Enter 选中并提交当前 ref", async ({ page }) => {
   await setup(page);
   const composer = page.locator(".lumir-hp-composer .cm-content");
   const menu = page.locator(".lumir-hp-skill-menu");
@@ -172,7 +262,7 @@ test("方向键进入选择态后 Enter 选中并提交当前 ref", async ({ pag
   await page.mouse.move(10, 10);
   await page.keyboard.type("/acc");
   await expect(menu.locator("[role=option]")).toHaveCount(2);
-  await expect(menu).toHaveAttribute("data-armed", "false");
+  await expect(menu).toHaveAttribute("data-armed", "true");
   await expect(composer).toHaveAttribute("aria-activedescendant", "lumir-hp-skill-option-0");
   await page.keyboard.press("ArrowDown");
   await expect(menu.locator("[role=option][aria-selected=true]")).toHaveCount(1);
@@ -186,7 +276,7 @@ test("方向键进入选择态后 Enter 选中并提交当前 ref", async ({ pag
   expect((await sent(page))[0].skills_json).toBe('["acc-deploy"]');
 });
 
-test("方向键进入选择态后 Tab 接受并提交当前 ref", async ({ page }) => {
+test("方向键改变高亮后 Tab 接受并提交当前 ref", async ({ page }) => {
   await setup(page);
   const composer = page.locator(".lumir-hp-composer .cm-content");
   const menu = page.locator(".lumir-hp-skill-menu");
@@ -294,8 +384,9 @@ test("草稿恢复 catalog 恰好一次且零新键入不打开候选", async ({
   await expect(page.locator(".lumir-hp-skill-menu")).toBeHidden();
 });
 
-test("deferred catalog 裸 / 回包后显示合法项且连续输入不重复强制请求", async ({ page }) => {
+test("deferred catalog 回包后高亮即接受：Enter 选首项，连续输入不重复强制请求", async ({ page }) => {
   await setup(page, null, true);
+  const composer = page.locator(".lumir-hp-composer .cm-content");
   const menu = page.locator(".lumir-hp-skill-menu");
   await page.keyboard.type("/");
   await expect(menu).toBeHidden();
@@ -303,13 +394,104 @@ test("deferred catalog 裸 / 回包后显示合法项且连续输入不重复强
   await page.evaluate(() => (window as unknown as { __resolveSkills: () => void }).__resolveSkills());
   await expect(menu).toBeVisible();
   await expect(menu.locator(".lumir-hp-skill-name")).toHaveText(["acc-skill-abc", "tmp-acc", "acc-deploy"]);
-  // 迟到 catalog 只补视觉高亮，绝不武装：此刻 Enter 仍必须是发送。
-  await expect(menu).toHaveAttribute("data-armed", "false");
-  await expect(page.locator(".lumir-hp-composer .cm-content")).toHaveAttribute("aria-activedescendant", "lumir-hp-skill-option-0");
+  // 迟到 catalog 到达后首项即接受态：Enter 接受，不再发送普通文本。
+  await expect(menu).toHaveAttribute("data-armed", "true");
+  await expect(composer).toHaveAttribute("aria-activedescendant", "lumir-hp-skill-option-0");
   await page.keyboard.type("acc");
   await expect.poll(() => page.evaluate(() => (window as unknown as { __skillCalls: number }).__skillCalls)).toBe(1);
-  await expect(menu).toHaveAttribute("data-armed", "false");
+  await expect(menu).toHaveAttribute("data-armed", "true");
   await expect(menu.locator("[role=option][aria-selected=true]")).toHaveAttribute("id", "lumir-hp-skill-option-0");
+  await page.keyboard.press("Enter");
+  await expect(composer).toHaveText("/acc-skill-abc ");
+  await expect(composer.locator(".lumir-hp-skill-ref")).toHaveCount(1);
+  expect(await sent(page)).toEqual([]);
+});
+
+test("异步 catalog 重排不换接受目标：按名字保留高亮，Enter 接受的仍是同一项", async ({ page }) => {
+  await setup(page, null, "after-first");
+  const composer = page.locator(".lumir-hp-composer .cm-content");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  await page.mouse.move(10, 10);
+  // 第一次请求立即回包，建立缓存；随后关闭候选。
+  await page.keyboard.type("/acc");
+  await expect(menu.locator("[role=option]")).toHaveCount(2);
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  // 第二次打开：候选从缓存立即显示，刷新请求挂起（"after-first" 的第二拍）。
+  await page.keyboard.type(" /acc");
+  await expect(menu.locator("[role=option]")).toHaveCount(2);
+  await page.keyboard.press("ArrowDown");
+  await expect(menu.locator("[role=option][aria-selected=true]")).toHaveAttribute("id", "lumir-hp-skill-option-1");
+  // 回包把顺序翻转并在前面插入新项：接受目标必须按名字锁定在 acc-deploy。
+  await page.evaluate((next) => (window as unknown as { __resolveSkills: (items: unknown) => void }).__resolveSkills(next), [
+    { name: "acc-deploy", description: "禁自动", source: "vault", user_invocable: true, model_invocable: false, invocation_valid: true },
+    { name: "acc-skill-abc", description: "默认", source: "vault", user_invocable: true, model_invocable: true, invocation_valid: true },
+    { name: "acc-extra", description: "新项", source: "vault", user_invocable: true, model_invocable: true, invocation_valid: true },
+  ]);
+  await expect(menu.locator("[role=option]")).toHaveCount(3);
+  const selected = menu.locator("[role=option][aria-selected=true]");
+  await expect(selected).toHaveCount(1);
+  await expect(selected).toContainText("acc-deploy");
+  await expect(selected).toHaveAttribute("id", "lumir-hp-skill-option-0");
+  await expect(menu).toHaveAttribute("data-armed", "true");
+  await page.keyboard.press("Enter");
+  await expect(composer).toHaveText("/acc /acc-deploy ");
+  await expect(composer.locator(".lumir-hp-skill-ref")).toHaveCount(1);
+  expect(await sent(page)).toEqual([]);
+});
+
+test("异步回包把已选目标过滤掉：回落首项后仍须 armed，Enter 接受回落项", async ({ page }) => {
+  await setup(page, null, "after-first");
+  const composer = page.locator(".lumir-hp-composer .cm-content");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  await page.mouse.move(10, 10);
+  await page.keyboard.type("/acc");
+  await expect(menu.locator("[role=option]")).toHaveCount(2);
+  await page.keyboard.press("Escape");
+  // 第二次打开带在途刷新；先把高亮移到第二项。
+  await page.keyboard.type(" /acc");
+  await expect(menu.locator("[role=option]")).toHaveCount(2);
+  await page.keyboard.press("ArrowDown");
+  await expect(menu.locator("[role=option][aria-selected=true]")).toHaveAttribute("id", "lumir-hp-skill-option-1");
+  // 回包把第二项过滤掉：游标按规则回落首项，但接受态不得随之解除。
+  await page.evaluate((next) => (window as unknown as { __resolveSkills: (items: unknown) => void }).__resolveSkills(next), [
+    { name: "acc-skill-abc", description: "默认", source: "vault", user_invocable: true, model_invocable: true, invocation_valid: true },
+  ]);
+  await expect(menu.locator("[role=option]")).toHaveCount(1);
+  await expect(menu.locator("[role=option][aria-selected=true]")).toHaveAttribute("id", "lumir-hp-skill-option-0");
+  await expect(menu).toHaveAttribute("data-armed", "true");
+  await page.keyboard.press("Enter");
+  await expect(composer).toHaveText("/acc /acc-skill-abc ");
+  await expect(composer.locator(".lumir-hp-skill-ref")).toHaveCount(1);
+  expect(await sent(page)).toEqual([]);
+});
+
+test("接受之后迟到的 catalog 回包不得换项或重开候选", async ({ page }) => {
+  await setup(page, null, "after-first");
+  const composer = page.locator(".lumir-hp-composer .cm-content");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  await page.mouse.move(10, 10);
+  await page.keyboard.type("/acc");
+  await expect(menu.locator("[role=option]")).toHaveCount(2);
+  await page.keyboard.press("Escape");
+  // 第二次打开带一条在途刷新；先在缓存候选上选第二项并接受。
+  await page.keyboard.type(" /acc");
+  await expect(menu.locator("[role=option]")).toHaveCount(2);
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(composer).toHaveText("/acc /acc-deploy ");
+  await expect(menu).toBeHidden();
+  expect(await sent(page)).toEqual([]);
+  // 旧回包现在才到：不得重开候选、不得改写 composer、不得换项。
+  await page.evaluate((next) => (window as unknown as { __resolveSkills: (items: unknown) => void }).__resolveSkills(next), [
+    { name: "acc-skill-abc", description: "默认", source: "vault", user_invocable: true, model_invocable: true, invocation_valid: true },
+    { name: "acc-deploy", description: "禁自动", source: "vault", user_invocable: true, model_invocable: false, invocation_valid: true },
+    { name: "acc-extra", description: "新项", source: "vault", user_invocable: true, model_invocable: true, invocation_valid: true },
+  ]);
+  await expect(menu).toBeHidden();
+  await expect(composer).toHaveText("/acc /acc-deploy ");
+  await expect(composer.locator(".lumir-hp-skill-ref")).toHaveCount(1);
+  expect(await sent(page)).toEqual([]);
 });
 
 test("Esc/失焦/切会话后 catalog 回包不得复活候选", async ({ page }) => {
@@ -352,13 +534,13 @@ test("IME compositionstart 后组合更新不重开候选，确认 Enter 不吞�
   expect(await sent(page)).toEqual([]);
 });
 
-test("IME 组合结束按最终文档重算一次：全名武装可接受，确认 Enter 不被候选抢走", async ({ page }) => {
+test("IME 组合结束按最终文档重算一次：重算后即接受态，确认 Enter 不被候选抢走", async ({ page }) => {
   await setup(page);
   const composer = page.locator(".lumir-hp-composer .cm-content");
   const menu = page.locator(".lumir-hp-skill-menu");
   await page.keyboard.type("/tmp");
   await expect(menu).toBeVisible();
-  await expect(menu).toHaveAttribute("data-armed", "false");
+  await expect(menu).toHaveAttribute("data-armed", "true");
   await composer.evaluate((el) => el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })));
   await expect(menu).toBeHidden();
   await composer.evaluate((el) => {
@@ -366,7 +548,7 @@ test("IME 组合结束按最终文档重算一次：全名武装可接受，确�
     view.dispatch({ changes: { from: 4, insert: "-acc" }, selection: { anchor: 8 }, userEvent: "input.compose" });
     el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
   });
-  // 组合提交的最终文档是完整 Skill 名 → 重算后自动武装；组合期那一拍确认 Enter 由 IME 门处理，
+  // 组合提交的最终文档仍命中候选 → 重算后保持接受态；组合期那一拍确认 Enter 由 IME 门处理，
   // 候选不得把它解释成「接受」。
   await expect(menu).toHaveAttribute("data-armed", "true");
   await expect(composer).toHaveAttribute("aria-activedescendant", "lumir-hp-skill-option-0");
@@ -436,15 +618,15 @@ test("Meta/Alt+N/P 不被候选消费，也不移动候选高亮", async ({ page
     await page.keyboard.type("/acc");
     const menu = page.locator(".lumir-hp-skill-menu");
     await expect(menu).toBeVisible();
-    // 自动视觉高亮在首项；修饰键组合既不得移动它，也不得改变 armed。
+    // 自动视觉高亮在首项且即接受态；修饰键组合既不得移动它，也不得改变接受态。
     await expect(menu.locator("[role=option][aria-selected=true]")).toHaveAttribute("id", "lumir-hp-skill-option-0");
-    await expect(menu).toHaveAttribute("data-armed", "false");
+    await expect(menu).toHaveAttribute("data-armed", "true");
     await page.keyboard.press(key);
     // Alt+N 在 macOS 会产生原生组字（可能改写文档、关闭候选）；Meta 不产生字符。
     // 两支共同的判据只有一条：不得发生候选导航。仍可见时游标必须还在首项。
     if (await menu.isVisible()) {
       await expect(menu.locator("[role=option][aria-selected=true]")).toHaveAttribute("id", "lumir-hp-skill-option-0");
-      await expect(menu).toHaveAttribute("data-armed", "false");
+      await expect(menu).toHaveAttribute("data-armed", "true");
     }
     const keys = await page.evaluate(() => (window as unknown as { __keyDefaults: any[] }).__keyDefaults);
     expect(keys.at(-1)).toMatchObject({ prevented: false, [key.startsWith("Meta+") ? "metaKey" : "altKey"]: true });
@@ -1087,8 +1269,8 @@ for (const theme of ["light", "dark", "eink"] as const) {
 }
 
 
-// ── 机械核验 F1：武装态只接受**无修饰**的 Enter / Tab（delta「武装时无修饰的 Enter / Tab」）──
-// 全名自动武装与显式导航两路都要证明：Shift / Alt 组合保持原义，不会被候选吞成一次 Skill 调用。
+// ── 机械核验 F1：接受态只接受**无修饰**的 Enter / Tab（C4「有效高亮即接受」）──
+// 全名命中与显式导航两路都要证明：Shift / Alt 组合保持原义，不会被候选吞成一次 Skill 调用。
 async function armSkillMenuBy(page: Page, mode: "全名" | "导航"): Promise<void> {
   if (mode === "全名") {
     await page.keyboard.type("/tmp-acc");
@@ -1105,7 +1287,7 @@ async function composerDoc(page: Page): Promise<string> {
 const ARMED_DOC = { 全名: "/tmp-acc", 导航: "/acc" } as const;
 
 for (const mode of ["全名", "导航"] as const) {
-  test(`武装态（${mode}）Shift+Enter 仍插入换行，不创建 Skill 引用`, async ({ page }) => {
+  test(`接受态（${mode}）Shift+Enter 仍插入换行，不创建 Skill 引用`, async ({ page }) => {
     await setup(page);
     const composer = page.locator(".lumir-hp-composer .cm-content");
     const menu = page.locator(".lumir-hp-skill-menu");
@@ -1119,7 +1301,7 @@ for (const mode of ["全名", "导航"] as const) {
     await expect(menu).toBeHidden();
   });
 
-  test(`武装态（${mode}）Shift+Tab 仍回退焦点，不创建 Skill 引用`, async ({ page }) => {
+  test(`接受态（${mode}）Shift+Tab 仍回退焦点，不创建 Skill 引用`, async ({ page }) => {
     await setup(page);
     const composer = page.locator(".lumir-hp-composer .cm-content");
     const menu = page.locator(".lumir-hp-skill-menu");
@@ -1136,7 +1318,7 @@ for (const mode of ["全名", "导航"] as const) {
     expect(keys.at(-1)).toMatchObject({ key: "Tab", prevented: false, shiftKey: true });
   });
 
-  test(`武装态（${mode}）Alt+Enter 不被候选接受，按既有 Enter 语义发送纯文本`, async ({ page }) => {
+  test(`接受态（${mode}）Alt+Enter 不被候选接受，按既有 Enter 语义发送纯文本`, async ({ page }) => {
     await setup(page);
     const menu = page.locator(".lumir-hp-skill-menu");
     await page.mouse.move(10, 10);

@@ -4863,7 +4863,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   function selectSkillMenuItem(index?: number): void {
     if (skillMenuState === null) return;
     if (index !== undefined) {
-      // 指针点击本身就是显式选择：同一次动作里先武装游标，再走与键盘同一个接受路径。
+      // 指针点击先按落点更新游标，再走与键盘同一个接受路径（高亮即接受）。
       const next = hoverSkillHighlight(skillMenuState, index);
       if (next !== skillMenuState) {
         skillMenuState = next;
@@ -10729,7 +10729,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       return;
     }
     if (mod) return;
-    // 武装只接受**无修饰**的 Enter / Tab（change delta「武装时无修饰的 Enter / Tab」）：
+    // 接受只认**无修饰**的 Enter / Tab（C4「有效高亮即接受」）：
     // Shift+Enter 换行、Shift+Tab 焦点回退、Alt 组合保持原义（C7）。
     if (skillMenuState !== null && skillMenuState.armed &&
         !event.shiftKey && !event.altKey &&

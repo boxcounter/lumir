@@ -157,11 +157,22 @@ steps:
       - label: deny 正文仍未出现
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", not: "ACC-DENY-BODY" }
 
-  - name: 行首普通 /tmp（候选可出现但被动态 Enter 不选）
+  - name: 行首 /tmp（有候选时 Enter 会接受；先 Esc 关闭以发送原文）
     do: typeInNode
     target: { role: AXTextArea, name: "问点什么|/tmp" }
     text: "/tmp"
-  - name: 直接 Enter 发送普通路径
+    expect:
+      - label: 路径前缀命中 tmp-acc，候选已出现
+        ax: { has: "AXList (Select a Skill)" }
+  - name: Esc 关闭候选，保留原文 /tmp
+    do: key
+    key: escape
+    expect:
+      - label: 候选已关闭
+        ax: { not: "AXList (Select a Skill)" }
+      - label: composer 原文未被改写
+        ax: { has: '/AXTextArea = "/tmp"/' }
+  - name: Enter 发送普通路径原文（未被候选消费）
     do: key
     key: enter
   - name: 等普通路径回合完成

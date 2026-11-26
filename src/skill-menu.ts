@@ -17,14 +17,12 @@ export interface SkillToken {
 }
 
 /**
- * 候选状态（合同：docs/specs/selector-contract.md C1 / C4）。
+ * 候选状态（合同：docs/specs/selector-contract.md C1 / C4「有效高亮即接受」）。
  *
  * - `highlighted`：唯一游标，打开即有（首项 / 按名字保留 / 全名项）；query 变化可自动改它。
- * - `armed`：Enter / Tab 是否接受。只有显式选择（方向键 / ⌃N·⌃P / 指针）或 token 前缀
- *   逐字等于某项全名时为真；异步 catalog 回包绝不把 false 改成 true。
- *
- * 两个状态分开的原因：视觉高亮可以自动（降低「看不见高亮」的困惑），但「Enter 会做什么」
- * 必须仍由用户的显式动作承诺——否则 `/tmp` 这类路径前缀会把被动态 Enter 变成一次 Skill 调用。
+ * - `armed`：Enter / Tab 是否接受。`items` 非空时恒为真——用户看见哪一项，接受键就作用于
+ *   哪一项，不再要求全名、唯一候选或显式导航（Alex 2026-11-26 批准的 Enter 新合同）。
+ *   该字段只作 `data-armed` 观测位与选择函数的守卫，不再承载「用户是否承诺过」的语义。
  */
 export interface SkillMenuState {
   token: SkillToken;
@@ -58,9 +56,10 @@ export function filterSkillCatalog(
 /**
  * 候选状态转移（query 变化、选区同步与异步 catalog 回包共用同一入口）。
  *
- * - 游标：全名项 > 按名字保留的上一项 > 首项。
- * - 武装：全名恒成立；否则只在**同一个 token**（位置与前缀都没变）上继承——query 变了
- *   就回到未武装，异步回包也就无法把被动态 Enter 变成接受。
+ * - 游标：全名项 > 按名字保留的上一项 > 首项。异步回包按名字保留的正是这条规则：
+ *   它只换 items，不得把用户已经指向的目标换掉。
+ * - 接受态：`items` 非空即真。打开、query 变化与异步回包都不得制造「有游标但不可接受」
+ *   的中间态，也不得因回包换掉当前项（目标消失才回落全名项或首项）。
  *
  * 返回 null = 候选不显示（无 token / 零命中）。
  */
@@ -77,11 +76,15 @@ export function syncSkillMenuState(
   const fullName = items.findIndex((item) => item.name === token.prefix);
   const previousName = previous === null ? null : previous.items[previous.highlighted]?.name ?? null;
   const kept = previousName === null ? -1 : items.findIndex((item) => item.name === previousName);
-  const highlighted = fullName >= 0 ? fullName : kept >= 0 ? kept : 0;
   const sameToken = previous !== null &&
     previous.token.from === token.from && previous.token.prefix === token.prefix;
-  const armed = fullName >= 0 || (sameToken && previous.armed && kept >= 0);
-  return { token, items, highlighted, armed };
+  // 同一 token 的重复同步（含异步回包）按名字保留当前目标——即使回包新出现一个与 query
+  // 同名的项，也不得把用户已经指向的目标换掉；query 变化才按「全名项 > 保留 > 首项」重选。
+  const highlighted = sameToken && kept >= 0
+    ? kept
+    : fullName >= 0 ? fullName : kept >= 0 ? kept : 0;
+  // items 非空 ⇒ 有效高亮 ⇒ armed（C4）：接受目标只有游标一个来源。
+  return { token, items, highlighted, armed: true };
 }
 
 export function openSkillMenu(
@@ -113,7 +116,7 @@ export function sameSkillMenuState(
 export function moveSkillHighlight(state: SkillMenuState, delta: number): SkillMenuState {
   if (state.items.length === 0) return state;
   const highlighted = Math.max(0, Math.min(state.items.length - 1, state.highlighted + delta));
-  // 导航键本身就是显式选择：即使已在端点、索引没变，也武装 Enter。
+  // 导航键改变接受目标；items 非空时 armed 恒真，这里显式写回保持不变量。
   return { ...state, highlighted, armed: true };
 }
 
