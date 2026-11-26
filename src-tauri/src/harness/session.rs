@@ -52,6 +52,12 @@ pub struct PanelMessage {
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Web 工具调用的完整输入（query / URL）：与 live `started` 的参数摘要同一份 arguments，
+    /// 但不截断。供恢复路径的默认行与「查看详情」使用——失败记录的 `summary` 是错误摘要，
+    /// 不能当参数用。非 Web 工具 / 旧记录缺省，恢复端安全降级（MUST NOT 伪造）。
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub web_input: Option<super::web::output::PanelWebInput>,
     /// 执行状态：tool 消息的工具终态（done / denied / rejected / error）；
     /// assistant 消息的中断标注（"stopped" = 本轮被用户停止，面板 D383 徽标的数据源，M348）。
     #[ts(optional)]

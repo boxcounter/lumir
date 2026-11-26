@@ -98,12 +98,18 @@ test("Chromium CDP 真引擎组合：Backspace 不吃 committed 文本，取消/
   await expect.poll(async () => (await composerState(page)).doc).toBe("");
 });
 
-test("新会话成功：composer 新建 EditorState，旧文本与 history 不可达", async ({ page }) => {
+test("新会话成功：composer 内容与 history 保留（会话切换只换消息列表）", async ({ page }) => {
+  // change preserve-composer-across-sessions-nov26（Alex 2026-11-26「采纳」）：新建会话 MUST NOT
+  // 复位输入区。旧实现在这里新建 EditorState，本用例的第一条断言即判红（内容被清空）。
   await setup(page);
+  expect((await composerState(page)).doc).toBe("我");
   await page.locator(".lumir-hp-seg-new").click();
-  await expect.poll(async () => (await composerState(page)).doc).toBe("");
+  await expect.poll(async () => (await composerState(page)).doc).toBe("我");
+  // history 没有被换掉：撤销仍能回退 setup 里那次键入。焦点必须真的在 composer 里——
+  // 点 `.cm-content` 可能落在卡片 widget 上（引用卡的 click 是跳转，不给输入区焦点）。
+  await setComposerCaret(page, 1);
   await page.keyboard.press("Meta+z");
-  expect((await composerState(page)).doc).toBe("");
+  await expect.poll(async () => (await composerState(page)).doc).toBe("");
 });
 
 test("无 vault 双挂起新会话：迟到回包不得清掉更新后的输入", async ({ page }) => {
@@ -134,7 +140,7 @@ test("无 vault 双挂起新会话：迟到回包不得清掉更新后的输入"
   expect((await composerState(page)).doc).toBe("NEWER-INPUT");
 });
 
-test("新会话清除同 vault 草稿：落盘删除后 reload 不复活旧输入", async ({ page }) => {
+test("新会话不清同 vault 草稿：reload 后恢复旧输入（change preserve-composer-across-sessions-nov26）", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.addInitScript(() => {
     const w = window as unknown as Record<string, any>;
@@ -162,12 +168,14 @@ test("新会话清除同 vault 草稿：落盘删除后 reload 不复活旧输�
   await page.locator(".lumir-hp-toggle").click();
   await expect.poll(async () => (await composerState(page)).doc).toBe("OLD-DRAFT");
   await page.locator(".lumir-hp-seg-new").click();
-  await expect.poll(async () => (await composerState(page)).doc).toBe("");
-  await expect.poll(() => page.evaluate(() => (window as unknown as { __draftPuts: string[] }).__draftPuts.includes(""))).toBe(true);
+  // 旧实现：resetComposer + draft.clear()，内容清空且盘上草稿被删除（本用例必红）。
+  await expect.poll(async () => (await composerState(page)).doc).toBe("OLD-DRAFT");
+  await page.waitForTimeout(200);
+  expect(await page.evaluate(() => (window as unknown as { __draftPuts: string[] }).__draftPuts.includes(""))).toBe(false);
   await page.reload();
   await page.locator('.ft-row[title="ime.md"]').click();
   if (await page.locator(".lumir-hp-composer .cm-content").count() === 0) await page.locator(".lumir-hp-toggle").click();
-  await expect.poll(async () => (await composerState(page)).doc).toBe("");
+  await expect.poll(async () => (await composerState(page)).doc).toBe("OLD-DRAFT");
 });
 
 // ── 竖直移动的列位口径（M834）─────────────────────────────────────────────────────────

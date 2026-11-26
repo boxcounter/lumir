@@ -106,10 +106,16 @@ steps:
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-DEFAULT-BODY" }
       - label: 路径 Skill 正文进入 input/request
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-TMP-BODY" }
-      - label: 禁手动拒绝只上 live 工具行，不另造模型上下文
-        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", not: "skill_user_invocation_disabled" }
-      - label: 非法拒绝只上 live 工具行，不另造模型上下文
-        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", not: "skill_invocation_invalid" }
+      - label: 禁手动失败进显式痕迹字段（不再是 live-only）
+        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: '/"lumir_skill_trace":\[[^\]]*"code":"skill_user_invocation_disabled"/' }
+      - label: 非法元数据失败进显式痕迹字段
+        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: '/"lumir_skill_trace":\[[^\]]*"code":"skill_invocation_invalid"/' }
+      - label: 两个成功 Skill 各留一条 done 痕迹
+        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: '/"lumir_skill_trace":\[[^\]]*"name":"tmp-acc","status":"done"/' }
+      - label: 路径 Skill 的成功痕迹在场
+        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: '/"lumir_skill_trace":\[[^\]]*"name":"acc-skill-abc","status":"done"/' }
+      - label: 失败原因只活在痕迹字段，不冒充正文 part（反例实测见证据：text 键在任何位置都判红）
+        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", not: '/"text":"(?:[^"\\]|\\.)*skill_user_invocation_disabled/' }
       - label: deny 的显式正文未注入
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", not: "ACC-DENY-BODY" }
       - label: 禁手动正文未进入显式回合
@@ -121,14 +127,20 @@ steps:
       - label: 显式正文不上屏
         ax: { not: "ACC-TMP-BODY" }
 
-  - name: 展开显式回合工具组，核对禁手动与非法的 live 非阻断工具行
+  - name: 展开显式回合工具组，核对五个名字的显式痕迹行
     do: click
     target: { role: AXButton, name: "个工具调用 · 全部完成" }
     expect:
+      - label: 成功行必须带可见且 AX 可读的「已加载」终态（只有名字不算）
+        ax: { has: "/explicit_skill acc-skill-abc · 已加载/" }
+      - label: 路径 Skill 的成功痕迹同样带终态词
+        ax: { has: "/explicit_skill tmp-acc · 已加载/" }
       - label: 禁手动工具行同时绑定 acc-background 与专用错误
-        ax: { has: "/skill_load name: acc-background · error · skill_user_invocation_disabled/" }
+        ax: { has: "/explicit_skill acc-background · error · skill_user_invocation_disabled/" }
       - label: 非法工具行同时绑定 acc-invalid 与专用错误
-        ax: { has: "/skill_load name: acc-invalid · error · skill_invocation_invalid/" }
+        ax: { has: "/explicit_skill acc-invalid · error · skill_invocation_invalid/" }
+      - label: deny 的显式行绑定 default 与权限错误
+        ax: { has: "/explicit_skill default · denied · permission_denied/" }
 
   - name: 自动入口逐项调用（普通文本，不生成 refs）
     do: typeInNode
@@ -157,11 +169,22 @@ steps:
       - label: deny 正文仍未出现
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", not: "ACC-DENY-BODY" }
 
-  - name: 行首普通 /tmp（候选可出现但被动态 Enter 不选）
+  - name: 行首 /tmp（有候选时 Enter 会接受；先 Esc 关闭以发送原文）
     do: typeInNode
     target: { role: AXTextArea, name: "问点什么|/tmp" }
     text: "/tmp"
-  - name: 直接 Enter 发送普通路径
+    expect:
+      - label: 路径前缀命中 tmp-acc，候选已出现
+        ax: { has: "AXList (Select a Skill)" }
+  - name: Esc 关闭候选，保留原文 /tmp
+    do: key
+    key: escape
+    expect:
+      - label: 候选已关闭
+        ax: { not: "AXList (Select a Skill)" }
+      - label: composer 原文未被改写
+        ax: { has: '/AXTextArea = "/tmp"/' }
+  - name: Enter 发送普通路径原文（未被候选消费）
     do: key
     key: enter
   - name: 等普通路径回合完成
@@ -192,8 +215,8 @@ steps:
     expect:
       - label: 禁自动 Skill 仍可经真实候选显式注入
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-DEPLOY-BODY" }
-      - label: 候选用户消息仅原文 part 与 acc-deploy part，本地标记、段头和正文同属后者
-        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: '/^.*"kind":"llm_request".*"content":\[{"text":"/acc-deploy \\n\\n\[当前编辑器上下文：\\n文件：harness-note.md\\n视口（第 1-6 行）\]","type":"input_text"},{"lumir_skill":"acc-deploy","text":"\[已加载 Skill：acc-deploy\]\\n---\\ndescription: 合成禁自动 Skill\\ndisable-model-invocation: true\\n---\\nACC-DEPLOY-BODY\\n","type":"input_text"}\],"role":"user".*$/' }
+      - label: 候选用户消息含原文 part、acc-deploy part 与显式痕迹字段
+        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: '/^.*"kind":"llm_request".*"content":\[{"text":"/acc-deploy \\n\\n\[当前编辑器上下文：\\n文件：harness-note.md\\n视口（第 1-6 行）\]","type":"input_text"},{"lumir_skill":"acc-deploy","text":"\[已加载 Skill：acc-deploy\]\\n---\\ndescription: 合成禁自动 Skill\\ndisable-model-invocation: true\\n---\\nACC-DEPLOY-BODY\\n","type":"input_text"}\],"lumir_skill_trace":\[[^\]]*\],"role":"user".*$/' }
       - label: 显式正文仍不上屏
         ax: { not: "ACC-DEPLOY-BODY" }
 
@@ -241,6 +264,15 @@ steps:
       - label: 旧自动工具结果仍保留
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-BACKGROUND-BODY" }
 
+  - name: 开始新会话，确保恢复目标不是当前会话（当前会话恢复是 no-op，不重建面板）
+    do: click
+    target: { role: AXButton, name: "新会话" }
+  - name: 等新会话面板清空
+    do: waitFor
+    waitFor:
+      has: ["问点什么"]
+      not: ["/acc-skill-abc"]
+    timeoutMs: 10000
   - name: 打开历史会话清单并真正恢复含显式 part + 自动工具结果的会话
     do: click
     target: { role: AXPopUpButton, nth: 0 }
@@ -253,14 +285,31 @@ steps:
       - label: 恢复目标是本轮 /tmp-acc 会话而不是无名序号项
         node: { role: AXMenuItem, name: "/tmp-acc", present: true }
       - shot: 03-恢复会话清单
-  - name: 恢复该会话（最后一条 llm_request.messages 原样灌回）
-    do: clickInNode
+  - name: 恢复该会话（AXPress；坐标点击依赖前台，会被别的窗口吃掉）
+    do: click
     target: { role: AXMenuItem, name: "/tmp-acc", nth: 0 }
+    expect:
+      - label: 点击落在恢复行上（会话浮层已收起）
+        ax: { not: "AXMenuItem (/tmp-acc" }
   - name: 等恢复内容重建（恢复会话本身不发起模型回合）
     do: waitFor
     waitFor:
       has: ["当前编辑器上下文："]
     timeoutMs: 15000
+  - name: 恢复后展开显式回合工具组，核对痕迹仍在且不重复
+    do: click
+    target: { role: AXButton, name: "5 个工具调用 · 全部完成" }
+    expect:
+      - label: 恢复后的成功行仍在且保留「已加载」终态
+        ax: { has: "/explicit_skill acc-skill-abc · 已加载/" }
+      - label: 恢复后的路径 Skill 成功行同样保留终态词
+        ax: { has: "/explicit_skill tmp-acc · 已加载/" }
+      - label: 恢复后的禁手动失败行仍带原因（恢复尾注 = failureTextOf 的 code + message，无 live 的 error 前缀，见场景 96）
+        ax: { has: "/explicit_skill acc-background · skill_user_invocation_disabled: /" }
+      - label: 恢复后的权限拒绝行仍带原因（同上，无 denied 前缀；规则原文仍在）
+        ax: { has: "/explicit_skill default · permission_denied: /" }
+      - label: 恢复后的痕迹行不含正文
+        ax: { not: "ACC-TMP-BODY" }
   - name: 恢复后真实点击 composer，准备产生恢复后的首个新请求
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
@@ -292,4 +341,12 @@ steps:
 
 本场景只证明 mock 链路下的注入、留存、投影、策略执行和发送行为，不证明真实模型会遵守索引提示。
 发现期按现状读取 SKILL.md 解析 description 与策略；负向判据只约束对应执行期输出面，不声称发现期零 IO。
+显式 Skill 的可见痕迹由会话留存里的 `lumir_skill_trace` 字段承载：成功与失败各一条工具名
+`explicit_skill` 的痕迹行；成功行的终态词「已加载」是可见、AX 可读的文本（勾图标 aria-hidden，不承担
+语义），失败原因只在该字段与工具行上、不进正文 part；恢复路径从同一字段重建。成功行保留「已加载」；
+失败行与既有工具行同口径显示 `{code}: {message}`，不带 live 摘要里的 `error · ` / `denied · ` 前缀。
+「失败原因不冒充正文 part」的负向判据按 `"text":"…<code>…"` 形态匹配（键序无关），反例实测
+（text 在 type 前 / type 在 text 前 / 转义引号前缀）均判红，验证记录随本轮返修证据存档。
+provider wire 层面的剥离（`lumir_skill` / `lumir_skill_trace` 均不出现）由 Rust 单测覆盖，本场景不做
+wire 层断言。
 既有场景 77 是默认自动能力回归基线，文件与 fixture 均不由本场景修改；执行批次应连同 77 一起跑。

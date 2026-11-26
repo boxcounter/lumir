@@ -110,7 +110,7 @@ export function mountStartupSurface({ productName, firstRun }: StartupSurfaceOpt
   // 「打开 vault」入口：与树空态按钮同一形态（`.ft-open-btn` 的既有样式），回调由装配层
   // 接到既有 `requestAddVault`（同一条 dirty 前置门 + 目录选择器链路）。主模块装载之前的
   // 短暂窗口里点击是空操作——入口本身不可用才是缺陷，这里保持「可见即可达」。
-  const openCopyKey = firstRunMode ? "D1029" : "D6";
+  const openCopyKey = firstRunMode ? "D1034" : "D6";
   const open = document.createElement("button");
   open.type = "button";
   open.className = "ft-open-btn startup-open";

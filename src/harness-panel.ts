@@ -100,6 +100,7 @@ import {
 import type { ComposerContent, PlacedAttachment } from "./harness-composer";
 import { createComposerImeCoordinator } from "./harness-composer-ime";
 import { currentLanguage, errorText, formatDate, formatRelative, onRelabel, t, tPlural } from "./copy";
+import { byteSizeText } from "./byte-size";
 import type { CopyKey, Language } from "./copy";
 import { progressTailView } from "./harness-progress-tail";
 export { stageCopyKey } from "./harness-progress-tail";
@@ -133,8 +134,14 @@ import type { HarnessEvent } from "./ipc";
 import type { DecisionReason } from "./bindings/DecisionReason";
 import type { WebApprovalPayload } from "./bindings/WebApprovalPayload";
 import type { WebProviderStatus } from "./bindings/WebProviderStatus";
-import { parseWebAudit, webAuditFromPanelText } from "./web-audit";
-import type { WebAuditMetadata } from "./web-audit";
+import {
+  parseWebAudit,
+  parseWebPanelInput,
+  webAuditFromPanelText,
+  webInputText,
+  withWebPanelInput,
+} from "./web-audit";
+import type { WebAuditMetadata, WebPanelInput } from "./web-audit";
 import type { ThinkingEffort } from "./bindings/ThinkingEffort";
 import {
   assembleHarnessContext,
@@ -1043,6 +1050,25 @@ function createWebAuditBlock(metadata: WebAuditMetadata): HTMLElement {
   return el;
 }
 
+/** Web 搜索结果健康摘要（change compact-web-search-result-summary-nov26）：只有「成功 Search +
+ *  两个读数都是合法整数」才渲染。N = 预算裁剪后实际回送模型的结果条数；`size` = 最终保留结果
+ *  title / snippet / summary / content 的 UTF-8 字节和（后端单点计算）。
+ *
+ *  四种形态：正常 / 字段截断 / 结果裁剪 / 真正成功的空结果。失败、非 Search、缺读数 → null，
+ *  MUST NOT 用 `0 条结果` / `0 B` 冒充（旧留存缺键即走这条降级）。 */
+function webHealthText(metadata: WebAuditMetadata): string | null {
+  if (metadata.operation !== "search" || metadata.code !== null) return null;
+  if (metadata.result_count === null || metadata.result_text_bytes === null) return null;
+  const count = metadata.result_count;
+  const size = byteSizeText(metadata.result_text_bytes);
+  if (metadata.truncated_fields.includes("results")) {
+    return tPlural("D1033", count, { count, size });
+  }
+  if (count === 0) return t("D1031");
+  if (metadata.truncated) return tPlural("D1032", count, { count, size });
+  return tPlural("D1030", count, { count, size });
+}
+
 /** 定时任务批准预览（change add-cron-conversational-registration design §6.3 契约）：形状由
  *  Rust 侧批准载荷给出（事件与快照同源同形），前端只呈现、不推导——`skip_today` 是线程按
  *  自己的时钟算好的结果，MUST NOT 在前端重算。`op = "remove"` 时只有 `id` 与 `at`
@@ -1763,6 +1789,45 @@ export function thinkingStateOf(snapshot: unknown): { level: string; supported: 
  */
 const TOOL_FAILED_SUMMARY = /^[a-z]+ · [a-z0-9_]+: /;
 
+const WEB_TOOL_NAMES = new Set(["web_search", "web_fetch"]);
+
+/**
+ * Web 失败行的尾注：live 摘要带 `error · ` / `denied · ` 状态前缀，恢复路径的
+ * `failureTextOf` 不带——两者同形是 change compact-web-search-result-summary-nov26 的合同
+ * （稳定错误码 + 人话原因直接可见，不显示条数 / 大小）。非 Web 工具逐字不变。
+ */
+function webFailureTail(name: string, summary: string): string {
+  return WEB_TOOL_NAMES.has(name) ? summary.replace(/^(?:error|denied|rejected) · /, "") : summary;
+}
+
+/** 恢复行的 Web 参数格：持久化完整输入 → 审计投影 → 参数摘要（纯 query / URL / JSON）。
+ *  失败摘要（`状态 · code: message`）不是参数，`toolArgsText` 会返回空串——旧记录因此安全
+ *  降级为空，MUST NOT 把错误原因抄进参数格。 */
+function restoredWebArgsText(
+  name: string,
+  summary: string,
+  input: WebPanelInput | undefined,
+  audit: WebAuditMetadata | undefined,
+): string {
+  if (!WEB_TOOL_NAMES.has(name)) return toolArgsText(name, summary);
+  const web = webInputText(input, audit);
+  return web !== "" ? web : toolArgsText(name, summary);
+}
+
+/** 乱序 live done 的参数格：优先用同一 done 事件里的 Web 审计输入（含完整 query / URL），
+ *  没有再按严格摘要口径回落。非 Web 工具行为不变。 */
+function doneWebArgsText(
+  name: string,
+  summary: string,
+  audit: WebAuditMetadata | undefined,
+): string {
+  if (WEB_TOOL_NAMES.has(name)) {
+    const web = webInputText(undefined, audit);
+    if (web !== "") return web;
+  }
+  return humanizeToolArgsStrict(name, summary);
+}
+
 /**
  * 快照恢复路径上一条 assistant 记录的正文：缺 `text` / 非字符串 / 空白串 → `null`
  * （MUST NOT 渲染）。模型只发工具调用、无正文的轮次在 M367 之前会落一条 `text: Some("")`
@@ -1804,7 +1869,7 @@ export function restoredReasoningText(record: unknown): string | null {
 // 上屏（正好是 core 那份成品）——两种形态都可能在，判据见 [`humanizeToolArgs`] 与
 // [`toolArgsText`]（后者是「参数格取哪一份」的取值口径）。
 // 人话化是**展示层提取**（按工具名取关键参数：cli_run=完整命令、vault_*=路径、
-// vault_search=查询词、skill_load=技能名），截断 / 非 JSON / 未知工具一律回落原文，
+// vault_search=查询词、skill_load / explicit_skill=技能名），截断 / 非 JSON / 未知工具一律回落原文，
 // 不伪造。gated 调用的完整参数在 approval_request 载荷里（argv 数组 / diff 头文件名），
 // 到达后取代截断摘要。与上面几层同一条分层纪律：纯函数零 DOM（tests/unit 直接驱动）。
 // ---------------------------------------------------------------------------
@@ -1846,7 +1911,17 @@ function keyArgOf(name: string, args: Record<string, unknown>): string | null {
       return typeof args.path === "string" && args.path !== "" ? args.path : "/";
     case "vault_search":
       return typeof args.query === "string" && args.query !== "" ? args.query : null;
+    // Web 工具只上屏纯 query / URL（change compact-web-search-result-summary-nov26）：
+    // 旧快照的 summary 仍是 arguments JSON，默认参数（count / need_content）不进 running 行。
+    case "web_search":
+      return typeof args.query === "string" && args.query !== "" ? args.query : null;
+    case "web_fetch":
+      return typeof args.url === "string" && args.url !== "" ? args.url : null;
     case "skill_load":
+      return typeof args.name === "string" && args.name !== "" ? args.name : null;
+    // 显式 Skill 痕迹（change add-explicit-skill-trace-nov26）：痕迹行的参数摘要恒为
+    // {"name": <技能名>}（成功与失败同一形态）；工具名与模型自主的 skill_load 区分。
+    case "explicit_skill":
       return typeof args.name === "string" && args.name !== "" ? args.name : null;
     default:
       return null;
@@ -1893,6 +1968,19 @@ export function humanizeToolArgsStrict(name: string, summary: string): string {
 export function toolArgsText(name: string, summary: string): string {
   if (summary === "" || TOOL_FAILED_SUMMARY.test(summary)) return "";
   return humanizeToolArgs(name, summary);
+}
+
+/**
+ * 显式 Skill 痕迹行的**成功终态词**（change add-explicit-skill-trace-nov26 评审 P1-1）：
+ * 痕迹行必须有**可见且 AX 可读**的终态，不能只靠 `aria-hidden` 的勾图标（图标是纯装饰，
+ * 读屏与文本判据都读不到）。失败侧已由失败尾注承担，这里只补成功侧；其余工具行保持既有
+ * 三段式（成功不加尾注）。live 与恢复两条路径共用本函数，两侧不会各写一套终态词。
+ */
+export function explicitSkillSuccessTail(
+  name: string,
+  failed: boolean,
+): string | undefined {
+  return !failed && name === "explicit_skill" ? t("D1029") : undefined;
 }
 
 /** unified diff 的文件名（core diff.rs 头两行 `--- a/{path}` / `+++ b/{path}`；取不到 → null）。 */
@@ -4372,6 +4460,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  轮次终态经 finalizeStreamingMessage 定格（数据引用释放，DOM 元素留在消息内）。 */
   let thinkingBlocks: ThinkingBlock[] = [];
   let thinkingDirty = false;
+  /** Web 附属单元（change compact-web-search-result-summary-nov26）：健康摘要 + 默认关闭的
+   *  「查看详情」。按已存 metadata 重渲（语言切换），元素随 transcript 清面一起丢弃。 */
+  interface WebAuditUnitEntry {
+    unit: HTMLElement;
+    metadata: WebAuditMetadata;
+  }
+  let webAuditUnits: WebAuditUnitEntry[] = [];
   /** 内容事件的到达序号（M383）：text_chunk / reasoning_chunk 各领一个单调递增号——思考块
    *  视图与正文段的**结构性创建**按到达序合并落位（「DOM 序 = 事件序」合同，见
    *  flushPendingStructures；旧实现把思考块一律锚到首个正文段之前，交错时倒置）。 */
@@ -4481,6 +4576,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     el: HTMLElement;
     rows: HTMLElement[];
     running: HTMLElement | null;
+    /** 附属单元（Web 健康摘要 + 默认关闭的审计）：随组折叠 / 展开显隐，**不计入**
+     *  `rows`（组摘要只数真实工具调用）。 */
+    extras: HTMLElement[];
+    /** 组摘要是否处于收起态（append 时给新附属单元定初始显隐）。 */
+    collapsed: boolean;
   }
   let activeTools: ToolsBlock | null = null;
   /** 已封板的工具块（开出新文本段时旧块封板）——定稿时与在途块一起折叠。 */
@@ -4568,6 +4668,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   composerArea.append(skillMenuEl);
   let skillMenuState: SkillMenuState | null = null;
   let skillCatalog: readonly SkillSummary[] | null = null;
+  /** 上一次指针选意事件的视口坐标。WKWebView 在候选滚动 / 重排后会对**静止指针**补发
+   *  mousemove（clientX/Y 与上次相同，目标却是滚动后的新行）；同坐标不是新的指针移动，
+   *  MUST NOT 据此改游标（C6「hover 不得抹掉游标」的机器口径）。 */
+  let skillPointerX: number | null = null;
+  let skillPointerY: number | null = null;
   let skillCatalogEpoch = 0;
   let skillTokenFrom: number | null = null;
   let skillMenuIntentFrom: number | null = null;
@@ -4683,10 +4788,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     updateSkillMenuHighlight();
   }
 
-  /** 指针选意只认**真实指针移动**（`mousemove`），不认 `mouseenter`：揭示滚动会把另一行搬到
-   *  静止指针下面，`mouseenter` 会在那一刻改掉键盘刚选中的游标（合同 C6「hover 不得抹掉游标」）。
+  /** 指针选意只认**真实指针移动**（`mousemove` 且 `clientX/Y` 相对上次变化），不认 `mouseenter`：
+   *  揭示滚动会把另一行搬到静止指针下面。Chromium 不为此补发事件，WKWebView 会补发一条**同坐标**
+   *  mousemove——只认目标就会在那一刻改掉键盘刚选中的游标（合同 C6「hover 不得抹掉游标」）。
    *  整表只挂一个监听，option 重建时不重复注册。 */
   skillMenuEl.addEventListener("mousemove", (event) => {
+    if (event.clientX === skillPointerX && event.clientY === skillPointerY) return;
+    skillPointerX = event.clientX;
+    skillPointerY = event.clientY;
     const target = event.target;
     if (!(target instanceof Element)) return;
     const option = target.closest(".lumir-hp-skill-option");
@@ -4863,7 +4972,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   function selectSkillMenuItem(index?: number): void {
     if (skillMenuState === null) return;
     if (index !== undefined) {
-      // 指针点击本身就是显式选择：同一次动作里先武装游标，再走与键盘同一个接受路径。
+      // 指针点击先按落点更新游标，再走与键盘同一个接受路径（高亮即接受）。
       const next = hoverSkillHighlight(skillMenuState, index);
       if (next !== skillMenuState) {
         skillMenuState = next;
@@ -4949,6 +5058,22 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /** 草稿装载世代：读盘在途时又切了一次 vault，旧结果作废（与快照的 snapshotSeq 同口径——
    *  store 内部另有一道世代守它自己的状态，这条守的是**渲染**）。 */
   let draftSeq = 0;
+
+  /**
+   * 会话切换（新建 / 选择 / 恢复 / 重载）保留输入区：只作废在途的草稿恢复，不动 composer。
+   *
+   * change preserve-composer-across-sessions-nov26（Alex 2026-11-26「采纳」）：这些切换 MUST NOT
+   * 复位 composer、MUST NOT 清除盘上草稿——文字 / 卡片 / Skill / 光标 / 撤销历史原样保留，下一次
+   * 发送进入当前选中会话；草稿只在发送成功或用户手动删除时清除。在途读回属于切换前的输入区：
+   * 它落地时会 `resetComposer(loaded)`（新建 `EditorState`、换掉 history），必须整条作废。
+   *
+   * 切 vault **不走这里**：它本来就该换输入区并按自己的 vault 读回草稿（见 `vaultChanged` 与
+   * `restoreDraft`）。作废点也 MUST NOT 放进 `resetView`——`vaultChanged` 随后就要 `restoreDraft()`，
+   * 语义不该依赖调用顺序。
+   */
+  function preserveComposerAcrossSessionSwitch(): void {
+    draftSeq += 1;
+  }
 
   function markDraft(): void {
     const content = composerContentOf(composerView.state);
@@ -5558,6 +5683,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     refreshWhoLines();
     relabelToolSummaries();
     relabelThinkingViews();
+    relabelWebAuditUnits();
     // M644：浮钮的可访问名随语言重取（无新内容 / 有新内容两串）；态 / 未读取控制器现值——
     // 与 render 走同一个施加函数，不构成第二份状态。
     applyJumpBottomState({ phase: follow.phase(), unread: follow.unread() });
@@ -7048,7 +7174,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const host = streamingEl ?? lastAssistantEl;
     if (host !== null) host.append(el);
     else appendTranscriptNode(el);
-    activeTools = { el, rows: [], running: null };
+    activeTools = { el, rows: [], running: null, extras: [], collapsed: false };
     // 工具块落位后，其后的正文必须开新段（留在工具块之后）——currentSeg 封在这里：
     // 不清的话下一轮正文会继续追加进工具块之前的旧段，工具行被埋回消息末尾（M374 的
     // 时序倒置在「段后还有正文」的轮次里复现）。
@@ -7056,11 +7182,65 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return activeTools;
   }
 
-  /** 审计块统一追加点：**先有工具行、再追加审计**，并进 `rows`（折叠计数与逐行显隐）。 */
+  /** Web 附属单元（change compact-web-search-result-summary-nov26）：第二行是结果健康摘要 +
+   *  「查看详情」，审计正文默认关闭。单元**不进** `block.rows`——组摘要只数真实工具调用，
+   *  单 Web 调用因此不出摘要，两个真实调用 + 两个审计仍显示 2。 */
+  function createWebAuditUnit(metadata: WebAuditMetadata): HTMLElement {
+    const unit = document.createElement("div");
+    unit.className = "lumir-hp-web-unit";
+    const entry: WebAuditUnitEntry = { unit, metadata };
+    webAuditUnits.push(entry);
+    renderWebAuditUnit(entry, false);
+    return unit;
+  }
+
+  /** 按已存 metadata 重渲单元（创建与语言切换共用）。`preserveOpen` 保留用户当前的详情
+   *  展开态；组开合不经过本函数（只改单元的 hidden），因此不会改写各详情自身的开合。 */
+  function renderWebAuditUnit(entry: WebAuditUnitEntry, preserveOpen: boolean): void {
+    const open = preserveOpen && entry.unit.dataset.open === "true";
+    const unit = entry.unit;
+    unit.replaceChildren();
+    const meta = document.createElement("div");
+    meta.className = "lumir-hp-web-meta";
+    const health = webHealthText(entry.metadata);
+    if (health !== null) {
+      const healthEl = document.createElement("span");
+      healthEl.className = "lumir-hp-web-health";
+      healthEl.textContent = health;
+      meta.append(healthEl);
+    }
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "lumir-hp-web-detail-toggle";
+    toggle.setAttribute("aria-expanded", String(open));
+    const more = document.createElement("span");
+    more.className = "lumir-hp-tool-more";
+    const label = document.createElement("span");
+    label.textContent = t("D407");
+    more.append(createThinkChev(), label);
+    toggle.append(more);
+    const body = createWebAuditBlock(entry.metadata);
+    body.hidden = !open;
+    toggle.addEventListener("click", () => {
+      const next = body.hidden;
+      body.hidden = !next;
+      toggle.setAttribute("aria-expanded", String(next));
+      unit.dataset.open = String(next);
+      unit.classList.toggle("is-open", next);
+    });
+    meta.append(toggle);
+    unit.append(meta, body);
+    unit.dataset.open = String(open);
+    unit.classList.toggle("is-open", open);
+  }
+
+  /** 审计块统一追加点：**先有工具行、再追加附属单元**，单元进 `extras`（折叠时随行显隐），
+   *  不进 `rows`（不参与调用计数）。 */
   function appendWebAuditToBlock(block: ToolsBlock, audit: WebAuditMetadata): void {
-    const element = createWebAuditBlock(audit);
-    block.el.append(element);
-    block.rows.push(element);
+    const unit = createWebAuditUnit(audit);
+    unit.hidden = block.collapsed;
+    block.el.append(unit);
+    block.extras.push(unit);
   }
 
   /** 轮次终态收尾（幂等；done / aborted / error 经 finalizeStreamingMessage 共用本出口，
@@ -7084,6 +7264,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /** 单个工具块的折叠收尾（在途块与封板块共用）。 */
   function collapseBlock(block: ToolsBlock): void {
     if (block.rows.length < 2) return;
+    block.collapsed = true;
     const summary = document.createElement("button");
     summary.type = "button";
     summary.className = "lumir-hp-tool-summary";
@@ -7107,11 +7288,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       const open = summary.getAttribute("aria-expanded") !== "true";
       summary.setAttribute("aria-expanded", String(open));
       summary.classList.toggle("is-open", open);
+      block.collapsed = !open;
       for (const row of block.rows) row.hidden = !open && !isRunningTaskRow(row);
+      // 附属单元随组显隐；各单元自己的详情展开态由单元内部的 hidden 承担，组开合不改写它。
+      for (const extra of block.extras) extra.hidden = !open;
     });
     // 运行中的 `task` 行不被折叠隐藏（M822 C2）：用户视线在对话流里，进程控制不能藏进折叠区；
-    // 终态行随块折叠（结果可点开回看）。
+    // 终态行随块折叠（结果可点开回看）。附属单元一律随块折叠（其审计本就默认关闭）。
     for (const row of block.rows) row.hidden = !isRunningTaskRow(row);
+    for (const extra of block.extras) extra.hidden = true;
     block.el.prepend(summary);
   }
 
@@ -7120,6 +7305,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     for (const btn of transcript.querySelectorAll<HTMLElement>(".lumir-hp-tool-summary")) {
       const label = btn.querySelector(".lumir-hp-tool-text");
       if (label !== null) label.textContent = t("D387", { count: Number(btn.dataset.count ?? "0") });
+    }
+  }
+
+  /** Web 附属单元随语言重渲：健康摘要 / 「查看详情」/ 审计键名都重取文案，保留各详情当前
+   *  展开态（`renderWebAuditUnit` 从单元已存的 dataset 恢复）。 */
+  function relabelWebAuditUnits(): void {
+    for (const entry of webAuditUnits) {
+      if (!transcript.contains(entry.unit)) continue;
+      renderWebAuditUnit(entry, true);
     }
   }
 
@@ -7675,7 +7869,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           if (text !== null) {
             const outEl = document.createElement("span");
             outEl.className = "lumir-hp-tool-out";
-            outEl.textContent = `· ${summary}`;
+            outEl.textContent = `· ${webFailureTail(name, summary)}`;
             text.append(document.createTextNode(" "), outEl);
           }
         }
@@ -7716,14 +7910,19 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       startedCallIds.delete(row);
       const failed = TOOL_FAILED_SUMMARY.test(summary);
       row.classList.replace("is-running", failed ? "is-fail" : "is-done");
+      // 参数格恒取 `started` 那份**参数摘要**（M528 r1）：`args` 与行的成败无关——失败文本
+      // 走第三参（尾注），故两侧同走参数格口径（`toolArgsText`）。旧写法在失败侧用严格版
+      // （判据「是 JSON 才取参数」），而 M528 起 core 的成品摘要不是 JSON ⇒ 失败行的参数格
+      // 整格空掉、命令本体消失（修前：arguments ≤80 字的调用严格版能解析出命令、看得见；
+      // >80 字的调用原文截断后照样看不见——M528 与这处一并收口）。
+      // Web 调用的 done 行优先用同一 done 事件的审计输入（完整 query / URL）——它与恢复行
+      // 持久化的 `web_input` 是同一份 arguments，live / restored 因此同形；old 事件缺审计时
+      // 才回落到 started 参数摘要。非 Web 工具行为不变。
+      const auditArgs = WEB_TOOL_NAMES.has(name) ? webInputText(undefined, audit) : "";
+      const argsText = auditArgs !== "" ? auditArgs : toolArgsText(name, args);
       row.replaceChildren(
         createToolIcon(failed ? "fail" : "done"),
-        // 参数格恒取 `started` 那份**参数摘要**（M528 r1）：`args` 与行的成败无关——失败文本
-        // 走第三参（尾注），故两侧同走参数格口径（`toolArgsText`）。旧写法在失败侧用严格版
-        // （判据「是 JSON 才取参数」），而 M528 起 core 的成品摘要不是 JSON ⇒ 失败行的参数格
-        // 整格空掉、命令本体消失（修前的可见性本来就分两半：arguments ≤80 字的调用严格版能
-        // 解析出命令、看得见；>80 字的调用原文截断后照样看不见——M528 与这处一并收口）。
-        createToolText(name, toolArgsText(name, args), failed ? summary : undefined, toolPathTargetsOf(name, args)),
+        createToolText(name, argsText, failed ? webFailureTail(name, summary) : explicitSkillSuccessTail(name, failed), toolPathTargetsOf(name, args)),
       );
     } else {
       // 无 running 行（乱序 done / 桩环境）：没有更早的那份摘要可用，done 原文按形状判定。
@@ -7734,8 +7933,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         createToolIcon(failed ? "fail" : "done"),
         createToolText(
           name,
-          humanizeToolArgsStrict(name, summary),
-          failed ? summary : undefined,
+          doneWebArgsText(name, summary, audit),
+          failed ? webFailureTail(name, summary) : explicitSkillSuccessTail(name, failed),
           toolPathTargetsOf(name, summary),
         ),
       );
@@ -10002,6 +10201,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const name = record.name;
     const summary = typeof record.summary === "string" ? record.summary : "";
     const status = typeof record.status === "string" ? record.status : "";
+    // Web 输入的唯一恢复来源（评审 P1-1）：面板记录随记录持久化的完整 query / URL；
+    // 旧记录缺键时用信封审计的 query / URL 补位，再退到 summary（纯参数摘要），最后为空。
+    // MUST NOT 把失败摘要（`状态 · code: message`）当参数上屏。
+    const webInput = parseWebPanelInput(record.web_input);
+    const webAudit = withWebPanelInput(webAuditFromPanelText(record.text), webInput);
+    const isWeb = WEB_TOOL_NAMES.has(name);
     const block = ensureToolsBlock();
     // 历史 `task` 行（design §19.1：历史任务的详情从 transcript 的 task 行点开）：正文是
     // 结果信封 JSON（`text`），解析出 agent / 终态 / 摘要；解析失败退回通用工具行——不丢记录。
@@ -10065,7 +10270,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         createToolIcon(approved ? "done" : "fail"),
         // M528：core 的参数摘要已是成品人话文本（不再是 JSON），用参数格口径取值——
         // 严格版会把成品摘要判成「没有参数」，恢复后「已采纳」行的命令就此消失。
-        createToolText(name, toolArgsText(name, summary), undefined, toolPathTargetsOf(name, summary)),
+        // Web 行优先用持久化的完整输入（失败记录的 summary 是错误摘要，不能当参数）。
+        createToolText(
+          name,
+          isWeb ? restoredWebArgsText(name, summary, webInput, webAudit) : toolArgsText(name, summary),
+          undefined,
+          toolPathTargetsOf(name, summary),
+        ),
       );
       const tres = document.createElement("span");
       tres.className = "lumir-hp-tool-res";
@@ -10101,8 +10312,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       if (approved) {
         // 与 live 的 ask 批准后路径同形：恢复出来的已批准 Web 调用也显示完整审计
         // （attempts / truncated / provider 错误细节）。拒绝没有执行，不建块。
-        const audit = webAuditFromPanelText(record.text);
-        if (audit !== undefined) appendWebAuditToBlock(block, audit);
+        if (webAudit !== undefined) appendWebAuditToBlock(block, webAudit);
       }
       return;
     }
@@ -10111,25 +10321,24 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const row = document.createElement("div");
     row.className = failed ? "lumir-hp-tool-row is-fail" : "lumir-hp-tool-row is-done";
     const tail = failed
-      ? (failureTextOf(record) ?? (TOOL_FAILED_SUMMARY.test(summary) ? summary : undefined))
-      : undefined;
+      ? (failureTextOf(record) ?? (TOOL_FAILED_SUMMARY.test(summary) ? webFailureTail(name, summary) : undefined))
+      : explicitSkillSuccessTail(name, failed);
     row.append(
       createToolIcon(failed ? "fail" : "done"),
       createToolText(
         name,
-        failed ? humanizeToolArgsStrict(name, summary) : humanizeToolArgs(name, summary),
+        isWeb
+          ? restoredWebArgsText(name, summary, webInput, webAudit)
+          : failed
+            ? humanizeToolArgsStrict(name, summary)
+            : humanizeToolArgs(name, summary),
         tail,
         toolPathTargetsOf(name, summary),
       ),
     );
     block.el.append(row);
     block.rows.push(row);
-    const audit = webAuditFromPanelText(record.text);
-    if (audit !== undefined) {
-      const element = createWebAuditBlock(audit);
-      block.el.append(element);
-      block.rows.push(element);
-    }
+    if (webAudit !== undefined) appendWebAuditToBlock(block, webAudit);
   }
 
   /**
@@ -10404,10 +10613,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     thinkingDirty = false;
     pendingThinkCreates = [];
     pendingSegSeq = null;
+    webAuditUnits = [];
   }
 
   /**
-   * 视图复位（换会话 / 切 vault）：清渲染面、换代、复位跟随态与输入区。
+   * 视图复位（换会话 / 切 vault）：清渲染面、换代、复位跟随态与输入区的**发送意图**。
+   *
+   * **输入区内容不在这里处理**：会话切换保留它（`preserveComposerAcrossSessionSwitch`），切 vault
+   * 由 `vaultChanged` 换成本 vault 的草稿。这里只经 `composerIme.reset` 取消旧视图的延迟发送。
    *
    * `clearActivityFor` = **动作发起时捕获的 vault**（design §7）：非 null 时只清该 vault 的
    * 活动记录（换会话即换视图，旧的终态不再属于该视图）；null 时只做视图复位、**不动任何
@@ -10729,7 +10942,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       return;
     }
     if (mod) return;
-    // 武装只接受**无修饰**的 Enter / Tab（change delta「武装时无修饰的 Enter / Tab」）：
+    // 接受只认**无修饰**的 Enter / Tab（C4「有效高亮即接受」）：
     // Shift+Enter 换行、Shift+Tab 焦点回退、Alt 组合保持原义（C7）。
     if (skillMenuState !== null && skillMenuState.armed &&
         !event.shiftKey && !event.altKey &&
@@ -10810,8 +11023,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 清空的是**渲染面**：会话真源在 Rust，重置成功后本地视图随之清空；待决批准项随
         // 会话失效，一并撤下（它们的 id 已不属于任何会话）——口径见 resetView 的注释。
         resetView({ clearActivityFor: actionVault });
-        resetComposer();
-        void draft.clear();
+        // 输入区**保留**（change preserve-composer-across-sessions-nov26）：新建会话只换消息列表，
+        // 文字 / 卡片 / Skill / 光标 / 撤销历史与盘上草稿都不动；在途的草稿恢复作废，免得迟到的
+        // 读回把保留下来的内容换成切换前的盘上草稿。下一次发送进入新会话。
+        preserveComposerAcrossSessionSwitch();
         // 新逻辑会话：旧会话的 token 与「已提示」标记作废；完整快照是空健康的地板。
         resetPersistenceView();
         fetchPersistenceSnapshot();
@@ -10903,8 +11118,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 同值的 DOM（独立评审 P1-1b：目标非当前时不得有任何 B 的 DOM 写入）。
     if (!stillCurrent) return;
     resetView({ clearActivityFor: null });
-    resetComposer();
-    void draft.clear();
+    // 输入区**保留**（change preserve-composer-across-sessions-nov26）：重载只重建 transcript
+    // （cron 发起失败回滚 / 打开会话通知），composer 的文字 / 卡片 / Skill / 光标 / 撤销历史与
+    // 盘上草稿都不动；在途的草稿恢复作废，迟到的读回不得覆盖它。
+    preserveComposerAcrossSessionSwitch();
     fetchSnapshot();
   }
 
@@ -11146,6 +11363,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         if (previousToken !== null) retiredPersistenceTokens.add(previousToken);
         persistenceSnapshotSeq += 1;
         resetView({ clearActivityFor: actionVault });
+        // 输入区保留（change preserve-composer-across-sessions-nov26）：恢复只换消息列表与会话名，
+        // 并作废切换前的在途草稿恢复，避免迟到的读回改写保留的输入区。
+        preserveComposerAcrossSessionSwitch();
         persistenceSessionToken = persistenceSessionTokenOf(info.session_token);
         historyStickyShown.delete(currentVault ?? "");
         hidePersistenceLine();

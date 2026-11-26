@@ -37,6 +37,6 @@ test("tips 的可见标签 / 手势 / 脚注 / 读屏名都在文案表里", () 
     assert.ok(key in COPY, `${key} 不在文案表里`);
   }
   // 首启按钮与非首启启动态按钮是两个不同键（首启用「添加 vault」，恢复模式仍 D6）。
-  assert.equal(COPY.D1029.zh, "添加 vault");
-  assert.equal(COPY.D1029.en, "Add vault");
+  assert.equal(COPY.D1034.zh, "添加 vault");
+  assert.equal(COPY.D1034.en, "Add vault");
 });

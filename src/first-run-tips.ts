@@ -31,19 +31,19 @@ type TipRow = KeyRow | TokenRow;
 /** 三组只靠间距区分，不画分组标题——少三条可见文案，也不引入第二套字层级。 */
 const GROUPS: readonly (readonly TipRow[])[] = [
   [
-    { kind: "key", command: "app.quick-open", label: "D1031" },
-    { kind: "key", command: "app.search-open", label: "D1032" },
-    { kind: "key", command: "toc.toggle", label: "D1033" },
-    { kind: "key", command: "vault.switcher", label: "D1034" },
-    { kind: "key", command: "app.settings-open", label: "D1036" },
+    { kind: "key", command: "app.quick-open", label: "D1036" },
+    { kind: "key", command: "app.search-open", label: "D1037" },
+    { kind: "key", command: "toc.toggle", label: "D1038" },
+    { kind: "key", command: "vault.switcher", label: "D1039" },
+    { kind: "key", command: "app.settings-open", label: "D1041" },
   ],
   [
-    { kind: "key", command: "harness.toggle", label: "D1035" },
-    { kind: "token", token: "[[", label: "D1037" },
-    { kind: "gesture", token: "D1041", label: "D1038" },
+    { kind: "key", command: "harness.toggle", label: "D1040" },
+    { kind: "token", token: "[[", label: "D1042" },
+    { kind: "gesture", token: "D1046", label: "D1043" },
   ],
   [
-    { kind: "gesture", token: "D1042", label: "D882" },
+    { kind: "gesture", token: "D1047", label: "D882" },
   ],
 ];
 
@@ -61,11 +61,11 @@ export function createFirstRunTips(): HTMLElement {
   const root = document.createElement("section");
   root.className = "first-run-tips";
   root.setAttribute("role", "region");
-  root.setAttribute("aria-label", t("D1040"));
+  root.setAttribute("aria-label", t("D1045"));
 
   const title = document.createElement("h2");
   title.className = "first-run-tips-title";
-  title.textContent = t("D1030");
+  title.textContent = t("D1035");
   root.append(title);
 
   for (const group of GROUPS) {
@@ -93,7 +93,7 @@ export function createFirstRunTips(): HTMLElement {
 
   const note = document.createElement("p");
   note.className = "first-run-tips-note";
-  note.textContent = t("D1039");
+  note.textContent = t("D1044");
   root.append(note);
   return root;
 }

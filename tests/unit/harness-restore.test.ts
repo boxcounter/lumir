@@ -20,6 +20,7 @@ import assert from "node:assert/strict";
 import {
   approvalArgsText,
   diffPathOf,
+  explicitSkillSuccessTail,
   failureTextOf,
   formatArgv,
   humanizeToolArgs,
@@ -29,6 +30,7 @@ import {
   restoredReasoningText,
   toolArgsText,
 } from "../../src/harness-panel.ts";
+import { t } from "../../src/copy.ts";
 
 // ── 空正文 assistant 记录（旧快照防御） ──
 
@@ -94,6 +96,34 @@ test("humanizeToolArgsStrict：六工具各取关键参数（cli_run 拼完整�
   assert.equal(humanizeToolArgsStrict("vault_patch", '{"path":"a.md","diff":"…"}'), "a.md");
   assert.equal(humanizeToolArgsStrict("vault_search", '{"query":"笔记"}'), "笔记");
   assert.equal(humanizeToolArgsStrict("skill_load", '{"name":"obsidian-cli"}'), "obsidian-cli");
+});
+
+test("explicit_skill（显式 Skill 痕迹）：参数格取技能名；失败尾注仍取输出 JSON", () => {
+  // change add-explicit-skill-trace-nov26：痕迹行与既有工具行同形，工具名 `explicit_skill`
+  // 与模型自主的 `skill_load` 区分；参数摘要恒为 {"name": <技能名>}（失败行也取参数格，
+  // 名称因此不会因失败而消失）。
+  assert.equal(humanizeToolArgsStrict("explicit_skill", '{"name":"acc-skill-abc"}'), "acc-skill-abc");
+  assert.equal(humanizeToolArgs("explicit_skill", '{"name":"acc-skill-abc"}'), "acc-skill-abc");
+  assert.equal(toolArgsText("explicit_skill", '{"name":"ghost"}'), "ghost");
+  // 失败尾注的数据源与既有失败行同一份：面板记录 text 里的工具输出 JSON。
+  const failure = JSON.stringify({
+    ok: false,
+    code: "skill_not_found",
+    message: "技能 ghost 不存在",
+  });
+  assert.equal(failureTextOf({ text: failure }), "skill_not_found: 技能 ghost 不存在");
+  // 缺 name / 非 JSON → 取空（不伪造参数）。
+  assert.equal(humanizeToolArgsStrict("explicit_skill", "{}"), "");
+  assert.equal(humanizeToolArgsStrict("explicit_skill", "error · skill_not_found: x"), "");
+});
+
+test("explicit_skill 成功终态词：可见尾注「已加载」，其他工具与失败行不加（评审 P1-1）", () => {
+  // 勾图标是 aria-hidden 的纯装饰：成功终态必须有可读文本，否则 AX 只能读到名字。
+  assert.equal(explicitSkillSuccessTail("explicit_skill", false), t("D1029"));
+  assert.notEqual(t("D1029"), "");
+  assert.equal(explicitSkillSuccessTail("skill_load", false), undefined, "自动入口不得多出终态词");
+  assert.equal(explicitSkillSuccessTail("explicit_skill", true), undefined, "失败侧由失败尾注承担");
+  assert.equal(explicitSkillSuccessTail("vault_read", false), undefined);
 });
 
 test("humanizeToolArgsStrict 取空：非 JSON / 截断半边 / 非对象 / 缺关键参数 / 未知工具 → \"\"", () => {

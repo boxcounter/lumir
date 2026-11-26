@@ -818,7 +818,7 @@ add-first-run-onboarding-nov25 补第四种）：
 | 已装载 vault + 有文件行 | 入口按钮在 + 至少一个 `.md` 行 + `AXTextArea` 可读 | 默认形态 |
 | 已装载 vault + 空 vault 引导 | 入口按钮在 + D107 的「这个 vault 还没有打开的文件」在 AX 里 | 该 vault 还没有会话历史（**启动常态**，M163 起）：引导层盖住正文，编辑器从 AX 里消失——严格门不认它的话每个场景都会在这一步超时 |
 | 未打开 vault 的空态 | 树 pane 的空态说明行（D5）+ 打开入口，且 `ax.textarea` 在位 | `last_vault` 失效 / 无 `last_vault`；**只有** `requireVault: false` 才认 |
-| 首启模式（无 `last_vault`） | AX 里真实的 `AXButton`，读屏名精确是 `添加 vault` / `Add vault`（D1029）；不要求 `AXTextArea` | 真正首次启动：启动面盖住树与编辑器；**只有** `requireVault: false` 才认。`requireVault: true` 时落到这里说明 `last_vault` 意外丢失，必须报红 |
+| 首启模式（无 `last_vault`） | AX 里真实的 `AXButton`，读屏名精确是 `添加 vault` / `Add vault`（D1034）；不要求 `AXTextArea` | 真正首次启动：启动面盖住树与编辑器；**只有** `requireVault: false` 才认。`requireVault: true` 时落到这里说明 `last_vault` 意外丢失，必须报红 |
 
 第二 / 第四行的判据都是**正**观测（引导文案 / 按钮必须真的在 AX 里），不是「编辑器读不到就当就绪」——REVIEW.md「读不到当成空」条禁的是后者。首启终态还要求节点 role 是 `AXButton`：同名文本只是 `AXStaticText`、或 AX 里没有该按钮（空 AX）都不算就绪。`editor.*` 类断言仍严格：`AXTextArea` 不可读一律 FAIL，不会在空转的 `""` 上下结论。
 

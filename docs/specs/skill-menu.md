@@ -3,7 +3,8 @@
 > 来源：Alex 2026-11-25 在 Lumir 0.16.0 的三项实测缺陷报告。本文是
 > [渲染/交互缺陷合同先行规则](../process/rendering-defect-contract-first.md) 要求的专项质量合同；
 > 产品增量归 OpenSpec change `fix-skill-menu-ux-nov25`，S1 / S2 的游标、武装与真实 clip 口径由
-> `selector-reveal-auto-select-nov25` 收紧。
+> `selector-reveal-auto-select-nov25` 收紧；接受键从「全名或显式导航才武装」改为「有效高亮即接受」
+> 由 change `fix-skill-enter-accept-nov26` 落地（Alex 2026-11-26「认可这个方案」）。
 >
 > 转移语义与通用不变量（游标 / 武装 / 真实 clip / 最小揭示 / IME / ARIA）的统一居所是
 > [selector-contract.md](selector-contract.md)。本文只保留 Skill 表面的专属口径（S3 宽度、S4 滚动面、
@@ -31,9 +32,9 @@ composition 时，Ctrl+N 与 ArrowDown 恒产生相同的下一项状态，Ctrl+
 本合同不接管按键，既有 Emacs 行移动 MUST 保持。Shift+Arrow 与 Ctrl+Shift+N/P 继续走原生选区路径且不被
 候选消费，既有扩选 MUST 保持；Shift+Arrow 扩选使 caret 离开 Skill token 后，候选按既有
 `selectionSet → syncSkillMenu()` 路径关闭，Ctrl+Shift+N/P 另保留旧主动关闭路径，两者均不强制保留候选。
-Meta / Alt 组合与 IME composition MUST NOT 被这条候选导航吞掉；Enter / Tab 只在武装态接受，且只认
-**无修饰**组合（C4）：Shift+Enter 仍换行、Shift+Tab 仍回退焦点、Alt 组合保持原义，Escape 关闭的
-既有合同不变。
+Meta / Alt 组合与 IME composition MUST NOT 被这条候选导航吞掉；候选打开且 `items` 非空时，**无修饰**
+Enter / Tab 接受当前高亮（C4「有效高亮即接受」）：Shift+Enter 仍换行、Shift+Tab 仍回退焦点、
+Alt / Meta 组合保持原义，Escape 关闭与「关闭后 Enter 发送原文」的合同见 S5。
 
 ### S2 — 高亮项始终完整可见，候选盒不被祖先裁切
 
@@ -80,6 +81,23 @@ SHALL 在定高后恢复，已完整可见目标的 `scrollTop` MUST NOT 因此�
 ### S4 — 滚动面与交互件边界不变
 
 候选继续归滚动条细条档；其右缘 12px 内 MUST NOT 新增常驻可交互件。长列表断言 MUST 先证明 `scrollHeight > clientHeight`，避免在不溢出的菜单上空测滚动。
+
+### S5 — 接受 / 发送的边界与异步稳定
+
+菜单存在有效高亮项时，无修饰 `Enter` / `Tab` SHALL 接受 `items[highlighted]`——把当前 token 替换为
+`/完整名 ` 并创建引用，MUST NOT 发送；不要求 token 是全名，也不要求候选唯一。接受之后再按 `Enter`
+才是发送。方向键 / `⌃N` / `⌃P` / 指针移动只改变高亮，接受键始终作用于当前高亮项，到端停住、
+不环绕的既有语义不变。
+
+无候选（前缀零命中或 token 已结束）时 `Enter` SHALL 发送普通文本。`Esc` 关闭候选后 `Enter` SHALL
+发送未改写的原文（`/tmp` 等字样保持原义），MUST NOT 接受任何项，候选 MUST NOT 因这次发送重新打开。
+
+catalog / 索引回包 SHALL 按名字保留当前高亮与接受目标，目标消失才回落（全名项 > 首项）。接受动作在按键时刻定格
+目标：晚到回包 MUST NOT 把已接受的项换成另一项；候选已因 `Esc` / 接受 / 失焦 / 换会话关闭时，旧回包
+MUST NOT 重开候选、改写 composer 文本或新增 / 替换引用。
+
+`data-armed` 保留为观测位：菜单打开且 `items` 非空时恒为 `"true"`，关闭时移除；它不是视觉差异，
+MUST NOT 被样式消费（C4「有效高亮即接受」的证据位）。
 
 ## 证伪方式
 

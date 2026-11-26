@@ -2986,24 +2986,46 @@ const COPY_TABLE = {
     zh: "enabled 或 approval 非法：请选择有效值后再保存",
     en: "enabled or approval is invalid: choose valid values before saving",
   },
-
-  // D1029–D1042：首启引导（change add-first-run-onboarding-nov25）。首启模式按钮只在
+  // 显式 Skill 痕迹的成功终态（change add-explicit-skill-trace-nov26 评审 P1-1）：痕迹行必须
+  // 有可见且 AX 可读的终态词——勾图标 aria-hidden，不承担语义；失败侧沿用失败尾注。
+  D1029: { zh: "已加载", en: "Loaded" },
+  // Web 搜索结果健康摘要（change compact-web-search-result-summary-nov26，Alex 2026-11-26
+  // 「Web Search 按推荐」）：N = 预算裁剪后实际回送模型的结果条数，X = 最终保留结果
+  // title/snippet/summary/content 的 UTF-8 字节和（`byteSizeText` 格式化）。英文单数档在
+  // 运行时表（enOne），deck 只记复数母本。
+  D1030: {
+    zh: "{count} 条结果 · 文本 {size}",
+    en: "{count} results · text {size}",
+    enOne: "{count} result · text {size}",
+  },
+  D1031: { zh: "0 条结果 · 搜索成功", en: "0 results · search succeeded" },
+  D1032: {
+    zh: "{count} 条结果 · 文本 {size} · 已截断",
+    en: "{count} results · text {size} · truncated",
+    enOne: "{count} result · text {size} · truncated",
+  },
+  D1033: {
+    zh: "保留 {count} 条结果 · 文本 {size} · 已截断",
+    en: "Kept {count} results · text {size} · truncated",
+    enOne: "Kept {count} result · text {size} · truncated",
+  },
+  // D1034–D1047：首启引导（change add-first-run-onboarding-nov25）。首启模式按钮只在
   // `last_vault === null` 的启动面上出现；tips 的键位字形从 KEY_BINDINGS 派生，这里只存
   // 可见标签 / 标题 / 脚注 / 区域读屏名，不存 `⌘P` 一类键位字符串。
-  D1029: { zh: "添加 vault", en: "Add vault" },
-  D1030: { zh: "开始使用", en: "Get started" },
-  D1031: { zh: "快速打开文件", en: "Quick open a file" },
-  D1032: { zh: "文件内查找", en: "Find in the current file" },
-  D1033: { zh: "大纲", en: "Outline" },
-  D1034: { zh: "切换或新增 vault", en: "Switch or add a vault" },
-  D1035: { zh: "打开或收起对话", en: "Open or hide the chat pane" },
-  D1036: { zh: "设置", en: "Settings" },
-  D1037: { zh: "插入双链", en: "Insert a wikilink" },
-  D1038: { zh: "摘录到对话", en: "Quote to chat" },
-  D1039: { zh: "默认键位 · ⌘/ 查看全部", en: "Defaults · press ⌘/ for all shortcuts" },
-  D1040: { zh: "首次使用提示", en: "Getting started tips" },
-  D1041: { zh: "选中文本", en: "Select text" },
-  D1042: { zh: "右键左栏 vault 名", en: "Right-click the vault name" },
+  D1034: { zh: "添加 vault", en: "Add vault" },
+  D1035: { zh: "开始使用", en: "Get started" },
+  D1036: { zh: "快速打开文件", en: "Quick open a file" },
+  D1037: { zh: "文件内查找", en: "Find in the current file" },
+  D1038: { zh: "大纲", en: "Outline" },
+  D1039: { zh: "切换或新增 vault", en: "Switch or add a vault" },
+  D1040: { zh: "打开或收起对话", en: "Open or hide the chat pane" },
+  D1041: { zh: "设置", en: "Settings" },
+  D1042: { zh: "插入双链", en: "Insert a wikilink" },
+  D1043: { zh: "摘录到对话", en: "Quote to chat" },
+  D1044: { zh: "默认键位 · ⌘/ 查看全部", en: "Defaults · press ⌘/ for all shortcuts" },
+  D1045: { zh: "首次使用提示", en: "Getting started tips" },
+  D1046: { zh: "选中文本", en: "Select text" },
+  D1047: { zh: "右键左栏 vault 名", en: "Right-click the vault name" },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

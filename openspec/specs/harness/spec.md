@@ -120,7 +120,7 @@ composer（输入区）与控制行 SHALL 收进同一个圆角卡片容器（�
 系统 SHALL 自动发现 user-wide（`~/.agents/skills/`）与 vault-wide（`<vault>/.agents/skills/`）两处的 Skill（SKILL.md 约定），vault-wide 同名覆盖 user-wide。Skill 索引（name + description）SHALL 注入系统上下文；`skill_load(name)` 工具 SHALL 按名加载 SKILL.md 全文，路径解析 MUST 限定在两个 Skill 根内（只读、防逃逸）。与网页无关的外部能力 SHALL 以「Skill + 对应 CLI」形态接入；统一 `web_search` / `web_fetch` 是本条明确列入工具集的外部网页阅读合同，首个 provider 为 DeepSeek。后续搜索 / 抓取 provider MUST 并入同一工具合同，MUST NOT 为特定服务另造专用工具名、别名或第二套结果形状。
 
 除模型自主判断外，用户 SHALL 可经输入区显式选择点名 Skill，由后端确定性加载；两条入口的缺省、分控、
-权限与留存见「Skill 的混合调用、入口策略与候选交互」。文本里的 `/名字` 字样 MUST NOT 被当作显式调用依据。
+权限与留存见「Skill 的混合调用、入口策略与候选接受」。文本里的 `/名字` 字样 MUST NOT 被当作显式调用依据。
 该新增入口 MUST NOT 改变默认 Skill 的索引注入与模型自主 `skill_load` 能力；索引仍是会话建立 / 新会话 /
 压缩时装配一次的会话快照。
 
@@ -303,8 +303,9 @@ deny > 既有硬层 > `web_access.approval`，deny 永远优先；Web 不使用 
 
 - **WHEN** `harness.web_access.approval` 缺省为 `allow_all`，模型在三种权限模式中的任一种调用
   `web_search` 或 `web_fetch`
-- **THEN** 调用不进入批准闸而直接执行，工具行 / 结果保留完整 query / URL、provider、费用与
-  untrusted 审计；若目标命中 `web_fetch(origin)` deny 或其它硬边界，仍按对应错误拒绝且不产生请求
+- **THEN** 调用不进入批准闸而直接执行，工具行保留 query / URL；provider、费用与 untrusted 审计
+  保留在默认关闭的「查看详情」中（呈现口径见「Web 访问策略与 origin 例外」条）；若目标命中
+  `web_fetch(origin)` deny 或其它硬边界，仍按对应错误拒绝且不产生请求
 
 ### Requirement: 批准闸呈现与决策后收敛
 
@@ -349,7 +350,8 @@ DeepSeek 抓取」的双路外发与计费说明。provider 尚未解析成功�
 不伪造 `"deepseek"` 为配置 id。Web 卡不生成专用持久 allow / 免问动作；origin deny 只在设置与
 权限规则中管理。批准或拒绝后，待决字段、说明与动作 SHALL 按本条统一终态折叠，只保留工具名 +
 决策结果 + 相对时间；完整 query / URL 与决策摘要 SHALL 可在展开详情中回看，不以待决按钮或置灰
-动作残留。默认 Allow 的工具行 / 结果 SHALL 保留同样的输入、provider、费用与 untrusted 审计。
+动作残留。默认 Allow 的工具行 / 结果 SHALL 与决策后同形：紧凑行 + 默认关闭的「查看详情」；
+输入、provider、费用与 untrusted 审计 SHALL 保留在该详情中，MUST NOT 以「常驻显示」为默认态。
 
 #### Scenario: diff 行高亮覆盖整行文本
 
@@ -413,8 +415,8 @@ DeepSeek 抓取」的双路外发与计费说明。provider 尚未解析成功�
 #### Scenario: 默认 Allow 不产生批准卡且审计仍在
 
 - **WHEN** `harness.web_access.approval` 缺省为 `allow_all`，模型连续调用 Search / Fetch
-- **THEN** 不产生逐次批准卡或 Web 专用持久 allow 动作，调用直接执行；工具行 / 结果仍保留完整
-  query / URL、provider、费用与 `trust:"untrusted"`
+- **THEN** 不产生逐次批准卡或 Web 专用持久 allow 动作，调用直接执行；工具行保留 query / URL，
+  provider、费用与 `trust:"untrusted"` 保留在默认关闭的「查看详情」中
 
 ### Requirement: 上下文用量显示与触顶处理
 
@@ -1479,7 +1481,10 @@ harness 的浮层（模型 chip 的 provider 浮层、标题栏 harness 段的�
 
 ### Requirement: 工具调用呈现
 
-工具调用 SHALL 以步骤清单形态呈现于当前 agent 消息内（hairline 夹区、独立于消息正文）：运行中的调用 SHALL 显示运行中行（脉冲指示 + 调用名），完成的调用 SHALL 翻为完成行（✓ 图标 + 结果摘要）；同一轮次的多次调用 SHALL 累积为有序多行清单。轮次结束后，含两行及以上的清单 SHALL 折叠为一行摘要（「N 个工具调用 · 全部完成」），摘要 SHALL 可点击展开回看全部步骤行；单行清单 SHALL 保持展开。快照恢复的历史轮次 SHALL 按同口径重建清单与折叠态。
+工具调用 SHALL 以步骤清单形态呈现于当前 agent 消息内（hairline 夹区、独立于消息正文）：运行中的调用 SHALL 显示运行中行（脉冲指示 + 调用名），完成的调用 SHALL 翻为完成行（✓ 图标 + 结果摘要）；同一轮次的多次调用 SHALL 累积为有序多行清单。轮次结束后，含两行及以上的清单 SHALL 折叠为一行摘要（「N 个工具调用 · 全部完成」），摘要 SHALL 可点击展开回看全部步骤行；单行清单 SHALL 保持展开。快照恢复的历史轮次 SHALL 按同口径重建清单与折叠态。组摘要的计数 SHALL 只计真实工具调用行；
+Web 调用的结果健康摘要与默认关闭的审计详情 SHALL 作为该调用的附属内容，MUST NOT 计为另一次
+调用、MUST NOT 影响单行 / 多行判定。点击摘要展开回看时，各调用的审计详情 SHALL 保持默认关闭
+（组开合 MUST NOT 改写各详情自身的展开态）。
 
 #### Scenario: 进行中清单
 
@@ -1495,6 +1500,11 @@ harness 的浮层（模型 chip 的 provider 浮层、标题栏 harness 段的�
 
 - **WHEN** 一轮只含一次工具调用的轮次结束
 - **THEN** 该步骤行保持展开可见，不出现摘要行
+
+#### Scenario: Web 审计不计入调用数
+
+- **WHEN** 一轮内只有一次 Web 工具调用，或先后发生两次真实工具调用且每次各带一个审计详情
+- **THEN** 单调用不出现组摘要；两次调用仍折叠为「2 个工具调用」；展开组后各审计详情仍默认关闭
 
 ### Requirement: 思考过程呈现
 
@@ -3450,9 +3460,9 @@ composer 摘录正文 SHALL 通过 `data-excerpt + CSS ::before` 保留视觉呈
 
 ### Requirement: CM composer 的单一 history
 
-composer SHALL 使用 CodeMirror history 作为文本与卡片的唯一撤销 / 重做真源，MUST NOT 再维护 DOM / blocks 快照栈。卡片 SHALL 以 `{ id, card, anchor }` 记录：`id` 是会话内稳定身份，`anchor` 是文档中的**精确 UTF-16 偏移**（不要求行首）。卡片添加与移除 SHALL 由专用 StateEffect 更新 StateField；移除按 `id` 定位，MUST NOT 按下标定位；附件结构事务 SHALL 与相邻编辑隔离。composer MUST NOT 在现有 history 上执行 `addToHistory:false` 或 `remote` 的文档变更；装载 / 复位（草稿恢复、切 vault、新会话、会话重载、发送清空）MUST 新建 `EditorState` 重置 history；新会话与会话重载 MUST 同时清除当前 bound vault 的盘上草稿，其他 vault 的草稿与复位后的新输入不得受影响，MUST NOT 用 `state.update({annotations: Transaction.addToHistory.of(false)})` 在旧 state 上打补丁。连续文本输入 SHALL 按 CM history 聚簇；IME 整段 history SHALL 由 CM 管理，MUST NOT 在 compositionstart/end 手工压栈。导航本身 MUST NOT 产生编辑 undo 事件。
+composer SHALL 使用 CodeMirror history 作为文本与卡片的唯一撤销 / 重做真源，MUST NOT 再维护 DOM / blocks 快照栈。卡片 SHALL 以 `{ id, card, anchor }` 记录：`id` 是会话内稳定身份，`anchor` 是文档中的**精确 UTF-16 偏移**（不要求行首）。卡片添加与移除 SHALL 由专用 StateEffect 更新 StateField；移除按 `id` 定位，MUST NOT 按下标定位；附件结构事务 SHALL 与相邻编辑隔离。composer MUST NOT 在现有 history 上执行 `addToHistory:false` 或 `remote` 的文档变更；装载 / 复位（草稿恢复、切 vault、发送清空）MUST 新建 `EditorState` 重置 history。新建会话、选择 / 恢复其他会话与会话重载 MUST NOT 复位 composer：文字、引用 / 消息摘录 / 图片卡片、Skill 引用、光标与撤销历史 SHALL 原样保留，下一次发送 SHALL 进入当前选中会话；这些切换 MUST NOT 清除当前 vault 的盘上草稿——草稿只在发送成功或用户手动删除时清除，其他 vault 的草稿与保留后的新输入不得受影响。切 vault MUST 恢复各 vault 自己的草稿，MUST NOT 跨 vault 混用；会话切换 MUST 作废在途的草稿恢复，迟到的读回 MUST NOT 覆盖会话切换后保留的输入区、MUST NOT 借此重建编辑史。MUST NOT 用 `state.update({annotations: Transaction.addToHistory.of(false)})` 在旧 state 上打补丁。连续文本输入 SHALL 按 CM history 聚簇；IME 整段 history SHALL 由 CM 管理，MUST NOT 在 compositionstart/end 手工压栈。导航本身 MUST NOT 产生编辑 undo 事件。
 
-文本 Backspace / Delete、⌘A、普通输入、粘贴与 IME MUST NOT 发出附件增删 effect，因此不得增删或重排卡片；文本变更引起的 anchor 映射是机械重映射，不属于附件编辑。重置、草稿恢复、切 vault 和发送成功后的空输入 SHALL 是新的编辑史，MUST NOT 撤销回另一 vault 或已发送内容。
+文本 Backspace / Delete、⌘A、普通输入、粘贴与 IME MUST NOT 发出附件增删 effect，因此不得增删或重排卡片；文本变更引起的 anchor 映射是机械重映射，不属于附件编辑。重置、草稿恢复、切 vault 和发送成功后的空输入 SHALL 是新的编辑史，MUST NOT 撤销回另一 vault 或已发送内容。新建 / 选择 / 恢复会话与会话重载 MUST NOT 产生新的编辑史：撤销 / 重做 SHALL 跨这些会话切换保留，MUST NOT 撤销回另一 vault 或已发送内容。
 
 anchor SHALL 随 `tr.changes.mapPos(anchor, -1)` 做精确偏移映射，**MUST NOT 钳到行首**：删除行界后 anchor 落在行中时，块级 widget 在该偏移把文本拆成前后两块。映射后 SHALL 按新 anchor 与映射前视觉位次稳定排序，同锚点保持原相对次序。
 
@@ -3503,7 +3513,47 @@ anchor 的可逆性 MUST NOT 只靠 `mapPos` 反推。每次改变文档或卡�
 #### Scenario: 非 history 文档变更被拒绝
 
 - **WHEN** 代码尝试在现有 composer state 上以 `addToHistory:false` 或 `remote` 修改 doc
-- **THEN** 该事务被拒绝（开发断言 / 过滤器），composer 内容与 history 不变；装载 / 复位路径必须新建 `EditorState`，旧 history 不可达；MUST NOT 用 sync effect 的 `mapPos` 补映射
+- **THEN** 该事务被拒绝（开发断言 / 过滤器），composer 内容与 history 不变；**重建 `EditorState` 的装载 / 复位路径（草稿恢复、切 vault、发送清空）旧 history 不可达**；新建 / 选择 / 恢复会话与会话重载 MUST NOT 新建 `EditorState`，**其旧 history 仍须可达（撤销 / 重做跨这些会话切换保留）**；MUST NOT 用 sync effect 的 `mapPos` 补映射
+
+#### Scenario: 新建会话保留输入区
+
+- **WHEN** 输入区含文字、引用卡 / 图片卡与 Skill 引用，caret 在文本中部，用户点击「新会话」
+- **THEN** transcript 清空、会话名回到「新会话」；输入区的文字、卡片、Skill、光标与切换前逐字段相同，撤销历史仍可撤销；盘上草稿未被删除；随后的发送进入新会话
+
+#### Scenario: 选择 / 恢复历史会话保留输入区
+
+- **WHEN** 输入区含内容，用户从会话浮层选择另一条历史会话，或经 cron 结果通知打开其会话
+- **THEN** 只切换消息列表与会话名；输入区内容、光标与撤销历史保持，下一次发送进入恢复后的会话
+
+#### Scenario: 会话重载保留输入区
+
+- **WHEN** 输入区含内容，面板按后端当前会话重载（cron 发起失败回滚 / 打开会话通知的重载通道）
+- **THEN** transcript 按该通道重建，输入区 MUST NOT 被清空或重建编辑史；在途的草稿恢复 MUST NOT 覆盖它
+
+#### Scenario: 新建失败不清输入区
+
+- **WHEN** 用户点击「新会话」而 `harness_new_session` 的回包被拒绝
+- **THEN** 面板只追加错误行；输入区内容、卡片、光标与撤销历史与点击前相同，盘上草稿不变
+
+#### Scenario: 新会话取消发送意图但不清内容
+
+- **WHEN** `pendingSend` 已设置（组合期），用户点击「新会话」
+- **THEN** 旧视图的延迟发送被取消、插卡队列按既有口径清空；输入区的文字、卡片与光标保留，组合文本 MUST NOT 被清掉
+
+#### Scenario: 连续切换不被在途草稿恢复覆盖
+
+- **WHEN** 草稿读回在途时用户新建会话或重载会话（连续切换）
+- **THEN** 迟到的读回 MUST NOT 铺进输入区、MUST NOT 重建编辑史；输入区保持会话切换时的内容
+
+#### Scenario: 切 vault 仍按 vault 恢复草稿
+
+- **WHEN** 输入区含 vault A 的内容，用户切到 vault B 再切回 A
+- **THEN** 切到 B 时输入区按 B 自己的草稿恢复（B 无草稿则为空），切回 A 时恢复 A 的草稿；MUST NOT 把 A 的内容带进 B，MUST NOT 把 B 的草稿写进 A
+
+#### Scenario: 发送成功仍清空并清草稿
+
+- **WHEN** 用户在保留的输入区里直接发送且后端受理
+- **THEN** 输入区清空，草稿按发送时定格的归属清除（「发送与写失败保留语义」条逐字不变）
 
 ### Requirement: 新消息的附件前置序列化协议
 
@@ -4392,362 +4442,6 @@ harness composer 的 Skill 候选浮层 SHALL 是不透底的浮层面：其计�
 - **WHEN** 消息摘录卡已作为 composer 内 widget 插入，准备在卡片后的文本段落输入问题
 - **THEN** typeInNode 通过占位名或本轮注入文本定位同一个 composer，且 N→N+1 回读成立；随后发送、transcript 同构与 `<msg-quote role at>` wire 断言继续执行
 
-### Requirement: Skill 的混合调用、入口策略与候选交互
-
-系统 SHALL 同时提供两条 Skill 调用入口：**用户显式选择**与**模型自主 `skill_load`**。显式选择 SHALL
-由后端确定性加载 SKILL.md 全文；模型自主入口 SHALL 保留既有「索引（name + description）→ 模型按相关性
-判断 → `skill_load` → 工具结果」链路。任一入口 MUST NOT 以削弱另一入口的默认能力为实现前提。
-
-**两阶段读取边界**：系统 SHALL 区分发现期元数据读取与调用执行期正文加载。发现期为装配索引与解析策略，
-当前实现可能通过 `fs::read_to_string` 把整份 SKILL.md 读入内存，但只把文本用于元数据解析（description
-保持现有 frontmatter / 无 frontmatter 首行兜底，另加 invocation 字段），不把正文作为调用结果投递；该读取
-发生在权限与入口策略判定之前，属于既有索引行为，MUST NOT 被虚称为零 IO。200KB 上限 SHALL 只约束执行期正文
-加载，MUST NOT 被用来暗示发现期只读 frontmatter 或只读前 200KB。调用执行期正文加载 SHALL 在权限与策略
-放行后调用共享正文加载器，把正文投递到用户消息 part 或工具结果。某一入口因权限 deny、入口策略或非法
-元数据被拒绝时，拒绝保证 SHALL 只约束该入口：其执行期正文加载器未被调用、对应输出面无正文，MUST NOT
-被表述为发现期也未读取任何 Skill 文件，也 MUST NOT 扩大到另一放行入口。deny 与非法元数据 SHALL 拒绝
-两个入口；禁自动 SHALL 只拒绝自动入口并保留显式正文 marker 正向对照；禁手动 SHALL 只拒绝显式入口并保留
-自动工具结果正文 marker 正向对照。发现期只读 frontmatter 的优化不在本 change 内，后续优化 MUST NOT 改变
-索引行为。
-
-**默认与分控**：每个 Skill 缺省 SHALL 同时允许用户显式选择与模型自主调用。SKILL.md frontmatter SHALL
-支持且只支持以下两个 Lumir 调用策略字段：`disable-model-invocation`（缺省 `false`，为 `true` 时禁止模型
-自主调用但保留用户显式调用）与 `user-invocable`（缺省 `true`，为 `false` 时禁止用户显式调用但保留模型
-自主调用）。这两个字段借用 Claude Code 的拼写，其语义以本规格为准，MUST NOT 被描述为 Agent Skills
-标准字段；系统 MUST NOT 另支持 `allow_implicit_invocation`、字段别名、嵌套调用配置或第二套拼写。目录名
-SHALL 仍是 Skill 名字的唯一来源。
-
-字段 SHALL 只接受不带引号的布尔字面量 `true` / `false`；只有字段缺失才使用缺省值。重复字段、带引号、
-`yes` / `no`、大小写变体或其他非布尔值 SHALL 被视为非法调用元数据，两个入口均 MUST fail closed，以
-`skill_invocation_invalid` 明确报告，MUST NOT 调用执行期正文加载器，且各输出面 MUST 无正文；未知
-frontmatter 字段 SHALL 按现状忽略。
-vault-wide 同名覆盖 user-wide 时，名字、正文来源与策略 SHALL 作为同一发现项整体覆盖。
-
-**发现面投影**：系统提示索引 SHALL 继续列出所有已发现 Skill；默认项的索引文本 SHALL 保持不变，非默认
-策略与非法元数据 SHALL 在对应索引项上明确标注。`harness_skills_list` SHALL 复用 `discover_skills` 的
-发现与覆盖结果，返回符合 `/` grammar 的 `{name,description,source,user_invocable,model_invocable,
-invocation_valid}` 条目且 MUST NOT 暴露绝对路径；候选 SHALL 只显示元数据合法且 `user_invocable = true`
-的条目。禁手动条目 SHALL 保留在索引与模型自动入口；禁自动条目 SHALL 保留在 catalog 与显式入口。
-发现、索引与候选 MUST NOT 共用错误的可见性过滤。
-
-**显式语义分界**：只有用户从候选中显式选择的 Skill 才构成一次显式调用。消息文本里的 `/名字` 字样本身
-MUST NOT 被当作显式调用依据；`/tmp`、`/usr/local` 等斜杠开头路径与普通文本保持原义。调用关系 SHALL
-由发送时随当前新消息提交的显式选择元数据表达，按文本位置排序、同名只取首次。后端 MUST NOT 从消息文本
-解析技能名。历史消息里的 token / 选择 MUST NOT 在后续轮次重新触发显式注入；重试 SHALL 原样回放该轮输入。
-
-**全名自动接受**：候选打开且 token 前缀逐字等于某项 Skill 全名时，候选 SHALL 直接进入武装态，
-`Enter` / `Tab` 接受该项（Alex 2026-11-25 批准的行为变化）。这是**用户按键确认**的显式选择，MUST NOT
-被描述为后端从文本推断调用；名字之后继续输入（token 结束）时 `Enter` 回到发送语义。路径前缀不构成全名：
-`/tmp` 之于 `tmp-acc` MUST NOT 武装。
-
-**候选、游标与武装**：键入 `/` 且满足边界与名字前缀匹配时 SHALL 显示候选。候选 SHALL 维护**唯一游标**与
-**武装**两个状态（定义见 `docs/specs/selector-contract.md` C1 / C4）：游标打开即有，取全名项、按名字保留的
-上一项或首项；武装只由显式动作成立——方向键 / `⌃N` / `⌃P`、指针真实移动，或 token 前缀逐字等于全名。
-查询变化 MUST NOT 继承武装（全名情形除外）；异步 catalog 回包只允许按名字保留游标，MUST NOT 把未武装的候选
-改成武装。未武装时 `Enter` / `Tab` MUST NOT 被候选消费；武装时无修饰的 `Enter` / `Tab` 接受当前项，
-`Esc` 关闭，鼠标点击接受且按下时 MUST NOT 夺走输入区焦点。
-
-武装态下无修饰的 `↑` / `↓` 与候选打开时无 Shift 的 `⌃N` / `⌃P` SHALL 经同一路径移动游标（下一项 / 上一项，
-到端停住、不环绕），事件 SHALL 被候选消费且 MUST NOT 同时移动 composer caret、改变文档或产生撤销步。
-游标由指针移动接管时，揭示滚动把另一行搬到静止指针下面 MUST NOT 改动游标。
-候选关闭时的 `⌃N` / `⌃P` SHALL 保留 composer 既有 Emacs 行移动；`⌃⇧N` / `⌃⇧P` SHALL 保留既有扩选，
-候选按原有关闭路径结束但 MUST NOT 消费该组合键。带修饰键的同名方向键 MUST NOT 被候选消费；
-`⇧↑` / `⇧↓` SHALL 保留原生扩选，扩选使 caret 离开 Skill token 后候选按既有选区同步路径关闭，MUST NOT
-为保留候选而阻断或重写原生选区。`Esc` SHALL 走共享浮层层栈，一次只关最上层，MUST NOT 收起面板或移动焦点。
-
-**候选几何与揭示**：真实可见带 SHALL 取 `menuRect ∩ panelRect ∩ viewport`（再扣掉候选自身的边框与
-padding），MUST NOT 取候选的 `clientHeight`——菜单盒被祖先裁掉时，盒内坐标会把屏外的行判成可见。候选盒
-SHALL 完整落在面板与视口内：面板高度不足时收缩 `max-height`，允许向上覆盖 transcript，垂直夹取宿主
-MUST NOT 是 composer 区；行高与高度 MUST 取实测值，MUST NOT 另留一份硬编码行高。下方放置 SHALL 以
-控制行顶缘为界，MUST NOT 压住控制行；上翻空间不足时 SHALL 先按上方可用空间收缩 `max-height`，
-MUST NOT 让盒底越过 caret；`max-height` 上限的唯一真源 SHALL 是 CSS，上限 MUST 取「清空 inline 后实测的
-受约束高度」，MUST NOT 把 `getComputedStyle` 的字符串按 px 解析（百分比等非 px 计算值会被静默误读）。
-候选在窗口 / 面板尺寸变化与同状态回包（token / 游标 / items 不变）后 SHALL 按新 clip 重新夹取；
-揭示只在游标改变、或重排前完整可见的游标被新几何挤出带时发生，重排 MUST NOT 重建 items、MUST NOT
-改动游标，也 MUST NOT 把用户手动滚开的候选位置拉回游标项；重排内部为读数清空 `max-height` 时 MUST 保留
-候选自身滚动位置（先记后恢复），已完整可见目标的 `scrollTop` MUST NOT 因此改变。判定「重排前完整可见」
-SHALL 依据上一次放置确立的几何（上一次放置后游标完整在带内，且此后用户没有滚动过候选），MUST NOT 依据
-几何变化后的 clip。
-
-游标经键盘或指针改变后，当前 option SHALL 完整落在真实可见带内；已完整可见时候选滚动位置 MUST NOT 改变，
-越界时 SHALL 只滚动候选到带边缘并保留一行上下文，首尾自然 clamp。首尾、长列表与指针 / 键盘混合输入均
-SHALL 满足同一不变量，MUST NOT 通过滚动整页、transcript、编辑器或 composer 完成揭示。候选 SHALL 继续
-归滚动条细条档，右缘 12px 内 MUST NOT 新增常驻可交互件。
-
-**候选响应式尺寸**：候选 SHALL 按 composer 宿主可用宽度加宽。令 `avail = max(0, hostWidth − 16px)`、
-`cap = min(48em, avail)`、`target = min(max(200px, 0.85 × avail), cap)`，最终宽度 SHALL 为
-`min(max(naturalWidth, target), cap)`。窄 pane MUST NOT 越界，正常 pane 的短内容 SHALL 取得可用空间驱动的
-目标宽，超宽 pane MUST 受 48em 上限，长描述 SHALL 可超过旧 26em；em 上限 SHALL 随共享 Harness 字号缩放。
-该 Skill 专用目标宽与上限 MUST NOT 改写其它 list 浮层的 26em 档。
-
-输入法组合期 MUST NOT 触发候选、响应候选导航键或吞掉确认候选的 `Enter`；组合开始时已打开的候选 SHALL
-立即关闭。组合结束后 SHALL 按**最终文档**重算一次候选状态（在 CodeMirror 的 pending MutationRecord 清空
-之后），MUST NOT 在 `compositionend` 的同步路径里抢确认 `Enter`。
-
-**选择引用与 chip**：选中后 SHALL 把当前 `/前缀` 替换为 `/完整名 `（尾随一个半角空格），一次选中 MUST
-是一条可撤销历史步，并创建名字 + 文档范围的引用。引用 SHALL 随文档编辑映射；范围越界、切片不再逐字节
-等于 `/名字` 或左边界失效时，该引用 MUST 失效。撤销 / 重做 SHALL 与文本同事务同步。chip MUST 只由引用
-派生，MUST NOT 从文本扫描推断，也 MUST NOT 改文档、选区、复制或投递内容。
-
-前端 SHALL 按 vault 缓存最新成功 catalog：新 `/` 强制刷新；关闭候选后保留；草稿装载异步取一次但不打开
-候选；切 vault / 会话复位清空并作废在途；失败不阻断输入且 MUST NOT 误标 chip。最新成功 catalog 中名字
-不存在时 chip SHALL 呈缺失态；名字存在但禁手动或元数据非法时 SHALL 呈禁用态并给出不同提示。草稿恢复
-SHALL 先按引用重现 chip，不依赖 catalog 成功。
-
-**命名 grammar**：`/` 显式入口 SHALL 只支持 `^[A-Za-z0-9][A-Za-z0-9_-]*$`。前端引用、后端元数据与
-清单过滤 SHALL 共用同一 grammar。不符合该 grammar 的名字 SHALL 继续由 `discover_skills` 注入索引；
-含点（非点开头）/ 空格 / CJK 的名字 SHALL 继续可供模型自主 `skill_load`，点开头的名字 SHALL 仍按现行
-`skill_name_invalid` 被拒绝。本功能 MUST NOT 收紧或改写既有自主发现面。
-
-**显式发送与确定性加载**：发送时前端 SHALL 只提交当前新消息引用，作为 `harness_send` 必填参数
-`skills_json`。后端 SHALL 在回合开始时按当回合发现结果解析名字，先以 `skill_load` + 技能名 +
-`{"name": <name>}` 调现行权限判定，再检查用户入口策略；只有权限 `Allow`、元数据合法且允许用户调用时
-才调用执行期正文加载器。对可加载的名字，系统 SHALL 沿用既有根内路径校验与 200KB 上限加载 SKILL.md
-全文，作为独立 `input_text` part 追加到该用户消息末尾；part SHALL 带本地标记 `lumir_skill`，正文以
-`[已加载 Skill：<名字>]` 开头。显式与自动入口 SHALL 共用同一执行期正文加载器，MUST NOT 复制第二套路径、
-大小或读取逻辑。
-
-权限 `Deny`（或任何非 `Allow`）MUST NOT 调用执行期正文加载器或注入正文；禁手动 SHALL 以
-`skill_user_invocation_disabled` 非阻断报告，非法元数据 SHALL 以 `skill_invocation_invalid` 非阻断报告，
-两者同样 MUST NOT 调用执行期正文加载器或注入。三种拒绝路径的 `input` / `llm_request.messages` /
-provider wire MUST 无正文，且 MUST NOT 伪装成未知名字；用户消息 SHALL 照常发送。未知 / 超限 / 读取失败 /
-不合 grammar 的名字 SHALL 跳过且不阻断；`skills_json` 结构非法（非数组 / 非字符串元素 / 坏 JSON）SHALL
-以明确错误拒绝发送，不建会话、不入队。
-
-**自动入口策略执行**：默认 Skill 的索引、工具定义、`skill_load` 参数、工具结果与循环顺序 SHALL 不变。
-模型对 `disable-model-invocation: true` 的条目调用 `skill_load` 时，系统 SHALL 在现行权限判定后返回
-`skill_model_invocation_disabled`，MUST NOT 调用执行期正文加载器，且 SKILL.md 与该 Skill 目录内其他文件
-均无正文进入工具结果；发现期元数据读取仍按既有索引路径发生。该策略 MUST NOT 阻止用户显式加载。
-`user-invocable: false` MUST NOT 改变模型自主加载。索引策略提示 SHALL 由执行层策略闸兜底，MUST NOT 只
-依赖模型自觉遵守提示。
-
-**留存与投影**：显式技能 part SHALL 进入会话 `input` 与 `llm_request.messages`，供重试与恢复原样回放；
-本地标记 MUST 在 provider wire 前剥离且保留正文，剥离 MUST 发生在无图片早退之前。面板投影与自动命名
-素材（`title::item_text` 与 `title::material` 的首轮 / 最近轮）MUST 跳过显式技能 part。重试 / 恢复 MUST NOT
-重新执行显式正文注入；自动压缩 SHALL 把该 part 当作普通消息内容参与摘要，不承诺逐字节保留。模型自主
-加载 SHALL 沿用既有工具调用 / 工具结果留存，不新增 `lumir_skill` 用户消息 part，其重试、恢复与压缩行为
-MUST NOT 被本 change 改写。
-
-调用策略 SHALL 只约束新调用：草稿引用 MUST NOT 保存策略快照，发送时按当前策略判定；历史恢复 SHALL 原样
-灌回最后请求，MUST NOT 按当前策略回写、删除或清洗旧显式正文 / 自动工具结果。显式正文与自动工具结果作为
-历史上下文随后续请求发送时 MUST NOT 产生新的显式注入。上下文超限 SHALL 沿用既有压缩机制尽力恢复，系统
-MUST NOT 承诺任意数量 / 任意大小的 Skill 都能进入模型上下文。
-
-**权限**：两个入口 SHALL 以同一工具名、技能名和参数经过现行权限判定；同一 tool 级或名字模式 deny 对
-显式与自动调用同效，任何非 `Allow` 均不调用执行期正文加载器，显式 `input` / `llm_request.messages` /
-provider wire 与自动工具结果均无正文。发现期已完成的元数据读取不属于该执行期断言。显式选择 MUST NOT
-改变权限档、跳过批准闸或预批准
-Skill 内容引发的 `cli_run`；invocation policy MUST NOT 替代或放宽权限规则。`skill_load` 的读类默认放行
-不变，后续 `cli_run` SHALL 沿用现行档位、规则、命令分类与缓存。
-
-**系统提示与验收口径**：系统提示 SHALL 说明显式加载段头的含义、斜杠路径不是显式调用、默认 Skill 仍可
-自主 `skill_load`，以及禁自动条目应请用户显式选择。提示装配单测 SHALL 断言约定与索引策略标记确实进入
-系统提示。mock 场景 SHALL 只用于证明注入、留存、投影、策略执行与发送链路，MUST NOT 被表述为证明真实
-模型遵守提示；真实遵守率只作 dogfood 观察，不进入机器门禁。
-
-#### Scenario: 默认 Skill 双入口均可用
-
-- **WHEN** 一个 Skill 未声明两个调用策略字段
-- **THEN** 它按现有口径进入系统提示索引并可由模型自主 `skill_load`；同时出现在用户候选中，显式选择后
-  由后端确定性加载全文；默认索引条目不增加策略标记
-
-#### Scenario: 显式选择确定性注入
-
-- **WHEN** 用户键入 `/acc-skill-a` 后按 `↓` 进入选择态、按 `Enter` 选中 `acc-skill-abc`，然后发送
-- **THEN** 首个 `llm_request.messages` 的该用户消息含一个带 `lumir_skill` 标记的 part，正文含
-  `[已加载 Skill：acc-skill-abc]` 与 SKILL.md 正文；无需模型再次调用 `skill_load`；面板 AX 不含正文标记
-
-#### Scenario: 手打名字但不选择不做显式注入
-
-- **WHEN** 用户完整键入 `/acc-skill-abc 问题`（名字后跟空格与正文，token 已结束）并发送
-- **THEN** 候选此时不显示；消息照常发出，该用户消息不含 `lumir_skill` 或显式注入正文；模型自主入口是否
-  按既有逻辑调用不受该文本 token 强制。名字后未继续输入、caret 仍在 token 内时按「全名自动接受」场景处理。
-
-#### Scenario: 绝对路径不被误判
-
-- **WHEN** vault 内存在名为 `tmp-acc` 的技能，用户在行首、空格后或列表项里键入 `/tmp` 后直接按 `Enter`
-- **THEN** 消息照常发送对应文本；`llm_request.messages` 不含 `lumir_skill`；候选即使出现也不消费该 Enter
-
-#### Scenario: 被动候选不抢 Enter 与 Tab
-
-- **WHEN** 候选已显示（可能带自动视觉游标）但尚未武装，用户按 `Enter` 或 `Tab`
-- **THEN** Enter 按原语义发送、Tab 按原语义处理；消息不因候选打开而被拦截或改写，也不创建 Skill 引用
-
-#### Scenario: 全名键入即武装 Enter 接受
-
-- **WHEN** 用户逐字键入 `/tmp-acc`（该名字恰好是候选的全名），caret 仍在 token 内
-- **THEN** 候选游标指向 `tmp-acc` 且进入武装态；`Enter` 或 `Tab` 把它替换为 `/tmp-acc ` 并创建引用，
-  与方向键选中走同一接受路径
-
-#### Scenario: 视觉高亮不等于接受承诺
-
-- **WHEN** 用户键入 `/acc`（两项候选）后直接按 `Enter`，未按方向键、未移动指针
-- **THEN** 首选行有可见游标但候选未武装，`Enter` 发送普通文本；随后按 `↓` 再按 `Enter` 才接受第二项
-
-#### Scenario: 异步 catalog 只补高亮不武装
-
-- **WHEN** 候选因 catalog 在途而不显示，用户键入 `/acc`；catalog 回包后才出现两项候选
-- **THEN** 首项获得视觉游标，但候选仍未武装，`Enter` 仍发送普通文本；只有方向键、指针移动或全名命中
-  才改变武装态
-
-#### Scenario: 选择态键位与 IME
-
-- **WHEN** 候选已武装，用户使用方向键 / Ctrl+N / Ctrl+P / Enter / Tab / Esc；另一次在中文输入法组合期键入或确认
-- **THEN** 候选只消费相应导航与选中键，Ctrl+N / Ctrl+P 与方向键分别同义且不改 composer caret 或文档；
-  Esc 只关候选；组合期不触发、不导航、不吞确认 Enter，组合开始关闭已有候选；组合结束后按最终文档重算
-  一次候选状态（最终文档是全名时武装，但仍不抢组合确认的那拍 Enter）
-
-#### Scenario: Shift+Arrow 保留原生扩选并关闭候选
-
-- **WHEN** 候选已显示，caret 位于多行 composer 的 Skill token 末尾，用户按 `⇧↑` 或 `⇧↓`
-- **THEN** 事件不被候选消费，原生扩选非空且文档不变；caret 离开 Skill token 后候选按既有选区同步路径关闭
-
-#### Scenario: 长列表高亮始终可见且不带动整页
-
-- **WHEN** 候选长度覆盖不足一屏、恰好一屏与超出一屏，用户用两类键盘从首项到末项再返回，并在中部交替使用指针与键盘
-- **THEN** 每次游标改变后当前 option 均完整落在 `menuRect ∩ panelRect ∩ viewport` 内；已可见时滚动位置不变，
-  越出时只滚动候选到带边缘并保留一行上下文；游标不环绕，整页、transcript、编辑器与 composer 的滚动位置不变
-
-#### Scenario: 可见最底项再移一项
-
-- **WHEN** 长列表打开时游标停在最后一个完整可见行，用户再按一次 `↓`
-- **THEN** 下一项完整进入真实可见带，且它与带底之间保留一行上下文；候选 `scrollTop` 增大，祖先与页面的
-  滚动位置不变
-
-#### Scenario: 短视口收缩态连续导航
-
-- **WHEN** 视口高度不足、候选已按可用空间收缩且列表真实溢出，用户连续按 `↓` 到末项再连续按 `↑` 回到首项
-- **THEN** 每一拍高亮项仍完整落在真实可见带内；按键前已完整可见的目标，其 `scrollTop` 不变——重排为读数
-  清空 `max-height` 造成的钳制 MUST NOT 泄漏到揭示判据
-
-#### Scenario: 窗口缩放与同状态回包后的重排
-
-- **WHEN** 候选打开时把窗口缩放到面板高度大幅缩短，或候选打开期间发生一次不改变 token / 游标 / items 的
-  文档回包（同状态同步）
-- **THEN** 候选盒按新的 `menuRect ∩ panelRect ∩ viewport` 重新夹取、必要时收缩 `max-height`；重排前完整
-  可见的高亮项仍完整可见，候选 items 不重建（option 节点不变），游标与 `aria-selected` / `data-armed` /
-  `aria-activedescendant` 均不变
-
-#### Scenario: 手动滚开后的重排不拉回高亮项
-
-- **WHEN** 用户先把候选向上滚开（高亮项已不在可见带内），随后发生同状态回包，或窗口 / 面板尺寸变化
-- **THEN** 候选 `scrollTop` 保持用户滚到的位置，揭示不发生，高亮项不被搬回视野；只有新的几何把原本
-  完整可见的游标挤出带时才按最小揭示把它带回带内，且 MUST NOT 借机回弹到高亮首项
-
-#### Scenario: 同拍放置让游标揭示不受跨拍让位例外影响
-
-- **WHEN** 用户先把候选滚开（高亮项已不在可见带内），或刚发生一次同状态回包 / 窗口缩放的重排，随后按
-  `↓` / `↑` / `⌃N` / `⌃P` 改变游标
-- **THEN** 新游标仍 SHALL 完整落在 `menuRect ∩ panelRect ∩ viewport` 内并按最小揭示保留一行上下文；
-  Skill 候选的放置与揭示在同一拍内完成，不存在「游标改变后、写拍前」可被用户滚动插入的窗口，C3 的
-  跨拍让位例外在本表面不成立；让位只作用于没有游标变化的重排，MUST NOT 被扩展成「游标改变可以不揭示」
-
-#### Scenario: 三类宿主宽度与三主题下的响应式尺寸
-
-- **WHEN** 在 light / dark / eink 下分别把 Harness pane 置于窄、正常、超宽可用宽度，并显示短描述与长描述候选
-- **THEN** 短内容宽度随可用空间增长，长内容可超过 26em 但不超过 48em 或 pane 可用宽；菜单始终不越出宿主，
-  其它 list 浮层宽度不变
-
-#### Scenario: 候选关闭后 `⌃N` / `⌃P` 保留行移动
-
-- **WHEN** 候选未打开，composer 光标位于多行文本中，用户按 `⌃N` 或 `⌃P`
-- **THEN** 光标按输入区既有行移动语义处理，事件不被候选消费，消息不发送、文本不变
-
-#### Scenario: 选中后改文本使引用失效
-
-- **WHEN** 用户选中 `acc-skill-abc` 后删掉名字中的一个字符并发送
-- **THEN** 该引用失效，不注入、无 chip；消息按修改后的文本正常发送
-
-#### Scenario: 禁自动但允许显式
-
-- **WHEN** 含唯一 body marker 的 `acc-deploy` 声明 `disable-model-invocation: true`，模型调用
-  `skill_load("acc-deploy")`；随后用户从候选显式选择该 Skill 并发送
-- **THEN** 发现期已取得索引与策略元数据；模型调用返回 `skill_model_invocation_disabled`，仅自动入口的
-  执行期正文加载器未被调用，SKILL.md 与目录内其他文件均无正文 marker 进入工具结果；用户显式入口仍调用
-  加载器，`input` / `llm_request.messages` / provider wire 均有 body marker
-
-#### Scenario: 禁手动但允许自动
-
-- **WHEN** 含唯一 body marker 的 `acc-background` 声明 `user-invocable: false`，用户打开候选并尝试经旧
-  引用显式发送；模型随后自主调用 `skill_load("acc-background")`
-- **THEN** 该 Skill 不出现在候选，索引仍列出并标注禁手动；仅显式入口的执行期正文加载器未被调用，
-  `input` / `llm_request.messages` / provider wire 无 marker；自动入口仍调用加载器且工具结果有 body marker
-
-#### Scenario: 旧引用不能绕过禁手动
-
-- **WHEN** 一个引用创建后，对应 Skill 改为 `user-invocable: false`，用户恢复草稿并发送
-- **THEN** chip 呈禁用态；后端不调用执行期正文加载器、不注入，`input` / `llm_request.messages` /
-  provider wire 无正文，并给出 `skill_user_invocation_disabled` 非阻断提示；模型自主入口仍可用
-
-#### Scenario: 非法调用元数据 fail closed
-
-- **WHEN** 一个 Skill 的调用策略字段重复、带引号、写为 `yes` 或其他非 `true` / `false` 值
-- **THEN** 发现期已解析出非法状态；两个入口均返回 / 报告 `skill_invocation_invalid`，执行期正文加载器
-  未被调用，显式 `input` / `llm_request.messages` / provider wire 与自动工具结果均无正文；系统不得按字段
-  缺失的默认开放值处理；未知 frontmatter 字段不产生该错误
-
-#### Scenario: 自动入口默认行为不削弱
-
-- **WHEN** `harness.web_access.enabled=true` 且 Alex 提问需要联网搜索；随后另一个问题明确要求使用某外部
-  Skill、访问特殊站点或读取非 HTML 内容
-- **THEN** 一般网页搜索默认使用统一 `web_search` / `web_fetch`，不再要求经 `skill_load` 后调用 `cli_run`；
-  只有用户显式选择 Skill、特殊站点或非 HTML 场景才经对应 CLI，工具结果与既有留存形态不变；
-  `harness.web_access.enabled=false` 时 Web 工具不注册，不得以幻觉调用代替显式 CLI 选择
-
-#### Scenario: 权限判定对两个入口一致
-
-- **WHEN** 含唯一正文 marker 的 SKILL.md 已在发现期被成功读取并解析出 description / 策略后，配置
-  `deny = ["skill_load"]` 或 `deny = ["skill_load(<name>)"]`，在任一权限档分别经显式选择与模型自主调用
-  加载同一 Skill
-- **THEN** 两个入口的执行期正文加载器均未被调用；显式路径不注入且 `input` / `llm_request.messages` /
-  provider wire 无 marker，自动工具结果无 marker；同一命中规则原文按各入口既有错误面报告；
-  不得用文件系统零读取作为该拒绝路径的判据
-
-#### Scenario: 显式选择不改变后续命令权限
-
-- **WHEN** 用户在任一权限档显式选择一个 Skill，且技能内容引导模型执行一条写操作命令
-- **THEN** `cli_run` 沿用现行档位 / 规则 / 命令分类 / 缓存；该请求批准就请求批准，该自动放行就自动放行；
-  显式选择不改变判定输入或结果
-
-#### Scenario: 恢复与策略变更不重写历史
-
-- **WHEN** 会话已含显式技能 part 与自动 `skill_load` 工具结果，随后 Skill 被改为禁自动 / 禁手动并恢复会话
-- **THEN** 最后一条 `llm_request.messages` 原样灌回，旧显式正文与自动工具结果仍在历史且不被回写；
-  面板仍不显示显式正文；只有恢复后的新调用按当前策略拦截
-
-#### Scenario: 重试与压缩不重新显式注入
-
-- **WHEN** 带显式技能 part 的轮次被重试或自动压缩
-- **THEN** 重试原样回放 `input`，显式预加载器不再次执行；压缩把正文作为普通内容参与摘要，新会话只接收
-  摘要且不重新显式注入，不承诺正文逐字节保留
-
-#### Scenario: 未知名字与非法发送元数据
-
-- **WHEN** 引用名字在发送时已不存在；或 `skills_json` 不是字符串数组
-- **THEN** 前者跳过注入、发送照常且无阻断性错误；后者以明确错误拒绝发送，不建会话、不入队
-
-#### Scenario: grammar 之外的名字仍可自主使用
-
-- **WHEN** Skill 根下存在名字含点 / 空格 / CJK / 点开头的技能
-- **THEN** 清单与候选不含它们；系统提示索引仍列出；含点（非点开头）/ 空格 / CJK 的名字仍可被模型自主
-  `skill_load`，点开头的名字仍按现行 `skill_name_invalid` 被拒绝
-
-#### Scenario: 无图片消息也剥离本地标记
-
-- **WHEN** 一条只有用户文本 + 显式技能 part、没有任何图片引用的消息被发送
-- **THEN** provider wire 的 text part 不含 `lumir_skill` 字段、正文仍在；附件目录不被解析或创建
-
-#### Scenario: 自动命名素材不含显式技能正文
-
-- **WHEN** 首轮或最近轮的用户消息带 `lumir_skill` part，标题生成读取 `title::material`
-- **THEN** 命名素材只含用户提问文本与既有问答，不含显式技能正文
-
-#### Scenario: 提示约定与策略标记进入系统提示
-
-- **WHEN** 发起新会话并读取装配后的系统提示，Skill 清单含默认、禁自动、禁手动与非法元数据条目
-- **THEN** 身份段含显式段头、斜杠路径与混合调用约定；默认条目不增加策略标记，其他条目分别标注；
-  固定段字节指纹与装配清单同步
-
 ### Requirement: Harness Markdown strong 的流式渲染一致性
 
 凡项目既有 `@lezer/markdown` GFM 配置认定为 `StrongEmphasis` 的 strong，Harness SHALL 在普通段落、
@@ -4798,7 +4492,12 @@ clamp；`need_content` 缺省 `false`。`web_fetch` 输入 SHALL 仅含 1–8192
 MUST NOT 暴露 API Key、provider、base URL、超时、重试、响应上限或任意 HTTP header。
 
 统一信封 SHALL 含 `ok` / `provider` / `provider_id` / `operation` / `attempts` / `local_precheck` /
-`trust` / `truncated` / `truncated_fields`。`local_precheck` SHALL 记录 Fetch 是否**实际执行过**
+`trust` / `truncated` / `truncated_fields`，并 SHALL 另含两个可空结果读数 `result_count` /
+`result_text_bytes`。成功 Search 的两个读数 SHALL 在预算裁剪全部完成后由后端**单一一次**计算：
+`result_count` = 实际回送模型的结果条数（不是 provider 原始条数、不是请求的 `count`）；
+`result_text_bytes` = 最终保留各结果的 title / snippet / summary / content 各字符串 UTF-8 字节数
+之和（不含 URL / site / date / authority / query 与 JSON 结构开销，不是网页大小或网络流量）。
+非 Search 成功、失败、缺读数时两键 SHALL 为 null，MUST NOT 以 0 冒充空结果。`local_precheck` SHALL 记录 Fetch 是否**实际执行过**
 本地预检：未配置、配置非法、参数非法、权限拒绝等未进入 executor 的路径为 `false`；进入 executor
 后无论预检成功、失败还是取消均为 `true`。审计 MUST NOT 仅按 `operation=fetch` 推断该值。`provider` / `provider_id` SHALL 为 `string | null`：只有 provider
 解析成功才填 `"deepseek"` 与实际配置映射键；未配置、配置歧义、自定义 base URL 及解析前的参数 /
@@ -4879,6 +4578,13 @@ URL / date / authority / provider MUST NOT 被裁剪。任何字段或数组被�
 - **THEN** 只有进入 executor 的 Fetch 审计 `local_precheck=true`；`provider_fetch` 只在
   `attempts>0` 时为 true；deny / 未配置的审计两个布尔均为 false，MUST NOT 按 operation 恒猜
 
+#### Scenario: 结果读数按预算裁剪后的实际回送计算
+
+- **WHEN** Search 返回的结果被字段截断、聚合裁剪或整条移除
+- **THEN** `result_count` 等于最终仍回送模型的结果条数，`result_text_bytes` 等于这些结果的
+  title / snippet / summary / content 的 UTF-8 字节和；真正成功的空结果为 `0` 而不是 null，
+  失败 / 非 Search 成功为 null（MUST NOT 以 0 冒充）
+
 ### Requirement: Web 访问策略与 origin 例外
 
 `harness.web_access.approval` 缺省为 `allow_all`，`web_search` / `web_fetch` SHALL 在所有权限模式中
@@ -4888,8 +4594,21 @@ URL / date / authority / provider MUST NOT 被裁剪。任何字段或数组被�
 
 Search 的 permission subject SHALL 为完整 query；Fetch 的 subject SHALL 为规范化 origin
 （scheme + host + 有效 port），origin 规范化 SHALL 小写 scheme / host、省略默认 port、保留非默认 port，
-且不含 userinfo / path / query / fragment。默认无批准卡时，工具行与结果 SHALL 仍完整展示 query / URL、
-provider id、费用、双路外发与 `trust:"untrusted"`，MUST NOT 只靠 80 字摘要满足可见性。
+且不含 userinfo / path / query / fragment。默认无批准卡时，Web 工具行 SHALL 默认紧凑：运行中单行
+显示状态与纯 query（Fetch 为纯 URL），MUST NOT 显示原始 arguments JSON 或默认参数；完成后默认
+显示 query（Fetch 为 URL）；Fetch 的默认行 URL SHALL 是调用 arguments 的原始输入 URL，重定向后的
+最终 `source.url` SHALL 只在默认关闭的「查看详情」中呈现，MUST NOT 覆盖默认行。Search 成功另有
+第二行结果健康摘要——正常为 `N 条结果 · 文本 X`，
+字段截断追加 `· 已截断`，`truncated_fields` 含 `results` 时为 `保留 N 条结果 · 文本 X · 已截断`，
+真正成功的空结果为 `0 条结果 · 搜索成功`（英文同义双语；N 与 X 的口径见「统一 Web 搜索与抓取
+工具」条）。失败时直接显示稳定错误码与人话原因，MUST NOT 显示条数或文本大小。provider id、
+attempts、完整 query / URL、截断字段、实际外发与费用、`trust:"untrusted"` SHALL 全部保留在默认
+关闭的「查看详情」中，可展开完整回看；MUST NOT 删除事件 / 面板记录 / JSONL / 安全元数据。Ask
+待决卡的完整预览信息不变。live 事件与快照 / 会话恢复两条路径 SHALL 同形同默认态：恢复行的
+query / URL SHALL 从该调用的持久化输入（同一份 arguments，完整不截断；Fetch 为原始输入
+URL）恢复，MUST NOT 把失败摘要（`状态 · code: message`）或最终 `source.url` 当默认行参数；
+旧留存缺该输入时 SHALL 安全降级为空、MUST NOT 伪造。
+旧留存缺结果读数时 SHALL 不显示条数与文本大小（MUST NOT 补零）。
 `harness.permissions.deny` 中的 `web_fetch(origin)` SHALL 在初始调用与每跳重定向重新判定。
 
 跨 origin 重定向不是新工具调用，MUST NOT 另开批准。预检 SHALL 先校验 Location 的 scheme / 凭据 /
@@ -4901,8 +4620,8 @@ host，再检查目标 origin deny；未封禁才继续 DNS / 连接 / 内容类
 #### Scenario: 默认 Allow 不逐次弹卡且审计完整
 
 - **WHEN** approval 缺省为 `allow_all`，模型以不同 query 连续搜索并抓取多个页面
-- **THEN** 所有调用默认直接执行，没有会话范围限制或逐次批准卡；每次工具行 / 结果仍保留完整
-  query / URL、provider、attempts、费用与 untrusted 说明
+- **THEN** 所有调用默认直接执行，没有会话范围限制或逐次批准卡；每次工具行显示 query / URL 与
+  结果健康摘要，provider、attempts、费用与 untrusted 说明保留在默认关闭的「查看详情」中
 
 #### Scenario: origin deny 恢复默认策略
 
@@ -4917,6 +4636,37 @@ host，再检查目标 origin deny；未封禁才继续 DNS / 连接 / 内容类
   封禁目标返回 `permission_denied`，未连接新 origin、未请求 DeepSeek
 - **AND** A → B 全部通过后，提交给 DeepSeek 的 url 与 `source.url` 都是最后一个通过校验的 B URL，
   不得拒绝跨源或继续提交 A URL
+
+#### Scenario: 默认紧凑与详情默认关闭
+
+- **WHEN** allow_all 下一次 Search 成功完成
+- **THEN** 工具行显示 query，第二行显示 `N 条结果 · 文本 X`；详情入口读「查看详情」且
+  `aria-expanded=false`，审计正文不可见；展开后可见 provider / attempts / 完整 query / 截断字段 /
+  外发与费用 / untrusted，再次点击收回
+
+#### Scenario: 空结果、字段截断与结果裁剪
+
+- **WHEN** Search 真正成功但没有结果 / 某字段被截断 / 结果数组被整条移除
+- **THEN** 三种分别显示 `0 条结果 · 搜索成功`、`N 条结果 · 文本 X · 已截断`、
+  `保留 N 条结果 · 文本 X · 已截断`；N 与 X 取预算裁剪后的实际回送值
+
+#### Scenario: 失败不显示条数与大小
+
+- **WHEN** Web 调用以 `web_provider_unconfigured` / `web_http_error` / `permission_denied` 等失败
+- **THEN** 工具行直接显示稳定错误码与人话原因，MUST NOT 出现 `0 条结果` / `0 B` 一类读数；
+  provider / attempts / 外发事实仍可在「查看详情」中回看
+
+#### Scenario: 实时与恢复同形
+
+- **WHEN** 同一 Web 调用分别经 live 事件与快照 / 会话恢复重建
+- **THEN** 两者工具行（含默认行可见的 query / URL）、第二行健康摘要、详情入口与默认关闭态一致；
+  旧留存缺输入 / 读数时不显示 query / URL / 条数 / 大小（MUST NOT 伪造）
+
+#### Scenario: Fetch 重定向的原始输入与最终 URL
+
+- **WHEN** Fetch 从原始 URL A 重定向到最终 URL B 后成功或失败
+- **THEN** live、快照恢复与 JSONL 恢复的默认行都显示原始 A；展开「查看详情」后显示最终 B 与
+  其余审计事实；默认行 MUST NOT 被最终 B 覆盖
 
 ### Requirement: DeepSeek Web provider 与隐私
 
@@ -5156,3 +4906,484 @@ HTTPS SHALL 使用只含 `target.test` 的测试 CA / 证书与隔离 trust stor
 - **WHEN** 普通配置 / 环境变量 / 真实 vault / 生产构建尝试提供合成 endpoint 或 loopback 映射
 - **THEN** 没有激活入口，生产仍只使用官方 DeepSeek endpoint，URL / DNS 拒绝规则不变；
   测试装配不出现在发布构建里
+
+### Requirement: Skill 候选可见性的机器判据
+
+Skill 候选「游标 option 完整落在真实可见带内」的机器判据 SHALL 独立于实现计算真实可见带：
+取候选盒与**全部裁切祖先**矩形及视口的交集，再扣掉候选自身（滚动口）的边框与 padding。
+判据 MUST NOT 复用实现里的裁剪辅助函数、MUST NOT 以候选自身的盒或 `clientHeight` 代餐——
+与实现同源的判据只能证明「实现与自己一致」，祖先裁切或滚动口 padding 出错时它照样通过。
+
+判据 SHALL 在**每一次**游标变化上成立，而不是只在某个代表步：真实规模目录（超过一屏、含长描述）、
+`↑` / `↓` 与 `⌃N` / `⌃P` 两种键族、向下与向上两个方向，逐拍走完整个列表。每一拍 SHALL 同时断言
+（a）游标 option 完整落在真实可见带内；（b）可见标记（`.is-selected`）与 `aria-selected` 在**同一个**
+option 上、且同一时刻至多一个可见标记，标记本身可辨（线宽 / 颜色与底色差成立）。
+候选滚动位置发生变化、或 AX 树里存在该行，MUST NOT 单独作为「可见」的判据。
+
+该判据 SHALL 在 chromium 与真机同款 UA 的 WebKit project 各判一次：揭示只写 `scrollTop`，两引擎的
+滚动钳制与子像素取整不同，chromium 绿 MUST NOT 替代真实 UA 的 WebKit 分支（该 project 不覆写
+`deviceScaleFactor`，实际 DPR 1）。
+
+真机验收场景 SHALL 为同一条不变量给出 **AX 暴露**判据：AX 快照按离屏过滤只暴露曝光窗口内的行，而该
+窗口比像素可见区**多一行**，因此它是**必要不充分**判据——游标行的文本不在快照里 SHALL 判为「该行在真实
+可见带之外」（这一向足以判红），文本在场 MUST NOT 被判为「整行完整可见」。整行 ⊆ 真实可见带、带内不动、
+留一行上下文这些完整几何 SHALL 由浏览器几何矩阵判定，MUST NOT 用 AX 暴露冒充；只留截图 MUST NOT 被
+当作可见性判据。
+
+#### Scenario: 长目录逐拍导航
+
+- **WHEN** 真实规模目录（30 项、长描述）打开候选，并逐拍按 `⌃N` 走到底、再逐拍按 `⌃P` 走回顶
+- **THEN** 每一拍的选中 option 都完整落在独立计算的真实可见带内，`.is-selected` 与
+  `aria-selected` 指向同一项，且恰好一个可见标记
+
+#### Scenario: 候选盒不得越出裁切祖先
+
+- **WHEN** 短视口、共享字号缩放、窄 harness pane 或窗口收缩后候选重排
+- **THEN** 候选盒的上下缘仍在裁切祖先与视口之内（必要时收缩 `max-height`），游标 option 仍完整在带内；
+  原本完整可见的游标被新几何挤出带时补揭示，被用户手动滚开的位置不被拉回
+
+#### Scenario: 真机选中行的 AX 暴露
+
+- **WHEN** 真机场景把游标移到列表末项与倒数第二项
+- **THEN** 该行的文本出现在 AX 快照的曝光窗口里（窗口外的行不暴露；窗口比像素可见区多一行，故本判据
+  只能判「不出现＝不可见」这一向），完整几何由浏览器矩阵判，判据不依赖截图
+
+### Requirement: Skill 的混合调用、入口策略与候选接受
+
+系统 SHALL 同时提供两条 Skill 调用入口：**用户显式选择**与**模型自主 `skill_load`**。显式选择 SHALL
+由后端确定性加载 SKILL.md 全文；模型自主入口 SHALL 保留既有「索引（name + description）→ 模型按相关性
+判断 → `skill_load` → 工具结果」链路。任一入口 MUST NOT 以削弱另一入口的默认能力为实现前提。
+
+**两阶段读取边界**：系统 SHALL 区分发现期元数据读取与调用执行期正文加载。发现期为装配索引与解析策略，
+当前实现可能通过 `fs::read_to_string` 把整份 SKILL.md 读入内存，但只把文本用于元数据解析（description
+保持现有 frontmatter / 无 frontmatter 首行兜底，另加 invocation 字段），不把正文作为调用结果投递；该读取
+发生在权限与入口策略判定之前，属于既有索引行为，MUST NOT 被虚称为零 IO。200KB 上限 SHALL 只约束执行期正文
+加载，MUST NOT 被用来暗示发现期只读 frontmatter 或只读前 200KB。调用执行期正文加载 SHALL 在权限与策略
+放行后调用共享正文加载器，把正文投递到用户消息 part 或工具结果。某一入口因权限 deny、入口策略或非法
+元数据被拒绝时，拒绝保证 SHALL 只约束该入口：其执行期正文加载器未被调用、对应输出面无正文，MUST NOT
+被表述为发现期也未读取任何 Skill 文件，也 MUST NOT 扩大到另一放行入口。deny 与非法元数据 SHALL 拒绝
+两个入口；禁自动 SHALL 只拒绝自动入口并保留显式正文 marker 正向对照；禁手动 SHALL 只拒绝显式入口并保留
+自动工具结果正文 marker 正向对照。发现期只读 frontmatter 的优化不在本 change 内，后续优化 MUST NOT 改变
+索引行为。
+
+**默认与分控**：每个 Skill 缺省 SHALL 同时允许用户显式选择与模型自主调用。SKILL.md frontmatter SHALL
+支持且只支持以下两个 Lumir 调用策略字段：`disable-model-invocation`（缺省 `false`，为 `true` 时禁止模型
+自主调用但保留用户显式调用）与 `user-invocable`（缺省 `true`，为 `false` 时禁止用户显式调用但保留模型
+自主调用）。这两个字段借用 Claude Code 的拼写，其语义以本规格为准，MUST NOT 被描述为 Agent Skills
+标准字段；系统 MUST NOT 另支持 `allow_implicit_invocation`、字段别名、嵌套调用配置或第二套拼写。目录名
+SHALL 仍是 Skill 名字的唯一来源。
+
+字段 SHALL 只接受不带引号的布尔字面量 `true` / `false`；只有字段缺失才使用缺省值。重复字段、带引号、
+`yes` / `no`、大小写变体或其他非布尔值 SHALL 被视为非法调用元数据，两个入口均 MUST fail closed，以
+`skill_invocation_invalid` 明确报告，MUST NOT 调用执行期正文加载器，且各输出面 MUST 无正文；未知
+frontmatter 字段 SHALL 按现状忽略。
+vault-wide 同名覆盖 user-wide 时，名字、正文来源与策略 SHALL 作为同一发现项整体覆盖。
+
+**发现面投影**：系统提示索引 SHALL 继续列出所有已发现 Skill；默认项的索引文本 SHALL 保持不变，非默认
+策略与非法元数据 SHALL 在对应索引项上明确标注。`harness_skills_list` SHALL 复用 `discover_skills` 的
+发现与覆盖结果，返回符合 `/` grammar 的 `{name,description,source,user_invocable,model_invocable,
+invocation_valid}` 条目且 MUST NOT 暴露绝对路径；候选 SHALL 只显示元数据合法且 `user_invocable = true`
+的条目。禁手动条目 SHALL 保留在索引与模型自动入口；禁自动条目 SHALL 保留在 catalog 与显式入口。
+发现、索引与候选 MUST NOT 共用错误的可见性过滤。
+
+**显式语义分界**：只有用户从候选中显式选择的 Skill 才构成一次显式调用。消息文本里的 `/名字` 字样本身
+MUST NOT 被当作显式调用依据；候选未出现或已被关闭时，`/tmp`、`/usr/local` 等斜杠开头路径与
+普通文本保持原义，有候选时按「高亮即接受」由按键确认。调用关系 SHALL
+由发送时随当前新消息提交的显式选择元数据表达，按文本位置排序、同名只取首次。后端 MUST NOT 从消息文本
+解析技能名。历史消息里的 token / 选择 MUST NOT 在后续轮次重新触发显式注入；重试 SHALL 原样回放该轮输入。
+
+**高亮即接受**：候选打开且 `items` 非空时 SHALL 总有唯一游标，且该游标 SHALL 直接处于接受态
+（armed）；无修饰 `Enter` / `Tab` SHALL 把 `items[highlighted]` 替换为 `/完整名 ` 并创建引用，
+MUST NOT 发送消息。接受不要求 token 前缀等于全名，也不要求候选唯一——打开即按首项 / 按名字保留项 /
+全名项高亮，用户看见哪一项，接受键就作用于哪一项（Alex 2026-11-26 批准的 Enter 新合同）。接受是
+**用户按键确认**的显式选择，MUST NOT 被描述为后端从文本推断调用；`/tmp` 这类路径前缀在有候选时同样
+按当前高亮接受，候选不存在或用户先 `Esc` 关闭时 `Enter` 才回到发送原义。
+
+**异步候选更新**：catalog / 索引回包只更新 `items`，SHALL 按名字保留当前游标与接受目标；目标消失时
+回落（全名项 > 首项）并照常保持接受态。接受动作在按键时刻定格目标，晚到回包 MUST NOT 把已接受的项换成另一项；
+候选已因 `Esc` / 接受 / 失焦 / 换会话关闭时，旧回包 MUST NOT 重新打开候选、改写 composer 文本或
+新增 / 替换引用。
+
+**候选、游标与接受态**：键入 `/` 且满足边界与名字前缀匹配时 SHALL 显示候选。候选 SHALL 维护**唯一游标**
+与**接受态**（定义见 `docs/specs/selector-contract.md` C1 / C4）：游标打开即有，取全名项、按名字保留的
+上一项或首项；方向键 / `⌃N` / `⌃P` 与指针真实移动只负责改变游标，`items` 非空时接受态恒为真，
+`data-armed` 只作「有效高亮 ⇒ 可接受」的观测位，MUST NOT 被样式消费。无候选时 `Enter` / `Tab`
+MUST NOT 被候选消费；有候选时无修饰的 `Enter` / `Tab` 接受当前项，`Esc` 关闭，鼠标点击接受且
+按下时 MUST NOT 夺走输入区焦点。`Esc` 关闭候选后 `Enter` SHALL 发送 composer 原文（含 `/名字`、
+`/tmp` 等字样），MUST NOT 接受任何项。
+
+候选打开时无修饰的 `↑` / `↓` 与无 Shift 的 `⌃N` / `⌃P` SHALL 经同一路径移动游标（下一项 / 上一项，
+到端停住、不环绕），事件 SHALL 被候选消费且 MUST NOT 同时移动 composer caret、改变文档或产生撤销步。
+游标由指针移动接管时，揭示滚动把另一行搬到静止指针下面 MUST NOT 改动游标。
+候选关闭时的 `⌃N` / `⌃P` SHALL 保留 composer 既有 Emacs 行移动；`⌃⇧N` / `⌃⇧P` SHALL 保留既有扩选，
+候选按原有关闭路径结束但 MUST NOT 消费该组合键。带修饰键的同名方向键 MUST NOT 被候选消费；
+`⇧↑` / `⇧↓` SHALL 保留原生扩选，扩选使 caret 离开 Skill token 后候选按既有选区同步路径关闭，MUST NOT
+为保留候选而阻断或重写原生选区。`Esc` SHALL 走共享浮层层栈，一次只关最上层，MUST NOT 收起面板或移动焦点。
+
+**候选几何与揭示**：真实可见带 SHALL 取 `menuRect ∩ panelRect ∩ viewport`（再扣掉候选自身的边框与
+padding），MUST NOT 取候选的 `clientHeight`——菜单盒被祖先裁掉时，盒内坐标会把屏外的行判成可见。候选盒
+SHALL 完整落在面板与视口内：面板高度不足时收缩 `max-height`，允许向上覆盖 transcript，垂直夹取宿主
+MUST NOT 是 composer 区；行高与高度 MUST 取实测值，MUST NOT 另留一份硬编码行高。下方放置 SHALL 以
+控制行顶缘为界，MUST NOT 压住控制行；上翻空间不足时 SHALL 先按上方可用空间收缩 `max-height`，
+MUST NOT 让盒底越过 caret；`max-height` 上限的唯一真源 SHALL 是 CSS，上限 MUST 取「清空 inline 后实测的
+受约束高度」，MUST NOT 把 `getComputedStyle` 的字符串按 px 解析（百分比等非 px 计算值会被静默误读）。
+候选在窗口 / 面板尺寸变化与同状态回包（token / 游标 / items 不变）后 SHALL 按新 clip 重新夹取；
+揭示只在游标改变、或重排前完整可见的游标被新几何挤出带时发生，重排 MUST NOT 重建 items、MUST NOT
+改动游标，也 MUST NOT 把用户手动滚开的候选位置拉回游标项；重排内部为读数清空 `max-height` 时 MUST 保留
+候选自身滚动位置（先记后恢复），已完整可见目标的 `scrollTop` MUST NOT 因此改变。判定「重排前完整可见」
+SHALL 依据上一次放置确立的几何（上一次放置后游标完整在带内，且此后用户没有滚动过候选），MUST NOT 依据
+几何变化后的 clip。
+
+游标经键盘或指针改变后，当前 option SHALL 完整落在真实可见带内；已完整可见时候选滚动位置 MUST NOT 改变，
+越界时 SHALL 只滚动候选到带边缘并保留一行上下文，首尾自然 clamp。首尾、长列表与指针 / 键盘混合输入均
+SHALL 满足同一不变量，MUST NOT 通过滚动整页、transcript、编辑器或 composer 完成揭示。候选 SHALL 继续
+归滚动条细条档，右缘 12px 内 MUST NOT 新增常驻可交互件。
+
+**候选响应式尺寸**：候选 SHALL 按 composer 宿主可用宽度加宽。令 `avail = max(0, hostWidth − 16px)`、
+`cap = min(48em, avail)`、`target = min(max(200px, 0.85 × avail), cap)`，最终宽度 SHALL 为
+`min(max(naturalWidth, target), cap)`。窄 pane MUST NOT 越界，正常 pane 的短内容 SHALL 取得可用空间驱动的
+目标宽，超宽 pane MUST 受 48em 上限，长描述 SHALL 可超过旧 26em；em 上限 SHALL 随共享 Harness 字号缩放。
+该 Skill 专用目标宽与上限 MUST NOT 改写其它 list 浮层的 26em 档。
+
+输入法组合期 MUST NOT 触发候选、响应候选导航键或吞掉确认候选的 `Enter`；组合开始时已打开的候选 SHALL
+立即关闭。组合结束后 SHALL 按**最终文档**重算一次候选状态（在 CodeMirror 的 pending MutationRecord 清空
+之后），MUST NOT 在 `compositionend` 的同步路径里抢确认 `Enter`。
+
+**选择引用与 chip**：选中后 SHALL 把当前 `/前缀` 替换为 `/完整名 `（尾随一个半角空格），一次选中 MUST
+是一条可撤销历史步，并创建名字 + 文档范围的引用。引用 SHALL 随文档编辑映射；范围越界、切片不再逐字节
+等于 `/名字` 或左边界失效时，该引用 MUST 失效。撤销 / 重做 SHALL 与文本同事务同步。chip MUST 只由引用
+派生，MUST NOT 从文本扫描推断，也 MUST NOT 改文档、选区、复制或投递内容。
+
+前端 SHALL 按 vault 缓存最新成功 catalog：新 `/` 强制刷新；关闭候选后保留；草稿装载异步取一次但不打开
+候选；切 vault / 会话复位清空并作废在途；失败不阻断输入且 MUST NOT 误标 chip。最新成功 catalog 中名字
+不存在时 chip SHALL 呈缺失态；名字存在但禁手动或元数据非法时 SHALL 呈禁用态并给出不同提示。草稿恢复
+SHALL 先按引用重现 chip，不依赖 catalog 成功。
+
+**命名 grammar**：`/` 显式入口 SHALL 只支持 `^[A-Za-z0-9][A-Za-z0-9_-]*$`。前端引用、后端元数据与
+清单过滤 SHALL 共用同一 grammar。不符合该 grammar 的名字 SHALL 继续由 `discover_skills` 注入索引；
+含点（非点开头）/ 空格 / CJK 的名字 SHALL 继续可供模型自主 `skill_load`，点开头的名字 SHALL 仍按现行
+`skill_name_invalid` 被拒绝。本功能 MUST NOT 收紧或改写既有自主发现面。
+
+**显式发送与确定性加载**：发送时前端 SHALL 只提交当前新消息引用，作为 `harness_send` 必填参数
+`skills_json`。后端 SHALL 在回合开始时按当回合发现结果解析名字，先以 `skill_load` + 技能名 +
+`{"name": <name>}` 调现行权限判定，再检查用户入口策略；只有权限 `Allow`、元数据合法且允许用户调用时
+才调用执行期正文加载器。对可加载的名字，系统 SHALL 沿用既有根内路径校验与 200KB 上限加载 SKILL.md
+全文，作为独立 `input_text` part 追加到该用户消息末尾；part SHALL 带本地标记 `lumir_skill`，正文以
+`[已加载 Skill：<名字>]` 开头。显式与自动入口 SHALL 共用同一执行期正文加载器，MUST NOT 复制第二套路径、
+大小或读取逻辑。
+
+权限 `Deny`（或任何非 `Allow`）MUST NOT 调用执行期正文加载器或注入正文；禁手动 SHALL 以
+`skill_user_invocation_disabled` 非阻断报告，非法元数据 SHALL 以 `skill_invocation_invalid` 非阻断报告，
+两者同样 MUST NOT 调用执行期正文加载器或注入。三种拒绝路径的 `input` / `llm_request.messages` /
+provider wire MUST 无正文，且 MUST NOT 伪装成未知名字；用户消息 SHALL 照常发送。未知 / 超限 / 读取失败 /
+不合 grammar 的名字 SHALL 跳过且不阻断；`skills_json` 结构非法（非数组 / 非字符串元素 / 坏 JSON）SHALL
+以明确错误拒绝发送，不建会话、不入队。
+
+**自动入口策略执行**：默认 Skill 的索引、工具定义、`skill_load` 参数、工具结果与循环顺序 SHALL 不变。
+模型对 `disable-model-invocation: true` 的条目调用 `skill_load` 时，系统 SHALL 在现行权限判定后返回
+`skill_model_invocation_disabled`，MUST NOT 调用执行期正文加载器，且 SKILL.md 与该 Skill 目录内其他文件
+均无正文进入工具结果；发现期元数据读取仍按既有索引路径发生。该策略 MUST NOT 阻止用户显式加载。
+`user-invocable: false` MUST NOT 改变模型自主加载。索引策略提示 SHALL 由执行层策略闸兜底，MUST NOT 只
+依赖模型自觉遵守提示。
+
+**留存与投影**：显式技能 part SHALL 进入会话 `input` 与 `llm_request.messages`，供重试与恢复原样回放；
+本地标记 MUST 在 provider wire 前剥离且保留正文，剥离 MUST 发生在无图片早退之前。面板投影与自动命名
+素材（`title::item_text` 与 `title::material` 的首轮 / 最近轮）MUST 跳过显式技能 part。重试 / 恢复 MUST NOT
+重新执行显式正文注入；自动压缩 SHALL 把该 part 当作普通消息内容参与摘要，不承诺逐字节保留。模型自主
+加载 SHALL 沿用既有工具调用 / 工具结果留存，不新增 `lumir_skill` 用户消息 part，其重试、恢复与压缩行为
+MUST NOT 被本 change 改写。
+
+调用策略 SHALL 只约束新调用：草稿引用 MUST NOT 保存策略快照，发送时按当前策略判定；历史恢复 SHALL 原样
+灌回最后请求，MUST NOT 按当前策略回写、删除或清洗旧显式正文 / 自动工具结果。显式正文与自动工具结果作为
+历史上下文随后续请求发送时 MUST NOT 产生新的显式注入。上下文超限 SHALL 沿用既有压缩机制尽力恢复，系统
+MUST NOT 承诺任意数量 / 任意大小的 Skill 都能进入模型上下文。
+
+**权限**：两个入口 SHALL 以同一工具名、技能名和参数经过现行权限判定；同一 tool 级或名字模式 deny 对
+显式与自动调用同效，任何非 `Allow` 均不调用执行期正文加载器，显式 `input` / `llm_request.messages` /
+provider wire 与自动工具结果均无正文。发现期已完成的元数据读取不属于该执行期断言。显式选择 MUST NOT
+改变权限档、跳过批准闸或预批准
+Skill 内容引发的 `cli_run`；invocation policy MUST NOT 替代或放宽权限规则。`skill_load` 的读类默认放行
+不变，后续 `cli_run` SHALL 沿用现行档位、规则、命令分类与缓存。
+
+**系统提示与验收口径**：系统提示 SHALL 说明显式加载段头的含义、斜杠路径不是显式调用、默认 Skill 仍可
+自主 `skill_load`，以及禁自动条目应请用户显式选择。提示装配单测 SHALL 断言约定与索引策略标记确实进入
+系统提示。mock 场景 SHALL 只用于证明注入、留存、投影、策略执行与发送链路，MUST NOT 被表述为证明真实
+模型遵守提示；真实遵守率只作 dogfood 观察，不进入机器门禁。
+
+#### Scenario: 默认 Skill 双入口均可用
+
+- **WHEN** 一个 Skill 未声明两个调用策略字段
+- **THEN** 它按现有口径进入系统提示索引并可由模型自主 `skill_load`；同时出现在用户候选中，显式选择后
+  由后端确定性加载全文；默认索引条目不增加策略标记
+
+#### Scenario: 显式选择确定性注入
+
+- **WHEN** 用户键入 `/acc-skill-a` 后按 `↓` 进入选择态、按 `Enter` 选中 `acc-skill-abc`，然后发送
+- **THEN** 首个 `llm_request.messages` 的该用户消息含一个带 `lumir_skill` 标记的 part，正文含
+  `[已加载 Skill：acc-skill-abc]` 与 SKILL.md 正文；无需模型再次调用 `skill_load`；面板 AX 不含正文标记
+
+#### Scenario: 手打名字但不选择不做显式注入
+
+- **WHEN** 用户完整键入 `/acc-skill-abc 问题`（名字后跟空格与正文，token 已结束）并发送
+- **THEN** 候选此时不显示；消息照常发出，该用户消息不含 `lumir_skill` 或显式注入正文；模型自主入口是否
+  按既有逻辑调用不受该文本 token 强制。名字后未继续输入、caret 仍在 token 内时按「部分匹配与多候选默认
+  接受当前高亮」场景处理。
+
+#### Scenario: 路径前缀候选按高亮接受，Esc 后发送原文
+
+- **WHEN** vault 内存在名为 `tmp-acc` 的技能，用户在行首、空格后或列表项里键入 `/tmp`
+- **THEN** 候选显示且 `tmp-acc` 是当前高亮；`Enter` 把它替换为 `/tmp-acc ` 并创建引用（不要求全名），
+  不发送消息；若用户先按 `Esc` 关闭候选再按 `Enter`，消息发送原文 `/tmp`，`llm_request.messages`
+  不含 `lumir_skill`
+
+#### Scenario: Esc 关闭后 Enter 发送原文
+
+- **WHEN** 候选已显示（`Enter` 本会接受当前高亮），用户先按 `Esc` 关闭候选，再按 `Enter`
+- **THEN** 消息按 composer 原文发送，不创建 Skill 引用；候选不因这次发送或迟到回包重新打开
+
+#### Scenario: 部分匹配与多候选默认接受当前高亮
+
+- **WHEN** 候选显示两项以上（如键入 `/acc` 命中 `acc-skill-abc` 与 `acc-deploy`），用户未按方向键、
+  未移动指针，直接按无修饰 `Enter` 或 `Tab`
+- **THEN** 接受键把当前高亮（首项）替换为 `/acc-skill-abc ` 并创建引用，MUST NOT 发送消息；
+  再按一次 `Enter` 才发送该消息。方向键 / `⌃N` / `⌃P` / 指针改变高亮后，接受键作用于新的高亮项
+
+#### Scenario: 无候选时 Enter 发送普通文本
+
+- **WHEN** 用户键入 `/zzz`（前缀零命中，候选不显示），或继续输入使 Skill token 结束，然后按 `Enter`
+- **THEN** 消息按原文发送，`skills_json` 为空；候选不消费该 `Enter`，也不创建 Skill 引用
+
+#### Scenario: 异步 catalog 不换接受目标、旧回包不重开候选
+
+- **WHEN** 候选打开期间 catalog / 索引回包晚到并按名字保留当前项；或候选已因 `Esc` / 接受而关闭后
+  才收到旧回包
+- **THEN** 打开期间的回包 SHALL 保留当前游标与接受目标（名字消失才回落全名项或首项），`Enter` 接受的
+  仍是同一项，MUST NOT 换项；关闭后的旧回包 MUST NOT 重新打开候选、改写 composer 文本或新增 / 替换引用
+
+#### Scenario: 选择态键位与 IME
+
+- **WHEN** 候选已武装，用户使用方向键 / Ctrl+N / Ctrl+P / Enter / Tab / Esc；另一次在中文输入法组合期键入或确认
+- **THEN** 候选只消费相应导航与选中键，Ctrl+N / Ctrl+P 与方向键分别同义且不改 composer caret 或文档；
+  Esc 只关候选；组合期不触发、不导航、不吞确认 Enter，组合开始关闭已有候选；组合结束后按最终文档重算
+  一次候选状态（重算后仍是接受态，但仍不抢组合确认的那拍 Enter）
+
+#### Scenario: Shift+Arrow 保留原生扩选并关闭候选
+
+- **WHEN** 候选已显示，caret 位于多行 composer 的 Skill token 末尾，用户按 `⇧↑` 或 `⇧↓`
+- **THEN** 事件不被候选消费，原生扩选非空且文档不变；caret 离开 Skill token 后候选按既有选区同步路径关闭
+
+#### Scenario: 长列表高亮始终可见且不带动整页
+
+- **WHEN** 候选长度覆盖不足一屏、恰好一屏与超出一屏，用户用两类键盘从首项到末项再返回，并在中部交替使用指针与键盘
+- **THEN** 每次游标改变后当前 option 均完整落在 `menuRect ∩ panelRect ∩ viewport` 内；已可见时滚动位置不变，
+  越出时只滚动候选到带边缘并保留一行上下文；游标不环绕，整页、transcript、编辑器与 composer 的滚动位置不变
+
+#### Scenario: 可见最底项再移一项
+
+- **WHEN** 长列表打开时游标停在最后一个完整可见行，用户再按一次 `↓`
+- **THEN** 下一项完整进入真实可见带，且它与带底之间保留一行上下文；候选 `scrollTop` 增大，祖先与页面的
+  滚动位置不变
+
+#### Scenario: 短视口收缩态连续导航
+
+- **WHEN** 视口高度不足、候选已按可用空间收缩且列表真实溢出，用户连续按 `↓` 到末项再连续按 `↑` 回到首项
+- **THEN** 每一拍高亮项仍完整落在真实可见带内；按键前已完整可见的目标，其 `scrollTop` 不变——重排为读数
+  清空 `max-height` 造成的钳制 MUST NOT 泄漏到揭示判据
+
+#### Scenario: 窗口缩放与同状态回包后的重排
+
+- **WHEN** 候选打开时把窗口缩放到面板高度大幅缩短，或候选打开期间发生一次不改变 token / 游标 / items 的
+  文档回包（同状态同步）
+- **THEN** 候选盒按新的 `menuRect ∩ panelRect ∩ viewport` 重新夹取、必要时收缩 `max-height`；重排前完整
+  可见的高亮项仍完整可见，候选 items 不重建（option 节点不变），游标与 `aria-selected` / `data-armed` /
+  `aria-activedescendant` 均不变
+
+#### Scenario: 手动滚开后的重排不拉回高亮项
+
+- **WHEN** 用户先把候选向上滚开（高亮项已不在可见带内），随后发生同状态回包，或窗口 / 面板尺寸变化
+- **THEN** 候选 `scrollTop` 保持用户滚到的位置，揭示不发生，高亮项不被搬回视野；只有新的几何把原本
+  完整可见的游标挤出带时才按最小揭示把它带回带内，且 MUST NOT 借机回弹到高亮首项
+
+#### Scenario: 同拍放置让游标揭示不受跨拍让位例外影响
+
+- **WHEN** 用户先把候选滚开（高亮项已不在可见带内），或刚发生一次同状态回包 / 窗口缩放的重排，随后按
+  `↓` / `↑` / `⌃N` / `⌃P` 改变游标
+- **THEN** 新游标仍 SHALL 完整落在 `menuRect ∩ panelRect ∩ viewport` 内并按最小揭示保留一行上下文；
+  Skill 候选的放置与揭示在同一拍内完成，不存在「游标改变后、写拍前」可被用户滚动插入的窗口，C3 的
+  跨拍让位例外在本表面不成立；让位只作用于没有游标变化的重排，MUST NOT 被扩展成「游标改变可以不揭示」
+
+#### Scenario: 三类宿主宽度与三主题下的响应式尺寸
+
+- **WHEN** 在 light / dark / eink 下分别把 Harness pane 置于窄、正常、超宽可用宽度，并显示短描述与长描述候选
+- **THEN** 短内容宽度随可用空间增长，长内容可超过 26em 但不超过 48em 或 pane 可用宽；菜单始终不越出宿主，
+  其它 list 浮层宽度不变
+
+#### Scenario: 候选关闭后 `⌃N` / `⌃P` 保留行移动
+
+- **WHEN** 候选未打开，composer 光标位于多行文本中，用户按 `⌃N` 或 `⌃P`
+- **THEN** 光标按输入区既有行移动语义处理，事件不被候选消费，消息不发送、文本不变
+
+#### Scenario: 选中后改文本使引用失效
+
+- **WHEN** 用户选中 `acc-skill-abc` 后删掉名字中的一个字符并发送
+- **THEN** 该引用失效，不注入、无 chip；消息按修改后的文本正常发送
+
+#### Scenario: 禁自动但允许显式
+
+- **WHEN** 含唯一 body marker 的 `acc-deploy` 声明 `disable-model-invocation: true`，模型调用
+  `skill_load("acc-deploy")`；随后用户从候选显式选择该 Skill 并发送
+- **THEN** 发现期已取得索引与策略元数据；模型调用返回 `skill_model_invocation_disabled`，仅自动入口的
+  执行期正文加载器未被调用，SKILL.md 与目录内其他文件均无正文 marker 进入工具结果；用户显式入口仍调用
+  加载器，`input` / `llm_request.messages` / provider wire 均有 body marker
+
+#### Scenario: 禁手动但允许自动
+
+- **WHEN** 含唯一 body marker 的 `acc-background` 声明 `user-invocable: false`，用户打开候选并尝试经旧
+  引用显式发送；模型随后自主调用 `skill_load("acc-background")`
+- **THEN** 该 Skill 不出现在候选，索引仍列出并标注禁手动；仅显式入口的执行期正文加载器未被调用，
+  `input` / `llm_request.messages` / provider wire 无 marker；自动入口仍调用加载器且工具结果有 body marker
+
+#### Scenario: 旧引用不能绕过禁手动
+
+- **WHEN** 一个引用创建后，对应 Skill 改为 `user-invocable: false`，用户恢复草稿并发送
+- **THEN** chip 呈禁用态；后端不调用执行期正文加载器、不注入，`input` / `llm_request.messages` /
+  provider wire 无正文，并给出 `skill_user_invocation_disabled` 非阻断提示；模型自主入口仍可用
+
+#### Scenario: 非法调用元数据 fail closed
+
+- **WHEN** 一个 Skill 的调用策略字段重复、带引号、写为 `yes` 或其他非 `true` / `false` 值
+- **THEN** 发现期已解析出非法状态；两个入口均返回 / 报告 `skill_invocation_invalid`，执行期正文加载器
+  未被调用，显式 `input` / `llm_request.messages` / provider wire 与自动工具结果均无正文；系统不得按字段
+  缺失的默认开放值处理；未知 frontmatter 字段不产生该错误
+
+#### Scenario: 自动入口默认行为不削弱
+
+- **WHEN** `harness.web_access.enabled=true` 且 Alex 提问需要联网搜索；随后另一个问题明确要求使用某外部
+  Skill、访问特殊站点或读取非 HTML 内容
+- **THEN** 一般网页搜索默认使用统一 `web_search` / `web_fetch`，不再要求经 `skill_load` 后调用 `cli_run`；
+  只有用户显式选择 Skill、特殊站点或非 HTML 场景才经对应 CLI，工具结果与既有留存形态不变；
+  `harness.web_access.enabled=false` 时 Web 工具不注册，不得以幻觉调用代替显式 CLI 选择
+
+#### Scenario: 权限判定对两个入口一致
+
+- **WHEN** 含唯一正文 marker 的 SKILL.md 已在发现期被成功读取并解析出 description / 策略后，配置
+  `deny = ["skill_load"]` 或 `deny = ["skill_load(<name>)"]`，在任一权限档分别经显式选择与模型自主调用
+  加载同一 Skill
+- **THEN** 两个入口的执行期正文加载器均未被调用；显式路径不注入且 `input` / `llm_request.messages` /
+  provider wire 无 marker，自动工具结果无 marker；同一命中规则原文按各入口既有错误面报告；
+  不得用文件系统零读取作为该拒绝路径的判据
+
+#### Scenario: 显式选择不改变后续命令权限
+
+- **WHEN** 用户在任一权限档显式选择一个 Skill，且技能内容引导模型执行一条写操作命令
+- **THEN** `cli_run` 沿用现行档位 / 规则 / 命令分类 / 缓存；该请求批准就请求批准，该自动放行就自动放行；
+  显式选择不改变判定输入或结果
+
+#### Scenario: 恢复与策略变更不重写历史
+
+- **WHEN** 会话已含显式技能 part 与自动 `skill_load` 工具结果，随后 Skill 被改为禁自动 / 禁手动并恢复会话
+- **THEN** 最后一条 `llm_request.messages` 原样灌回，旧显式正文与自动工具结果仍在历史且不被回写；
+  面板仍不显示显式正文；只有恢复后的新调用按当前策略拦截
+
+#### Scenario: 重试与压缩不重新显式注入
+
+- **WHEN** 带显式技能 part 的轮次被重试或自动压缩
+- **THEN** 重试原样回放 `input`，显式预加载器不再次执行；压缩把正文作为普通内容参与摘要，新会话只接收
+  摘要且不重新显式注入，不承诺正文逐字节保留
+
+#### Scenario: 未知名字与非法发送元数据
+
+- **WHEN** 引用名字在发送时已不存在；或 `skills_json` 不是字符串数组
+- **THEN** 前者跳过注入、发送照常且无阻断性错误；后者以明确错误拒绝发送，不建会话、不入队
+
+#### Scenario: grammar 之外的名字仍可自主使用
+
+- **WHEN** Skill 根下存在名字含点 / 空格 / CJK / 点开头的技能
+- **THEN** 清单与候选不含它们；系统提示索引仍列出；含点（非点开头）/ 空格 / CJK 的名字仍可被模型自主
+  `skill_load`，点开头的名字仍按现行 `skill_name_invalid` 被拒绝
+
+#### Scenario: 无图片消息也剥离本地标记
+
+- **WHEN** 一条只有用户文本 + 显式技能 part、没有任何图片引用的消息被发送
+- **THEN** provider wire 的 text part 不含 `lumir_skill` 字段、正文仍在；附件目录不被解析或创建
+
+#### Scenario: 自动命名素材不含显式技能正文
+
+- **WHEN** 首轮或最近轮的用户消息带 `lumir_skill` part，标题生成读取 `title::material`
+- **THEN** 命名素材只含用户提问文本与既有问答，不含显式技能正文
+
+#### Scenario: 提示约定与策略标记进入系统提示
+
+- **WHEN** 发起新会话并读取装配后的系统提示，Skill 清单含默认、禁自动、禁手动与非法元数据条目
+- **THEN** 身份段含显式段头、斜杠路径与混合调用约定；默认条目不增加策略标记，其他条目分别标注；
+  固定段字节指纹与装配清单同步
+
+### Requirement: 显式 Skill 加载痕迹
+
+用户显式选择的每个 Skill SHALL 在 harness 面板留下**恰好一条**与工具调用同形的痕迹记录（工具行），
+加载成功与失败同等留痕。痕迹 MUST 显示 Skill 名称与终态：成功 SHALL 呈「已加载」终态；失败 SHALL 呈
+失败终态并给出具体原因——至少覆盖名字不合 grammar、当前回合发现结果里不存在、SKILL.md 缺失 /
+不可读 / 超限、加载结果无正文、调用元数据非法、`user-invocable: false` 与权限拒绝，MUST NOT 静默跳过。
+
+痕迹 MUST 只含名称、终态、错误码 / 人话原因与时刻，MUST NOT 含 SKILL.md 正文或 Skill 目录内其他文件
+的内容；面板文本与辅助技术树 MUST NOT 因该痕迹出现任何正文。痕迹行的工具名 SHALL 为 `explicit_skill`
+（与模型自主调用的 `skill_load` 区分），MUST NOT 被描述或呈现为模型自主调用；行的折叠、图标、参数格、
+失败尾注与时间读数 SHALL 复用既有工具行视觉体系，MUST NOT 新造一套渲染形态。既有 requirement 里对
+未知 / 超限 / 读取失败 / 不合 grammar 的「跳过」SHALL 仅指不注入正文、不阻断发送；本条要求这些名字
+留下失败痕迹，MUST NOT 改变其正文注入面。
+
+痕迹行的工具名只用于面板呈现，MUST NOT 向模型注册成第二件工具；权限判定仍以 `skill_load` + 技能名 +
+`{"name": <name>}` 进行，与既有显式入口逐字一致。
+
+痕迹 SHALL 可恢复：痕迹项 SHALL 随该条用户消息进入会话 `input` 与 `llm_request.messages` 的本地字段
+`lumir_skill_trace`（数组，元素含 `name` / `status`，失败时含 `code` / `message`，及 `ts`），该字段 MUST
+在发送给 provider 的 wire 展开时被剥离；恢复会话 / 切换历史后 SHALL 从该字段重建同一批工具行（名称、
+终态、原因与时刻一致），MUST NOT 重新执行正文加载。live 路径与恢复路径 MUST 共用同一份「痕迹项 → 面板
+消息」映射，MUST NOT 各算一套；两条路径 MUST NOT 重复留痕。重试 SHALL 原样回放该轮输入，MUST NOT 重算
+痕迹或追加痕迹行。
+
+同名选择 SHALL 只加载并留痕一次（按发送顺序先到先得）。显式痕迹 MUST NOT 改变权限判定、执行期正文
+加载器、正文注入 part、面板正文投影、自动命名素材与自动 `skill_load` 的工具行 / 结果回送：权限与策略
+失败沿用既有错误码，自动入口的既有表现逐字不变。
+
+#### Scenario: 成功加载留一行
+
+- **WHEN** 用户显式选择一个可加载 Skill 并发送消息
+- **THEN** 该用户消息之后出现一条工具名 `explicit_skill` 的痕迹行，参数格为该 Skill 名称，终态为已加载；
+  SKILL.md 正文仍只进入该用户消息的模型可见 part，面板文本与 AX 不含正文字符串
+
+#### Scenario: 多 Skill 一次发送
+
+- **WHEN** 一条消息显式选择两个不同 Skill，且元数据里重复出现其中一个名字
+- **THEN** 每个不同名字各得一条痕迹行（同名的重复项不产生第二行），行的顺序与发送元数据里各名字首次出现
+  的顺序一致
+
+#### Scenario: 失败留痕与具体原因
+
+- **WHEN** 用户显式选择的名字分别命中 grammar 不合、不存在、元数据非法、禁手动、权限 deny、SKILL.md
+  缺失与 SKILL.md 超限
+- **THEN** 每个名字各得一条失败终态的痕迹行，尾注含对应错误码与人话原因（权限拒绝带命中的规则原文，
+  口径同既有 deny 回送）；用户消息照常发送；失败原因 MUST NOT 以任何正文 part 形式进入该消息
+
+#### Scenario: 恢复后痕迹仍在且不重复
+
+- **WHEN** 含显式痕迹（成功与失败各至少一条）的会话被切走后再恢复
+- **THEN** 面板重建出同样的痕迹行（名称、终态、原因与时刻一致），MUST NOT 重新执行正文加载；
+  每条名字仍然只有一行，用户消息不重复、正文不上屏
+
+#### Scenario: 重试不重复留痕
+
+- **WHEN** 显式回合的 provider 往返失败后用户触发重试
+- **THEN** 该轮输入原样回放，不重新加载 Skill、不新增痕迹行；之后恢复该会话，每个名字仍只有一行
+
+#### Scenario: 自动入口不回归
+
+- **WHEN** 模型自主调用 `skill_load`
+- **THEN** 仍走既有的工具行与工具结果回送，不产生 `explicit_skill` 痕迹行；其重试、恢复与压缩行为不变
+
+#### Scenario: 正文与失败码不进入 provider wire
+
+- **WHEN** 一次显式发送同时含成功加载与失败选择
+- **THEN** 留存里的该用户消息带 `lumir_skill` 正文 part 与 `lumir_skill_trace` 数组，但实际发送给 provider 的
+  wire MUST NOT 含 `lumir_skill`、`lumir_skill_trace` 标记，也 MUST NOT 出现失败错误码；正文仍按既有语义
+  进入 wire

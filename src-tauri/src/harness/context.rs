@@ -407,6 +407,21 @@ pub fn skill_summaries(skills: &[SkillEntry]) -> Vec<SkillSummary> {
         .collect()
 }
 
+/// 显式入口的诊断（change add-explicit-skill-trace-nov26 评审 P2-2）：单段名字在两个 Skill 根下
+/// 存在目录、但目录里没有 SKILL.md。发现层按既有口径跳过这类目录（不改变索引 / 候选 / 自动
+/// 入口），本函数只给执行期报告「有目录但缺文件」与「没有这个 Skill」的分界用。
+pub fn skill_dir_without_manifest(vault_root: &Path, name: &str) -> bool {
+    [
+        home_dir().join(".agents").join("skills"),
+        vault_root.join(".agents").join("skills"),
+    ]
+    .iter()
+    .any(|root| {
+        let dir = root.join(name);
+        dir.is_dir() && !dir.join("SKILL.md").is_file()
+    })
+}
+
 /// 双根发现：user-wide 先入表，vault-wide 同名整项覆盖。发现期沿用整文件读取，
 /// 文本只用于元数据解析；正文加载在执行期另行经过权限与入口策略。
 pub fn discover_skills(vault_root: &Path) -> Vec<SkillEntry> {
@@ -1000,7 +1015,7 @@ mod tests {
     /// identity 段 2181 → 2550 字节（QUOTE_REFERENCE 未动）。
     /// change `add-harness-web-fetch-search-nov24`：补统一网页工作流（search → fetch、untrusted
     /// data、默认 Allow 来自用户配置、curl 不自动降级），identity 段 2550 → 2847 字节
-    /// （QUOTE_REFERENCE 未动）。
+    /// （QUOTE_REFERENCE 未动）。本地 prompt 修订：identity 段 2847 → 2839 字节，指纹同步更新。
     #[test]
     fn identity_prompt_teaches_unified_web_workflow_and_trust_boundary() {
         for expected in [
@@ -1027,7 +1042,7 @@ mod tests {
                 fnv1a64(quote.as_bytes()),
                 quote.len(),
             ),
-            (0xc65956ee7ea2325f, 2847, 0x5cba54b785b843b, 1170),
+            (0x1c010d8daacd293f, 2839, 0x5cba54b785b843b, 1170),
         );
     }
 

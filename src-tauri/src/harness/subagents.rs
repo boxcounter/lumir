@@ -1258,6 +1258,7 @@ pub(crate) fn insert_notice_message(session: &mut Session, text: &str, batch: Op
         text: Some(strip_notice_marker(text)),
         summary: batch.map(str::to_string),
         name: None,
+        web_input: None,
         status: None,
         reasoning: None,
         decision: None,

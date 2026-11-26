@@ -126,7 +126,7 @@ export async function settle(cu, pid, { timeoutMs = 30_000, now = Date.now, slee
  *      文案在」，两者都是正观测；
  *   3. 未打开 vault 的空态（D5/D6）——只有 `requireVault: false` 才认（见下）；
  *   4. **首启模式**（无 `last_vault`，启动面首启态）——AX 里是唯一真实的「添加 vault」/
- *      「Add vault」按钮（D1029），树 / 编辑器都被启动面盖住。同样只有 `requireVault: false`
+ *      「Add vault」按钮（D1034），树 / 编辑器都被启动面盖住。同样只有 `requireVault: false`
  *      才认；`requireVault: true` 时落到首启模式说明 `last_vault` 意外丢失，必须报红。
  *
  * `requireVault: false`（M159 起，只给「本步期待未打开空态」的场景用）：启动恢复移出主线程
@@ -150,7 +150,7 @@ const LANG_PATTERNS = {
   emptyHint: /打开一个目录作为 vault|Open a folder as a vault/,
   openVault: /打开 vault|Open vault/,
   emptyVault: /这个 vault 还没有打开的文件|No files opened in this vault yet/,
-  // 首启模式（change add-first-run-onboarding-nov25）的唯一主操作（D1029）；只有
+  // 首启模式（change add-first-run-onboarding-nov25）的唯一主操作（D1034）；只有
   // `requireVault: false` 才认（见 waitAppReady 的终态表）。
   firstRun: /^(添加 vault|Add vault)$/,
 };
@@ -174,7 +174,7 @@ export async function waitAppReady(cu, pid, { timeoutMs = 30_000, requireVault =
     // 还没有会话历史），严格门必须认它——否则每个场景都会在这一步超时。
     const hasEmptyVaultNotice = LANG_PATTERNS.emptyVault.test(ax.text);
     // **首启模式**（change add-first-run-onboarding-nov25）：启动面盖住整窗、`#app` inert 且
-    // aria-hidden，AX 里只剩唯一主操作「添加 vault」（D1029）。判据必须是**真实的按钮节点**
+    // aria-hidden，AX 里只剩唯一主操作「添加 vault」（D1034）。判据必须是**真实的按钮节点**
     // （role=AXButton + 精确读屏名），不是「AX 文本里出现过这句话」——空 AX / 只有静态文本
     // 一律不算就绪（REVIEW.md「读不到当成空」条）。严格门不认它：`requireVault: true` 时
     // 落到首启模式说明 `last_vault` 意外丢失，是场景要报红的现场，不是可放行的终态。

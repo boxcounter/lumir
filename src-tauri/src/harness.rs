@@ -909,6 +909,7 @@ impl Runtime {
                 text: Some(subagents::notice_display_text(&notice.text)),
                 summary: Some(notice.wake_batch.clone()),
                 name: None,
+                web_input: None,
                 status: None,
                 reasoning: None,
                 decision: None,
@@ -1545,6 +1546,9 @@ fn restored_panel_messages(
                     None => (None, None),
                 };
                 let tool_name = item["name"].as_str().unwrap_or("");
+                let arguments = item["arguments"].as_str().unwrap_or("");
+                let web_input =
+                    self::web::output::PanelWebInput::from_arguments(tool_name, arguments);
                 let decision = approval_queue
                     .get_mut(tool_name)
                     .and_then(|queue| queue.pop_front())
@@ -1553,10 +1557,9 @@ fn restored_panel_messages(
                     role: "tool".into(),
                     text,
                     reasoning: None,
-                    summary: Some(turn::summarize_args(
-                        item["arguments"].as_str().unwrap_or(""),
-                    )),
+                    summary: Some(turn::summarize_args_for(tool_name, arguments)),
                     name: Some(tool_name.to_string()),
+                    web_input,
                     status: status.map(str::to_string),
                     decision,
                     ts: at,
@@ -1583,10 +1586,29 @@ fn restored_panel_messages(
                             reasoning: None,
                             summary: None,
                             name: None,
+                            web_input: None,
                             status: None,
                             decision: None,
                             ts: at,
                         });
+                    }
+                    // 显式 Skill 痕迹（change add-explicit-skill-trace-nov26）：用户消息项的本地字段
+                    // 是恢复路径的唯一重建源——live 与恢复共用 `explicit_skill_panel_message`，
+                    // 名称 / 终态 / 原因 / 时刻逐值一致；旧留存无该字段时零输出（不伪造）。
+                    for trace in item[turn::SKILL_TRACE_FIELD]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                    {
+                        let Ok(mut trace) =
+                            serde_json::from_value::<turn::ExplicitSkillTrace>(trace.clone())
+                        else {
+                            continue;
+                        };
+                        if trace.ts == 0 {
+                            trace.ts = at;
+                        }
+                        messages.push(turn::explicit_skill_panel_message(&trace));
                     }
                 }
                 Some("assistant") => {
@@ -1602,6 +1624,7 @@ fn restored_panel_messages(
                             reasoning: pending_reasoning.take(),
                             summary: None,
                             name: None,
+                            web_input: None,
                             status: None,
                             decision: None,
                             ts: at,
@@ -2519,6 +2542,57 @@ mod tests {
             messages.iter().map(|m| m.ts).collect::<Vec<u64>>(),
             vec![100, 0, 0]
         );
+    }
+
+    /// 显式 Skill 痕迹（change add-explicit-skill-trace-nov26）：恢复路径从用户消息项的本地字段
+    /// `lumir_skill_trace` 重建同一批工具行，位置紧跟该用户消息；成功行进正文 part 但**不**把
+    /// 正文带进面板消息；缺字段的旧留存保持原样（不伪造痕迹行）。
+    #[test]
+    fn restored_panel_messages_rebuilds_explicit_skill_trace_rows() {
+        let mut user = session::user_item("question");
+        user["content"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "type": "input_text",
+                "text": "[已加载 Skill：demo]\nUNIQUE-SKILL-BODY",
+                "lumir_skill": "demo"
+            }));
+        user["lumir_skill_trace"] = serde_json::json!([
+            {"name": "demo", "status": "done", "ts": 101},
+            {"name": "ghost", "status": "error", "code": "skill_not_found",
+             "message": "技能 ghost 不存在", "ts": 101}
+        ]);
+        let restored = vec![user, session::assistant_item("答。", None)[0].clone()];
+        let messages = restored_panel_messages(&restored, &[Some(100), Some(105)], &[]);
+        let roles: Vec<&str> = messages.iter().map(|m| m.role.as_str()).collect();
+        assert_eq!(roles, vec!["user", "tool", "tool", "assistant"]);
+        assert_eq!(messages[0].text.as_deref(), Some("question"));
+        assert_eq!(messages[1].name.as_deref(), Some("explicit_skill"));
+        assert_eq!(messages[1].status.as_deref(), Some("done"));
+        assert_eq!(messages[1].ts, 101, "痕迹行取痕迹项自带的入队时刻");
+        let args =
+            serde_json::from_str::<serde_json::Value>(messages[1].summary.as_deref().unwrap())
+                .unwrap();
+        assert_eq!(args["name"], "demo");
+        assert_eq!(messages[2].name.as_deref(), Some("explicit_skill"));
+        assert_eq!(messages[2].status.as_deref(), Some("error"));
+        assert_eq!(messages[2].ts, 101);
+        let text = messages[2].text.as_deref().unwrap();
+        assert!(text.contains("skill_not_found"), "{text}");
+        assert!(text.contains("技能 ghost 不存在"), "{text}");
+        assert!(
+            !serde_json::to_string(&messages)
+                .unwrap()
+                .contains("UNIQUE-SKILL-BODY"),
+            "恢复面板不得出现 Skill 正文"
+        );
+
+        // 旧留存（无该字段）：不产生痕迹行——不伪造。
+        let plain = vec![session::user_item("旧问题")];
+        let messages = restored_panel_messages(&plain, &[], &[]);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "user");
     }
 
     /// change rank-harness-sessions-by-last-activity-nov23 §3.2：链遍历的防环、自指与深度上限。
@@ -3937,5 +4011,20 @@ mod tests {
         assert!(fetch_text.contains("\"http_status\":503"));
         assert!(fetch_text.contains("\"attempts\":3"));
         assert_eq!(messages[1].status.as_deref(), Some("error"));
+        // 评审 P1-1：JSONL 恢复同样把完整输入带进面板记录，恢复行不再依赖 summary。
+        assert_eq!(
+            messages[0]
+                .web_input
+                .as_ref()
+                .and_then(|input| input.query.as_deref()),
+            Some("full synthetic query")
+        );
+        assert_eq!(
+            messages[1]
+                .web_input
+                .as_ref()
+                .and_then(|input| input.url.as_deref()),
+            Some("https://other.example/b")
+        );
     }
 }

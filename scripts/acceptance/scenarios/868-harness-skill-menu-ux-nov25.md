@@ -2,7 +2,7 @@
 id: "868-harness-skill-menu-ux-nov25"
 item: 868
 tier: full
-title: Skill 候选：Ctrl+N/P 同方向键、长列表高亮揭示与响应式加宽（change fix-skill-menu-ux-nov25）
+title: Skill 候选：高亮即接受（Enter 新合同）、Ctrl+N/P 同方向键、长列表揭示与响应式加宽（change fix-skill-menu-ux-nov25 + fix-skill-enter-accept-nov26）
 open: harness-note.md
 marker: "HNL-ALPHA"
 config:
@@ -132,7 +132,31 @@ steps:
     expect:
       - label: composer 已持焦
         ax: { focused: "AXTextArea" }
-  - name: 移开指针，确保候选从无 hover 的被动态打开
+  - name: 部分匹配多候选：不按方向键，直接 Enter 接受当前高亮首项
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|/acc-skill-0" }
+    text: "/acc-skill-0"
+    expect:
+      - label: 十个候选已出现（不要求全名或唯一候选）
+        ax: { has: "AXList (Select a Skill)" }
+  - name: Enter 接受首项 acc-skill-00（不发送）
+    do: key
+    key: enter
+    expect:
+      - label: 当前高亮首项被写入 composer
+        ax: { has: '/AXTextArea = "/acc-skill-00"/' }
+      - label: 未把普通文本 /acc-skill-0 发出（transcript 无该行）
+        node: { role: AXStaticText, name: "^/acc-skill-0$", present: false }
+      - label: 候选已关闭
+        ax: { not: "AXList (Select a Skill)" }
+      - shot: 00b-多候选默认接受首项
+  - name: 新建会话，回到长列表导航流程
+    do: click
+    target: { role: AXButton, name: "新会话" }
+  - name: 再次聚焦空 composer
+    do: clickInNode
+    target: { role: AXTextArea, name: "问点什么" }
+  - name: 移开指针，确保候选从无 hover 的自动高亮状态打开
     do: hover
     target: { role: AXRadioButton, name: "^harness-note.md$" }
   - name: 输入共同前缀，打开十二项长列表
@@ -153,6 +177,10 @@ steps:
     expect:
       - label: 导航后候选仍在且正文未变
         editor: { unchangedSince: doc-before-skill-nav }
+      - label: 首屏首行在 AX 曝光窗口内（正向对照：同一判据在末项处必须翻面）
+        node: { role: AXStaticText, name: "^acc-skill-00 ", present: true }
+      - label: 末项行不在 AX 里＝它必然在真实可见带外（反向对照：曝光窗口外的行不暴露；窗口比像素多一行，故不出现是充分条件）
+        node: { role: AXStaticText, name: "^acc-skill-11 ", present: false }
       - shot: 02-Ctrl-N-第三项
   - name: Ctrl+P 回第二项
     do: key
@@ -178,7 +206,7 @@ steps:
   - name: 再次聚焦空 composer
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
-  - name: 移开指针，确保候选从无 hover 的被动态打开
+  - name: 移开指针，确保候选从无 hover 的自动高亮状态打开
     do: hover
     target: { role: AXRadioButton, name: "^harness-note.md$" }
   - name: 再次打开同一长列表
@@ -195,14 +223,23 @@ steps:
     expect:
       - label: 逐项导航仍未改编辑器
         editor: { unchangedSince: doc-before-skill-nav }
-      - label: 末项已完整滚入真实可见带（截图证据；几何断言在视觉套件）
-        shot: 04-滚动到末项-末项应完整可见
+      - label: 末项行（游标所在项）出现在 AX 曝光窗口内（不出现即判红；完整几何由浏览器矩阵判）
+        node: { role: AXStaticText, name: "^acc-skill-11 ", present: true }
+      - label: 倒数第二项行同样在曝光窗口内（缺陷现场最先消失的就是这一行）
+        node: { role: AXStaticText, name: "^acc-skill-10 ", present: true }
+      - label: 首屏首行离开 AX＝曝光窗口真的滚到末段（与首段同一判据翻面，防恒绿）
+        node: { role: AXStaticText, name: "^acc-skill-00 ", present: false }
+      - shot: 04-滚动到末项-末项应完整可见
   - name: Ctrl+P 回到倒数第二项
     do: key
     key: "ctrl+p"
     expect:
       - label: 末段回退仍未改编辑器
         editor: { unchangedSince: doc-before-skill-nav }
+      - label: 倒数第二项行（游标所在项）在 AX 曝光窗口内
+        node: { role: AXStaticText, name: "^acc-skill-10 ", present: true }
+      - label: 首屏首行仍在曝光窗口外（窗口没有回弹到顶部）
+        node: { role: AXStaticText, name: "^acc-skill-00 ", present: false }
       - shot: 04b-末段导航-倒数第二项应完整可见
   - name: Enter 接受倒数第二项
     do: key
@@ -215,13 +252,13 @@ steps:
       - label: 整个键盘流程未改编辑器
         editor: { unchangedSince: doc-before-skill-nav }
 
-  - name: 新建会话，准备全名自动接受
+  - name: 新建会话，准备全名接受
     do: click
     target: { role: AXButton, name: "新会话" }
   - name: 聚焦空 composer
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
-  - name: 移开指针，避免指针悬停替用户武装
+  - name: 移开指针，避免指针悬停改变高亮
     do: hover
     target: { role: AXRadioButton, name: "^harness-note.md$" }
   - name: 逐字键入完整 Skill 名 acc-skill-05
@@ -231,8 +268,8 @@ steps:
     expect:
       - label: 候选仍显示（全名命中不关闭候选）
         ax: { has: "AXList (Select a Skill)" }
-      - shot: 04c-全名自动武装
-  - name: 全名态 Enter 直接接受
+      - shot: 04c-全名高亮即接受
+  - name: 全名态 Enter 同样按高亮接受
     do: key
     key: enter
     expect:
@@ -258,7 +295,7 @@ steps:
   - name: 聚焦 Shift+Arrow 对照 composer
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
-  - name: 移开指针，确保候选从无 hover 的被动态打开
+  - name: 移开指针，确保候选从无 hover 的自动高亮状态打开
     do: hover
     target: { role: AXRadioButton, name: "^harness-note.md$" }
   - name: 打开 Shift+Arrow 对照候选
@@ -289,7 +326,7 @@ steps:
   - name: 聚焦 Ctrl+Shift 对照 composer
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
-  - name: 移开指针，确保候选从无 hover 的被动态打开
+  - name: 移开指针，确保候选从无 hover 的自动高亮状态打开
     do: hover
     target: { role: AXRadioButton, name: "^harness-note.md$" }
   - name: 打开 Ctrl+Shift 对照候选
@@ -318,7 +355,7 @@ steps:
   - name: 聚焦 Meta 对照 composer
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
-  - name: 移开指针，确保候选从无 hover 的被动态打开
+  - name: 移开指针，确保候选从无 hover 的自动高亮状态打开
     do: hover
     target: { role: AXRadioButton, name: "^harness-note.md$" }
   - name: 打开 Meta 对照候选
@@ -345,7 +382,7 @@ steps:
   - name: 聚焦 Alt 对照 composer
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
-  - name: 移开指针，确保候选从无 hover 的被动态打开
+  - name: 移开指针，确保候选从无 hover 的自动高亮状态打开
     do: hover
     target: { role: AXRadioButton, name: "^harness-note.md$" }
   - name: 打开 Alt 对照候选
@@ -386,7 +423,7 @@ steps:
   - name: 聚焦 20% 窄 pane composer
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
-  - name: 移开指针，确保候选从无 hover 的被动态打开
+  - name: 移开指针，确保候选从无 hover 的自动高亮状态打开
     do: hover
     target: { role: AXRadioButton, name: "^harness-note.md$" }
   - name: 20% 窄 pane 打开长描述候选并保留几何现场截图
@@ -404,42 +441,140 @@ steps:
   - name: 聚焦空 composer
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
-  - name: 移开指针，避免指针悬停替用户武装
+  - name: 移开指针，避免指针悬停改变高亮
     do: hover
     target: { role: AXRadioButton, name: "^harness-note.md$" }
-  - name: 键入 /tmp，唯一候选只做视觉预选
+  - name: 键入 /tmp，唯一候选高亮即可接受
     do: typeInNode
     target: { role: AXTextArea, name: "问点什么|/tmp" }
     text: "/tmp"
     expect:
-      - label: 路径前缀仍显示被动候选
+      - label: 路径前缀命中 tmp-acc，候选已出现
         ax: { has: "AXList (Select a Skill)" }
-      - shot: 10b-tmp-路径前缀只做视觉预选
-  - name: Enter 发送普通文本而不是接受 tmp-acc
+      - shot: 10b-tmp-路径前缀候选
+  - name: Enter 接受当前高亮 tmp-acc（不再发送普通文本）
     do: key
     key: enter
     expect:
-      - label: 候选不得把被动态 Enter 变成一次 Skill 调用
-        ax: { not: '/AXTextArea = "/tmp-acc"/' }
-      - label: 普通文本被当成消息发出（transcript 出现 /tmp）
-        node: { role: AXStaticText, name: "^/tmp$", present: true }
+      - label: 当前高亮被写入 composer（不要求全名）
+        ax: { has: '/AXTextArea = "/tmp-acc"/' }
+      - label: 未把普通文本 /tmp 发出（transcript 无该行）
+        node: { role: AXStaticText, name: "^/tmp$", present: false }
       - label: 候选已关闭
         ax: { not: "AXList (Select a Skill)" }
       - label: 编辑器仍未变
         editor: { unchangedSince: doc-before-skill-nav }
-      - shot: 10c-tmp-发送后现场
+      - shot: 10c-tmp-接受后现场
+  - name: 再按 Enter 发送带显式引用的消息
+    do: key
+    key: enter
+    expect:
+      - label: composer 已清空（回到占位句）
+        ax: { has: "问点什么" }
+      - label: composer 不再持有 /tmp-acc
+        ax: { not: '/AXTextArea = "/tmp-acc"/' }
+      - label: 发送时带显式 Skill 引用 tmp-acc
+        file: { path: "env:harness/sessions/acc-skill-ux/*.jsonl", has: '"lumir_skill":"tmp-acc"' }
+      - label: transcript 出现 /tmp-acc（不是普通 /tmp）
+        node: { role: AXStaticText, name: "^/tmp-acc", present: true }
+      - shot: 10d-tmp-发送后现场
+
+  - name: 新建会话，准备无候选对照
+    do: click
+    target: { role: AXButton, name: "新会话" }
+  - name: 聚焦空 composer
+    do: clickInNode
+    target: { role: AXTextArea, name: "问点什么" }
+  - name: 键入零命中的 /zzz
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|/zzz" }
+    text: "/zzz"
+    expect:
+      - label: 无候选（候选不显示）
+        ax: { not: "AXList (Select a Skill)" }
+  - name: Enter 发送普通文本
+    do: key
+    key: enter
+    expect:
+      - label: transcript 出现 /zzz
+        node: { role: AXStaticText, name: "^/zzz$", present: true }
+      - label: composer 已清空（回到占位句）
+        ax: { has: "问点什么" }
+      - label: composer 不再持有 /zzz
+        ax: { not: '/AXTextArea = "/zzz"/' }
+      - label: 候选仍关闭
+        ax: { not: "AXList (Select a Skill)" }
+      - shot: 10e-无候选发送
+
+  - name: 新建会话，准备 Esc 后发送原文
+    do: click
+    target: { role: AXButton, name: "新会话" }
+  - name: 聚焦空 composer
+    do: clickInNode
+    target: { role: AXTextArea, name: "问点什么" }
+  - name: 键入 /acc-skill-0 打开候选
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|/acc-skill-0" }
+    text: "/acc-skill-0"
+    expect:
+      - label: 候选已出现
+        ax: { has: "AXList (Select a Skill)" }
+  - name: Esc 关闭候选，保留原文
+    do: key
+    key: escape
+    expect:
+      - label: 候选已关闭
+        ax: { not: "AXList (Select a Skill)" }
+      - label: composer 原文未被改写
+        ax: { has: '/AXTextArea = "/acc-skill-0"/' }
+  - name: Enter 发送原文（不创建 Skill 引用）
+    do: key
+    key: enter
+    expect:
+      - label: transcript 出现原文 /acc-skill-0
+        node: { role: AXStaticText, name: "^/acc-skill-0$", present: true }
+      - label: 未被解释成显式 Skill 调用
+        file: { path: "env:harness/sessions/acc-skill-ux/*.jsonl", not: '"lumir_skill":"acc-skill-0"' }
+      - label: composer 已清空（回到占位句）
+        ax: { has: "问点什么" }
+      - label: composer 不再持有原文
+        ax: { not: '/AXTextArea = "/acc-skill-0"/' }
+      - shot: 10f-Esc后发送原文
 ---
 
 本场景用 Enter 后的实际 ref 判定 Ctrl+N/P 的导航结果，不以「AX 里能看到 option 文本」冒充高亮或滚动位置断言。
-全名接受写入的是 `/名字 `（带尾随空格，见 `tests/unit/skill-menu.test.ts` 对 `skillSelectionSpec` 的断言与
-`tests/visual/scenes/skill-hybrid.spec.ts` 的全名用例），但**真机 AX 的 `AXTextArea = "…"` 会把值尾的空白裁掉**
+接受（全名与部分匹配同路）写入的是 `/名字 `（带尾随空格，见 `tests/unit/skill-menu.test.ts` 对
+`skillSelectionSpec` 的断言与 `tests/visual/scenes/skill-hybrid.spec.ts` 的 `/tmp`、`/in` 用例），但**真机 AX 的 `AXTextArea = "…"` 会把值尾的空白裁掉**
 （同场景「Enter 接受第二项」按 `/acc-skill-01` 无空格判 PASS，走的是同一条插入路径），因此尾随空格不能靠
 「期望值里写一个空格」来证明——那条断言在任何实现下都恒红。改为接受后继续键入一个字符：留了空格才会得到
-`/acc-skill-05 x`，没留则是 `/acc-skill-05x`，同一个判据同时锁住「空格」与「caret 落在空格之后」。同理 `/tmp`
-那一步的负向断言不再把空格写进判据串（旧写法 `"/tmp-acc "` 在裁掉空白的 AX 里永不可能命中，是恒真断言），
-改成 `not "/tmp-acc"` 与「transcript 里出现普通消息 `/tmp`」一正一负成对。
-长列表揭示、菜单外零滚动、修饰键 `defaultPrevented`、候选高亮与 20% 窄 pane 不越界的逐拍机器判据在
-`tests/visual/scenes/skill-hybrid.spec.ts`；真机 AX 读不到这些 DOM 事实，因此 868 用选区替换结果验证
-Shift/Ctrl+Shift 的原生路径，用候选存续验证 Meta、用精确组字结果验证 Alt，并用截图保留两者和窄 pane 现场，
-不把截图描述成已通过的像素断言。
+`/acc-skill-05 x`，没留则是 `/acc-skill-05x`，同一个判据同时锁住「空格」与「caret 落在空格之后」。`/tmp`
+那一步同受这条约束：接受后的正向断言不把尾随空格写进判据串（`/tmp-acc`），并以「transcript 不出现
+普通 `/tmp`」与「发送文件里出现 `"lumir_skill":"tmp-acc"`」一正一负成对；`Esc` 后发送原文那一段再用
+「transcript 出现 `/acc-skill-0`」与「文件无 `lumir_skill`」成对。
+长列表揭示的**几何**（活动行 ⊆ 真实可见带、带内不动、留一行上下文、菜单外零滚动）仍由
+`tests/visual/scenes/skill-hybrid.spec.ts` 与 `skill-visible-selection-nov25.spec.ts` 的逐拍判据钉住；
+修饰键 `defaultPrevented`、候选高亮与 20% 窄 pane 不越界的机器判据同在那里。
+
+真机侧从此**不再只用截图**判「选中行可见」（change `fix-skill-visible-selection-nov25`）：WKWebView 的 AX
+快照按离屏过滤只暴露**曝光窗口**内的行（`truncated: true [offscreen_filter]`，与本套件 867 同一手法）。
+但曝光窗口**比像素可见区多一行**（本场景 r4 实测：`04` 快照暴露 `acc-skill-05`–`09`，像素只显示
+`06`–`09`），所以它是**必要不充分**判据，不能替代完整几何：
+
+- 游标行文本**不在** AX 里 ⇒ 它一定在真实可见带之外——这一向足以判红（本次缺陷正是这种形态），是充分条件；
+- 游标行文本**在** AX 里 ⇒ 它只进入了曝光窗口，仍可能是被裁掉的那一行——不构成「整行完整可见」的证明。
+
+判据按**正反两向成对**写，并在同一次运行里翻面，所以不可能是恒真：
+
+- 首段（窗口在顶部）：`acc-skill-00` 行在场（正向对照）+ `acc-skill-11` 行不在场（它必然在带外）；
+- 末段（12 拍 ⌃N 到底）：`acc-skill-11` 与 `acc-skill-10` 行在场（游标行与上下文行都进入了曝光窗口）
+  + `acc-skill-00` 行不在场（曝光窗口真的滚走了）；
+- 回退到倒数第二项：`acc-skill-10` 行在场 + `acc-skill-00` 行不在场（曝光窗口没有回弹到顶部）。
+
+整行 ⊆ 真实可见带、带内不动、留一行上下文这些**完整几何**仍由浏览器矩阵（`skill-hybrid.spec.ts`、
+`skill-visible-selection-nov25.spec.ts`，chromium 与 `webkit-realua` 两支）判定，MUST NOT 用 AX 暴露冒充。
+AX 读不到 `aria-selected` / 左条样式，也读不到 `scrollTop`：**「哪一行是游标」由 Enter 的实际 ref 判定**
+（`/acc-skill-01`、`/acc-skill-10`），标记样式与几何由视觉套件判定——三者分工，截图只留现场。这条判据的
+必要性有现场证据：r4 那次 PASS 的 `04` 截图里，AX 列表只暴露 `acc-skill-05`–`09`、游标行 `10` 根本不在
+AX 里，缺陷已在证据中，只是当时没有任何断言读它。Shift/Ctrl+Shift 的原生路径仍用选区替换结果验证，
+Meta 用候选存续、Alt 用精确组字结果验证，不用截图冒充已通过的断言。
 所有 Skill 与描述均为合成 fixture，不读取真实配置或真实 vault。

@@ -1,5 +1,7 @@
 ---
 # change add-harness-web-fetch-search-nov24 阶段5：deny 优先且不产生网络请求。
+# change compact-web-search-result-summary-nov26：单调用不出组摘要，attempts / 外发事实在
+# 默认关闭的「查看详情」里。
 id: "871-harness-web-deny"
 item: 871
 tier: full
@@ -39,17 +41,22 @@ steps:
     expect:
       - label: deny 不进批准闸
         ax: { not: "要抓取这个网页吗？" }
-  - name: 展开工具清单
-    do: click
-    target: { role: AXButton, name: "个工具调用 · 全部完成" }
+  - name: 单 Web 调用默认行显示拒绝，不出组摘要
     expect:
       - label: 工具行显示拒绝
         ax: { has: "permission_denied" }
+      - label: 单次 Web 调用不出组摘要（审计不计为另一次调用）
+        ax: { not: "个工具调用 · 全部完成" }
+      - shot: 01-deny默认行
+  - name: 展开「查看详情」核对零尝试与无外发
+    do: click
+    target: { role: AXButton, name: "^查看详情$" }
+    expect:
       - label: 审计记录 attempts=0
         ax: { has: "尝试次数" }
       - label: 未发生外发，不显示预检 + DeepSeek 外发说明
         ax: { not: "HEAD / Range GET" }
-      - shot: 01-deny审计
+      - shot: 02-deny详情
   - name: JSONL 审计事实与拒绝同一条
     expect:
       - label: permission_denied + local_precheck=false + provider_fetch=false

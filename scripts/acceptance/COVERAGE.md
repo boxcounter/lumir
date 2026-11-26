@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：299
-- 验收项（不同 item 编号）：268
-- 分档：core 32 / full 257 / bundle 5 / evidence 5（full 批 = 全部 299 个，含其余各档）
+- 场景：300
+- 验收项（不同 item 编号）：269
+- 分档：core 32 / full 258 / bundle 5 / evidence 5（full 批 = 全部 300 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -276,7 +276,7 @@
 | 865 | `865-wikilink-caret-reveal-nov24` | wikilink 键盘 / 指针进入源码、修饰键旧语义与精确 undo / save | full |
 | 866 | `866-wikilink-suggestion-nov24` | 行内 [[ 候选：过滤 / 键鼠接受 / Escape / 空态 / 特殊扩展名与零隐式写入 | full |
 | 867 | `867-wikilink-suggestion-native-refresh-nov25` | 行内 [[ 候选：原生逐字输入立即打开、query 逐拍同步、逐字删除关闭 | full |
-| 868 | `868-harness-skill-menu-ux-nov25` | Skill 候选：Ctrl+N/P 同方向键、长列表高亮揭示与响应式加宽（change fix-skill-menu-ux-nov25） | full |
+| 868 | `868-harness-skill-menu-ux-nov25` | Skill 候选：高亮即接受（Enter 新合同）、Ctrl+N/P 同方向键、长列表揭示与响应式加宽（change fix-skill-menu-ux-nov25 + fix-skill-enter-accept-nov26） | full |
 | 869 | `869-harness-web-default-audit` | Web 默认无卡审计：未配置 provider 仍显示 query / provider / attempts / untrusted，无批准卡 | full |
 | 870 | `870-harness-web-ask-preview` | Web Ask 预览：完整 URL / origin / provider / 双路外发 / 费用 / untrusted；拒绝不执行 | full |
 | 871 | `871-harness-web-deny` | Web deny：deny 规则直接拒绝、不预检、不请求 provider，审计不写外发说明 | full |
@@ -286,3 +286,4 @@
 | 875 | `875-harness-markdown-bold` | Harness Markdown strong：有序列表空行后的缩进续段在流式中间态与终态均不显示字面星号 | full |
 | 876 | `876-harness-web-production-no-injection` | 生产 dev 不激活验收注入：哨兵端点零使用、URL 规则不放宽、provider 仍只有 official | full |
 | 877 | `877-first-run-onboarding` | 首启模式只添加 vault、命令闸门、tips + 默认 harness、首文档撤下 tips 与老用户回归 | full |
+| 878 | `878-composer-preserve-across-sessions` | 新建 / 选择会话保留 composer（文字、引用卡与草稿；下一次发送进入当前会话） | full |
