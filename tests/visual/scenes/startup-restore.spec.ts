@@ -15,7 +15,7 @@ import { fireVaultRestoreFinished, setBackendVault, stubTauri, type VaultFixture
 // `applyVault` 里的 `startup?.notifyTreeReady()` 删掉，第 3 / 4 条会红在「`#startup` 仍在」。
 
 /** 恢复中：`vault_current` 按后端契约回 vault=null + restore_pending=true（尚未提交）。 */
-const RESTORING: VaultFixture = { entries: [], restorePending: true };
+const RESTORING: VaultFixture = { entries: [], restorePending: true, lastVault: "/mock/restoring-vault" };
 
 /** 恢复完成的终态：已打开一个 vault。 */
 const RESTORED: VaultFixture = {
@@ -53,8 +53,10 @@ test("恢复中 = 启动态 + 阶段行（D95），打开入口在场且不另�
   await expect(page.locator("#app #startup")).toHaveCount(0);
 });
 
-test("未打开终态没有阶段行——启动态撤下后露出既有空态", async ({ page }) => {
-  await stubTauri(page, null);
+test("非首启的未打开终态没有阶段行——启动态撤下后露出既有空态", async ({ page }) => {
+  // 首启模式的 no_vault 不撤下（见 first-run-empty-state.spec.ts）；这里显式给失效的
+  // 非 null last_vault，验证非首启终态仍走既有空态。
+  await stubTauri(page, null, { lastVault: "/mock/missing-vault" });
   await page.goto("/");
   // 终态到达即撤下启动态（reason=no_vault），露出既有空态与打开入口
   await expect(page.locator("#startup")).toHaveCount(0);
@@ -63,6 +65,34 @@ test("未打开终态没有阶段行——启动态撤下后露出既有空态",
   // 判据是「无提示行」：恢复中态的文案现在只在启动态的阶段行里，终态空态不带它
   await expect(page.locator(".ft-notice")).toHaveCount(0);
   await expect(page.locator(".ft-row")).toHaveCount(0);
+});
+
+test("非首启恢复中打开设置：树就绪撤下启动面不得解除设置面板的 #app inert", async ({ page }) => {
+  await stubTauri(page, { ...RESTORING, config: { language: "en" } });
+  await page.goto("/");
+  await expect(page.locator("#startup")).toBeVisible();
+  // 等主模块装配完成（keymap / 配置施加），否则 Meta+, 可能落在启动层尚未接线的窗口里。
+  await expect(page.locator(".modeline-language")).toBeVisible();
+
+  const inert = () => page.evaluate(() => document.querySelector<HTMLElement>("#app")?.inert === true);
+
+  // 非首启恢复中：启动面不是首启模式，设置面板可以正常打开；它把 #app 置为 inert。
+  await page.keyboard.press("Meta+,");
+  await expect(page.locator(".lumir-set-overlay")).toBeVisible();
+  expect(await inert()).toBe(true);
+
+  // 恢复完成、树就绪 → 启动面撤下；设置面板仍开着，它的背景隔离必须保留。
+  await setBackendVault(page, RESTORED);
+  await fireVaultRestoreFinished(page);
+  await expect(page.locator('.ft-row[title="readme.md"]')).toBeVisible();
+  await expect(page.locator("#startup")).toHaveCount(0);
+  await expect(page.locator(".lumir-set-overlay")).toBeVisible();
+  expect(await inert()).toBe(true);
+
+  // 关闭设置之后才由设置 owner 自己恢复。
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".lumir-set-overlay")).toBeHidden();
+  expect(await inert()).toBe(false);
 });
 
 test("恢复完成信号唤醒一次权威拉取，树就绪即撤下启动态", async ({ page }) => {

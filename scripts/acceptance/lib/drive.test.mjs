@@ -28,7 +28,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { settle, snapshotBody, StepError, resizeWindowAX, pinWindowSize, parseLsappinfoPid } from "./drive.mjs";
+import { settle, snapshotBody, StepError, resizeWindowAX, pinWindowSize, parseLsappinfoPid, waitAppReady } from "./drive.mjs";
 import { InfraError } from "./util.mjs";
 
 /** KimiCU 快照首行（逐字取自 2026-10-27 的真机 dump）。 */
@@ -63,7 +63,7 @@ function axText({
     '  - [1] AXWindow "Lumir" @0,0 1200×800 actions=[AXRaise]',
     "    - [2] AXScrollArea @0,0 1200×800",
     '      - [3] AXWebArea (Lumir) URL: http://127.0.0.1:1430/',
-    nodeLine,
+    ...(Array.isArray(nodeLine) ? nodeLine : [nodeLine]),
   ];
   if (editor) lines.push('      - [9] AXTextArea = "# doc\\nbody" @0,0 1100×700 actions=[AXPress]');
   lines.push("```");
@@ -193,6 +193,97 @@ test("settle：正文恒定但 AX 里没有 AXTextArea ⇒ 编辑器门不放宽
     "无编辑器节点时 settle 不得因正文一致就返回（编辑器门是既有合同）",
   );
   assert.ok(cu.reads.length >= 2, `编辑器门不成立时要继续轮询，实际只读了 ${cu.reads.length} 次`);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// waitAppReady 的首启终态（change add-first-run-onboarding-nov25）
+//
+// 现场（2026-11-25 真机 263 / 877）：无 `last_vault` 的首启由启动态首启模式承接——启动面盖住
+// 树与编辑器，AX 里只剩唯一「添加 vault」按钮。旧 `waitAppReady` 在 `requireVault: false` 下只认
+// 「树 pane 空态说明行 + 打开入口」，首启 AX 里两者都不在 ⇒ 每个首启场景白等 30s 后整场 INVALID。
+//
+// 判据的边界必须成对钉住：
+//   - 正例：AX 里**真实按钮**（role=AXButton）且读屏名精确是「添加 vault」/「Add vault」⇒ 就绪
+//     （zh 的 label 形态与 en 的 value 形态各一条，覆盖 dump 的两种渲染）；
+//   - 反例 A：同一份 AX 走默认严格门（`requireVault: true`）⇒ 必须超时（`last_vault` 意外丢失
+//     是场景要报红的现场，不得被首启放行）；
+//   - 反例 B：AX 里没有该按钮（只有窗口/滚动区）⇒ `requireVault: false` 也超时（空 AX 不当就绪）；
+//   - 反例 C：同名文本只是 `AXStaticText`（不是按钮）⇒ 超时（判据是真实按钮，不是文案出现过）。
+//   - 回归：严格门既有形态（入口 + `.md` 行 + `AXTextArea`）仍通过。
+// 全部注入假时钟：waitAppReady 的 700ms 采样与 600ms 收口都走 `sleepFn`，用例不吃墙钟。
+
+test("waitAppReady：requireVault:false 认首启终态——真实的「添加 vault」按钮即可就绪，不要求 AXTextArea", async () => {
+  const clock = fakeClock();
+  const cu = fakeCu([
+    axText({ editor: false, nodeLine: '- [10] AXButton (添加 vault) @550,390 90×30 actions=[AXPress]' }),
+  ]);
+  const ax = await waitAppReady(cu, 0, { requireVault: false, now: clock.now, sleepFn: clock.sleepFn, timeoutMs: 3000 });
+  assert.match(ax.text, /添加 vault/, "返回的是原始快照（证据 dump 仍看原文）");
+  assert.equal(ax.textarea, null, "首启面盖住编辑器：本终态本来就没有 AXTextArea");
+  assert.equal(cu.reads.length, 3, "两次正观测后再读一次最终快照（与既有收口语义一致）");
+  assert.deepEqual(clock.sleeps, [700, 600], "采样与收口都走注入的 sleepFn，不吃墙钟");
+});
+
+test("waitAppReady：requireVault:false 同样认 en 面「Add vault」（value 形态的按钮行）", async () => {
+  const clock = fakeClock();
+  const cu = fakeCu([
+    axText({ editor: false, nodeLine: '- [10] AXButton = "Add vault" @550,390 90×30 actions=[AXPress]' }),
+  ]);
+  const ax = await waitAppReady(cu, 0, {
+    requireVault: false,
+    now: clock.now,
+    sleepFn: clock.sleepFn,
+    timeoutMs: 3000,
+  });
+  assert.match(ax.text, /Add vault/);
+});
+
+test("waitAppReady：默认严格门不认首启终态（last_vault 意外丢失必须报红）", async () => {
+  const clock = fakeClock();
+  const cu = fakeCu([
+    axText({ editor: false, nodeLine: '- [10] AXButton = "添加 vault" @550,390 90×30 actions=[AXPress]' }),
+  ]);
+  await assert.rejects(
+    waitAppReady(cu, 0, { now: clock.now, sleepFn: clock.sleepFn, timeoutMs: 3000 }),
+    (e) => e instanceof InfraError && /未就绪/.test(e.message),
+    "requireVault:true 时首启按钮不得让门通过",
+  );
+});
+
+test("waitAppReady：requireVault:false 也不把空 AX（没有该按钮）当就绪", async () => {
+  const clock = fakeClock();
+  const cu = fakeCu([axText({ editor: false, nodeLine: "" })]);
+  await assert.rejects(
+    waitAppReady(cu, 0, { requireVault: false, now: clock.now, sleepFn: clock.sleepFn, timeoutMs: 3000 }),
+    (e) => e instanceof InfraError && /未就绪/.test(e.message),
+    "只有窗口 / 滚动区、没有主操作时不得放行",
+  );
+});
+
+test("waitAppReady：requireVault:false 不把同名静态文本当按钮（role 必须是 AXButton）", async () => {
+  const clock = fakeClock();
+  const cu = fakeCu([
+    axText({ editor: false, nodeLine: '- [10] AXStaticText = "添加 vault" @550,390 90×30' }),
+  ]);
+  await assert.rejects(
+    waitAppReady(cu, 0, { requireVault: false, now: clock.now, sleepFn: clock.sleepFn, timeoutMs: 3000 }),
+    (e) => e instanceof InfraError && /未就绪/.test(e.message),
+    "判据是真实按钮节点，不是「AX 文本里出现过这句话」",
+  );
+});
+
+test("waitAppReady：严格门既有形态（入口 + .md 行 + AXTextArea）仍通过", async () => {
+  const clock = fakeClock();
+  const cu = fakeCu([
+    axText({
+      nodeLine: [
+        '- [5] AXPopUpButton (vault：demo（点击查看全部 vault）) @520,10 80×20',
+        '- [6] AXButton = "note.md" @10,100 100×20 actions=[AXPress]',
+      ],
+    }),
+  ]);
+  const ax = await waitAppReady(cu, 0, { now: clock.now, sleepFn: clock.sleepFn, timeoutMs: 3000 });
+  assert.ok(ax.textarea, "严格门仍以 AXTextArea 为编辑器判据");
 });
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────

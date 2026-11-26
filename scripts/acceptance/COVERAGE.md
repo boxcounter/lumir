@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：306
-- 验收项（不同 item 编号）：274
-- 分档：core 32 / full 264 / bundle 5 / evidence 5（full 批 = 全部 306 个，含其余各档）
+- 场景：307
+- 验收项（不同 item 编号）：275
+- 分档：core 32 / full 265 / bundle 5 / evidence 5（full 批 = 全部 307 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -225,7 +225,7 @@
 | 260 | `260-editing-oracle-nov18` | 编辑参照模型的固定真机 witness——marker 导航原子步、连续空列表 Enter、保存后 file.exact 全文（M832） | full |
 | 261 | `261-native-widget-deletion` | 原生跨行删除不写显示文本——列表 / wikilink / 行内公式的精确合并、一次撤销与精确落盘（M836） | full |
 | 262 | `262-native-ime-exploration` | 原生 IME 人工探索矩阵（0.13.0 CM composer；自动段只建现场，native 人工终判） | evidence |
-| 263 | `263-first-run-empty-vault` | 首启空态与空 vault 新建：无 SAMPLE / 错误占位、可见新建入口、默认 .md、保存与重启恢复 | full |
+| 263 | `263-first-run-empty-vault` | 首启模式 + 老用户空 vault 新建：唯一添加 vault、D107 新建入口、默认 .md、保存与重启恢复 | full |
 | 264 | `264-first-run-provider-config` | 首次安装：无 provider 与网络失败的错误行本地化（en 界面、不含内部 URL），以及添加 provider + 模型后保存重启恢复 | full |
 | 265 | `265-table-cell-webkit-editing` | WebKit 表格 cell 端点编辑——键入 / Backspace / Delete 只改被点中的源字节、一次撤销与精确落盘（M855） | full |
 | 266 | `266-selection-delete-widgets` | 非空选区编辑 = 源码精确编辑——表格单字符 cell 的删除与跨 cell 键入替换、精确落盘、一次撤销（M854） | full |
@@ -285,6 +285,7 @@
 | 874 | `874-quick-open-external-directory-and-stable-layout` | Quick Open 外部目录一层候选、子目录进入、外部文件只读与输入框 bbox 稳定 | full |
 | 875 | `875-harness-markdown-bold` | Harness Markdown strong：有序列表空行后的缩进续段在流式中间态与终态均不显示字面星号 | full |
 | 876 | `876-harness-web-production-no-injection` | 生产 dev 不激活验收注入：哨兵端点零使用、URL 规则不放宽、provider 仍只有 official | full |
+| 877 | `877-first-run-onboarding` | 首启模式只添加 vault、命令闸门、tips + 默认 harness、首文档撤下 tips 与老用户回归 | full |
 | 878 | `878-composer-preserve-across-sessions` | 新建 / 选择会话保留 composer（文字、引用卡与草稿；下一次发送进入当前会话） | full |
 | 879 | `879-harness-stream-boundary-newline` | 流式分片边界不越界：前一片以换行结尾时，下一片首字符在中间态即上屏 | full |
 | 880 | `880-save-all`<br>`880b-save-all-session-flush-failure` | 保存全部（File → Save All）：多标签脏内容一次落盘，完成终态是正向信号<br>保存全部——标签会话真实写失败时判失败、不出本次完成标记；恢复权限后可再次成功 | full<br>full |

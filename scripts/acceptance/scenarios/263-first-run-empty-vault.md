@@ -1,17 +1,20 @@
 ---
 # M851（0.13.0 初装验证，M849 报告 §B / §E 的 #4 / #5 / #6）：首启空态合同与空 vault 新建入口。
+# change add-first-run-onboarding-nov25 起，无 last_vault 的首启由启动态首启模式承接（唯一
+# 「添加 vault」）；本场景第一段改判首启模式，第二段仍是**老用户**空 vault（last_vault 非 null）
+# 的 D107 + 新建入口。
 #
-# 真机链：空配置 → 无 vault 空态（Open vault 可见可达）→ 空 vault（正文给出可见「新建笔记」）
+# 真机链：空配置 → 首启模式（添加 vault）→ 老用户空 vault（D107 + 新建笔记）
 # → 新建不带扩展名的 note（默认补 .md）→ 编辑保存 → 退出重启恢复。
 #
-# 原生目录选择器边界（README「已知边界」）：套件不驱动 rfd 的 NSOpenPanel，因此「Open vault」
-# 只判入口在 AX 里可见可点；装载空 vault 的终态用「预置注册表 + last_vault + 重启」表达
-# （与场景 17 / 67 同一口径）。「空 vault」的「空」由删掉 $vault2 的唯一 fixture 得到——
-# 它比主验收 vault 干净，删一个文件就真的空了。
+# 原生目录选择器边界（README「已知边界」）：套件不驱动 rfd 的 NSOpenPanel，因此首启模式的
+# 「添加 vault」只判入口在 AX 里可见可点；老用户空 vault 的终态用「预置注册表 + last_vault +
+# 重启」表达（与场景 17 / 67 同一口径）。「空 vault」的「空」由删掉 $vault2 的唯一 fixture
+# 得到——它比主验收 vault 干净，删一个文件就真的空了。
 id: "263-first-run-empty-vault"
 item: 263
 tier: full
-title: 首启空态与空 vault 新建：无 SAMPLE / 错误占位、可见新建入口、默认 .md、保存与重启恢复
+title: 首启模式 + 老用户空 vault 新建：唯一添加 vault、D107 新建入口、默认 .md、保存与重启恢复
 seed:
   registry:
     - { id: acc-b, path: $vault2, lastOpenedAt: 1757000003000 }
@@ -34,14 +37,16 @@ steps:
     file: config.json
     content: |
       {"version":1,"editor":{"mode":"md"},"ui":{"language":"zh"}}
-  - name: 重启进入「未打开」空态（空配置：无 last_vault、无恢复提示）
+  - name: 重启进入启动态首启模式（空配置：无 last_vault、无恢复提示）
     do: restart
     requireVault: false
     expect:
-      - label: 左栏空态说明行在位（可读的下一步指引）
-        ax: { has: "打开一个目录作为 vault" }
-      - label: 「打开 vault」是按钮节点（与说明行里的同族子串区分开）
-        ax: { has: "/AXButton[^\\n]*打开 vault/" }
+      - label: 唯一主操作是「添加 vault」
+        ax: { has: "/AXButton[^\\n]*添加 vault/" }
+      - label: 首启不铺既有树空态（D5 说明行不在）
+        ax: { not: "打开一个目录作为 vault" }
+      - label: 首启不显示既有 D6「打开 vault」按钮
+        ax: { not: "/AXButton[^\\n]*打开 vault/" }
       - label: 不残留恢复类提示（这不是 last_vault 失效路径）
         ax: { not: "上次打开的 vault 已不可用" }
       - label: 不残留「正在恢复」
@@ -54,9 +59,9 @@ steps:
         ax: { not: "Attachment not found" }
       - label: 首屏没有图片读取失败占位（Image read failed）
         ax: { not: "Image read failed" }
-      - shot: 01-空配置首启-无vault空态
+      - shot: 01-首启模式-添加vault
 
-  - name: 打开注册表里的空 vault（等价于 Open vault 选中空目录后的终态），重启进入空 vault 首入态
+  - name: 打开注册表里的空 vault（等价于非首启用户打开空目录后的终态），重启进入老用户空 vault 首入态
     do: configWrite
     lastVault: $vault-b
     language: zh
@@ -81,20 +86,24 @@ steps:
     do: click
     target: { any: "/^新建笔记$/" }
     expect:
-      - label: 行内输入框在位（空值态的读屏名）
-        ax: { has: "新建文件的名称" }
+      # 默认名（change add-default-note-name-nov24，Alex 2026-11-25 裁决始终启用）：新建文件
+      # 的行内输入框**预填**「未命名笔记」并全选。输入框非空时 WKWebView 的 AX 只暴露值
+      # （`AXTextField = "…"`），aria-label（`新建文件的名称`）不上屏——判据因此改为预填值。
+      - label: 行内输入框在位（预填默认名，不含 .md）
+        ax: { has: '/AXTextField = "未命名笔记"/' }
       - shot: 03-行内新建输入框
 
-  - name: 键入不带扩展名的名字（默认扩展名规则应补 .md）
+  - name: 键入不带扩展名的名字（默认扩展名规则应补 .md；全选后键入即替换默认名）
     do: typeInNode
-    target: { role: AXTextField, name: "新建文件的名称|note" }
+    # target.name 要同时命中注入前（预填默认名）与注入后（键入值）两个状态。
+    target: { role: AXTextField, name: "未命名笔记|note" }
     text: "note"
   - name: 回车提交
     do: key
     key: "return"
   - name: 等新建文件自动打开落到终态
     do: waitFor
-    waitFor: { has: ["note.md"], not: ["新建文件的名称"] }
+    waitFor: { has: ["note.md"], not: ['/AXTextField/'] }
     expect:
       - label: 盘上出现 note.md（不是无扩展名的 note）
         file: { path: "$vault-b/note.md", exists: true }
@@ -182,6 +191,10 @@ M849 的 0.13.0 初装验证暴露了首启面的三件事（报告 §B / §E �
 
 - **原生目录选择器的实际选择动作不在本场景**：按钮点击后的选择器交互仍由人手验（M849 已
   真机走过一遍：标题 `Choose a vault folder`、⌘⇧G 直达路径、选中空目录装载成功）。
+- **默认名预填后的 AX 值面**（change add-default-note-name-nov24）：新建文件输入框始终预填
+  「未命名笔记」并全选，因此 AX 只有值（`AXTextField = "未命名笔记"`），空值态的读屏名
+  `新建文件的名称` 不上屏——本场景的输入框断言与 `typeInNode` target 都按预填值匹配；
+  「全选后键入即替换」的后果由后续 `note.md` 的落盘断言证明，不在 AX 里读选区。
 - **像素层**（空态观感、按钮配色）不在本场景：`tests/visual/scenes/first-run-empty-state.spec.ts`
   判结构与文案，整页像素归 `scripts/gate.sh visual`（首屏既有基线的变化由基线更新的人肉
   裁决流程处理，本 mission 不自行重录）。

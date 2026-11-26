@@ -18,7 +18,7 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 // ——`observeBootOrder` 的观察器是对这个先后的判别性判据（顺序反了就红，不是靠肉眼看颜色）。
 
 /** 恢复中：vault 尚未提交（`vault_current` 按后端契约回 vault=null + restore_pending=true）。 */
-const RESTORING: VaultFixture = { entries: [], restorePending: true };
+const RESTORING: VaultFixture = { entries: [], restorePending: true, lastVault: "/mock/restoring-vault" };
 
 /** 桩的元信息缺省值（tauri-stub 的 `appMeta`：刻意不跟随 tauri.conf.json 的真版本，
  *  见那里的注释）。产品标记必须逐字等于它——读的是真源，不是硬编码副本。 */

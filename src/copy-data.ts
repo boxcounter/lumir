@@ -3005,6 +3005,23 @@ const COPY_TABLE = {
     en: "Kept {count} results · text {size} · truncated",
     enOne: "Kept {count} result · text {size} · truncated",
   },
+  // D1034–D1047：首启引导（change add-first-run-onboarding-nov25）。首启模式按钮只在
+  // `last_vault === null` 的启动面上出现；tips 的键位字形从 KEY_BINDINGS 派生，这里只存
+  // 可见标签 / 标题 / 脚注 / 区域读屏名，不存 `⌘P` 一类键位字符串。
+  D1034: { zh: "添加 vault", en: "Add vault" },
+  D1035: { zh: "开始使用", en: "Get started" },
+  D1036: { zh: "快速打开文件", en: "Quick open a file" },
+  D1037: { zh: "文件内查找", en: "Find in the current file" },
+  D1038: { zh: "大纲", en: "Outline" },
+  D1039: { zh: "切换或新增 vault", en: "Switch or add a vault" },
+  D1040: { zh: "打开或收起对话", en: "Open or hide the chat pane" },
+  D1041: { zh: "设置", en: "Settings" },
+  D1042: { zh: "插入双链", en: "Insert a wikilink" },
+  D1043: { zh: "摘录到对话", en: "Quote to chat" },
+  D1044: { zh: "默认键位 · ⌘/ 查看全部", en: "Defaults · press ⌘/ for all shortcuts" },
+  D1045: { zh: "首次使用提示", en: "Getting started tips" },
+  D1046: { zh: "选中文本", en: "Select text" },
+  D1047: { zh: "右键左栏 vault 名", en: "Right-click the vault name" },
   // 保存全部（change add-acceptance-installed-app-pause）：D1048 是命令标签（键位面板 / 菜单
   // 对应的人类标签），D1049 是屏障全绿后的正向完成信号（必须是一条**正**观测——验收通道
   // 据此判「保存链路真的跑完」，不得以「没有错误提示」代替），D1050 是任一步失败时的终态提示。
@@ -3106,6 +3123,7 @@ const COPY_TABLE = {
     en: "The quit request wasn't accepted; Lumir is still open. Try again.",
   },
   D1075: { zh: "正在退出", en: "Quitting" },
+
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

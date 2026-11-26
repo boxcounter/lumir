@@ -339,7 +339,7 @@ for (const theme of THEMES) {
     // `var(--border)` 再写成字面值 `#000`——本批归位，值不变）。
     // 这一态没有 vault fixture，主题改由**运行期切换**给（⌘⇧T 循环 light→dark→eink，与
     // theme-live-switch 场景同一条入口）；循环次数按目标档算，切换后以 `data-theme` 为准。
-    await stubTauri(page, null);
+    await stubTauri(page, null, { lastVault: "/mock/missing-vault" });
     await page.goto("/");
     await expect(page.locator(".ft-open-btn")).toBeVisible();
     await configApplied(page);

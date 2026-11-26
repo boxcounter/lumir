@@ -119,18 +119,22 @@ export async function settle(cu, pid, { timeoutMs = 30_000, now = Date.now, slee
  * 前端就绪门：等左栏文件树 + 编辑器节点就位。
  * 不用「整棵 AX 文本两次一致」——编辑器有光标/渲染时序，树会持续微抖，会假超时。
  *
- * 三种合法终态（M164 补第三种）：
+ * 四种合法终态（M164 补第三种；change add-first-run-onboarding-nov25 补第四种）：
  *   1. 已装载 vault 且有文件行 + 编辑器可读（严格门的默认形态）；
  *   2. 已装载 vault 但一个标签都没恢复 → D107 的空 vault 引导盖住正文，编辑器从 AX 消失。
  *      这是**启动常态**（该 vault 还没有会话历史），不是异常——判据是「树头部入口在 + 引导
  *      文案在」，两者都是正观测；
- *   3. 未打开 vault 的空态（D5/D6）——只有 `requireVault: false` 才认（见下）。
+ *   3. 未打开 vault 的空态（D5/D6）——只有 `requireVault: false` 才认（见下）；
+ *   4. **首启模式**（无 `last_vault`，启动面首启态）——AX 里是唯一真实的「添加 vault」/
+ *      「Add vault」按钮（D1034），树 / 编辑器都被启动面盖住。同样只有 `requireVault: false`
+ *      才认；`requireVault: true` 时落到首启模式说明 `last_vault` 意外丢失，必须报红。
  *
  * `requireVault: false`（M159 起，只给「本步期待未打开空态」的场景用）：启动恢复移出主线程
  * 后，`last_vault` 失效 / 无 `last_vault` 时前端**合法地**停在未打开空态（树 pane 里没有
  * `.ft-row`，只有空态的「打开 vault」入口），严格门那条「树里有 .md 行」永远不成立。放宽后
- * 判据是「树 pane 呈现了任一种形态 + 编辑器节点在位」，终态仍由场景自己的断言证明
- * ——不得作为默认口径（默认仍是严格门，见 run.mjs 的 ctx.restartApp）。
+ * 判据是「树 pane 呈现了任一种形态（空态说明行 + 打开入口，或首启模式的唯一按钮）+ 编辑器
+ * 节点在位（首启模式以该按钮为正观测）」，终态仍由场景自己的断言证明——不得作为默认口径
+ * （默认仍是严格门，见 run.mjs 的 ctx.restartApp）。
  */
 /**
  * **语言无关的就绪判据**（M282，change ui-language-i18n）：产品默认语言已裁为 `en`，而这里的
@@ -146,12 +150,15 @@ const LANG_PATTERNS = {
   emptyHint: /打开一个目录作为 vault|Open a folder as a vault/,
   openVault: /打开 vault|Open vault/,
   emptyVault: /这个 vault 还没有打开的文件|No files opened in this vault yet/,
+  // 首启模式（change add-first-run-onboarding-nov25）的唯一主操作（D1034）；只有
+  // `requireVault: false` 才认（见 waitAppReady 的终态表）。
+  firstRun: /^(添加 vault|Add vault)$/,
 };
 
-export async function waitAppReady(cu, pid, { timeoutMs = 30_000, requireVault = true } = {}) {
+export async function waitAppReady(cu, pid, { timeoutMs = 30_000, requireVault = true, now = Date.now, sleepFn = sleep } = {}) {
   let seen = 0;
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  const deadline = now() + timeoutMs;
+  while (now() < deadline) {
     const ax = await readAx(cu, pid);
     // 树头部入口（形态 A，M163）：入口是 vault 名称本身，读屏名取 D96 的
     // 「vault：{名称}（点击查看全部 vault）」——旧的「切换 vault」按钮已随形态 A 退场。
@@ -166,26 +173,33 @@ export async function waitAppReady(cu, pid, { timeoutMs = 30_000, requireVault =
     // 都在，但 D107 的引导层盖住正文、编辑器随之从 AX 里消失。这是启动的**常态**（该 vault
     // 还没有会话历史），严格门必须认它——否则每个场景都会在这一步超时。
     const hasEmptyVaultNotice = LANG_PATTERNS.emptyVault.test(ax.text);
+    // **首启模式**（change add-first-run-onboarding-nov25）：启动面盖住整窗、`#app` inert 且
+    // aria-hidden，AX 里只剩唯一主操作「添加 vault」（D1034）。判据必须是**真实的按钮节点**
+    // （role=AXButton + 精确读屏名），不是「AX 文本里出现过这句话」——空 AX / 只有静态文本
+    // 一律不算就绪（REVIEW.md「读不到当成空」条）。严格门不认它：`requireVault: true` 时
+    // 落到首启模式说明 `last_vault` 意外丢失，是场景要报红的现场，不是可放行的终态。
+    const hasFirstRun = findNode(ax.nodes, { role: "AXButton", name: LANG_PATTERNS.firstRun }) !== null;
     const treeReady = hasHeader && (hasFiles || hasEmptyVaultNotice)
       ? true
-      : !requireVault && hasEmptyState;
+      : !requireVault && (hasEmptyState || hasFirstRun);
     // 编辑器就位 = AXTextArea 可读，**或**上面那条空态引导正在覆盖它。后者是**正**判据
     // （引导文案必须真的在 AX 里），不是「读不到就当就绪」——REVIEW.md 「读不到当成空」条禁的是后者。
-    const editorReady = ax.textarea !== null || hasEmptyVaultNotice;
+    // 首启模式同理：启动面盖住编辑器，唯一按钮是正观测（只随 requireVault: false 生效）。
+    const editorReady = ax.textarea !== null || hasEmptyVaultNotice || (!requireVault && hasFirstRun);
     if (treeReady && editorReady) seen += 1;
     else seen = 0;
     if (seen >= 2) {
-      await sleep(600);
+      await sleepFn(600);
       const final = await readAx(cu, pid);
       // 窗口形态自检（M236，窗口配置只有一份真源，见 REVIEW.md 「同一语义两处真源」条）：每次启动（含 restartApp 重启）都反查一次
       // 「webview 铺满整窗 = overlay 标题栏」，不让套件静默跑在非 overlay 形态上。
       assertOverlayChrome(final);
       return final;
     }
-    await sleep(700);
+    await sleepFn(700);
   }
   throw new InfraError(
-    `前端在 ${timeoutMs}ms 内未就绪（左栏文件树/编辑器节点未出现${requireVault ? "" : "；本步已放宽为允许未打开空态"}）`,
+    `前端在 ${timeoutMs}ms 内未就绪（左栏文件树/编辑器节点未出现${requireVault ? "" : "；本步已放宽为允许未打开空态或首启模式（添加 vault / Add vault）"}）`,
   );
 }
 

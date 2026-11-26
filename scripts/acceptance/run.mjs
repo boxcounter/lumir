@@ -804,6 +804,13 @@ async function main() {
       const needsIme = [...(scenario.steps ?? []), ...(scenario.teardown ?? [])].some((step) => step.do === "imeDrive");
       if (needsIme) process.env.LUMIR_ACCEPTANCE_IME = "1";
       else delete process.env.LUMIR_ACCEPTANCE_IME;
+      // 首启验收的 vault-open 桥（change add-first-run-onboarding-nov25）：只有含
+      // `vaultOpenPath` 的场景才让 Vite 注入桥 / 端点；其它场景完全无感。
+      const needsVaultOpen = [...(scenario.steps ?? []), ...(scenario.teardown ?? [])].some(
+        (step) => step.do === "vaultOpenPath",
+      );
+      if (needsVaultOpen) process.env.LUMIR_ACCEPTANCE_VAULT_OPEN = "1";
+      else delete process.env.LUMIR_ACCEPTANCE_VAULT_OPEN;
       // 场景声明的实例 flavour（M605）：`requires: bundle` 的通知点击类场景在 dev flavour 下
       // 物理上验不到（点击响应按 `com.apple.Terminal` 路由，本进程收不到）——直接判 INVALID，
       // 不让它跑成一串「cron_click 零条」的产品 FAIL。复跑条件写进证据与提示。
@@ -918,8 +925,9 @@ async function main() {
           // 预置会被那次 flush 覆盖（`do: restart` 的 `windowState:` 参数走这条钩子）。
           if (beforeLaunch) await beforeLaunch();
           handle = await launchApp({ logFile: appLogFile });
-          // requireVault: false = 本步期待「未打开空态」（如 last_vault 失效），就绪门放宽为
-          // 「树 pane 任一形态 + 编辑器在位」。默认仍是严格门（树里有 .md 行）。
+          // requireVault: false = 本步期待「未打开空态」（如 last_vault 失效）或首启模式，
+          // 就绪门放宽为「树 pane 任一形态 / 首启唯一按钮 + 编辑器在位（首启以按钮为正观测）」。
+          // 默认仍是严格门（树里有 .md 行；首启终态不认——落到那里说明 last_vault 意外丢失）。
           await waitAppReady(cu, handle.pid, { requireVault });
           // M516：这一段的路由判据是 `restoreTabsAtStartup`（见上，**静态 seed**），所以门只覆盖
           // **seed 带会话标签**的场景。首启那一段语义完整；重启这一段有已知边界：前半程自己写

@@ -1389,6 +1389,9 @@ body {
   padding: var(--sp-3) var(--sp-7);
   border: 1px solid var(--border);
   border-radius: var(--r8);
+  /* 前景必须显式取 token：按钮不继承父级 color，缺省落 UA 的 buttontext（跟随系统外观，
+     不跟 CSS 主题）——深色主题上背景取 --content-bg 而文字仍是系统近黑，对比 1.34:1。 */
+  color: var(--text);
   background: var(--content-bg);
   font: inherit;
   font-size: var(--fs-ui);
@@ -1426,6 +1429,9 @@ body {
   padding: var(--sp-3) var(--sp-7);
   border: 1px solid var(--border);
   border-radius: var(--r8);
+  /* 与 .ft-open-btn 同根因：按钮不继承父级 color，缺省会落 UA buttontext（深色主题下
+     近黑压深底 1.34:1）。前景显式取 token。 */
+  color: var(--text);
   background: var(--content-bg);
   font: inherit;
   font-size: var(--fs-ui);

@@ -113,7 +113,7 @@ test("新会话成功：composer 内容与 history 保留（会话切换只换�
 });
 
 test("无 vault 双挂起新会话：迟到回包不得清掉更新后的输入", async ({ page }) => {
-  await stubTauri(page, null);
+  await stubTauri(page, null, { lastVault: "/mock/missing-vault" });
   await page.addInitScript((providers) => {
     const w = window as unknown as Record<string, any>;
     w.__newSessionResolvers = [];

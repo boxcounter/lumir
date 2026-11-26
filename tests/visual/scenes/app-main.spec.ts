@@ -6,8 +6,10 @@ import { DEMO_VAULT, fireFsEvent, remapCalls, requestAddVault, stubTauri } from 
 // 这是 webview 内容截图，不含原生窗口装饰。Tauri 后端用 __TAURI_INTERNALS__ 桩
 // 替代（见 tauri-stub.ts），invoke 走 fixture 路由。
 
-test("未打开 vault 的空态主界面", async ({ page }) => {
-  await stubTauri(page, null);
+test("非首启的未打开 vault 空态主界面", async ({ page }) => {
+  // 首启模式已由 first-run-empty-state.spec.ts 覆盖；本页保留旧空态基线，因此显式给一个
+  // 失效的非 null last_vault（firstRun=false，no_vault 撤下到既有空态）。
+  await stubTauri(page, null, { lastVault: "/mock/missing-vault" });
   await page.goto("/");
   const openBtn = page.getByRole("button", { name: "打开 vault" });
   await expect(openBtn).toBeVisible();
