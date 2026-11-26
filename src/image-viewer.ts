@@ -30,6 +30,7 @@
 // 而是靠这里只有一份 src 这个结构事实。
 
 import { errorMessage } from "./ipc";
+import { byteSizeText } from "./byte-size";
 import { formatNumber, t } from "./copy";
 import { imageFallbackText, imageLoadingText, imageReadErrorText } from "./preview/attachments";
 
@@ -55,12 +56,10 @@ export function dataUrlByteLength(src: string): number {
 }
 
 /** 字节数 → 人话读数（B / KB / MB，单位是 ASCII、两档语言同形，与 deck D437 的 MB 用法同源）。
- *  只做数量级压缩，不做本地化宽度对齐：读数出现在 modeline 右段，同一行还会有「宽×高」。 */
+ *  只做数量级压缩，不做本地化宽度对齐：读数出现在 modeline 右段，同一行还会有「宽×高」。
+ *  阈值与舍入口径的唯一实现是 `byteSizeText`（Web 搜索文本大小共用同一份）。 */
 export function imageSizeText(bytes: number): string {
-  if (bytes < 1024) return `${formatNumber(bytes)} B`;
-  const kb = bytes / 1024;
-  if (kb < 1024) return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return byteSizeText(bytes);
 }
 
 /**

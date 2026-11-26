@@ -2989,6 +2989,26 @@ const COPY_TABLE = {
   // 显式 Skill 痕迹的成功终态（change add-explicit-skill-trace-nov26 评审 P1-1）：痕迹行必须
   // 有可见且 AX 可读的终态词——勾图标 aria-hidden，不承担语义；失败侧沿用失败尾注。
   D1029: { zh: "已加载", en: "Loaded" },
+  // Web 搜索结果健康摘要（change compact-web-search-result-summary-nov26，Alex 2026-11-26
+  // 「Web Search 按推荐」）：N = 预算裁剪后实际回送模型的结果条数，X = 最终保留结果
+  // title/snippet/summary/content 的 UTF-8 字节和（`byteSizeText` 格式化）。英文单数档在
+  // 运行时表（enOne），deck 只记复数母本。
+  D1030: {
+    zh: "{count} 条结果 · 文本 {size}",
+    en: "{count} results · text {size}",
+    enOne: "{count} result · text {size}",
+  },
+  D1031: { zh: "0 条结果 · 搜索成功", en: "0 results · search succeeded" },
+  D1032: {
+    zh: "{count} 条结果 · 文本 {size} · 已截断",
+    en: "{count} results · text {size} · truncated",
+    enOne: "{count} result · text {size} · truncated",
+  },
+  D1033: {
+    zh: "保留 {count} 条结果 · 文本 {size} · 已截断",
+    en: "Kept {count} results · text {size} · truncated",
+    enOne: "Kept {count} result · text {size} · truncated",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

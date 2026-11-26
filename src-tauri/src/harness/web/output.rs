@@ -67,6 +67,49 @@ pub struct WebProviderIdentity {
     pub provider_id: String,
 }
 
+/// Web 工具调用的完整输入（change compact-web-search-result-summary-nov26，评审 P1-1）：
+/// 面板工具记录随记录持久化，供快照 / 会话恢复的默认行与「查看详情」使用。
+///
+/// 与 live `started` 事件的参数摘要**同一语义源**（同一份 arguments），但不截断——恢复
+/// 失败记录不能只靠 `summary`（失败摘要是 `状态 · code: message`，不是参数）。非 Web 工具 /
+/// 旧记录缺省；恢复端按缺省安全降级，MUST NOT 伪造 query / URL。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct PanelWebInput {
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+impl PanelWebInput {
+    /// 从工具名 + arguments JSON 取完整输入；非 Web / 非法 JSON / 空值 → None。
+    pub fn from_arguments(name: &str, arguments: &str) -> Option<Self> {
+        let operation = super::operation(name)?;
+        let parsed: serde_json::Value = serde_json::from_str(arguments).ok()?;
+        match operation {
+            WebOperation::Search => parsed
+                .get("query")
+                .and_then(serde_json::Value::as_str)
+                .filter(|query| !query.is_empty())
+                .map(|query| Self {
+                    query: Some(query.to_string()),
+                    url: None,
+                }),
+            WebOperation::Fetch => parsed
+                .get("url")
+                .and_then(serde_json::Value::as_str)
+                .filter(|url| !url.is_empty())
+                .map(|url| Self {
+                    query: None,
+                    url: Some(url.to_string()),
+                }),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct WebApprovalPayload {
@@ -121,6 +164,14 @@ pub struct WebEnvelope {
     pub results: Option<Vec<WebSource>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<WebSource>,
+    // 结果读数（change compact-web-search-result-summary-nov26）：只在成功 Search 的
+    // 预算裁剪完成后由 `budget::search_success` **单一一次**计算。非 Search 成功、失败、
+    // 未经过预算路径的信封一律 null——MUST NOT 用 0 冒充空结果（0 是合法读数：真正成功的
+    // 空结果）。键恒在场（serde 序列化为 null），旧留存缺键由前端按 null 降级。
+    pub result_count: Option<u32>,
+    // JSON 是 number（字节数远低于 2^53）；ts-rs 的 u64 默认导出 bigint 与本载荷不符。
+    #[ts(type = "number | null")]
+    pub result_text_bytes: Option<u64>,
 }
 
 impl WebEnvelope {
@@ -187,6 +238,8 @@ impl WebEnvelope {
             query: None,
             results: None,
             source: None,
+            result_count: None,
+            result_text_bytes: None,
         }
     }
 }
@@ -209,6 +262,14 @@ pub fn audit_metadata(
         .or_else(|| input.get("url"))
         .cloned()
         .unwrap_or(serde_json::Value::Null);
+    // 原始调用输入与「实际提交 / 最终 URL」分开：`url` 仍是 source.url（Fetch 重定向后
+    // 是最终 B），`input_url` 只取调用 arguments 的原始 A。默认行用 A，详情用 B
+    //（评审 P1-2）；两者都由后端一次投影，前端不得自行猜。
+    let input_url = input
+        .get("url")
+        .filter(|value| !value.is_null())
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     let attempts = output
         .get("attempts")
         .and_then(serde_json::Value::as_u64)
@@ -223,6 +284,7 @@ pub fn audit_metadata(
         "operation": operation,
         "query": query,
         "url": url,
+        "input_url": input_url,
         "provider": output.get("provider").cloned().unwrap_or(serde_json::Value::Null),
         "provider_id": output.get("provider_id").cloned().unwrap_or(serde_json::Value::Null),
         "attempts": attempts,
@@ -233,6 +295,9 @@ pub fn audit_metadata(
         "truncated": output.get("truncated").and_then(serde_json::Value::as_bool).unwrap_or(false),
         "truncated_fields": output.get("truncated_fields").cloned().unwrap_or_else(|| serde_json::json!([])),
         "code": output.get("code").cloned().unwrap_or(serde_json::Value::Null),
+        // 结果读数只透传信封（预算路径的单一计算点），审计不重算。
+        "result_count": output.get("result_count").cloned().unwrap_or(serde_json::Value::Null),
+        "result_text_bytes": output.get("result_text_bytes").cloned().unwrap_or(serde_json::Value::Null),
     })
 }
 
@@ -384,5 +449,96 @@ mod tests {
                 "{operation:?} attempts={attempts}"
             );
         }
+    }
+
+    #[test]
+    fn audit_metadata_separates_original_input_url_from_final_source_url() {
+        let output = serde_json::json!({
+            "operation": "fetch",
+            "provider": "deepseek",
+            "provider_id": "deepseek-work",
+            "attempts": 1,
+            "truncated": false,
+            "truncated_fields": [],
+            "source": {"url": "https://final.example/b", "title": ""},
+        });
+        let input = serde_json::json!({"url": "https://origin.example/a"});
+        let audit = audit_metadata(WebOperation::Fetch, &output, &input);
+        assert_eq!(audit["url"], "https://final.example/b");
+        assert_eq!(audit["input_url"], "https://origin.example/a");
+    }
+
+    #[test]
+    fn panel_web_input_reads_full_query_or_url_from_arguments() {
+        assert_eq!(
+            PanelWebInput::from_arguments(
+                "web_search",
+                r#"{"query":"synthetic query","count":5,"need_content":false}"#
+            ),
+            Some(PanelWebInput {
+                query: Some("synthetic query".to_string()),
+                url: None,
+            })
+        );
+        assert_eq!(
+            PanelWebInput::from_arguments("web_fetch", r#"{"url":"https://example.com/a"}"#),
+            Some(PanelWebInput {
+                query: None,
+                url: Some("https://example.com/a".to_string()),
+            })
+        );
+        assert_eq!(
+            PanelWebInput::from_arguments("web_search", r#"{"query":"","count":5}"#),
+            None
+        );
+        assert_eq!(
+            PanelWebInput::from_arguments("cli_run", r#"{"command":"ls"}"#),
+            None
+        );
+        assert_eq!(
+            PanelWebInput::from_arguments("web_search", "{bad-json"),
+            None
+        );
+        let value = serde_json::to_value(PanelWebInput {
+            query: Some("synthetic query".to_string()),
+            url: None,
+        })
+        .unwrap();
+        assert_eq!(value, serde_json::json!({"query": "synthetic query"}));
+    }
+
+    #[test]
+    fn audit_metadata_carries_result_metrics_and_failures_stay_null() {
+        let success = serde_json::json!({
+            "operation": "search",
+            "query": "synthetic",
+            "provider": "deepseek",
+            "provider_id": "deepseek-work",
+            "attempts": 1,
+            "local_precheck": false,
+            "truncated": true,
+            "truncated_fields": ["results"],
+            "result_count": 2,
+            "result_text_bytes": 15,
+        });
+        let audit = audit_metadata(WebOperation::Search, &success, &serde_json::json!({}));
+        assert_eq!(
+            audit["result_count"],
+            serde_json::json!(2),
+            "审计只透传，不重算"
+        );
+        assert_eq!(audit["result_text_bytes"], serde_json::json!(15));
+
+        let failure = serde_json::json!({
+            "operation": "search",
+            "attempts": 0,
+            "truncated": false,
+            "truncated_fields": [],
+            "code": "web_provider_unconfigured",
+        });
+        let audit = audit_metadata(WebOperation::Search, &failure, &serde_json::json!({}));
+        assert_eq!(audit["result_count"], serde_json::Value::Null);
+        assert_eq!(audit["result_text_bytes"], serde_json::Value::Null);
+        assert!(audit.get("result_count").is_some(), "键必须在场，值为 null");
     }
 }

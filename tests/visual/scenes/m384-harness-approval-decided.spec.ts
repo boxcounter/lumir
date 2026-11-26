@@ -790,13 +790,13 @@ test("Web Search Ask：完整 query 与可空 provider 不伪造配置身份", a
   await expect(card.locator('[data-act="approve-persist"]')).toHaveCount(0);
 });
 
-// ── 阶段5：默认无卡 Web 审计的结构（不建像素基线）────────────────────────────
+// ── 阶段5：默认无卡 Web 的紧凑结果与默认关闭审计（结构断言，不建像素基线）────────────
 //
-// change add-harness-web-fetch-search-nov24 的 D1024 / D1025 审计块：工具行在前、审计在后；
-// 未配置 / 未外发时不得渲染 D1021 / D1022 的外发说明。判据是 DOM 顺序与文本，不是像素——
-// 审计块已由 m734 的 Web 设置与既有 Ask 场景覆盖视觉面，本用例只钉结构不变量。
+// change compact-web-search-result-summary-nov26：工具行保持单行（纯 query / URL），第二行是
+// 结果健康摘要 + 「查看详情」；审计正文默认关闭，展开后完整。审计 / 健康摘要不计入组摘要的
+// 调用数——单次 Web 调用不出现摘要钮，两个真实调用 + 两个审计仍显示 2。
 
-test("默认无卡 Web 审计：工具行→审计顺序，未外发时不渲染外发说明", async ({ page }) => {
+test("默认无卡 Web：单调用不出组摘要，详情默认关闭、展开后完整", async ({ page }) => {
   await page.addInitScript(() => {
     (window as unknown as Record<string, unknown>).__pendingApprovalList = [];
   });
@@ -832,18 +832,148 @@ test("默认无卡 Web 审计：工具行→审计顺序，未外发时不渲染
       truncated: false,
       truncated_fields: [],
       code: "web_provider_unconfigured",
+      result_count: null,
+      result_text_bytes: null,
     },
   });
   const block = page.locator(".lumir-hp-tools");
-  const audit = block.locator(".lumir-hp-web-audit");
-  await expect(audit).toHaveCount(1);
+  await expect(block.locator(".lumir-hp-tool-summary")).toHaveCount(0, {
+    timeout: 2000,
+  });
+  const unit = block.locator(".lumir-hp-web-unit");
+  await expect(unit).toHaveCount(1);
+  const audit = unit.locator(".lumir-hp-web-audit");
+  await expect(audit).toBeHidden();
+  const toggle = unit.locator(".lumir-hp-web-detail-toggle");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(toggle).toContainText("查看详情");
+  await expect(unit.locator(".lumir-hp-web-health")).toHaveCount(0);
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(audit).toBeVisible();
   await expect(audit).toContainText("未解析");
   await expect(audit).toContainText("尝试次数");
   await expect(audit).toContainText("untrusted data");
   await expect(audit).not.toContainText("HEAD / Range GET");
+  await toggle.click();
+  await expect(audit).toBeHidden();
   const order = await block.evaluate((el) => [...el.children].map((child) => child.className));
   const rowIndex = order.findIndex((name) => name.includes("lumir-hp-tool-row"));
-  const auditIndex = order.findIndex((name) => name.includes("lumir-hp-web-audit"));
+  const unitIndex = order.findIndex((name) => name.includes("lumir-hp-web-unit"));
   expect(rowIndex).toBeGreaterThanOrEqual(0);
-  expect(auditIndex).toBeGreaterThan(rowIndex);
+  expect(unitIndex).toBeGreaterThan(rowIndex);
+});
+
+test("Search 成功：第二行结果健康摘要，N 与字节来自预算后读数", async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as unknown as Record<string, unknown>).__pendingApprovalList = [];
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await fire(page, { type: "auto_turn_started", chain_index: 1 });
+  await fire(page, {
+    type: "tool_call",
+    name: "web_search",
+    status: "started",
+    summary: "synthetic query",
+    call_id: "call_search",
+  });
+  await fire(page, {
+    type: "tool_call",
+    name: "web_search",
+    status: "done",
+    summary: "成功",
+    call_id: "call_search",
+    web: {
+      operation: "search",
+      query: "synthetic query",
+      url: null,
+      provider: "deepseek",
+      provider_id: "deepseek-work",
+      attempts: 1,
+      cost_per_1000_success_cny: 5,
+      local_precheck: false,
+      provider_fetch: true,
+      trust: "untrusted",
+      truncated: true,
+      truncated_fields: ["results[].content"],
+      code: null,
+      result_count: 2,
+      result_text_bytes: 24_000,
+    },
+  });
+  const block = page.locator(".lumir-hp-tools");
+  await expect(block.locator(".lumir-hp-web-health")).toHaveText(
+    "2 条结果 · 文本 23 KB · 已截断",
+  );
+  await expect(block.locator(".lumir-hp-tool-summary")).toHaveCount(0);
+  await expect(block.locator(".lumir-hp-web-audit")).toBeHidden();
+});
+
+test("两个真实调用 + 两个审计：组摘要计 2，展开后各审计仍默认关闭", async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as unknown as Record<string, unknown>).__pendingApprovalList = [];
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await fire(page, { type: "auto_turn_started", chain_index: 1 });
+  for (const [index, callId] of [
+    [1, "call_a"],
+    [2, "call_b"],
+  ] as const) {
+    await fire(page, {
+      type: "tool_call",
+      name: "web_search",
+      status: "started",
+      summary: `synthetic query ${index}`,
+      call_id: callId,
+    });
+    await fire(page, {
+      type: "tool_call",
+      name: "web_search",
+      status: "done",
+      summary: "成功",
+      call_id: callId,
+      web: {
+        operation: "search",
+        query: `synthetic query ${index}`,
+        url: null,
+        provider: "deepseek",
+        provider_id: "deepseek-work",
+        attempts: 1,
+        cost_per_1000_success_cny: 5,
+        local_precheck: false,
+        provider_fetch: true,
+        trust: "untrusted",
+        truncated: false,
+        truncated_fields: [],
+        code: null,
+        result_count: index,
+        result_text_bytes: index * 1024,
+      },
+    });
+  }
+  await fire(page, { type: "done" });
+  const block = page.locator(".lumir-hp-tools");
+  const summary = block.locator(".lumir-hp-tool-summary");
+  await expect(summary).toHaveAttribute("data-count", "2");
+  await expect(summary).toContainText("2 个工具调用");
+  const audits = block.locator(".lumir-hp-web-audit");
+  const units = block.locator(".lumir-hp-web-unit");
+  await expect(audits).toHaveCount(2);
+  await expect(units).toHaveCount(2);
+  await expect(units.first()).toBeHidden();
+  await summary.click();
+  await expect(units.first()).toBeVisible();
+  await expect(units.nth(1)).toBeVisible();
+  await expect(audits.first()).toBeHidden();
+  await expect(audits.nth(1)).toBeHidden();
+  const toggles = block.locator(".lumir-hp-web-detail-toggle");
+  await toggles.first().click();
+  await expect(audits.first()).toBeVisible();
+  await expect(audits.nth(1)).toBeHidden();
 });

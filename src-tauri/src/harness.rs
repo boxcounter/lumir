@@ -909,6 +909,7 @@ impl Runtime {
                 text: Some(subagents::notice_display_text(&notice.text)),
                 summary: Some(notice.wake_batch.clone()),
                 name: None,
+                web_input: None,
                 status: None,
                 reasoning: None,
                 decision: None,
@@ -1545,6 +1546,9 @@ fn restored_panel_messages(
                     None => (None, None),
                 };
                 let tool_name = item["name"].as_str().unwrap_or("");
+                let arguments = item["arguments"].as_str().unwrap_or("");
+                let web_input =
+                    self::web::output::PanelWebInput::from_arguments(tool_name, arguments);
                 let decision = approval_queue
                     .get_mut(tool_name)
                     .and_then(|queue| queue.pop_front())
@@ -1553,10 +1557,9 @@ fn restored_panel_messages(
                     role: "tool".into(),
                     text,
                     reasoning: None,
-                    summary: Some(turn::summarize_args(
-                        item["arguments"].as_str().unwrap_or(""),
-                    )),
+                    summary: Some(turn::summarize_args_for(tool_name, arguments)),
                     name: Some(tool_name.to_string()),
+                    web_input,
                     status: status.map(str::to_string),
                     decision,
                     ts: at,
@@ -1583,6 +1586,7 @@ fn restored_panel_messages(
                             reasoning: None,
                             summary: None,
                             name: None,
+                            web_input: None,
                             status: None,
                             decision: None,
                             ts: at,
@@ -1620,6 +1624,7 @@ fn restored_panel_messages(
                             reasoning: pending_reasoning.take(),
                             summary: None,
                             name: None,
+                            web_input: None,
                             status: None,
                             decision: None,
                             ts: at,
@@ -4006,5 +4011,20 @@ mod tests {
         assert!(fetch_text.contains("\"http_status\":503"));
         assert!(fetch_text.contains("\"attempts\":3"));
         assert_eq!(messages[1].status.as_deref(), Some("error"));
+        // 评审 P1-1：JSONL 恢复同样把完整输入带进面板记录，恢复行不再依赖 summary。
+        assert_eq!(
+            messages[0]
+                .web_input
+                .as_ref()
+                .and_then(|input| input.query.as_deref()),
+            Some("full synthetic query")
+        );
+        assert_eq!(
+            messages[1]
+                .web_input
+                .as_ref()
+                .and_then(|input| input.url.as_deref()),
+            Some("https://other.example/b")
+        );
     }
 }

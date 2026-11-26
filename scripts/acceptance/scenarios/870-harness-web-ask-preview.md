@@ -63,7 +63,9 @@ steps:
     expect:
       - label: 终态行是已拒绝
         ax: { has: "已拒绝" }
-      - label: 拒绝调用没有执行审计块
+      - label: 单调用不出组摘要
+        ax: { not: "个工具调用 · 全部完成" }
+      - label: 拒绝调用没有执行审计块（compact 合同不改变 Ask 决策后收敛）
         ax: { not: "尝试次数" }
   - name: JSONL 记录拒绝且无 Web 执行结果
     expect:

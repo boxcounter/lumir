@@ -691,6 +691,7 @@ pub(crate) fn explicit_skill_panel_message(trace: &ExplicitSkillTrace) -> PanelM
         reasoning: None,
         summary: Some(explicit_skill_args_summary(&trace.name)),
         name: Some(EXPLICIT_SKILL_TRACE_TOOL.into()),
+        web_input: None,
         status: Some(trace.status.clone()),
         decision: None,
         ts: trace.ts,
@@ -937,6 +938,7 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
                 text: Some(panel_text),
                 summary: None,
                 name: None,
+                web_input: None,
                 status: None,
                 reasoning: None,
                 decision: None,
@@ -1195,6 +1197,7 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
                     text: Some(assistant_text.clone()),
                     summary: None,
                     name: None,
+                    web_input: None,
                     status: None,
                     reasoning: None,
                     decision: None,
@@ -1412,6 +1415,7 @@ fn abort_turn<C: RunContext>(ctx: &mut C, panel_base: usize, output: &llm::TurnO
                 text: Some(assistant_text.clone()),
                 summary: None,
                 name: None,
+                web_input: None,
                 status: Some("stopped".into()),
                 reasoning: None,
                 decision: None,
@@ -1722,8 +1726,8 @@ fn handle_call<C: RunContext>(
     call: &llm::ToolCall,
 ) -> (serde_json::Value, serde_json::Value) {
     // 参数摘要：live「started」事件与面板快照（M367 持久化）共用同一份，MUST NOT 各算各的
-    // （REVIEW.md 「同一语义两处真源」条：同一语义两处真源）。
-    let args_summary = summarize_args(&call.arguments);
+    // （REVIEW.md 「同一语义两处真源」条：同一语义两处真源）。Web 工具只给纯 query / URL。
+    let args_summary = summarize_args_for(&call.name, &call.arguments);
     ctx.sink().emit(events::tool_call(
         &call.name,
         "started",
@@ -1856,12 +1860,14 @@ fn finish_call<C: RunContext>(
         result_summary
     };
     let output_text = serde_json::to_string(&output.value).unwrap_or_default();
+    let web_input = super::web::output::PanelWebInput::from_arguments(&call.name, &call.arguments);
     let _ = ctx.with_session(|s| {
         s.push_panel(PanelMessage {
             role: "tool".into(),
             text: Some(output_text.clone()),
             summary: Some(panel_summary),
             name: Some(call.name.clone()),
+            web_input,
             status: Some(status.to_string()),
             reasoning: None,
             decision: gate_decision.map(str::to_string),
@@ -2189,6 +2195,25 @@ pub(crate) fn summarize_args(arguments: &str) -> String {
         }
     }
     truncate_summary(arguments)
+}
+
+/// 按工具名取参数摘要（Web 工具只上屏纯 query / URL；其余走 [`summarize_args`]）。
+///
+/// Web 工具的 arguments 是 `{query, count, need_content}` / `{url}`：原样截断会把默认参数与
+/// JSON 结构带上 running 行（change compact-web-search-result-summary-nov26）。live 事件、
+/// 面板留存与 JSONL 恢复（`harness.rs`）共用本函数，三处同形。
+pub(crate) fn summarize_args_for(name: &str, arguments: &str) -> String {
+    if super::web::WEB_TOOL_NAMES.contains(&name) {
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(arguments) {
+            let key = if name == "web_search" { "query" } else { "url" };
+            if let Some(value) = parsed.get(key).and_then(serde_json::Value::as_str) {
+                if !value.is_empty() {
+                    return truncate_summary(value);
+                }
+            }
+        }
+    }
+    summarize_args(arguments)
 }
 
 /// 摘要按 [`SUMMARY_LIMIT`] 字符截断（超限补省略号）。
@@ -3038,6 +3063,37 @@ mod tests {
         assert_eq!(summarize_args(&path_only), truncate_summary(&path_only));
         assert!(summarize_args(&path_only).ends_with('…'));
         assert_eq!(summarize_args(r#"{"path":"a.md"}"#), r#"{"path":"a.md"}"#);
+    }
+
+    /// Web 工具行的参数摘要只上屏纯 query / URL：默认参数（`count` / `need_content`）与
+    /// arguments JSON 结构都不进 running 行 / 面板留存（change
+    /// compact-web-search-result-summary-nov26）。非 Web 工具行为逐字不变。
+    #[test]
+    fn web_tool_args_summary_is_pure_query_or_url() {
+        assert_eq!(
+            summarize_args_for(
+                "web_search",
+                r#"{"query":"synthetic query","count":5,"need_content":false}"#
+            ),
+            "synthetic query"
+        );
+        assert_eq!(
+            summarize_args_for("web_fetch", r#"{"url":"https://example.com/a"}"#),
+            "https://example.com/a"
+        );
+        assert_eq!(
+            summarize_args_for("web_search", r#"{"query":"中文 查询","count":10}"#),
+            "中文 查询"
+        );
+        assert_eq!(
+            summarize_args_for("cli_run", r#"{"command":"ls","args":["-la"]}"#),
+            "ls -la",
+            "非 Web 工具仍走既有摘要"
+        );
+        let long = format!(r#"{{"query":"{}"}}"#, "q".repeat(200));
+        let summary = summarize_args_for("web_search", &long);
+        assert_eq!(summary.chars().count(), SUMMARY_LIMIT + 1);
+        assert!(summary.ends_with('…'));
     }
 
     /// M463：`llm_error` 记录的载荷——HTTP 面三件按在场与否追加；没有 HTTP 面的错误
@@ -5730,6 +5786,27 @@ mod tests {
             .unwrap()
             .iter()
             .all(|event| event["type"] != "approval_request"));
+        // 生产形状（评审 P1-1）：失败面板记录的 summary 是错误摘要，完整输入在 web_input；
+        // 恢复端必须能从后者拿到 query，而不是把 summary 当参数。
+        let state = runtime.snapshot(&fixture.scope, &config);
+        let tool = state
+            .messages
+            .iter()
+            .find(|message| message.role == "tool" && message.name.as_deref() == Some("web_search"))
+            .expect("Web 搜索应落一条面板工具记录");
+        assert!(
+            tool.summary
+                .as_deref()
+                .is_some_and(|summary| summary.starts_with("error · web_provider_unconfigured")),
+            "失败 summary 保持错误摘要，不改成参数"
+        );
+        assert_eq!(
+            tool.web_input
+                .as_ref()
+                .and_then(|input| input.query.as_deref()),
+            Some("synthetic query"),
+            "完整 query 必须随面板记录持久化"
+        );
         let input = runtime
             .with_session(&fixture.scope, |session| session.input().to_vec())
             .unwrap();
@@ -5841,6 +5918,22 @@ mod tests {
             assert_eq!(done["web"]["local_precheck"], false, "{name}");
             assert_eq!(done["web"]["provider_fetch"], false, "{name}");
             assert_eq!(done["web"]["attempts"], 0, "{name}");
+            drop(events);
+            let state = runtime.snapshot(&fixture.scope, &config);
+            let tool = state
+                .messages
+                .iter()
+                .find(|message| {
+                    message.role == "tool" && message.name.as_deref() == Some("web_fetch")
+                })
+                .unwrap_or_else(|| panic!("{name} 缺少 Web 面板工具记录"));
+            assert_eq!(
+                tool.web_input
+                    .as_ref()
+                    .and_then(|input| input.url.as_deref()),
+                Some("https://example.com/a"),
+                "{name} 的完整 URL 必须随面板记录持久化"
+            );
             let _ = std::fs::remove_dir_all(&fixture.root);
         }
     }
