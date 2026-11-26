@@ -1166,6 +1166,62 @@ test("node 断言走解析结果：正文里有判据串 ≠ 节点在场（M669
   );
 });
 
+test("node 断言忽略编辑器内部文本（真机 882：composer 里的原文不算 transcript 节点）", async () => {
+  // 真机 dump 的形态：composer 是 AXTextArea，CodeMirror 在它下面挂了同文本的 AXStaticText
+  // 子节点。撤回后原文只应出现在 composer 里——旧的扁平匹配会命中这个子节点，负向断言恒红。
+  const dump = (withTranscriptRow) =>
+    [
+      "# Lumir App State",
+      "",
+      "- app: Lumir",
+      "- pid: 123",
+      "- window_bounds: x=8 y=40 w=1200 h=800 (screen points)",
+      "- screenshot: none — no image attached",
+      "- coords: bbox `@x,y w×h` are WINDOW-LOCAL POINTS (origin = window top-left, 1:1 points — NOT screenshot pixels)",
+      "",
+      "```text",
+      '- [0] AXApplication "Lumir"',
+      '  - [16] AXWindow "Lumir" @0,0 1200×800',
+      "    - [19] AXScrollArea @0,0 1200×800",
+      "      - [20] AXWebArea (Lumir)",
+      "        - [217] AXGroup (Harness 面板)",
+      '          - [218] AXStaticText = "与当前文档对话——发送时会携带上方显示的上下文。"',
+      ...(withTranscriptRow ? ['          - [221] AXStaticText = "q882-WITHDRAW"'] : []),
+      "          - [223] AXGroup (问点什么…（Enter 发送，⇧Enter 换行）)",
+      '            - [224] AXTextArea = "q882-WITHDRAW" @748,688 423×24 actions=[AXPress] (focused)',
+      '              - [226] AXStaticText = "q882-WITHDRAW"',
+      "```",
+    ].join("\n");
+
+  const scenario = {
+    steps: [
+      {
+        name: "composer 里有原文、transcript 里没有",
+        expect: [
+          { label: "transcript 里没有该消息（应绿）", node: { role: "AXStaticText", name: "q882-WITHDRAW", present: false } },
+          { label: "不能因 composer 内的文本谎报在场（应红）", node: { role: "AXStaticText", name: "q882-WITHDRAW", present: true } },
+        ],
+      },
+    ],
+  };
+  const root = tmpRoot("node-editor-text");
+  useTmpEnv(root);
+  const composerOnly = await drive(root, scenario, { cu: { state: async () => ({ text: dump(false), image: null }) } });
+  assert.deepEqual(
+    composerOnly.records.map((r) => r.ok),
+    [true, false],
+    `只有 composer 带原文时 present:false 必须绿、present:true 必须红（编辑器内容不是 UI 节点）；实际 ${JSON.stringify(composerOnly.records)}`,
+  );
+
+  // 对照：真的有一条 transcript 消息行（不在 AXTextArea 下）时两条判据同时翻面。
+  const withRow = await drive(root, scenario, { cu: { state: async () => ({ text: dump(true), image: null }) } });
+  assert.deepEqual(
+    withRow.records.map((r) => r.ok),
+    [false, true],
+    `transcript 真有该消息时 present:false 必须红、present:true 必须绿；实际 ${JSON.stringify(withRow.records)}`,
+  );
+});
+
 test("node 断言静态校验：present 必填、角色名 / 未知键 / 坏正则都报 problem", () => {
   const errs = (expect) => checkScenario({ id: "node-check", item: 0, steps: [{ name: "n", expect: [expect] }] });
   assert.ok(

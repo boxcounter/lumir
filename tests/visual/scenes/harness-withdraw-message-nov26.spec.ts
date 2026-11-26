@@ -30,10 +30,16 @@ const MESSAGES = [
 
 type Mode = "direct" | "confirm" | "refuse";
 
-async function setup(page: Page, mode: Mode): Promise<void> {
+async function setup(
+  page: Page,
+  mode: Mode,
+  opts: { messages?: ReadonlyArray<Record<string, unknown>>; kept?: ReadonlyArray<Record<string, unknown>> } = {},
+): Promise<void> {
+  const messages = opts.messages ?? MESSAGES;
+  const kept = opts.kept ?? [];
   await stubTauri(page, VAULT);
   await page.addInitScript(
-    ({ mode, messages, marker }) => {
+    ({ mode, messages, kept, marker }) => {
       const w = window as unknown as Record<string, any>;
       const internals = w.__TAURI_INTERNALS__;
       const origInvoke = internals.invoke;
@@ -68,7 +74,7 @@ async function setup(page: Page, mode: Mode): Promise<void> {
             info: {
               session_id: "s1760000000000-bbbbbb",
               session_token: 12,
-              messages: [],
+              messages: kept,
               withdrawn: { text: marker, skills: [] },
               first_user_text: null,
             },
@@ -89,14 +95,17 @@ async function setup(page: Page, mode: Mode): Promise<void> {
         }
       };
     },
-    { mode, messages: MESSAGES, marker: MARKER },
+    { mode, messages, kept, marker: MARKER },
   );
   await page.goto("/");
   await page.locator('.ft-row[title="withdraw-note.md"]').click();
   await expect(page.locator(".cm-content").first()).toContainText("第一段");
   await page.locator(".lumir-hp-toggle").click();
   await expect(page.locator(".lumir-harness")).toBeVisible();
-  await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(1);
+  // 初始用户消息数按 fixture 算（默认 1 条；前缀用例 2 条）——写死 1 会把「撤回前有几问」也钉死。
+  await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(
+    messages.filter((message) => message.role === "user").length,
+  );
 }
 
 const calls = (page: Page) =>
@@ -144,6 +153,31 @@ test("撤回被拒（派生会话）：如实上错误行，消息与 composer �
   await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(1);
   await expect(page.locator(".lumir-hp-composer .cm-content")).toHaveText("");
   await expect(page.locator(".lumir-hp-withdraw-confirm")).toHaveCount(0);
+});
+
+test("撤回：transcript 重建为 B 的前缀（不是只清空，也不是留着 A 的尾巴）", async ({ page }) => {
+  // 真机 882 的教训：只在后端换会话、面板不做「清面 + 重放 B 的前缀」时，transcript 会留着
+  // A 的尾巴。空前缀用例（上面那条）只证明「清空」，抓不到「漏重放」——这里用非空前缀：
+  // 撤回前两问两答，撤回后必须只剩前缀的一问一答，被撤回的消息与它之后的答复都不在。
+  const prefix: Array<Record<string, unknown>> = [
+    { role: "user", text: "PREFIX-Q1" },
+    { role: "assistant", text: "前缀答复一。" },
+  ];
+  await setup(page, "direct", {
+    messages: [...prefix, { role: "user", text: MARKER }, { role: "assistant", text: "被撤回轮的答复。" }],
+    kept: prefix,
+  });
+  await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(2);
+  await page.locator(".lumir-hp-msg-user").last().hover();
+  await expect(page.locator(".lumir-hp-withdraw")).toBeVisible();
+  await page.locator(".lumir-hp-withdraw").click();
+
+  await expect.poll(() => calls(page)).toEqual([{ confirm: false }]);
+  await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-msg-user")).toContainText("PREFIX-Q1");
+  await expect(page.locator(".lumir-hp-transcript")).not.toContainText(MARKER);
+  await expect(page.locator(".lumir-hp-transcript")).not.toContainText("被撤回轮的答复。");
+  await expect(page.locator(".lumir-hp-composer .cm-content")).toContainText(MARKER);
 });
 
 test("旧会话的迟到事件按会话令牌拒收；新令牌的同一批事件照常上屏", async ({ page }) => {

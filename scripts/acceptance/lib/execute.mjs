@@ -10,7 +10,7 @@ import { appendFile, open, readdir, readFile, rm, stat, writeFile } from "node:f
 import os, { tmpdir } from "node:os";
 import path from "node:path";
 import yaml from "js-yaml";
-import { coordsSpace, findNode, nextSiblingNode, nodeName, parseNodes, windowBounds } from "./ax.mjs";
+import { coordsSpace, findNode, hasEditorAncestor, nextSiblingNode, nodeName, parseNodes, windowBounds } from "./ax.mjs";
 import {
   attachRelaunchedBundle,
   bundleBinary,
@@ -2482,7 +2482,15 @@ export async function runScenario(ctx, scenario) {
       if (ax.nodes.length === 0) {
         return fail(`${label}（AX 快照退化：0 个节点，节点在场性无法判定）`, "读不到一律判 FAIL，不在不可观测的窗口下结论", ax);
       }
-      const hit = findNode(ax.nodes, { role: spec.role, name: spec.name, nth: spec.nth ?? 0 });
+      // 编辑器内部文本（AXTextArea 的后代）不算 UI 节点：CodeMirror 把正文拆成 AXStaticText
+      // 子节点，同一串文字既在正文里也在编辑器 value 里——真机 882 的现场（撤回后 composer
+      // 里的原文被当成 transcript 里的消息，`present:false` 恒红）。同理，节点在场性一旦
+      // 被编辑器内容命中，`present:true` 也会恒绿。判据收窄到「UI 节点」，编辑器内容经
+      // `AXTextArea` 的 value 判。
+      const candidates = ax.nodes.filter(
+        (n) => !(n.role === "AXStaticText" && hasEditorAncestor(ax.nodes, n)),
+      );
+      const hit = findNode(candidates, { role: spec.role, name: spec.name, nth: spec.nth ?? 0 });
       const what = `${spec.role ?? "任意角色"}${spec.name ? ` name≈${spec.name}` : ""}`;
       if (hit) {
         const seen = `${hit.role} ${nodeName(hit)}`.trim();

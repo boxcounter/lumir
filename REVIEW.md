@@ -31,8 +31,8 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 **1. 断言等价于子串，没有区分度**
 - 症状：`/PAUSE-PROBE[\s\S]*$/m` 在探测串位于文档中部时同样 PASS；`AXTextArea[\s\S]*?\(focused\)` 在 `(focused)` 落于其后的节点（冲突 toast 的按钮）上照样匹配。
 - 根因：判据没有区分度——「看着更强、其实等价于子串」。
-- 证据：提交 `90ea069`；`scripts/acceptance/README.md` 的「匹配值」段（正则一律带 `m` flag 的三处边界）；2026-11-27 场景 881——`ax: { not: "JUMP-TARGET-39" }` 断言「目标行不在视口」，而 `AXTextArea.value` 暴露整篇正文（含第 39 行），负向恒红、跳转后的「标记出现」又恒绿（`.local/acceptance/2026-11-27-ux-goal/881-text-input-select-all-nov26/` 的 dump 01 [203]）；落点改用再开 goto-line 读预填行号（场景 56 的手法）。
-- 防线：下次写断言时，先造一个**必须让它 FAIL 的输入**（探测串放错位置、标记挪到别的节点）实测一次，确认它红了再提交；落点类断言用 `ax: { focused: … }` 解析形态，不用跨节点正则。
+- 证据：提交 `90ea069`；`scripts/acceptance/README.md` 的「匹配值」段（正则一律带 `m` flag 的三处边界）；2026-11-27 场景 881——`ax: { not: "JUMP-TARGET-39" }` 断言「目标行不在视口」，而 `AXTextArea.value` 暴露整篇正文（含第 39 行），负向恒红、跳转后的「标记出现」又恒绿（`.local/acceptance/2026-11-27-ux-goal/881-text-input-select-all-nov26/` 的 dump 01 [203]）；落点改用再开 goto-line 读预填行号（场景 56 的手法）。真机 2026-11-27 场景 882：撤回后原文只应出现在 composer，`node: { role: AXStaticText, name: "q882-WITHDRAW", present: false }` 却命中了 CodeMirror 在 `AXTextArea` 下的同文本子节点——同一串文字在正文里也有，负向断言恒红（面板实际已重建，transcript 只剩空态提示）；修法是 `node` 断言忽略 `AXTextArea` 的后代 `AXStaticText`（`lib/ax.mjs` 的 `hasEditorAncestor`）。
+- 防线：下次写断言时，先造一个**必须让它 FAIL 的输入**（探测串放错位置、标记挪到别的节点）实测一次，确认它红了再提交；落点类断言用 `ax: { focused: … }` 解析形态，不用跨节点正则。判「某串不在场」时先确认它不会出现在编辑器内部文本里（`AXTextArea` 的 value / 子节点），编辑器内容一律按 `AXTextArea` 的 value 判。
 
 **2. 读不到当成空：比较在 `"" === ""` 上空转**
 - 症状：modal 打开期间 AX 快照里没有 `AXTextArea`，`null ?? ""` 与逐字节基线比出「未变化」，负向断言与 `unchangedSince` 全程恒真（M135 r2 P1-1）。
