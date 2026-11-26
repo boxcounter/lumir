@@ -59,7 +59,8 @@
 - [x] 5.1 `openspec/changes/fix-no-tab-empty-state-nov27/` 的 proposal / design / tasks 与
       `specs/keymap-commands`、`specs/pane-layout` 增量；MODIFIED 条整条复制 living 后改。
 - [x] 5.2 新增 `scripts/acceptance/scenarios/885-no-tab-empty-state.md`（S5 / S4 真机行为 +
-      截图证据）；884 未被占用（本分支最高为 878），885 为空号。
+      截图证据）；884 未被占用（本分支最高为 878），885 为空号。真机 885 r4 PASS 16 断言
+      （`.local/acceptance/2026-11-27-ux-goal-r4/885-no-tab-empty-state/`）。
 - [x] 5.3 `node scripts/acceptance/run.mjs --check` 通过。
 - [x] 5.4 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过。
 - [x] 5.5 `bash scripts/docs-check.sh` 通过。
@@ -71,5 +72,7 @@
 - [x] 6.3 结构层视觉：`LUMIR_VISUAL_STRUCTURAL=1 pnpm --dir tests/visual exec playwright test
       scenes/no-tab-empty-state-nov27.spec.ts scenes/m281-goto-line.spec.ts
       scenes/gutter-copy-path-line.spec.ts`（按本仓实际脚本名核对后执行）。
-- [ ] 6.4 完整视觉门禁与基线更新**不在本 worker 执行**：像素测试与 `scripts/gate.sh visual`
-      由主会话串行安排；真机场景 885 未执行，待主会话排期。完成后勾选本项，change 才进入归档跟踪。
+- [x] 6.4 完整视觉门禁与基线：`scripts/gate.sh visual` 在合并预检中输出
+      `GATE RESULT: 13/15 PASS（SKIP 0）`；两个 FAIL 均为 master 既有（unit 的 link-suggest
+      时序抖动、visual 的四条 master 复现失败），无基线差异，未更新基线。真机 885 r4 PASS
+      16 断言。

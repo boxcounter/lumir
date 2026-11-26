@@ -119,7 +119,8 @@ tips 本来就挂在 `shell.editorPane`（root doc pane），不盖 harness。�
 - 单测：`gutterVisible` 真值表（无标签压过 on 与 ⌥G；有标签时按两档；`hasTabs` 翻面结果必须翻面——避免「加了参数但没参与判定」的假绿）。
 - 视觉结构层：新增 `no-tab-empty-state-nov27.spec.ts` 覆盖 S2–S5；更新 `m281-goto-line.spec.ts` 的「新 pane」用例（空 pane 0、打开文档后 1/1）与 `gutter-copy-path-line.spec.ts` 的「关闭最后标签」用例（无 gutter、无手势、重开恢复）。
 - 像素层：由主会话按 `scripts/gate.sh visual` 统一跑；候选截图落 `.local/missions/fix-no-tab-empty-state-nov27/`，不在本 change 内 `--update`。
-- 真机：新增 `885-no-tab-empty-state.md`；本批只跑 `--check`，真机时段由主会话串行安排。
+- 真机：新增 `885-no-tab-empty-state.md`；真机 885 r4 PASS 16 断言
+  （`.local/acceptance/2026-11-27-ux-goal-r4/885-no-tab-empty-state/`）。
 
 ## 7. 风险与边界
 

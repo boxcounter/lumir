@@ -54,7 +54,7 @@ Alex 的需求原话：没有打开 TAB 时 content pane 不显示行号、无�
 - 不新增空态创建按钮、不改 D107 / D882 / D369 文案。
 - 不改 harness composer 的输入、草稿与持久化；不改首启 tips 的内容与生命周期。
 - 不新增 IPC、Rust 命令、config schema 或 ts-rs 导出面。
-- 不在本 change 内更新视觉基线或执行真机；基线截图落 `.local/missions/fix-no-tab-empty-state-nov27/` 供主会话自审，`--update` 与真机时段由主会话串行安排。
+- 不在本 change 的实现 PR 内更新视觉基线或执行真机；基线截图落 `.local/missions/fix-no-tab-empty-state-nov27/` 供主会话自审，真机由主会话排期执行（885 r4 PASS 16 断言，证据见节点 2）。
 
 ## Impact
 
@@ -69,6 +69,40 @@ Alex 的需求原话：没有打开 TAB 时 content pane 不显示行号、无�
 - 影响的测试：
   - 单测：`tests/unit/line-numbers.test.ts` 增 `gutterVisible` 真值表；`tests/unit/harness.ts` 替身补字段。
   - 视觉：新增 `tests/visual/scenes/no-tab-empty-state-nov27.spec.ts`（S2–S5）；更新 `m281-goto-line.spec.ts` 的「新 pane」用例（空 pane 无 gutter、打开文档后 1/1）与 `gutter-copy-path-line.spec.ts` 的「关闭最后标签」用例（无 gutter、无手势、重开恢复）。
-  - 验收：新增 `scripts/acceptance/scenarios/885-no-tab-empty-state.md`；本批只跑 `--check`，真机未执行。
-- 视觉基线：预计 `m281-goto-line` 的「新 pane」用例不再断言空 pane 有 gutter（改为空 pane 0 / 打开文档后 1/1），`gutter-copy-path-line` 的空态截图变化；候选截图落 `.local/missions/fix-no-tab-empty-state-nov27/`，不自行 `--update`。
+  - 验收：新增 `scripts/acceptance/scenarios/885-no-tab-empty-state.md`；真机 885 r4 PASS 16 断言（`.local/acceptance/2026-11-27-ux-goal-r4/885-no-tab-empty-state/`）。
+- 视觉基线：候选截图落 `.local/missions/fix-no-tab-empty-state-nov27/`；完整像素门禁无基线差异，未执行 `--update`。
 - 关联约束：ADR 0003（不改写源文件）、ADR 0004（AI-only 开发）、ADR 0006（Emacs keybinding PKM 定位）。
+
+
+## 节点 2：归档放行记录
+
+机器 + 独立评审放行（`docs/process/openspec-workflow.md` 的五要件）；逐条读数如下：
+
+1. **方案已批准**：节点 1 记录见本文件「节点 1：批准与代裁记录」（Alex 2026-11-27 需求 +
+   主会话代裁 S1–S5）；实现期无静默扩 scope。
+2. **独立 reviewer clean / merge**：K3 独立终审 clean/merge，绑定实现 tip `a6e79de8`
+   （P1 / P2 / P3 = 0；评审文 `.local/reviews/fix-no-tab-empty-state-nov27/k3-verdict.md`）。
+   之后的 master 合并与验收场景修正（885）不含产品代码改动；真机 r4 PASS 覆盖其行为。
+3. **tasks 完成**：`tasks.md` 的 6 组任务全部勾选（含 6.4 完整视觉读数与真机 885 r4 PASS）；
+   无放弃项。
+4. **门禁与真机证据**：
+   - 合并预检：前端单测 2145 PASS、docs-check PASS、acceptance `--check` 308 场景 PASS。
+   - 完整 `scripts/gate.sh visual`：`GATE RESULT: 13/15 PASS（SKIP 0）`；两个 FAIL 均为
+     master 既有失败（unit 的 `link-suggest` 时序抖动，隔离单跑 2145/2145 PASS；visual 的
+     m133 / persistence-health V6 / 迟到旧 switched / webkit editing-oracle IME 四条已在
+     master 59052847 逐条复现）。无基线差异，未更新基线。
+     证据：`.local/missions/fix-no-tab-empty-state-nov27/gate-visual-nov27.log`、
+     `visual-regression-full.log`、`unit-tests-load-failure.log`。
+   - 真机 885：r4 PASS 16 断言，
+     `.local/acceptance/2026-11-27-ux-goal-r4/885-no-tab-empty-state/`。
+5. **规格对账无丢段**：归档前 `node scripts/openspec-archive-check.mjs` 门禁模式 PASS
+   （22 份 delta / 18 条 MODIFIED / 342 段 / 无静默丢段；归档队列 2 项均唯一）；
+   `validate --all --strict` 44 passed / 0 failed；`docs/backlog.md` 归档队列有且仅有一条
+   本 change 条目。
+
+**归档后记录**：包装器 `node scripts/openspec-archive.mjs fix-no-tab-empty-state-nov27`
+归档为 `2026-11-27-fix-no-tab-empty-state-nov27`；specs 更新 `keymap-commands` 3 条
+MODIFIED、`pane-layout` +1 ADDED / 1 MODIFIED，Totals `+1, ~4, -0, →0`；修链 0 处
+（扫过 5 篇 Markdown / 2 条相对链接），`openspec-links: PASS（710 条全部可达）`。
+归档提交 `f437b9a6`；`node scripts/openspec-archive-check.mjs --archived
+fix-no-tab-empty-state-nov27` PASS（4 条 MODIFIED，对比 98 段；人工恢复 0 段，声明认领 0 段）。
