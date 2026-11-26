@@ -110,3 +110,14 @@ Alex 2026-11-27 的需求：**退出前提醒改用弹框**。因为未保存时
 5. **规格对账**：`scripts/openspec-archive-check.mjs` 门禁模式 PASS；
    `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` PASS；`docs/backlog.md`
    归档跟踪队列有且仅有一条本 change 条目。
+
+### 归档后（强制完成）
+
+- 归档提交：`a7805bf2c5f1df50f9233cf375c5f464e284742d`
+- 包装器（`node scripts/openspec-archive.mjs add-quit-save-all-dialog-nov27`）输出：
+  `multi-tabs: update` / `+ 1 added` / `Totals: + 1, ~ 0, - 0, → 0` /
+  `Change 'add-quit-save-all-dialog-nov27' archived as '2026-11-27-add-quit-save-all-dialog-nov27'`；
+  `归档后修链 0 处（扫过 4 篇 Markdown / 0 条相对链接）`；
+  `openspec-links: PASS（校验 710 条相对链接，全部可达）`；`openspec-archive: PASS`。
+- `node scripts/openspec-archive-check.mjs --archived add-quit-save-all-dialog-nov27`：
+  `PASS（openspec/changes/archive/2026-11-27-add-quit-save-all-dialog-nov27：0 条 MODIFIED，对比 0 段；人工恢复 0 段，声明认领 0 段）`（2026-11-27 03:42 CST）。
