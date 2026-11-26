@@ -133,4 +133,17 @@
    `validate --all --strict` PASS；归档跟踪队列有且仅有一条条目（`docs/backlog.md`，本批
    删 4 条已归档历史记录以守 80 行硬上限）。
 
-**归档后**：待归档提交与 `--archived` 审计后追加。
+**归档后**（2026-11-27）：归档提交 `834654e2`（`chore(openspec): archive improve-file-open-harness-affordance-nov26`）。
+包装器 `node scripts/openspec-archive.mjs improve-file-open-harness-affordance-nov26` 输出：
+`Task status: 32/33 tasks`（运行时 6.3 尚未勾，归档提交里已补齐为 33/33）/
+`Applying changes to openspec/specs/harness/spec.md: + 1 added` /
+`Applying changes to openspec/specs/multi-tabs/spec.md: ~ 1 modified` /
+`Applying changes to openspec/specs/ui-design-system/spec.md: + 1 added` /
+`Applying changes to openspec/specs/vault-workspace/spec.md: ~ 1 modified` /
+`Totals: + 2, ~ 2, - 0, → 0` /
+`Change 'improve-file-open-harness-affordance-nov26' archived as '2026-11-27-improve-file-open-harness-affordance-nov26'`；
+归档后修链 **0 处**（扫过 6 篇 Markdown / 0 条相对链接），
+`openspec-links: PASS（校验 710 条相对链接，全部可达）`。
+归档提交后审计 `node scripts/openspec-archive-check.mjs --archived improve-file-open-harness-affordance-nov26`
+→ `PASS（openspec/changes/archive/2026-11-27-improve-file-open-harness-affordance-nov26：2 条 MODIFIED，
+对比 49 段；人工恢复 0 段，声明认领 0 段）`。
