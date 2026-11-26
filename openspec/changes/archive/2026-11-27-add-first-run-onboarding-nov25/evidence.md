@@ -364,3 +364,20 @@ fixture（派生非首启）或无 `stubTauri(page, null)`；全仓字面量 `st
 - 未更新任何视觉基线（集成未产生新像素差异；若 gate 出现新差异，按人肉裁决点停下送裁）。
 - 未 push / 未归档；旧评审结论绑定旧 tip，集成 tip（`e0daed4f` + `3b6776f4` + 本文档提交）需
   重新终审。
+
+## 13. 节点 2 归档前置读数（2026-11-27）
+
+- 独立终审：K3 `clean/merge`，绑定 tip `c04a3abf`，P1 / P2 / P3 = 0；verdict
+  `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/first-run-onboarding-nov25/k3-verdict.md`。
+- 完整门禁（低负载，`c04a3abf`）：`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0；visual-regression
+  1866 passed / 13 skipped。日志
+  `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/first-run-onboarding-nov25/gate-logs/gate-visual-lowload-20261127-c04a3abf.log`。
+- 真机（2026-11-27）：877 PASS 39 断言、263 PASS 36 断言、47c PASS 43 断言、220 PASS 55 断言；
+  `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-27-ux-goal/`。
+- merge 后主仓读数（merge tip `59052847`）：前端全量 2144/2144、根 / 视觉 tsc、docs-check、
+  `acceptance --check`（307 场景）、copy 15/15 全 PASS；证据
+  `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/first-run-onboarding-nov25/merge-main-20261127/`。
+- 归档分支 tip `f1fe9c99`（含 `59052847` 与 `fix-no-tab-empty-state-nov27` 的合并）。审阅 tip 与归档
+  tip 之间首启文件集未再改动；`src/main.ts` 的 `renderAllTabStrips` 在 no-tab change 中把既有
+  `firstRunTipsVisible` 并入 `structuralReadOnly`（行为保持，2144 单测全绿），如实记为审阅 tip 之后的
+  集成改动。

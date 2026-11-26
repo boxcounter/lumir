@@ -178,8 +178,10 @@
       `apply:"serve"`）。机器反证：普通 dev 无桥 / 端点 404；`pnpm build` 后
       `dist/assets/*.js` grep 桥接标记为 0；验收实例动作可用。若 Alex 不接受，877 的该段退回
       视觉断言 + 人工一步，并在证据里登记缺口。原生 `NSOpenPanel` 仍不驱动。
-- [ ] 7.5 跑 `node scripts/acceptance/run.mjs 877 263`；证据落 `.local/acceptance/<日期>/`
+- [x] 7.5 跑 `node scripts/acceptance/run.mjs 877 263`；证据落 `.local/acceptance/<日期>/`
       （不落 worktree）；FAIL 项先修，不送 Alex。
+      （2026-11-27：877 PASS 39 断言 / 263 PASS 36 断言；同批回归 47c PASS 43 / 220 PASS 55，
+      证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-27-ux-goal/`。）
 
 ## 8. Specs 与文档
 
@@ -208,18 +210,21 @@
 - [x] 9.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过。
 - [x] 9.2 `bash scripts/docs-check.sh` 通过（若因 `docs/backlog.md` 80 行上限或并行归档冲突报红，
       如实记录原因，不删别人条目、不为此改本 change 的结论）。
-- [ ] 9.3 `bash scripts/gate.sh quick` 通过；动过视觉代码 / 场景后本地 `bash scripts/gate.sh visual`
+- [x] 9.3 `bash scripts/gate.sh quick` 通过；动过视觉代码 / 场景后本地 `bash scripts/gate.sh visual`
       通过（CI 只跑结构层，像素层归本地）。
-      集成 master 后已跑两次完整 `gate.sh visual`：`13/15 PASS（SKIP 0）` exit 1 与
-      `14/15 PASS（SKIP 0）` exit 1；失败均为负载敏感的时序预算（`link-suggest` 16ms、webkit
-      settle 60ms），同断言在其它轮次 / 单用例复跑通过，无产品与像素差异（详见 evidence §12.3）。
-      该项保持未勾：须在机器空闲（无并行 mission 视觉）时重跑取得全绿。
-- [ ] 9.4 真机证据：`877` / `263` PASS；截图与读数落 `.local/acceptance/<日期>/`，报告里给可
+      （2026-11-27 低负载完整 `bash scripts/gate.sh visual` @ `c04a3abf`：`GATE RESULT: 15/15 PASS
+      （SKIP 0）`，退出码 0；visual-regression 1866 passed / 13 skipped。此前两次 exit 1 的读数
+      （13/15、14/15）已按负载敏感的时序预算定性，日志与复跑见 evidence §12.3 / §13。）
+- [x] 9.4 真机证据：`877` / `263` PASS；截图与读数落 `.local/acceptance/<日期>/`，报告里给可
       `ls` 的绝对路径。
-- [ ] 9.5 tasks 全部勾选后，在 `docs/backlog.md` 的归档跟踪队列落一条该 change 的记录（实现
+      （2026-11-27：877 PASS 39 断言、263 PASS 36 断言、47c PASS 43 断言、220 PASS 55 断言；
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-27-ux-goal/`。）
+- [x] 9.5 tasks 全部勾选后，在 `docs/backlog.md` 的归档跟踪队列落一条该 change 的记录（实现
       mission 号 + 五要件状态），供归档门禁核对；当前 backlog 已在 80/80 硬上限，若届时仍满，
       先按维护规则删掉已完成 / 无出口的僵尸条目再加，不为压行数删活条目。归档时补
       `first-run-onboarding` 的 Purpose 并跑 `--archived` 审计。
+      （2026-11-27：已删一条已归档历史记录（`add-quick-open-directory-stable-nov25`）腾行并落本
+      change 条目；Purpose 与 `--archived` 审计随本次归档执行，读数见 proposal 节点 2。）
 - [x] 9.6 验收基建修复（2026-11-26 复审追加）：877 / 263 首跑 INVALID 的根因是 `waitAppReady`
       不认识首启终态（启动面盖住树与编辑器，`requireVault: false` 下仍只认 D5/D6 空态）。
       修复：仅 `requireVault: false` 时接受 AX 里真实 `AXButton`（读屏名精确
