@@ -86,20 +86,24 @@ steps:
     do: click
     target: { any: "/^新建笔记$/" }
     expect:
-      - label: 行内输入框在位（空值态的读屏名）
-        ax: { has: "新建文件的名称" }
+      # 默认名（change add-default-note-name-nov24，Alex 2026-11-25 裁决始终启用）：新建文件
+      # 的行内输入框**预填**「未命名笔记」并全选。输入框非空时 WKWebView 的 AX 只暴露值
+      # （`AXTextField = "…"`），aria-label（`新建文件的名称`）不上屏——判据因此改为预填值。
+      - label: 行内输入框在位（预填默认名，不含 .md）
+        ax: { has: '/AXTextField = "未命名笔记"/' }
       - shot: 03-行内新建输入框
 
-  - name: 键入不带扩展名的名字（默认扩展名规则应补 .md）
+  - name: 键入不带扩展名的名字（默认扩展名规则应补 .md；全选后键入即替换默认名）
     do: typeInNode
-    target: { role: AXTextField, name: "新建文件的名称|note" }
+    # target.name 要同时命中注入前（预填默认名）与注入后（键入值）两个状态。
+    target: { role: AXTextField, name: "未命名笔记|note" }
     text: "note"
   - name: 回车提交
     do: key
     key: "return"
   - name: 等新建文件自动打开落到终态
     do: waitFor
-    waitFor: { has: ["note.md"], not: ["新建文件的名称"] }
+    waitFor: { has: ["note.md"], not: ['/AXTextField/'] }
     expect:
       - label: 盘上出现 note.md（不是无扩展名的 note）
         file: { path: "$vault-b/note.md", exists: true }
@@ -187,6 +191,10 @@ M849 的 0.13.0 初装验证暴露了首启面的三件事（报告 §B / §E �
 
 - **原生目录选择器的实际选择动作不在本场景**：按钮点击后的选择器交互仍由人手验（M849 已
   真机走过一遍：标题 `Choose a vault folder`、⌘⇧G 直达路径、选中空目录装载成功）。
+- **默认名预填后的 AX 值面**（change add-default-note-name-nov24）：新建文件输入框始终预填
+  「未命名笔记」并全选，因此 AX 只有值（`AXTextField = "未命名笔记"`），空值态的读屏名
+  `新建文件的名称` 不上屏——本场景的输入框断言与 `typeInNode` target 都按预填值匹配；
+  「全选后键入即替换」的后果由后续 `note.md` 的落盘断言证明，不在 AX 里读选区。
 - **像素层**（空态观感、按钮配色）不在本场景：`tests/visual/scenes/first-run-empty-state.spec.ts`
   判结构与文案，整页像素归 `scripts/gate.sh visual`（首屏既有基线的变化由基线更新的人肉
   裁决流程处理，本 mission 不自行重录）。

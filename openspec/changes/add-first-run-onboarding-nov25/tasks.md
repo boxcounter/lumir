@@ -221,3 +221,9 @@
       同名静态文本不放行。补 6 条 `waitAppReady` 单测（zh/en 正例、严格门 / 空 AX / 静态文本
       反例、严格门回归）；旧实现下两条正例红、新实现全绿。`drive.test.mjs` 与
       `check-suite.sh` 通过。
+- [x] 9.7 263 真机 FAIL 诊断（2026-11-26）：默认名变更（change add-default-note-name-nov24）
+      让新建文件输入框预填「未命名笔记」并全选，AX 因此只暴露值、空值态读屏名
+      `新建文件的名称` 不上屏；263 的断言与 `typeInNode` target 仍按旧读屏名 ⇒ 真机 FAIL。
+      产品无回归（D107 / 首启行为正常，输入框 aria-label 仍是 `New file name`）。场景改为按
+      预填值断言 / 注入（`/AXTextField = "未命名笔记"/`、target `未命名笔记|note`、提交后
+      `not: ['/AXTextField/']`），判据强度不变。
