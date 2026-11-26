@@ -1,0 +1,122 @@
+---
+# change add-harness-message-withdraw-nov26（Alex 2026-11-26 节点 1：仅撤回最近一条；成功后删除
+# 原会话 A、只留从撤回点开始的新会话 B；原文回到 composer 供编辑）。
+#
+# 判据分三层，每层都有区分度：
+# 1. 显示面：撤回后 transcript 不再有该消息（`node` 按 AXStaticText 判在场性——正文里的字符串
+#    不是节点，`ax.has/not` 会命中 composer 的值，没有区分度）；
+# 2. composer 面：同一条文本出现在 `AXTextArea` 的值里（撤回前是 present:false——空 composer）；
+# 3. 上下文面：撤回后改发另一句，盘上最新会话文件里**没有**被撤回的文本、且带
+#    `opened_from":"withdraw"`；会话目录里只剩一份 JSONL（A 已物理删除）。
+# 撤回钮 hover 才显形（读屏名 D1034「撤回」）；本场景走套件的 AXPress 点击通道，hover 的视觉
+# 形态不在判据内（属手感，归 Alex）。
+id: "882-harness-withdraw-message"
+item: 882
+tier: full
+title: 撤回最近一条用户消息：transcript 移除、原文回 composer、新会话 B 唯一且上下文不再含它
+open: harness-note.md
+marker: "HNL-ALPHA"
+config:
+  harness:
+    provider: mock
+    fixture: "$fixtures/harness-mock-basic.json"
+seed:
+  registry:
+    - { id: acc-withdraw, path: $vault, lastOpenedAt: 1757000002000 }
+  sessions:
+    acc-withdraw:
+      panes:
+        - { tabs: [harness-note.md], active: harness-note.md }
+      ratio: 0.5
+      harnessPane: true
+steps:
+  - name: 等 harness pane 按存储装配
+    do: waitFor
+    waitFor:
+      has: ["分隔条", "/AXButton \\(发送\\)/", "问点什么"]
+    timeoutMs: 40000
+    expect:
+      - shot: 01-起始态
+
+  - name: 点 composer 建立输入焦点
+    do: clickInNode
+    target: { role: AXTextArea, name: "问点什么" }
+
+  - name: 输入要撤回的那一句
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|q882-WITHDRAW" }
+    text: "q882-WITHDRAW"
+
+  - name: 发送
+    do: key
+    key: enter
+
+  - name: 等第一轮回答
+    do: waitFor
+    waitFor:
+      has: ["验收回答：上下文已收到。"]
+    timeoutMs: 30000
+
+  - name: 等回合收口（无在途轮次）
+    do: waitFor
+    waitFor:
+      not: ["/AXButton \\(停止\\)/"]
+    timeoutMs: 15000
+    expect:
+      - label: 撤回前：transcript 里有这条消息（AXStaticText 在场）
+        node: { role: AXStaticText, name: "q882-WITHDRAW", present: true }
+      - label: 撤回前：composer 是空的（同一条文本不在 AXTextArea 里）
+        node: { role: AXTextArea, name: "q882-WITHDRAW", present: false }
+      - shot: 02-撤回前
+
+  - name: 点最后一条用户消息上的「撤回」
+    do: click
+    target: { role: AXButton, name: "^撤回$" }
+
+  - name: 等新会话文件发布（B 的 opened_from=withdraw）
+    do: waitForFile
+    waitForFile:
+      path: "env:harness/sessions/acc-withdraw/*.jsonl"
+      has: '"opened_from":"withdraw"'
+    timeoutMs: 20000
+    expect:
+      - label: transcript 不再显示被撤回的消息
+        node: { role: AXStaticText, name: "q882-WITHDRAW", present: false }
+      - label: 原文回到 composer（AXTextArea 的值）
+        node: { role: AXTextArea, name: "q882-WITHDRAW", present: true }
+      - label: 会话目录只剩一份 JSONL（A 已物理删除，只留 B）
+        glob: { dir: "env:harness/sessions/acc-withdraw", pattern: "/[^/]+\\.jsonl$", exact: 1 }
+      - label: B 里没有撤回前的文本（seed 只携带撤回点之前的前缀）
+        file: { path: "env:harness/sessions/acc-withdraw/*.jsonl", not: "q882-WITHDRAW" }
+      - shot: 03-撤回后
+
+  - name: 把 composer 里的原文换成另一句（模拟编辑后重发）
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|q882-" }
+    text: "q882-replacement"
+    replace: true
+
+  - name: 发送替换后的消息
+    do: key
+    key: enter
+
+  - name: 等第二轮回答
+    do: waitFor
+    waitFor:
+      has: ["验收回答：上下文已收到。"]
+    timeoutMs: 30000
+
+  - name: 等回合收口
+    do: waitFor
+    waitFor:
+      not: ["/AXButton \\(停止\\)/"]
+    timeoutMs: 15000
+    expect:
+      - label: 新会话的请求里带的是替换后的消息
+        file: { path: "env:harness/sessions/acc-withdraw/*.jsonl", has: "q882-replacement" }
+      - label: 被撤回的文本没有随新请求回到模型上下文
+        file: { path: "env:harness/sessions/acc-withdraw/*.jsonl", not: "q882-WITHDRAW" }
+      - label: 仍是撤回产生的那一份（没有另开新文件）
+        glob: { dir: "env:harness/sessions/acc-withdraw", pattern: "/[^/]+\\.jsonl$", exact: 1 }
+      - shot: 04-重发后
+---

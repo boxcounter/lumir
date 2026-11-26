@@ -16,6 +16,7 @@ import type { SettingsSnapshot } from "./bindings/SettingsSnapshot";
 import type { SettingsPatch } from "./bindings/SettingsPatch";
 import type { SettingsApplyOutcome } from "./bindings/SettingsApplyOutcome";
 import type { FsChange } from "./bindings/FsChange";
+import type { WithdrawOutcome } from "./bindings/WithdrawOutcome";
 import type { FsEntryChangedEvent } from "./bindings/FsEntryChangedEvent";
 import type { ReadingPositions } from "./bindings/ReadingPositions";
 import type { VaultInfo } from "./bindings/VaultInfo";
@@ -783,6 +784,13 @@ export function harnessResumeSession(session_id: string): Promise<SessionResumeI
  */
 export function harnessDeleteSession(session_id: string): Promise<void> {
   return invoke<void>("harness_delete_session", { session_id });
+}
+
+/** 撤回最近一条用户消息（change add-harness-message-withdraw-nov26）。`confirm=false` 时若本轮
+ *  执行过工具，后端**什么都不做**、只回执工具名（`needs_confirmation`）；确认后再以 `true` 调
+ *  一次，届时全部校验与派生会话检测重新复跑。 */
+export function harnessWithdraw(confirm: boolean): Promise<WithdrawOutcome> {
+  return invoke<WithdrawOutcome>("harness_withdraw", { confirm });
 }
 
 /** harness:event 的 type 白名单（**单一真源**：`parseHarnessEvent` 不再各列一份）。

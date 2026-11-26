@@ -896,6 +896,10 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
         TurnInput::Preloaded { user_text } => preloaded = Some(user_text),
         TurnInput::Resume { user_text } => resumed_user_text = Some(user_text),
     }
+    // 轮次来源（change add-harness-message-withdraw-nov26）：撤回入口只对交互发送 / 重试轮
+    // 开放。记在**轮次真正开跑**的这一刻——起线程失败不会走到这里，因此不会把上一轮的来源
+    // 冒充成这一轮。
+    let _ = ctx.with_session(|s| s.set_last_turn_origin(origin));
     // user 消息入队（LLM 侧 + 面板侧 + JSONL + 上下文节记录，压缩重注入用）。
     // 上下文节由调用侧从 ContextBlock **同一次生成**并传入（装配与存储同源，M309）——
     // 不再从拼好的 message 里重解析（正文含 `\n\n[` 时会串味）。投递 parts 与面板文本是

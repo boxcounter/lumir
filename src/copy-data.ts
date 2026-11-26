@@ -3009,6 +3009,50 @@ const COPY_TABLE = {
     en: "Kept {count} results · text {size} · truncated",
     enOne: "Kept {count} result · text {size} · truncated",
   },
+  D1034: {
+    zh: "撤回",
+    en: "Withdraw",
+  },
+  D1035: {
+    zh: "先停止本轮，再撤回",
+    en: "Stop this turn first, then withdraw",
+  },
+  D1036: {
+    zh: "本轮已执行：{tools}；撤回不会撤销这些操作。",
+    en: "This turn ran: {tools}. Withdrawing will not undo them.",
+  },
+  D1037: {
+    zh: "确认撤回",
+    en: "Withdraw anyway",
+  },
+  D1038: {
+    zh: "已撤回；原文已回到输入区，可编辑后重新发送",
+    en: "Withdrawn; the message is back in the composer for editing",
+  },
+  D1039: {
+    zh: "该会话还有派生出来的会话（{sessions}），不能撤回；请先处理这些会话后再试",
+    en: "This session has derived sessions ({sessions}) and cannot be withdrawn; handle them first",
+  },
+  D1040: {
+    zh: "最近一轮不是你在本窗口发出的消息，不能撤回",
+    en: "The latest turn was not sent from this window, so it cannot be withdrawn",
+  },
+  D1041: {
+    zh: "当前会话没有可撤回的用户消息",
+    en: "This session has no user message to withdraw",
+  },
+  D1042: {
+    zh: "当前会话还没有留存身份，无法撤回",
+    en: "This session has no retention identity yet and cannot be withdrawn",
+  },
+  D1043: {
+    zh: "撤回失败：无法删除原会话留存；原会话与输入区均未改变",
+    en: "Withdraw failed: the original session could not be deleted; the session and composer are unchanged",
+  },
+  D1044: {
+    zh: "撤回失败：无法发布撤回后的新会话（{reason}）；原会话与输入区均未改变",
+    en: "Withdraw failed: the new session could not be published ({reason}); the session and composer are unchanged",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -3033,6 +3077,12 @@ export const COPY: Record<CopyKey, CopyEntry> = COPY_TABLE;
  */
 export const ERROR_COPY: Record<string, CopyKey> = {
   harness_skills_invalid: "D982",
+  harness_withdraw_derived_exists: "D1039",
+  harness_withdraw_not_applicable: "D1040",
+  harness_withdraw_nothing: "D1041",
+  harness_withdraw_failed: "D1042",
+  harness_withdraw_delete_failed: "D1043",
+  harness_withdraw_publish_failed: "D1044",
   vault_not_open: "D159",
   vault_list_failed: "D160",
   config_home_unknown: "D161",

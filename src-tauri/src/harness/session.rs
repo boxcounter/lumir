@@ -442,6 +442,7 @@ impl StateSnapshot {
             title: None,
             persistence: PersistenceHealth::default(),
             retry: None,
+            withdrawable: false,
         }
     }
 }
@@ -509,6 +510,11 @@ pub struct StateSnapshot {
     /// 重建的是尾部通用动作行，不复制 code / message / 半截正文。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry: Option<RetrySnapshot>,
+    /// 最近一轮能否撤回（change add-harness-message-withdraw-nov26）：仅本进程发起的交互
+    /// 发送 / 重试轮为 true；空会话、恢复出来的历史会话、cron / 自动唤醒轮为 false。面板据它
+    /// 决定最后一条用户消息是否挂撤回钮——**只做可见性**，真正的判定仍由撤回命令复跑
+    /// （busy / 目标项 / 派生会话都要在动作时点重新校验）。恒在场（空态同形 `false`）。
+    pub withdrawable: bool,
 }
 
 /// 在跑子运行的一行（`harness_state.live_subruns`，change rework-harness-delegation-ux-nov02）：
@@ -654,6 +660,60 @@ pub struct SessionResumeInfo {
     pub messages: Vec<PanelMessage>,
     /// 是否真正替换了当前会话；false 表示当前文件直切或同源 pending 复用。
     pub switched: bool,
+}
+
+/// 被撤回的用户消息在 composer 侧的重建素材（change add-harness-message-withdraw-nov26）。
+///
+/// `text` 是**序列化文本**（与 `PanelMessage.text` / `parseQuoteMessage` 的输入同形：
+/// `<quote>` / `<msg-quote>` / `<image …/>` 块按原交错保留），自动注入的「当前编辑器上下文」
+/// 节已由后端剥掉——前端不复制注入形态的字面量。`skills` 是显式 Skill 名（来自用户消息项上
+/// 的 `lumir_skill` part）：正文属注入内容，MUST NOT 回到 composer。
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct WithdrawnComposer {
+    pub text: String,
+    pub skills: Vec<String>,
+}
+
+/// `harness_withdraw` 的返回（ts-rs 导出）。
+///
+/// 两段式确认：`needs_confirmation=true` 表示**什么都没做**——只回执本轮已执行的工具名，
+/// 前端据此出二次确认；用户确认后用 `confirm=true` 再调一次（届时全部校验与派生检测重新
+/// 复跑，不信任第一次的读数）。
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct WithdrawOutcome {
+    pub needs_confirmation: bool,
+    /// 被撤回那一轮里出现过的 `function_call` 工具名（去重，按出现序）。非空即「可能已产生
+    /// 副作用」——撤回不回滚它们，文案必须如实列出。
+    pub tool_names: Vec<String>,
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub info: Option<SessionWithdrawInfo>,
+}
+
+/// 一次成功的撤回：B 的身份与面板重放素材（形状参照 [`SessionResumeInfo`]）。
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct SessionWithdrawInfo {
+    /// 新逻辑会话 B 的 id（已发布，文件在场）。
+    pub session_id: String,
+    /// B 的会话令牌：前端据此作废旧会话的迟到 `persistence` 事件。
+    #[ts(type = "number")]
+    pub session_token: u64,
+    /// B 的面板消息（撤回点之前的全部历史），前端一次重放。
+    pub messages: Vec<PanelMessage>,
+    /// composer 重建素材（原文 + 显式 Skill 名）。
+    pub withdrawn: WithdrawnComposer,
+    /// 继承的有效标题（源会话有标题时）；无则缺键，前端回落首条用户消息口径。
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// 与 `harness_list_sessions` 同一口径的首条用户消息文本（B 的种子前缀），供标题栏 /
+    /// 会话名即时刷新，不必再拉一次清单。
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_user_text: Option<String>,
 }
 
 /// `harness_list_sessions` 的元素（ts-rs 导出；前端会话选择器的消费形状）：
@@ -808,6 +868,11 @@ pub struct Session {
     subrun_usage: BTreeMap<String, SubrunUsage>,
     /// 逐 run 的终态汇总（M822）：sidecar 写入时就地合并，恢复时由同名字段重算。
     subrun_runs: BTreeMap<String, SubrunRunSnapshot>,
+    /// 最近一次真正开跑的轮次来源（change add-harness-message-withdraw-nov26）：撤回只对
+    /// 交互发送 / 重试轮开放——cron / 自动唤醒 / 子运行推入的用户项不是「用户发出去又后悔
+    /// 的那一句」。**内存态**：不落盘、不进 wire；重启后会话本就清空，恢复出来的会话回到
+    /// `None`（未在本进程发过言 ⇒ 没有可撤回的轮次）。
+    last_turn_origin: Option<super::turn::TurnOrigin>,
     jsonl: JsonlWriter,
 }
 
@@ -868,8 +933,29 @@ impl Session {
             subagent_hub: None,
             subrun_usage: BTreeMap::new(),
             subrun_runs: BTreeMap::new(),
+            last_turn_origin: None,
             jsonl,
         }
+    }
+
+    /// 记录本轮来源（`run_turn_core` 在轮次真正开跑时调用一次，见
+    /// [`super::turn::run_turn_core_with_mode`]）。
+    pub fn set_last_turn_origin(&mut self, origin: super::turn::TurnOrigin) {
+        self.last_turn_origin = Some(origin);
+    }
+
+    /// 最近一轮是否可撤回（交互发送 / 重试轮）。快照 `withdrawable` 与撤回入口共用这一处
+    /// 判据——MUST NOT 在命令层另写一份 `matches!`（REVIEW.md「同一语义两处真源」条）。
+    pub fn withdrawable(&self) -> bool {
+        matches!(
+            self.last_turn_origin,
+            Some(super::turn::TurnOrigin::Interactive | super::turn::TurnOrigin::Retry)
+        )
+    }
+
+    /// 缓存计数累计的只读投影（撤回 fork 把它作为新文件的 `session_open` 种子）。
+    pub fn cache_totals(&self) -> &CacheTotals {
+        &self.cache_totals
     }
 
     /// 会话实例令牌（见字段注释）：子运行保存启动时的值，检查点比对。
@@ -1207,6 +1293,7 @@ impl Session {
                 .failed
                 .as_ref()
                 .map(|failed| RetrySnapshot { turn: failed.turn }),
+            withdrawable: self.withdrawable(),
         }
     }
 
@@ -1367,6 +1454,11 @@ impl Session {
     /// 面板消息条数（中断标注的 base 计数用）。
     pub fn panel_len(&self) -> usize {
         self.panel.len()
+    }
+
+    /// 面板消息的只读切片（撤回在内存里截断面板，与 `input` 同口径取用）。
+    pub fn panel(&self) -> &[PanelMessage] {
+        &self.panel
     }
 }
 

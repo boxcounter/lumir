@@ -93,11 +93,12 @@ import {
   createComposerState,
   insertComposerText,
   mergeRejectedComposerContent,
+  mergeWithdrawnComposerContent,
   projectComposerDelivery,
   removeComposerAttachment,
   runComposerCommand as runCmComposerCommand,
 } from "./harness-composer";
-import type { ComposerContent, PlacedAttachment } from "./harness-composer";
+import type { ComposerContent, ComposerContentInput, PlacedAttachment, PlacedAttachmentInput } from "./harness-composer";
 import { createComposerImeCoordinator } from "./harness-composer-ime";
 import { currentLanguage, errorText, formatDate, formatRelative, onRelabel, t, tPlural } from "./copy";
 import { byteSizeText } from "./byte-size";
@@ -125,12 +126,14 @@ import {
   harnessState,
   harnessSubagentContinue,
   harnessSubagentStop,
+  harnessWithdraw,
   harnessWriteImage,
   onHarnessEvent,
   openExternalUrl,
   uncoveredEventType,
 } from "./ipc";
 import type { HarnessEvent } from "./ipc";
+import type { SessionWithdrawInfo } from "./bindings/SessionWithdrawInfo";
 import type { DecisionReason } from "./bindings/DecisionReason";
 import type { WebApprovalPayload } from "./bindings/WebApprovalPayload";
 import type { WebProviderStatus } from "./bindings/WebProviderStatus";
@@ -610,6 +613,50 @@ export function parseQuoteMessage(text: string): ComposerBlock[] {
     blocks.push({ kind: "paragraph", text: paragraphLines.join("\n") });
   }
   return blocks;
+}
+
+/**
+ * 消息序列化文本 → composer 内容（change add-harness-message-withdraw-nov26 的撤回回填）。
+ *
+ * 与 [`parseQuoteMessage`] / `projectDelivery` 同一条投影链：卡片按整行元素拆块、段落还原
+ * XML 实体（`projectDelivery` 转义过，这里必须还原一次——否则用户改完再发会把 `&lt;` 二次
+ * 转义）；卡片锚点落在它前面那段文本的末尾，与 `composerBlocks` 的「卡片前去掉一个换行」
+ * 互逆；连续卡片共用同一锚点。`skills` 只给名字，位置按 `/name` 在文本里的首次出现还原——
+ * 找不到即不还原（不伪造位置）。
+ */
+export function composerContentFromMessage(
+  text: string,
+  skills: readonly string[] = [],
+): ComposerContentInput {
+  const blocks = parseQuoteMessage(text);
+  let out = "";
+  const cards: PlacedAttachmentInput[] = [];
+  // 卡片的锚点 = 它**后面那一段文本**开始处的换行之前：序列化时卡片自成一行，`composerBlocks`
+  // 反过来把卡片前的一个换行剥给前一段。因此「卡在末尾」时不补换行，「卡后还有文本」时补一个。
+  let pending: PlacedAttachmentInput["card"][] = [];
+  const flushPending = (): void => {
+    if (pending.length === 0) return;
+    if (out !== "") out += "\n";
+    for (const card of pending) cards.push({ card, anchor: out.length });
+    pending = [];
+  };
+  for (const block of blocks) {
+    if (block.kind === "paragraph") {
+      flushPending();
+      out += unescapeXmlEntities(block.text);
+      continue;
+    }
+    pending.push(block);
+  }
+  // 末尾的卡片（卡后没有文本）：锚点就是文本末尾，不补换行。
+  for (const card of pending) cards.push({ card, anchor: out.length });
+  const refs = skills
+    .map((name) => {
+      const from = out.indexOf(`/${name}`);
+      return from < 0 ? null : { name, from };
+    })
+    .filter((ref): ref is { name: string; from: number } => ref !== null);
+  return { text: out, caret: out.length, cards, skills: refs };
 }
 
 // ── 图片卡片元信息行（design §3；M449 补恢复路径）────────────────────────────
@@ -4401,6 +4448,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  writeTextScale）：css 的全部 font-size 声明 calc 乘该变量（缺省 1 = 零缩放，逐字节
    *  不改基线观感）。运行期态、不落盘、不回写 config。 */
   let hpScale = 1;
+  // ── 撤回最近一条用户消息（change add-harness-message-withdraw-nov26）───────────────
+  /** 最近一条用户消息的 DOM：撤回钮的宿主（清面 / 换会话时置空）。 */
+  let lastUserMessageEl: HTMLElement | null = null;
+  let withdrawButtonEl: HTMLButtonElement | null = null;
+  /** 工具确认条（有工具副作用时插在消息下方；同一时刻至多一条）。 */
+  let withdrawConfirmEl: HTMLElement | null = null;
+  /** 后端快照的 `withdrawable`（本进程发起的交互轮 / 重试轮）：只决定钮的可见性。真正的判定
+   *  （busy / 目标项 / 派生会话）由撤回命令在动作时点复跑——前端不复制那套判据。 */
+  let withdrawable = false;
+  /** 撤回命令在途：连点 / 确认后重复触发只发一次（后端幂等，但第二次会回「不可撤回」的错误行）。 */
+  let withdrawInFlight = false;
   /** 合并选择器状态（config_get 宽容提取的 HarnessSelection；null = 未配置/读不到——
    *  桩环境 / 旧配置 / 读取失败不伪造读数，chip 隐藏）。 */
   let selSelection: HarnessSelection | null = null;
@@ -5679,6 +5737,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     relabelRetryActions();
     // 待决批准项是交互中的 UI（不是历史记录）：随语言重渲按钮与标题，输入框内容保留。
     for (const pending of pendingApprovals.values()) relabelApproval(pending);
+    // 撤回钮 / 确认条同属交互中的 UI：读屏名、悬停提示与按钮文字随语言重取。
+    if (withdrawButtonEl !== null) {
+      withdrawButtonEl.textContent = t("D1034");
+      withdrawButtonEl.setAttribute("aria-label", t("D1034"));
+      withdrawButtonEl.title = withdrawButtonEl.disabled ? t("D1035") : t("D1034");
+    }
+    if (withdrawConfirmEl !== null) relabelWithdrawConfirm(withdrawConfirmEl);
     // 已决策的终态记录同口径：结果词 / 原因句 / 详情摘要重取文案（正文性质的时间戳由
     // refreshWhoLines 按当前语言与时刻重算）。
     for (const rec of decidedApprovals.values()) relabelDecided(rec);
@@ -6827,6 +6892,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       applySendPhase(state.phase);
     }
     applyActivityBadge();
+    // 撤回钮的可用性跟相位走：在途 / 停止中置灰（要先停止本轮），回到 idle 立即恢复。
+    syncWithdrawButton();
   }
 
   /**
@@ -6941,6 +7008,163 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       }).catch(() => {}); // 剪贴板不可用：钮面不动，不伪造成功反馈。
     });
     el.append(btn);
+  }
+
+  // ── 撤回最近一条用户消息（change add-harness-message-withdraw-nov26）──────────────
+  /** 撤回钮与确认条的重施（相位 / 可撤回性 / 最后一条用户消息变化时调用）。
+   *  `renderActivity` 会被每个流式分片走到——已有钮且宿主未变时只更新可用性，MUST NOT 重建。 */
+  function syncWithdrawButton(): void {
+    const host = withdrawable ? lastUserMessageEl : null;
+    if (host === null) {
+      withdrawButtonEl?.remove();
+      withdrawButtonEl = null;
+      dismissWithdrawConfirm();
+      return;
+    }
+    if (withdrawButtonEl !== null && withdrawButtonEl.parentElement === host) {
+      const busy = currentActivity().phase !== "idle" || withdrawInFlight;
+      if (withdrawButtonEl.disabled !== busy) {
+        withdrawButtonEl.disabled = busy;
+        withdrawButtonEl.title = busy ? t("D1035") : t("D1034");
+      }
+      return;
+    }
+    withdrawButtonEl?.remove();
+    withdrawButtonEl = null;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "lumir-hp-withdraw";
+    btn.disabled = withdrawInFlight;
+    btn.textContent = t("D1034");
+    btn.setAttribute("aria-label", t("D1034"));
+    const busy = currentActivity().phase !== "idle";
+    btn.disabled = busy;
+    btn.title = busy ? t("D1035") : t("D1034");
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (currentActivity().phase !== "idle") {
+        deps.toast(t("D1035"));
+        return;
+      }
+      void withdrawTurn(false);
+    });
+    host.append(btn);
+    withdrawButtonEl = btn;
+  }
+
+  function dismissWithdrawConfirm(): void {
+    withdrawConfirmEl?.remove();
+    withdrawConfirmEl = null;
+  }
+
+  /** 撤回（两段式）：`confirmed=false` 先问后端本轮有没有工具；有则出确认条，无则直接执行。 */
+  async function withdrawTurn(confirmed: boolean): Promise<void> {
+    if (withdrawInFlight) return;
+    const actionVault = currentVault;
+    const actionToken = viewGeneration;
+    withdrawInFlight = true;
+    syncWithdrawButton();
+    let info: SessionWithdrawInfo | null = null;
+    try {
+      const outcome = await harnessWithdraw(confirmed);
+      if (actionVault !== currentVault || actionToken !== viewGeneration) return;
+      if (outcome.needs_confirmation) {
+        showWithdrawConfirm(outcome.tool_names);
+        return;
+      }
+      info = outcome.info ?? null;
+    } catch (e) {
+      if (actionVault !== currentVault || actionToken !== viewGeneration) return;
+      dismissWithdrawConfirm();
+      appendError(t("D348", { message: errorText(e) }));
+      return;
+    } finally {
+      withdrawInFlight = false;
+      syncWithdrawButton();
+    }
+    if (info !== null) applyWithdraw(info, actionVault);
+  }
+
+  /** 确认条上的工具名（`{tools}` 的重取素材；语言切换不重算工具清单本身）。 */
+  let withdrawConfirmTools: readonly string[] = [];
+
+  function relabelWithdrawConfirm(row: HTMLElement): void {
+    const note = row.querySelector(".lumir-hp-withdraw-note");
+    if (note !== null) {
+      const separator = "、"; // i18n-exempt: glyph（顿号是标点分隔符，不是文案；英文档用逗号）
+      note.textContent = t("D1036", {
+        tools: withdrawConfirmTools.join(currentLanguage() === "zh" ? separator : ", "),
+      });
+    }
+    const yes = row.querySelector(".lumir-hp-withdraw-yes");
+    if (yes !== null) yes.textContent = t("D1037");
+    const no = row.querySelector(".lumir-hp-withdraw-no");
+    if (no !== null) no.textContent = t("D136");
+  }
+
+  /** 工具确认条：插在最后一条用户消息下方，列出本轮已执行的工具（副作用不回滚）。 */
+  function showWithdrawConfirm(toolNames: readonly string[]): void {
+    dismissWithdrawConfirm();
+    const host = lastUserMessageEl;
+    if (host === null) return;
+    withdrawConfirmTools = toolNames;
+    const row = document.createElement("div");
+    row.className = "lumir-hp-withdraw-confirm";
+    const note = document.createElement("span");
+    note.className = "lumir-hp-withdraw-note";
+    const separator = "、"; // i18n-exempt: glyph（顿号是标点分隔符，不是文案；英文档用逗号）
+    note.textContent = t("D1036", {
+      tools: toolNames.join(currentLanguage() === "zh" ? separator : ", "),
+    });
+    const yes = document.createElement("button");
+    yes.type = "button";
+    yes.className = "lumir-hp-withdraw-yes";
+    yes.textContent = t("D1037");
+    const no = document.createElement("button");
+    no.type = "button";
+    no.className = "lumir-hp-withdraw-no";
+    no.textContent = t("D136");
+    yes.addEventListener("click", (event) => {
+      event.stopPropagation();
+      dismissWithdrawConfirm();
+      void withdrawTurn(true);
+    });
+    no.addEventListener("click", (event) => {
+      event.stopPropagation();
+      dismissWithdrawConfirm();
+    });
+    row.append(note, yes, no);
+    host.insertAdjacentElement("afterend", row);
+    withdrawConfirmEl = row;
+  }
+
+  /** 撤回成功：重放 B 的面板、换持久化身份、把被撤回的原文交回 composer。 */
+  function applyWithdraw(info: SessionWithdrawInfo, actionVault: string | null): void {
+    const previousToken = persistenceSessionToken;
+    if (previousToken !== null) retiredPersistenceTokens.add(previousToken);
+    persistenceSnapshotSeq += 1;
+    resetView({ clearActivityFor: actionVault });
+    preserveComposerAcrossSessionSwitch();
+    persistenceSessionToken = persistenceSessionTokenOf(info.session_token);
+    historyStickyShown.delete(currentVault ?? "");
+    hidePersistenceLine();
+    fetchPersistenceSnapshot();
+    renderSnapshotMessages(Array.isArray(info.messages) ? info.messages : []);
+    firstUserText = info.first_user_text ?? null;
+    sessionTitle = info.title ?? null;
+    applySessionName();
+    follow.jumpToBottom();
+    refreshThinkingState();
+    refreshUsageState();
+    refreshTaskState();
+    fetchActivitySnapshot();
+    withdrawable = false;
+    syncWithdrawButton();
+    const restored = composerContentFromMessage(info.withdrawn.text, info.withdrawn.skills);
+    resetComposer(mergeWithdrawnComposerContent(restored, composerContentOf(composerView.state)));
+    markDraft();
+    composerView.focus();
+    deps.toast(t("D1038"));
   }
 
   // ── transcript 追加 ──────────────────────────────────────────────────────
@@ -7068,6 +7292,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     lastAssistantEl = null; // 用户消息开新轮：恢复路径的工具记录挂点作废
     syncEmptyHint();
     follow.jumpToBottom(); // 分流表 #1：用户发送 = 白名单动作，新消息必须在眼前
+    // 撤回钮只挂最后一条用户消息（每来一条用户消息就搬家一次，重放路径同样收敛到最后一条）。
+    lastUserMessageEl = el;
+    syncWithdrawButton();
     // 元素即回滚把手：发送被同步拒绝时只撤这一条（`rollbackRejectedSend`），不碰历史。
     return el;
   }
@@ -10405,6 +10632,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
     const messages = Array.isArray(state.messages) ? state.messages : [];
     renderSnapshotMessages(messages);
+    // 可撤回性以后端快照为准（本进程发起的交互轮 / 重试轮才为 true）：历史恢复 / cron 会话
+    // 因此不挂撤回钮；真正的判定仍由撤回命令复跑。
+    withdrawable = state.withdrawable === true;
+    syncWithdrawButton();
     // 可重试失败的动作行（change add-harness-turn-retry-nov23 design §6.3）：**两档都重建**。
     // enter 档在消息重放后追加；content 档上面已清面，这里同样按快照 `retry` 幂等重建
     // （先移除既有行再追加，保证恰好一条）——MUST NOT 把「不重复」实现成「不新增」。
@@ -10571,6 +10802,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 关闭入口（`document` 径，交还焦点），MUST NOT 让遮罩停在一份已不存在的消息上。
     deps.blocks?.close();
     transcript.replaceChildren();
+    // 撤回钮 / 确认条都挂在 transcript 里的消息上：清面即失效，引用一并置空（避免对已摘除的
+    // 节点继续操作）。可撤回性随视图换代归零，等快照 / 发送重新给值。
+    lastUserMessageEl = null;
+    withdrawButtonEl = null;
+    dismissWithdrawConfirm();
+    withdrawable = false;
     // 先清 DOM 再 prune（顺序是判据）：此刻 transcript 里的缩略图已离场，composer 仍在场的
     // 图片保持 active；会话级淘汰只释放不再显示的非活跃项。
     imageThumbCache.prune();
@@ -10826,6 +11063,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 发送的 vault 同样定格（design §6.2）：同步拒绝到达时可能已在 B——记录只收口 A，
     // 否则 A 会永久停在在途（那一轮根本没起来，不会有终态事件）。
     const sendVault = currentVault;
+    // 撤回可用性的发送前态（同步拒绝时原样还回去）：本进程刚发出的这一轮是交互轮，钮可以出现；
+    // 但被拒不等于「发出去过」，撤销乐观气泡时一并回滚这两项。
+    const previousLastUserMessageEl = lastUserMessageEl;
+    const previousWithdrawable = withdrawable;
+    withdrawable = true;
     const optimistic = appendUserMessage(blocks, text, Date.now());
     const prevFirstUserText = firstUserText;
     if (firstUserText === null) {
@@ -10873,6 +11115,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 上一段会话——**整条 no-op**。否则 A 的拒绝会关掉 B 的轮次闸门（后续分片被当迟到
         // 产出丢弃）、把 A 的错误行 / toast 写进新视图、把 A 的输入区灌回新 composer。
         if (viewGeneration !== sendViewGeneration) return;
+        // 本轮没被受理：撤回可用性回到发送前的读法（乐观气泡随后整条撤掉）。
+        withdrawable = previousWithdrawable;
+        lastUserMessageEl = previousLastUserMessageEl;
+        syncWithdrawButton();
         // 走到这里 = 这一轮**没有被后端受理**（同步拒绝：忙 / 缺配置 / 线程起不来 /
         // 图片能力闸）。已受理之后的失败走 `harness:event` 的 error，不进本分支——
         // 那条路径的乐观消息是真实的一轮，不在回滚范围内。

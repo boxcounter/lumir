@@ -140,6 +140,7 @@ const NEW_SESSION = functionBodyOf(PANEL_SOURCE, "startNewSession");
 const RESUME = functionBodyOf(PANEL_SOURCE, "resumeSession");
 const CRON_RUN = functionBodyOf(PANEL_SOURCE, "beginCronRun");
 const RELOAD = functionBodyOf(PANEL_SOURCE, "reloadTargetSession");
+const WITHDRAW = functionBodyOf(PANEL_SOURCE, "applyWithdraw");
 const APPLY_LAYOUT = functionBodyOf(MAIN_SOURCE, "applyStoredLayout");
 const CRON_OPEN = functionBodyOf(MAIN_SOURCE, "handleCronOpenSession");
 const CRON_HANDLER = functionBodyOf(MAIN_SOURCE, "handleCronRun");
@@ -481,9 +482,10 @@ test("resetView 调用点矩阵：切 vault = null；换会话 = 动作发起时
   assert.match(RESUME, /resetView\(\{ clearActivityFor: actionVault \}\)/, "恢复会话清发起 vault");
   assert.match(CRON_RUN, /resetView\(\{ clearActivityFor: cronVault \}\)/, "cron 切屏清目标 vault");
   assert.match(RELOAD, /resetView\(\{ clearActivityFor: null \}\)/, "cron 回滚的记录已在 reloadTargetSession 里清过，视图复位不再重复清");
-  // 五处之外没有其他调用点（防止新路径绕过矩阵）。
+  assert.match(WITHDRAW, /resetView\(\{ clearActivityFor: actionVault \}\)/, "撤回换会话清发起 vault");
+  // 六处之外没有其他调用点（防止新路径绕过矩阵）。
   const calls = [...stripComments(PANEL_SOURCE).matchAll(/resetView\(\{/g)];
-  assert.equal(calls.length, 5, `resetView 只允许这五个调用点（实际 ${calls.length} 处）`);
+  assert.equal(calls.length, 6, `resetView 只允许这六个调用点（实际 ${calls.length} 处）`);
 });
 
 test("新会话 / 恢复：回包迟到时只清发起 vault，且不重建 B 的视图", () => {

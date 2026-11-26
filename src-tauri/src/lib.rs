@@ -222,6 +222,7 @@ pub fn run() {
             harness::harness_list_sessions,
             // 历史会话删除（M406）：选择器行内删除入口的后端，活跃会话拒删。
             harness::harness_delete_session,
+            harness::harness_withdraw,
             // composer 粘贴图片（change harness-composer-image-paste）：harness 侧内容
             // 寻址附件的写 / 读（落点 attachments/<vault 稳定 id>/，MUST NOT 触碰 vault）。
             harness::harness_write_image,
