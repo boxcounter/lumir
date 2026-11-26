@@ -74,8 +74,9 @@
 - [x] 4.3 更新既有真机场景里的「对话面板」断言（148 / 264 / 253 / 252 / 725 / 127 / 868 等）
 - [x] 4.4 `node scripts/acceptance/coverage.mjs` 重新生成覆盖表；
       `node scripts/acceptance/run.mjs --check` PASS
-- [ ] 4.5 **真机执行**（本轮不执行）：mission 边界明确本轮不起真机；执行时机 = 后续真机批次，
-      证据落 `.local/acceptance/<日期>/`
+- [x] 4.5 **真机执行**：883 PASS 25 断言、14-tabs PASS 51 断言、17-multi-vault-switch PASS 59 断言
+      （`.local/acceptance/2026-11-27-ux-goal/{883-file-open-harness-affordance,17-multi-vault-switch}/`
+      与 `.local/acceptance/2026-11-27-ux-goal-r5/14-tabs/`，`status.txt` 均 PASS）
 
 ## 5. 门禁与静态校验
 
@@ -90,7 +91,7 @@
 - [x] 6.1 证据（红 / 绿 / 候选截图 / 门禁日志）落主仓
       `.local/missions/improve-file-open-harness-affordance-nov26/`，不落 worktree
 - [x] 6.2 在 mission 分支提交（不 push、不 merge、不归档、不动视觉基线）——commit `7df3a995`
-- [ ] 6.3 归档时同步 `openspec/specs/multi-tabs/spec.md` 的 Purpose 句（现写「树上的单击 /
-      双击 / ⌘-点击各开一个标签」，归档工具不重写 Purpose，需在归档提交里手改）
+- [x] 6.3 归档时同步 `openspec/specs/multi-tabs/spec.md` 的 Purpose 句——已在本归档提交中改为
+      「单击 = 当前标签就地打开、⌘-点击 = 新标签并保留当前标签，双击 / 其它修饰键同单击」
 - [x] 6.4 已知风险登记：普通点击替换 dirty 标签的未保存内容——**已在本 change 内以「dirty 时退回新开」
       消解**（不是另立项）；图片会话边界同样已用退回新开兜底。两者均写进 delta / proposal

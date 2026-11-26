@@ -104,3 +104,33 @@
   以及同一条命令的速查标签 D648 / 来由 D345 的措辞）；相关视觉场景与真机验收场景的断言文案。
 - 关联约束：不改写源文件铁律（打开链路只读盘）、性能合同（点击路径零新增 IPC）、
   `REVIEW.md`「同一语义两处真源」条（文案仍只有 D327 一处真源）。
+
+## 节点 2：归档放行记录
+
+机器 + 主会话终审放行（`docs/process/openspec-workflow.md` 的五要件）；逐条读数如下：
+
+1. **方案已批准**：节点 1 记录见文件头「评审记录」（Alex 2026-11-26「其他你理解是对的，请你
+   安排」+ hover 追加「Harness pane」）；实现期无静默扩 scope——改动面 = 文件树打开意图 /
+   无标签 toggle 落位 / D327 文案 / 同批 chip 看守与图片会话兜底，逐条对应「What Changes」。
+2. **独立评审 clean / merge**：K3 主会话终审 clean / merge（会话内裁决；本批无独立 verdict
+   文件落 `.local/reviews/`，沿用 `fix-harness-stream-boundary-newline-nov26` 的登记口径），
+   绑定实现 tip `cfe75fc0`（分支 `fix/file-open-harness-affordance-nov26`）；master 合并提交
+   `5f94b98d`（`merge: refine file opening and harness affordance`）。tip 之后本 change 的
+   代码 / 场景 / 测试零改动；后续 `4e3f1299`（验收通道滚入视口）是 14-tabs 通道修复，不属于
+   本 change 的 delta。
+3. **tasks 完成**：`tasks.md` 全部勾选——4.5 真机执行由本批真机 PASS 闭合；6.3 的 Purpose
+   同步在归档提交中执行；无放弃项。
+4. **门禁与真机证据**：
+   - 完整 `scripts/gate.sh visual`（低负载）：`GATE RESULT: 15/15 PASS（SKIP 0）` exit 0
+     （`.local/missions/improve-file-open-harness-affordance-nov26/GATE-visual.log` /
+     `GATE-visual-exit.txt`）；
+   - 真机：`883-file-open-harness-affordance` PASS 25 断言、`14-tabs` PASS 51 断言、
+     `17-multi-vault-switch` PASS 59 断言（`.local/acceptance/2026-11-27-ux-goal/` 与
+     `.local/acceptance/2026-11-27-ux-goal-r5/14-tabs/`，`status.txt` 均 PASS）；
+   - 视觉基线两张经 Alex 批准后重生成：`app-main-chromium-darwin.png`（`b2b37c69`）、
+     `tab-bar-two-tabs-chromium-darwin.png`（`cfe75fc0`），各自与已核 actual 逐字节相同。
+5. **规格对账**：`scripts/openspec-archive-check.mjs` 门禁模式随 `docs-check` PASS；
+   `validate --all --strict` PASS；归档跟踪队列有且仅有一条条目（`docs/backlog.md`，本批
+   删 4 条已归档历史记录以守 80 行硬上限）。
+
+**归档后**：待归档提交与 `--archived` 审计后追加。
