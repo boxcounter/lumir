@@ -252,6 +252,15 @@ steps:
       - label: 旧自动工具结果仍保留
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: "ACC-BACKGROUND-BODY" }
 
+  - name: 开始新会话，确保恢复目标不是当前会话（当前会话恢复是 no-op，不重建面板）
+    do: click
+    target: { role: AXButton, name: "新会话" }
+  - name: 等新会话面板清空
+    do: waitFor
+    waitFor:
+      has: ["问点什么"]
+      not: ["/acc-skill-abc"]
+    timeoutMs: 10000
   - name: 打开历史会话清单并真正恢复含显式 part + 自动工具结果的会话
     do: click
     target: { role: AXPopUpButton, nth: 0 }
@@ -264,9 +273,12 @@ steps:
       - label: 恢复目标是本轮 /tmp-acc 会话而不是无名序号项
         node: { role: AXMenuItem, name: "/tmp-acc", present: true }
       - shot: 03-恢复会话清单
-  - name: 恢复该会话（最后一条 llm_request.messages 原样灌回）
-    do: clickInNode
+  - name: 恢复该会话（AXPress；坐标点击依赖前台，会被别的窗口吃掉）
+    do: click
     target: { role: AXMenuItem, name: "/tmp-acc", nth: 0 }
+    expect:
+      - label: 点击落在恢复行上（会话浮层已收起）
+        ax: { not: "AXMenuItem (/tmp-acc" }
   - name: 等恢复内容重建（恢复会话本身不发起模型回合）
     do: waitFor
     waitFor:

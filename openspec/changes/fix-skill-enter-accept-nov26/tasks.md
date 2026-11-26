@@ -51,3 +51,22 @@
   `156-harness-composer-ime-composition-freeze` 的人工矩阵，不在本 change 内冒充。
 - 异步 catalog：浏览器场景用可控 deferred `harness_skills_list` 回包验证「不换项 / 不重开」；
   真机 868 不伪造后端回包时序，该分支以浏览器场景为准。
+
+## 4. 真机返修（2026-11-26，主会话复跑前）
+
+- [x] 4.1 **A：WKWebView 滚动后同坐标 mousemove 抢走键盘游标。** 红测试
+      `skill-hybrid.spec.ts`「滚动把另一行搬到静止指针下时，同坐标 mousemove 不得抢走键盘游标」：
+      旧实现在指针停在第 0 项、键盘到第 12 项、列表滚动后补发同坐标事件，游标被改成指针下的第 9 项
+      （`visual-red-pointer.log`，received `option-9`）。修复：`mousemove` 只在 `clientX/Y` 相对上次
+      变化时更新指针选意，同坐标事件直接忽略；真实鼠标移动仍生效（既有 hover 用例全过）。修后
+      `skill-hybrid` 77/77 PASS（`visual-pointer-green.log`）。
+- [x] 4.2 **B：726 恢复等待失败。** 根因不是恢复渲染或历史 wire：失败时 AX 里会话浮层仍打开且唯一
+      项就是当前会话（时间「现在」），而恢复行 click handler 第一行同步 `setSessPop(false)`——浮层
+      未收起说明 DOM click 从未触发；该步用坐标 `clickInNode`，同次运行 runner 报告「前台焦点未取得
+      或被中途抢走」。且干净 env 下清单只有当前会话，`harness_resume_session` 对当前 id 返回
+      `switched=false`（前端直接 return、不重建面板），「当前编辑器上下文：」不可能出现；r5 通过是
+      因为残留了另一份同名源会话。修复：726 在恢复前先「新会话」确保目标不是当前会话；恢复行改用
+      AXPress（`do: click`）并在同一步断言浮层收起；m460 视觉补「恢复 wire 的上下文节原样上屏」
+      守卫（4/4 PASS，`visual-m460-full.log`）。**产品恢复路径零改动。**
+- [ ] 4.3 主会话真机复跑 868 / 726（本 worker 不跑真机；A 的缺陷现场只在 WKWebView 出现）。
+

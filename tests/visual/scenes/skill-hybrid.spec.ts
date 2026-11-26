@@ -369,6 +369,45 @@ test("候选打开时键盘与指针导航同路选择，composer 文档/caret/�
 });
 
 
+test("滚动把另一行搬到静止指针下时，同坐标 mousemove 不得抢走键盘游标", async ({ page }) => {
+  // WKWebView 在候选滚动 / 重排后会对静止指针补发 mousemove（clientX/Y 与上次相同）。
+  // 当前实现只认事件目标、不认坐标，于是「键盘刚选中的行」会被指针下的旧位置改掉。
+  await page.setViewportSize({ width: 1000, height: 320 });
+  await setup(page, null, false, undefined, syntheticSkills(20));
+  const composer = page.locator(".lumir-hp-composer .cm-content");
+  const menu = page.locator(".lumir-hp-skill-menu");
+  const options = menu.locator("[role=option]");
+  await page.mouse.move(10, 10);
+  await page.keyboard.type("/skill");
+  await expect(options).toHaveCount(20);
+  expect(await menu.evaluate((el) => el.scrollHeight > el.clientHeight), "长列表必须先证明真的溢出").toBe(true);
+  // 真实鼠标移动到首项：这是一次真实的指针选意。
+  const pointerTarget = options.nth(0);
+  await pointerTarget.hover();
+  await expect(options.nth(0)).toHaveAttribute("aria-selected", "true");
+  const box = await pointerTarget.boundingBox();
+  if (box === null) throw new Error("首项没有布局盒");
+  const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  // 键盘走到第 12 项；候选滚动把别的行搬到静止指针下面。
+  for (let step = 0; step < 12; step += 1) await page.keyboard.press("ArrowDown");
+  await expect(menu.locator("[role=option][aria-selected=true]")).toHaveAttribute("id", "lumir-hp-skill-option-12");
+  const under = await page.evaluate(({ x, y }) => {
+    const target = document.elementFromPoint(x, y)?.closest<HTMLElement>(".lumir-hp-skill-option");
+    if (target === null || target === undefined) return null;
+    // 复刻 WKWebView 的滚动补发：坐标与上次完全相同，目标却是滚动后的新行。
+    target.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: x, clientY: y }));
+    return target.id;
+  }, point);
+  expect(under, "前提：滚动后静止指针下必须是另一行").not.toBe("lumir-hp-skill-option-12");
+  expect(under, "前提：静止指针下必须仍有可命中的候选行").not.toBeNull();
+  // 同坐标补发不是指针选意：键盘游标必须留在第 12 项，Enter 也接受它。
+  await expect(menu.locator("[role=option][aria-selected=true]")).toHaveAttribute("id", "lumir-hp-skill-option-12");
+  await page.keyboard.press("Enter");
+  await expect(composer).toHaveText("/skill-12 ");
+  await expect(composer.locator(".lumir-hp-skill-ref")).toHaveCount(1);
+  expect(await sent(page)).toEqual([]);
+});
+
 test("草稿恢复 catalog 恰好一次且零新键入不打开候选", async ({ page }) => {
   await setup(page, {
     version: 3,
