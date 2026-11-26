@@ -801,9 +801,10 @@ vault 列表浮层的就地键 SHALL 与 `toc-outline` 的「浮层选择列表�
 补发的同值 `input` MUST NOT 触发第二次刷新）。
 
 筛选框的 `⌘A` SHALL 与 `quick-open` 的「输入面内的全选（⌘A）」条同一套（vault 筛选框同样是
-**输入面**）：输入框持焦时由浮层的就地键处理显式接管（`preventDefault` 后选中输入串），MUST NOT
+**输入面**）：由**统一键位层**按输入面显式接管（change fix-text-input-select-all-nov26：`selectAllAt`
+落到筛选框、选中输入串并 `preventDefault`；浮层 MUST NOT 保留本地 `input.select()` 副本），MUST NOT
 依赖 webview / 原生 Select All 菜单的默认行为，MUST NOT 绕到 `editor.select-all`（那会选中正文、
-丢掉输入串）；组合期的 `⌘A` MUST NOT 由该分支消费、MUST NOT 改变输入框选区。其余文本编辑键 SHALL
+丢掉输入串）；组合期的 `⌘A` MUST NOT 由统一分派消费、MUST NOT 改变输入框选区。其余文本编辑键 SHALL
 继续走原生输入框路径。本条不在 vault 侧重述实现，只声明同一合同适用于本浮层的筛选框。
 
 `aria-selected` SHALL 只表示**键盘游标**：任意时刻至多一条 option 为 `aria-selected="true"`，且它
