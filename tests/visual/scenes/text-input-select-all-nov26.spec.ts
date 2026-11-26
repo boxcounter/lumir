@@ -48,8 +48,11 @@ async function openDoc(page: Page, file = "plan.md", contains = "MARKER"): Promi
 /** 记录窗口冒泡末端的 ⌘A 消费读数（判「应用有没有显式接管」；见文件头）。 */
 async function installKeyLog(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const w = window as unknown as { __cmdA: Array<{ prevented: boolean }> };
+    const w = window as unknown as { __cmdA: Array<{ prevented: boolean }>; __cmdAInstalled?: boolean };
     w.__cmdA = [];
+    // 同一用例里多次安装只登记一次监听（否则一次按键会被多条监听各记一条，矩阵用例的断言即失真）。
+    if (w.__cmdAInstalled === true) return;
+    w.__cmdAInstalled = true;
     window.addEventListener("keydown", (event) => {
       if (event.key === "a" && event.metaKey) w.__cmdA.push({ prevented: event.defaultPrevented });
     });
@@ -314,6 +317,65 @@ test("编辑器内的 ⌘A 不回归：仍选整篇文档", async ({ page }) => 
     return { from: view.state.selection.main.from, to: view.state.selection.main.to, length: view.state.doc.length };
   });
   expect(selection).toEqual({ from: 0, to: selection.length, length: selection.length });
+});
+
+test("原生 input 类型矩阵（真实浏览器）：number / email 整值全选；date / time 不被吞", async ({ page }) => {
+  await openDoc(page);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+
+  // 合成熟宿主进页面：它们不是产品面，是「原生输入类型」这条判据的类型矩阵探针（与下面的
+  // contenteditable 探针同口径）。为什么必须有这一条：isTextEntryHost 的清单只能靠真实引擎定，
+  // 注释与直觉都会错——Chromium 151 实测 date / time 的 `.select()` 静默无效（之后键入仍按段
+  // 编辑），把它们当输入面就会吞掉 ⌘A 什么都不做。
+  await page.evaluate(() => {
+    const host = document.createElement("div");
+    host.id = "input-type-probes";
+    host.innerHTML = [
+      '<input id="probe-number" type="number" value="123">',
+      '<input id="probe-email" type="email" value="abc@x.com">',
+      '<input id="probe-date" type="date" value="2026-11-26">',
+      '<input id="probe-time" type="time" value="12:34">',
+    ].join("");
+    document.body.append(host);
+  });
+
+  // ① number：selectionStart 恒为 null，不能拿它判；判据是「⌘A 后键入整段替换」。
+  await page.locator("#probe-number").focus();
+  await installKeyLog(page);
+  await page.keyboard.press("Meta+a");
+  expect(await keyLog(page), "number 支持整值选中，⌘A 必须由本层接管").toEqual([{ prevented: true }]);
+  expect(await page.locator("#probe-number").inputValue()).toBe("123");
+  await page.keyboard.type("9");
+  expect(
+    await page.locator("#probe-number").inputValue(),
+    "整段替换 = select() 真的生效（未选中时键入会得到 9123）",
+  ).toBe("9");
+
+  // ② email：与 number 同族（selectionStart 为 null、setSelectionRange 抛错，但 select() 生效）。
+  await page.locator("#probe-email").focus();
+  await installKeyLog(page);
+  await page.keyboard.press("Meta+a");
+  expect(await keyLog(page)).toEqual([{ prevented: true }]);
+  await page.keyboard.type("9");
+  expect(await page.locator("#probe-email").inputValue()).toBe("9");
+
+  // ③ date / time：平台不支持整值选中——本层 MUST NOT 消费 ⌘A（落回平台，不能吞了什么都不做）。
+  for (const [selector, value] of [
+    ["#probe-date", "2026-11-26"],
+    ["#probe-time", "12:34"],
+  ] as const) {
+    await page.locator(selector).focus();
+    await installKeyLog(page);
+    await page.keyboard.press("Meta+a");
+    expect(await keyLog(page), `${selector} 不是整值可选的输入面，⌘A MUST NOT 被消费`).toEqual([
+      { prevented: false },
+    ]);
+    expect(await page.locator(selector).inputValue(), "⌘A 不改变日期 / 时间控件的值").toBe(value);
+  }
+
+  expect(errors, "整条路径 MUST NOT 抛异常（select() 对任何 type 都不抛）").toEqual([]);
+  await page.evaluate(() => document.getElementById("input-type-probes")?.remove());
 });
 
 test("合成 contenteditable：⌘A 选中该宿主内容（合同探针，不是产品面）", async ({ page }) => {

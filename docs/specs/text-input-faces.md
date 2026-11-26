@@ -16,7 +16,7 @@
 |---|---|
 | 输入面 | 当前聚焦的、可编辑文本的宿主。两种实现：CM 面（编辑器 contentDOM / composer）与原生宿主（`input` / `textarea` / contenteditable） |
 | CM 面 | CodeMirror 承载的可编辑面（编辑器正文、composer）；选区是 CM `EditorState.selection`，不是 DOM Selection |
-| 原生宿主 | 浏览器原生编辑的宿主（浮层筛选框、内联重命名、设置、搜索、行号框、审批理由 textarea、任意 contenteditable） |
+| 原生宿主 | 浏览器原生编辑、且平台支持**整值选中**的宿主（浮层筛选框、内联重命名、设置、搜索、行号框、审批理由 textarea、任意 contenteditable）。日期 / 时间族 input 不算——见下方「原生 input 的类型边界」 |
 | 只读内容根 | 全屏遮罩渲染出来的、不可编辑的内容副本（表格 / 代码块）。**不是输入面**——它的 ⌘A 是「选中这段只读内容」，归 `overlay-select` 的既有合同 |
 | 附加面 | `text` 作用域之外、由命令清单派生的命中扩展。当前只有 `editor.select-all`：除两处 CM 面外，原生宿主也命中（`NATIVE_INPUT_HOST_COMMAND_IDS`） |
 
@@ -58,6 +58,25 @@ MUST NOT 选到另一个面的内容（输入框持焦时选中正文 = 违反�
 路径处理；输入面 MUST NOT 拦截它们。`text` 作用域的 Emacs 命令 MUST NOT 因附加面放宽到原生宿主
 （它们实现作用于编辑器文档）。
 
+## 原生 input 的类型边界（Chromium 151 真实浏览器实测）
+
+只在平台**真的能整值选中**的类型上把 `⌘A` 收进本层；其余类型落回平台——本层 MUST NOT 吞掉
+`⌘A` 后什么都不做。实测口径（页面内合成 input，`.select()` 后键入 `9` 看是否整段替换）：
+
+| 类型 | `.select()` 抛错？ | `setSelectionRange` | `selectionStart` | `select()` 实际效果 | 是否输入面 |
+|---|---|---|---|---|---|
+| text / search / tel / url / password | 否 | 可用 | 0..len | 整段选中（键入替换） | 是 |
+| number | 否 | `InvalidStateError` | null | **整段选中**（`123` → `9`；不选中时 `9123`） | 是 |
+| email | 否 | `InvalidStateError` | null | **整段选中**（`abc@x.com` → `9`；不选中时 `9abc@x.com`） | 是 |
+| date / time / month / week / datetime-local | 否 | `InvalidStateError` | null | **无效果**（date → `0009-11-26`、time → `09:34`：键入仍在编辑聚焦段） | 否 |
+| checkbox / radio / range / color / file / 按钮族 / hidden | 否 | `InvalidStateError` | null | 无「全部文本」语义 | 否 |
+
+结论：判据是**正向清单**（`src/keys.ts` 的 `SELECTABLE_INPUT_TYPES`：text / search / tel / url /
+email / password / number），默认「不认识就不算输入面」。判据 MUST NOT 依赖 `selectionStart`
+（number / email 恒 null）或 `setSelectionRange`（对 number / email 等抛错）——行为判据是
+「`.select()` 后键入是否整段替换」。回归：`tests/visual/scenes/text-input-select-all-nov26.spec.ts`
+的类型矩阵用例（number / email 正例 + date / time 反例 + 全程无 pageerror）。
+
 ## 输入面清单
 
 判据的真源是 `tests/unit/text-input-faces.test.ts` 的 `REGISTRY`（新增原生文本输入未登记即红）。
@@ -93,5 +112,9 @@ Skill 候选与 wikilink 候选没有独立输入框——它们过滤的是 com
   spec，重命名 / 新建 / 搜索 / 行号 / 键位面板 / 菜单六条按预期判红。
 - **真机（WKWebView）**：`scripts/acceptance/scenarios/881-text-input-select-all-nov26.md`——键盘
   通道是否真的送达输入框只有真机可答；chromium 的原生 select-all 会掩盖缺失的接管。
+- **类型矩阵（真实浏览器）**：`text-input-select-all-nov26.spec.ts` 追加 number / email / date /
+  time 四个合成宿主——number / email 断言「⌘A 被接管 + 键入整段替换」，date / time 断言「MUST NOT
+  被消费 + 值不变」，整条路径无 `pageerror`。
 - **边界（如实登记）**：静态扫描认 `document.createElement` 与共享 `element(...)` 两种工厂；另造
-  工厂名的新输入面可能漏检——行为面由 T1 的结构化判据兜底（任何原生文本宿主都落分派）。
+  工厂名的新输入面可能漏检——行为面由 T1 的结构化判据兜底（任何支持整值选中的原生宿主都落分派）。
+  不在 `SELECTABLE_INPUT_TYPES` 里的 input 类型（如日期 / 时间族）**不是**输入面，⌘A 落回平台。

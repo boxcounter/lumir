@@ -56,7 +56,8 @@ Alex 报告：文件树内联重命名的编辑框里 `⌘A` 不能全选；并�
 
 1. **⌘A 的落面 = 任意可编辑文本宿主**（`keymap-commands`）：`editor.select-all` 仍是 `text`
    面命令（作用域与绑定表不变），另由 `NATIVE_INPUT_HOST_COMMAND_IDS` / `coversNativeInputHosts`
-   派生一条**附加面**——原生 `input` / `textarea` / contenteditable 也命中。附加面是命令的属性，
+   派生一条**附加面**——支持整值选中的原生输入宿主（文本类 `input` / `textarea` / contenteditable）
+   也命中（日期 / 时间族 input 平台不支持整值选中，不在此列，见「真实浏览器实测」）。附加面是命令的属性，
    MUST NOT 手写在绑定表里（单测双向对账）；族内其余 `text` 命令 MUST NOT 放宽。
 2. **一处分派**（`keymap-commands` + `text-input-faces`）：装配层的 `selectAllAt` 按事件目标
    （键盘）或当前焦点（菜单）落到：全屏遮罩 → composer → 编辑器 → 原生文本宿主 → 兜底编辑器。

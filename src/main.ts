@@ -4086,7 +4086,9 @@ function selectAllInTextEntry(host: HTMLElement): boolean {
  *   ⑤ 其余焦点（按钮 / 树行 / 空白 chrome）→ 编辑器整篇，与让位前的菜单口径一致。
  *
  *  判定助手都只有一份：`isComposerNode` / `isEditorDomNode` / `isTextEntryHost`。
- *  新增输入面**不需要**在这里加分支——凡原生 input / textarea / contenteditable 都落 ④。 */
+ *  新增输入面**不需要**在这里加分支——凡支持整值选中的原生宿主（文本类 input / textarea /
+ *  contenteditable）都落 ④；日期 / 时间族不在此列（平台不支持整值选中，见 keys.ts 的
+ *  SELECTABLE_INPUT_TYPES），它们不命中 `inputHosts`，⌘A 落回平台。 */
 function selectAllAt(target: EventTarget | null): void {
   if (tableFullscreen.isOpen()) {
     tableFullscreen.selectAll();

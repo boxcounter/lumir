@@ -14,7 +14,8 @@
 按面分派，见 harness 的「composer 的全选」），其余编辑器命令仍派生为 `editor`，其余命令仍派生为 `global`。
 `text` 面里另有**一条附加面**（change fix-text-input-select-all-nov26）：`editor.select-all` 的绑定 SHALL 由命令清单
 `NATIVE_INPUT_HOST_COMMAND_IDS` 派生一个 `inputHosts` 标记（MUST NOT 在绑定表里手写；清单与绑定表由单测双向
-对账），分发器对带该标记的 `text` 绑定 SHALL 在原生输入宿主（`input` / `textarea` / contenteditable）内同样命中
+对账），分发器对带该标记的 `text` 绑定 SHALL 在**支持整值选中的**原生输入宿主（文本类 `input` /
+`textarea` / contenteditable）内同样命中
 ——⌘A 是平台级全选动作，落面是「当前聚焦的那个输入面」，与它是不是 CM 面无关。族内其余命令 MUST NOT 因这条
 附加面放宽到原生宿主（它们的实现作用于编辑器文档）。附加面不改派生结果：`scopeOfCommand` 仍是三值，
 `editor.select-all` 仍派生为 `text`。`text` 作用域的命令实现 SHALL 按事件目标所属的**面**分派
@@ -112,7 +113,7 @@ key equivalent，菜单键等价在 NSApplication 分发阶段就被截获，web
 
 `⌘A` SHALL 由统一键位层按**输入面**分发（change fix-text-input-select-all-nov26）：焦点在编辑器内容区内 →
 编辑器全选；焦点在 harness composer 内 → composer 全选（见 harness 的「composer 的全选」）；焦点在原生输入
-宿主（`input` / `textarea` / contenteditable）内 → 选中该宿主的全部内容（调用宿主自身的全选并 `preventDefault`
+宿主（支持整值选中的文本类 `input` / `textarea` / contenteditable）内 → 选中该宿主的全部内容（调用宿主自身的全选并 `preventDefault`
 显式接管）；焦点不在任何可编辑文本宿主内 → 不消费该键。落面判定 SHALL 只有一处装配层实现（`selectAllAt`），
 键盘按事件目标、菜单按当前焦点走同一个函数；输入面 MUST NOT 各自就地处理该键（合同
 `docs/specs/text-input-faces.md` 的 T1–T3）。菜单点击没有键盘事件可判面，SHALL 按**当前焦点**路由到

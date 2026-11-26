@@ -15,6 +15,11 @@
       绿（对照，证明判据不是恒红）。
 - [x] 1.3 静态对账的反向验证：临时新增一个 `document.createElement("input")` + 本地 `"Cmd-A"` +
       未登记 `.select()` 的探针文件，三条判据分别判红后再删除探针（区分度实测，不是只读断言）。
+- [x] 1.4 真实浏览器核实 `input` 各类型的 `.select()`：number / email 整值选中；date / time /
+      month / week / datetime-local 静默无效（键入仍按段编辑）；`setSelectionRange` 对
+      email / number / 日期时间族抛 `InvalidStateError`。据此把 `isTextEntryHost` 改为正向清单
+      （text / search / tel / url / email / password / number），日期时间族落回平台；补类型矩阵
+      回归（number / email 正例 + date / time 反例 + 全程无 pageerror）。
 
 ## 2. 实现
 

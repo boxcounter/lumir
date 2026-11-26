@@ -1398,11 +1398,17 @@ test("输入面附加面：清单 ↔ 绑定表双向对账，只有 ⌘A 一条
   }
 });
 
-test("isTextEntryHost：文本类 input / textarea / contenteditable 为真，勾选类控件与普通元素为假", () => {
+test("isTextEntryHost：整值可选的 input / textarea / contenteditable 为真，其余控件与日期时间族为假", () => {
+  // 判据是「`.select()` 是否真的选中整值」，不是「是不是 input」。真实浏览器（Chromium 151）实测：
+  // number / email 的 selectionStart 为 null、setSelectionRange 抛 InvalidStateError，但 .select()
+  // 之后键入整段替换；date / time / month / week / datetime-local 的 .select() 静默无效（之后
+  // 键入仍按段编辑）——它们必须落在 false，否则 ⌘A 会被吞掉却什么都不做。
   for (const target of [
     { tagName: "INPUT" },
     { tagName: "input", type: "text" },
     { tagName: "INPUT", type: "search" },
+    { tagName: "INPUT", type: "tel" },
+    { tagName: "INPUT", type: "url" },
     { tagName: "INPUT", type: "password" },
     { tagName: "INPUT", type: "number" },
     { tagName: "INPUT", type: "email" },
@@ -1420,6 +1426,11 @@ test("isTextEntryHost：文本类 input / textarea / contenteditable 为真，�
     { tagName: "INPUT", type: "file" },
     { tagName: "INPUT", type: "button" },
     { tagName: "INPUT", type: "hidden" },
+    { tagName: "INPUT", type: "date" },
+    { tagName: "INPUT", type: "time" },
+    { tagName: "INPUT", type: "month" },
+    { tagName: "INPUT", type: "week" },
+    { tagName: "INPUT", type: "datetime-local" },
     { tagName: "BUTTON" },
     { tagName: "DIV" },
     { isContentEditable: false },
@@ -1429,6 +1440,9 @@ test("isTextEntryHost：文本类 input / textarea / contenteditable 为真，�
   ]) {
     assert.equal(isTextEntryHost(target), false, `${JSON.stringify(target)} MUST NOT 判为文本输入宿主`);
   }
+  // 日期 / 时间族不是「文本输入宿主」，但仍是「可编辑宿主」（打字键守卫的口径不变）。
+  assert.equal(isEditableHost({ tagName: "INPUT", type: "date" }), true);
+  assert.equal(isTextEntryHost({ tagName: "INPUT", type: "date" }), false);
   // 与打字键守卫的判据分界：勾选框也是「可编辑宿主」（守卫照旧让位），但不是「文本输入宿主」。
   assert.equal(isEditableHost({ tagName: "INPUT", type: "checkbox" }), true);
   assert.equal(isTextEntryHost({ tagName: "INPUT", type: "checkbox" }), false);

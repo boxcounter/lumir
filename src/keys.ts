@@ -358,8 +358,9 @@ export const COMPOSER_TEXT_COMMAND_IDS = [
 ] as const;
 
 /**
- * 在 `text` 面的两处 CM 面之外**额外覆盖原生输入宿主**（`input` / `textarea` /
- * contenteditable）的命令组（change fix-text-input-select-all-nov26）。
+ * 在 `text` 面的两处 CM 面之外**额外覆盖原生输入宿主**（支持整值选中的文本类 `input` /
+ * `textarea` / contenteditable，类型边界见 `SELECTABLE_INPUT_TYPES`）的命令组（change
+ * fix-text-input-select-all-nov26）。
  *
  * 为什么单列一个小清单而不扩 `text` 面：`text` 面的判据是「在 composer 内同样成立的文本编辑
  * 命令」，整族若一起覆盖原生输入框，⌃F / ⌃A / ⌃K 等会把输入框里的原生编辑语义抢走（那些命令
@@ -942,7 +943,8 @@ export interface KeymapContext {
   isComposerEvent?(event: KeyboardEvent): boolean;
   /**
    * 事件目标是否落在**任意可编辑文本宿主**内（change fix-text-input-select-all-nov26）：
-   * 编辑器内容区、composer、原生 `input` / `textarea`、contenteditable。
+   * 编辑器内容区、composer、支持整值选中的原生输入宿主（文本类 `input` / `textarea` /
+   * contenteditable；日期 / 时间族不在此列，见 `SELECTABLE_INPUT_TYPES`）。
    *
    * 只有 `inputHosts: true` 的绑定（当前仅 ⌘A → `editor.select-all`）会读它：`text` 面的两处
    * CM 面之外，平台级全选还要落到浮层 / 内联编辑的原生输入框上。族内其余 text 命令 MUST NOT
@@ -978,22 +980,31 @@ export function isEditableHost(target: unknown): boolean {
   return el.isContentEditable === true || tag === "INPUT" || tag === "TEXTAREA";
 }
 
-/** 不接受文本输入的 `input` 类型（勾选框 / 单选框 / 滑块 / 取色 / 文件 / 按钮族 / 隐藏域）。
+/** 支持「整值选中」的 `input` 类型（change fix-text-input-select-all-nov26 的真实浏览器实测，
+ *  Chromium 151）：`.select()` 之后**键入整段替换**的类型才收进本清单——text / search / tel /
+ *  url / email / password / number。
  *
- *  判据来源是 HTML 的 `type` 枚举里**没有「全部文本」语义**的那些；其余类型（text / search /
- *  url / tel / email / password / number / date 系）都按文本输入对待——`.select()` 与
- *  `setSelectionRange` 在它们上都成立。 */
-const NON_TEXT_INPUT_TYPES = new Set([
-  "checkbox",
-  "radio",
-  "range",
-  "color",
-  "file",
-  "button",
-  "submit",
-  "reset",
-  "image",
-  "hidden",
+ *  为什么是正向清单而不是「排除勾选框」的反向清单：平台对某些类型（日期 / 时间族）的 `.select()`
+ *  是**静默无效**的，反向清单会把它们当成输入面、吞掉 ⌘A 后什么都不做。正向清单的默认是
+ *  「不认识就不算输入面」——⌘A 落回平台，而不是被本层吞掉；将来新增类型也会走这条安全默认。
+ *
+ *  实测口径（Chromium 151，页面内合成 input）：
+ *  - `select()` 对**任何** type 都不抛错；
+ *  - `setSelectionRange` 对 email / number / date / time / month / week / datetime-local / color /
+ *    range / checkbox 抛 `InvalidStateError`——本模块只用 `.select()`，MUST NOT 改用
+ *    `setSelectionRange` 做全选；
+ *  - email / number 的 `selectionStart` 恒为 null，但 `.select()` 确实选中整值（键入 `9` 后
+ *    值从 `abc@x.com` / `123` 变成 `9`）；判据因此只看行为，不看 `selectionStart`；
+ *  - date / time / month / week / datetime-local 的 `.select()` 无效果：之后键入 `9`，date 变
+ *    `0009-11-26`、time 变 `09:34`（编辑的是聚焦段，不是整值），故**不**收进本清单。 */
+const SELECTABLE_INPUT_TYPES = new Set([
+  "text",
+  "search",
+  "tel",
+  "url",
+  "email",
+  "password",
+  "number",
 ]);
 
 /**
@@ -1017,9 +1028,10 @@ export function isTextEntryHost(target: unknown): boolean {
   const tag = typeof el.tagName === "string" ? el.tagName.toUpperCase() : "";
   if (tag === "TEXTAREA") return true;
   if (tag !== "INPUT") return false;
-  // 缺省 type 的 `<input>` 在浏览器里就是 text；替身元素没有 type 字段时按 text 处理。
+  // 缺省 / 非法的 type 在浏览器里就是 text（`input.type` 已归一到 "text"）；替身元素没有
+  // type 字段时按 text 处理。日期 / 时间族与勾选类控件不在清单里，见 SELECTABLE_INPUT_TYPES。
   const type = typeof el.type === "string" ? el.type.toLowerCase() : "text";
-  return !NON_TEXT_INPUT_TYPES.has(type);
+  return SELECTABLE_INPUT_TYPES.has(type);
 }
 
 /** 键是不是「打字键」：`event.key` 长度为 1（字母 / 数字 / 符号 / 空格）且不带 ⌘ / ⌃ / ⌥。

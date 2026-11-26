@@ -28,8 +28,10 @@
    `selectAllOf`）。遮罩自己的 keydown 先消费 ⌘A，这一支主要服务菜单路径。
 2. **composer**：`harnessPanel.composerCommand("editor.select-all")`（CM 选区；卡片不参与）。
 3. **编辑器内容区**：`editor.commands["editor.select-all"]`（CM 选区）。
-4. **原生文本宿主**：`HTMLInputElement` / `HTMLTextAreaElement` → `.select()`；contenteditable →
-   DOM Range（`selectAllOf`）。
+4. **原生文本宿主**：`HTMLInputElement`（仅 `SELECTABLE_INPUT_TYPES` 里的类型）/ `HTMLTextAreaElement`
+   → `.select()`；contenteditable → DOM Range（`selectAllOf`）。日期 / 时间族的 `.select()` 在
+   Chromium 上静默无效（键入仍按段编辑），它们**不**算输入面：`inputHosts` 不命中，⌘A 落回平台，
+   MUST NOT 被吞掉（实测与清单见 `docs/specs/text-input-faces.md`）。
 5. **其余焦点**：编辑器整篇（与让位前的菜单口径一致；键盘路径到不了这里——作用域判定先挡住）。
 
 判据助手各一份：`isComposerNode`（既有）、`isEditorDomNode`（从 `keymapContext.isEditorEvent`
@@ -105,7 +107,9 @@
 
 - unit：附加面双向对账、`isTextEntryHost` 矩阵、分发器命中/不命中/组合期、静态对账（含反向探针：
   故意新增输入面 / 本地 Cmd-A / 未登记 `.select()` 时三条判据分别判红）。
-- visual：`text-input-select-all-nov26.spec.ts` 十条（rename 红→绿、新建、搜索、行号、键位面板、
-  菜单路径、非文本面不抢焦点、组合期、编辑器回归、contenteditable 探针）；既有 quick-open /
-  selector-aria-ime / m627 场景回归。
+- visual：`text-input-select-all-nov26.spec.ts` 十一条（rename 红→绿、新建、搜索、行号、键位面板、
+  菜单路径、非文本面不抢焦点、组合期、编辑器回归、contenteditable 探针、**原生 input 类型矩阵**）；
+  既有 quick-open / selector-aria-ime / m627 场景回归。类型矩阵的由来：真实浏览器实测发现
+  date / time 族的 `.select()` 静默无效（number / email 则整值选中），判据因此改为正向清单并补
+  number / email 正例 + date / time 反例。
 - 真机：场景 881（本轮只更新文件，不执行；由后续验收批跑 WKWebView 的键盘通道）。
