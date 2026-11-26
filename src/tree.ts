@@ -1054,6 +1054,10 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     // Enter 提交、Esc 取消。两个键在输入框内就地消费（preventDefault）：编辑器键位层
     // 的作用域按「事件目标是否在 contentDOM 内」判定，这里本来就不命中；显式消费是给
     // 「以后谁在 window 上加监听」留一道不依赖作用域的保险。
+    // ⌘A **不在**这里接管（change fix-text-input-select-all-nov26）：内联编辑框是原生
+    // `input`，统一键位层的 `editor.select-all` 带 `inputHosts` 附加面，按事件目标落到本框
+    // 并调用其 `.select()`。MUST NOT 在此另写 `case "Cmd-A"`——各输入面各写一份就是本
+    // change 收掉的缺陷形态（重命名漏写、⌘A 静默落空）。
     input.addEventListener("keydown", (event) => {
       const token = keyToken(event);
       if (token === "Enter") {

@@ -1681,15 +1681,10 @@ class VaultSwitcher implements VaultSwitcherHandle {
     const token = keyToken(event);
     if (token === null) return;
     switch (token) {
-      // 输入框内的全选必须由本层显式接管（与 Quick Open / TOC 同源，change
-      // fix-selector-ime-aria-nov25：筛选框是「输入面」，合同见 quick-open 的「输入面内的全选
-      // （⌘A）」）。WKWebView 是否把原生 Select All 送进 input 不归本仓控制；直接选中输入框内容
-      // 并阻止默认行为，MUST NOT 绕到 editor.select-all（那会选中正文、丢掉输入串）。组合期已由
-      // 本方法首行守卫挡掉，不会走到这里。
-      case "Cmd-A":
-        event.preventDefault();
-        this.input.select();
-        return;
+      // ⌘A 不在此列（change fix-text-input-select-all-nov26）：筛选框是「输入面」，但全选不再由
+      // 本浮层就地接管——统一键位层的 `editor.select-all` 带 `inputHosts` 附加面，落到任意原生
+      // 文本宿主（含本筛选框）时调用该宿主的 `.select()`；MUST NOT 绕到 editor.select-all
+      //（那会选中正文、丢掉输入串）。组合期已由本方法首行守卫挡掉，不会走到分发表。
       // ⌃N / ⌃P 是 Emacs 的 next-line / previous-line，与 ↑↓ 完全等价（同一落点、同一钳制），
       // 共用 move() 这一份实现——浮层里 MUST NOT 有第二套下标逻辑（与大纲浮层 M157 同口径）。
       case "ArrowDown":

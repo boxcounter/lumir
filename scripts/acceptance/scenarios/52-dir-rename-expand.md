@@ -63,13 +63,14 @@ steps:
         ax: { has: '/AXTextField = "rensub" /' }
       - label: 输入框持焦点（下一步的注入落在它身上）
         ax: { focused: "AXTextField" }
-  # M768 通道审计（保留 AX，不切 cgevent）：⌘A 打在**目录重命名的原生 `<input>`** 上，不在应用的
-  # 键位层作用域里（`src/keys.ts` 的 `Cmd-a → editor.select-all` 属 `text` 面，只认编辑器 / composer
-  # 两个事件源；原生输入框里由 WebKit 自己的 selectAll 处理）。判据只要求「文本被选中」让下一条
-  # typeInNode 替换之，AX 全选在同一个原生控件上给出的正是这个语义 ⇒ 保留 KimiCU 的 `cmd+a`。
-  - name: 全选原名（chord 盲发不重试；typeInNode 的整串注入会替换选区）
+  # change fix-text-input-select-all-nov26：目录重命名框是**输入面**，⌘A 由应用的统一键位层
+  # 接管（`editor.select-all` 的 `inputHosts` 附加面 → `selectAllAt` → 输入框 `.select()`）。
+  # MUST 走 `channel: cgevent` 的真键盘事件：KimiCU 的 `cmd+a` 走 AX 全选兼容路径（零键盘事件），
+  # 验不到应用的分派，也会把「⌘A 静默落空」判成绿。
+  - name: 全选原名（真实键盘事件；typeInNode 的整串注入会替换选区）
     do: key
     key: "cmd+a"
+    channel: cgevent
   - name: 输入新名（M507：原生输入原子注入，整串一次 + 计数回读；逐字符 press_key 会丢 'e'）
     do: typeInNode
     target: { role: AXTextField, name: "rensub|rendir" }
@@ -111,10 +112,11 @@ steps:
         ax: { has: '/AXTextField = "rendir" /' }
       - label: 输入框持焦点
         ax: { focused: "AXTextField" }
-  # M768 通道审计（保留 AX）：同本场景第一处 ⌘A——原生输入框的全选，判据只要求文本被选中。
+  # 同本场景第一处 ⌘A：真实键盘事件（应用接管）。
   - name: 全选并输入原名（M507 原子注入）
     do: key
     key: "cmd+a"
+    channel: cgevent
   - name: 输入 rensub
     do: typeInNode
     target: { role: AXTextField, name: "rendir|rensub" }
@@ -239,7 +241,7 @@ Alex 2026-09-27 的现场（fieldnotes vault，非只读）：把 `.local` 下�
 - **外部进程改名的展开态迁移不在本场景**：判据只认 app 内自己发起的改名（登记配不上就不迁移，
   `tests/unit/tree-rename.test.ts` 有反向对照条）。外部改名（Finder / 别的编辑器）在真机侧只保
   证「目录仍可展开、子树齐全」，本场景不构造那条现场。
-- **注入通道的两条老账**：① `cmd+a` 是 chord，套件盲发不重试（丢键就红，先复跑一次再判产品
+- **注入通道的两条老账**：① `cmd+a`（cgevent 真键盘事件）是 chord，套件盲发不重试（丢键就红，先复跑一次再判产品
   缺陷）；② 改名素材串注入已迁 `do: typeInNode`（M507：`type_text` 整串一次 + M143 计数回读重试），
   不再逐字符 `do: keys`——后者对 WKWebView 丢键（'e' 本机确定性丢失，M497 归因、M504 实测本场景
   「rendir」落「rndir」），回读重试修不了确定性丢失。两条见 `scripts/acceptance/README.md` 的
