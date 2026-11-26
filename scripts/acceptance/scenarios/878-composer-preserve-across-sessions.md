@@ -146,25 +146,31 @@ steps:
         ax: { has: "harness-note.md · Harness 验收笔记" }
       - shot: 04-恢复会话后
 
-  - name: 点 composer 建立输入焦点
+  - name: 记录发送前正文（防止 Enter 漏进编辑器覆盖引用行）
+    do: recordEditor
+    as: preserve878-editor-before
+
+  - name: 点 composer 卡片下方的空白输入区建立焦点（点卡片会按既定语义跳回正文）
     do: clickInNode
-    target: { role: AXTextArea, name: "问点什么|preserve878" }
+    target: { role: AXTextArea, name: "问点什么|preserve878", dy: 0.9 }
 
   - name: 发送保留下来的问题（下一次发送进入当前选中会话）
     do: key
     key: enter
 
-  - name: 等回答到达
+  - name: 等发送被受理（composer 清空；历史回答不能冒充新一轮）
     do: waitFor
     waitFor:
-      has: ["验收回答：上下文已收到。"]
+      not: ["/AXTextArea = \"preserve878/"]
     timeoutMs: 30000
 
   - name: 断言发送落在恢复出的会话
     do: settle
     expect:
-      - label: 保留的问题作为一条用户消息上屏
-        ax: { has: "preserve878 keep this question" }
+      - label: 保留的问题作为 transcript 静态文本上屏（不是 composer 自身的 AXTextArea）
+        ax: { has: "/AXStaticText = \"preserve878 keep this question/" }
+      - label: Enter 没有落进编辑器或覆盖引用行
+        editor: { unchangedSince: preserve878-editor-before }
       - label: 恢复出的会话在首次真实请求时发布新文件（opened_from=restore）
         file: { path: "env:harness/sessions/*/*.jsonl", has: '"opened_from":"restore"' }
       - label: 问题原文进入该会话的 JSONL（下一次请求的 input）

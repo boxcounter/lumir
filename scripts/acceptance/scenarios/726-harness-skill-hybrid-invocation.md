@@ -304,10 +304,10 @@ steps:
         ax: { has: "/explicit_skill acc-skill-abc · 已加载/" }
       - label: 恢复后的路径 Skill 成功行同样保留终态词
         ax: { has: "/explicit_skill tmp-acc · 已加载/" }
-      - label: 恢复后的禁手动失败行仍带原因
-        ax: { has: "/explicit_skill acc-background · error · skill_user_invocation_disabled/" }
-      - label: 恢复后的权限拒绝行仍带原因
-        ax: { has: "/explicit_skill default · denied · permission_denied/" }
+      - label: 恢复后的禁手动失败行仍带原因（恢复尾注 = failureTextOf 的 code + message，无 live 的 error 前缀，见场景 96）
+        ax: { has: "/explicit_skill acc-background · skill_user_invocation_disabled: /" }
+      - label: 恢复后的权限拒绝行仍带原因（同上，无 denied 前缀；规则原文仍在）
+        ax: { has: "/explicit_skill default · permission_denied: /" }
       - label: 恢复后的痕迹行不含正文
         ax: { not: "ACC-TMP-BODY" }
   - name: 恢复后真实点击 composer，准备产生恢复后的首个新请求
@@ -343,7 +343,8 @@ steps:
 发现期按现状读取 SKILL.md 解析 description 与策略；负向判据只约束对应执行期输出面，不声称发现期零 IO。
 显式 Skill 的可见痕迹由会话留存里的 `lumir_skill_trace` 字段承载：成功与失败各一条工具名
 `explicit_skill` 的痕迹行；成功行的终态词「已加载」是可见、AX 可读的文本（勾图标 aria-hidden，不承担
-语义），失败原因只在该字段与工具行上、不进正文 part；恢复路径从同一字段重建并保留终态词。
+语义），失败原因只在该字段与工具行上、不进正文 part；恢复路径从同一字段重建。成功行保留「已加载」；
+失败行与既有工具行同口径显示 `{code}: {message}`，不带 live 摘要里的 `error · ` / `denied · ` 前缀。
 「失败原因不冒充正文 part」的负向判据按 `"text":"…<code>…"` 形态匹配（键序无关），反例实测
 （text 在 type 前 / type 在 text 前 / 转义引号前缀）均判红，验证记录随本轮返修证据存档。
 provider wire 层面的剥离（`lumir_skill` / `lumir_skill_trace` 均不出现）由 Rust 单测覆盖，本场景不做
