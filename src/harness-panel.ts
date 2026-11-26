@@ -1899,6 +1899,19 @@ export function toolArgsText(name: string, summary: string): string {
   return humanizeToolArgs(name, summary);
 }
 
+/**
+ * 显式 Skill 痕迹行的**成功终态词**（change add-explicit-skill-trace-nov26 评审 P1-1）：
+ * 痕迹行必须有**可见且 AX 可读**的终态，不能只靠 `aria-hidden` 的勾图标（图标是纯装饰，
+ * 读屏与文本判据都读不到）。失败侧已由失败尾注承担，这里只补成功侧；其余工具行保持既有
+ * 三段式（成功不加尾注）。live 与恢复两条路径共用本函数，两侧不会各写一套终态词。
+ */
+export function explicitSkillSuccessTail(
+  name: string,
+  failed: boolean,
+): string | undefined {
+  return !failed && name === "explicit_skill" ? t("D1029") : undefined;
+}
+
 /** unified diff 的文件名（core diff.rs 头两行 `--- a/{path}` / `+++ b/{path}`；取不到 → null）。 */
 export function diffPathOf(diff: string): string | null {
   for (const line of diff.split("\n")) {
@@ -7736,7 +7749,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // （判据「是 JSON 才取参数」），而 M528 起 core 的成品摘要不是 JSON ⇒ 失败行的参数格
         // 整格空掉、命令本体消失（修前的可见性本来就分两半：arguments ≤80 字的调用严格版能
         // 解析出命令、看得见；>80 字的调用原文截断后照样看不见——M528 与这处一并收口）。
-        createToolText(name, toolArgsText(name, args), failed ? summary : undefined, toolPathTargetsOf(name, args)),
+        createToolText(name, toolArgsText(name, args), failed ? summary : explicitSkillSuccessTail(name, failed), toolPathTargetsOf(name, args)),
       );
     } else {
       // 无 running 行（乱序 done / 桩环境）：没有更早的那份摘要可用，done 原文按形状判定。
@@ -7748,7 +7761,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         createToolText(
           name,
           humanizeToolArgsStrict(name, summary),
-          failed ? summary : undefined,
+          failed ? summary : explicitSkillSuccessTail(name, failed),
           toolPathTargetsOf(name, summary),
         ),
       );
@@ -10125,7 +10138,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     row.className = failed ? "lumir-hp-tool-row is-fail" : "lumir-hp-tool-row is-done";
     const tail = failed
       ? (failureTextOf(record) ?? (TOOL_FAILED_SUMMARY.test(summary) ? summary : undefined))
-      : undefined;
+      : explicitSkillSuccessTail(name, failed);
     row.append(
       createToolIcon(failed ? "fail" : "done"),
       createToolText(

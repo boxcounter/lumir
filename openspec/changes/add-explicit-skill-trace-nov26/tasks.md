@@ -44,3 +44,11 @@
 - [x] 6.4 `scripts/docs-check.sh`
 - [x] 6.5 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`
 - [ ] 6.6 真机验收场景 726 + 77（**本轮未执行**：mission 明令本轮不执行真机操作；场景静态契约已通过，行为面等待独立真机批次）
+
+## 7. 独立评审返修（verdict: needs-changes → 返修）
+
+- [x] 7.1 P1-1 成功痕迹补可见且 AX 可读的终态词「已加载」（D1029；live 与恢复共用 `explicitSkillSuccessTail`），726 成功断言必须命中 `· 已加载`
+- [x] 7.2 P2-1 长名只在展示字段截断；正文标题与 `lumir_skill` 使用完整原名，补 >80 字合法长名回归
+- [x] 7.3 P2-2 目录在但 SKILL.md 缺席稳定报 `skill_file_missing`（与 `skill_not_found` 分列），修正测试与设计口径
+- [x] 7.4 P2-3 726 负向断言改为键序无关的 `"text":"…<code>…"` 判据，并用两种键序 + 转义前缀反例实测必红（证据 `.local/missions/add-explicit-skill-trace-nov26/counterexample-p23.log`）
+- [x] 7.5 返修后复跑：Rust 目标与全 lib / 前端单测 / 结构视觉子集 / docs-check / validate（读数见证据目录）

@@ -775,19 +775,32 @@ fn explicit_skill_load<C: RunContext>(
     raw_name: &str,
     ts: u64,
 ) -> (Option<serde_json::Value>, ExplicitSkillTrace) {
-    // 面板 / 留存里的名字有界（防止畸形请求把超长串带进每条请求的记录）；加载判定仍用原文。
-    let name = truncate_summary(raw_name);
+    // 痕迹名只是**展示字段**：面板 / 留存里的名字有界（防止畸形请求把超长串带进每条请求的
+    // 记录）。正文标题与 `lumir_skill` 标记 MUST 用完整原名——它们进模型上下文，截断会改变
+    // 既有注入内容（评审 P2-1）。
+    let display_name = truncate_summary(raw_name);
     if !super::context::explicit_skill_name_valid(raw_name) {
         let output = ToolOutput::err(
             "skill_name_invalid",
-            format!("技能名不合法（必须是 Skill 根下的单段目录名）：{name}"),
+            format!("技能名不合法（必须是 Skill 根下的单段目录名）：{display_name}"),
         );
-        let (_, trace) = explicit_skill_trace_from_output(&name, &output, ts);
+        let (_, trace) = explicit_skill_trace_from_output(&display_name, &output, ts);
         return (None, trace);
     }
     let Some(skill) = skills.iter().find(|skill| skill.name == raw_name) else {
-        let output = ToolOutput::err("skill_not_found", format!("技能 {name} 不存在"));
-        let (_, trace) = explicit_skill_trace_from_output(&name, &output, ts);
+        // 目录在但 SKILL.md 缺席（评审 P2-2）：发现层按既有口径跳过这类目录，执行期据此
+        // 稳定报 skill_file_missing——与「没有这个 Skill」区分开，不改变发现 / 索引行为。
+        let (code, message) =
+            if super::context::skill_dir_without_manifest(ctx.vault_root(), raw_name) {
+                (
+                    "skill_file_missing",
+                    format!("技能 {display_name} 的目录里缺少 SKILL.md"),
+                )
+            } else {
+                ("skill_not_found", format!("技能 {display_name} 不存在"))
+            };
+        let output = ToolOutput::err(code, message);
+        let (_, trace) = explicit_skill_trace_from_output(&display_name, &output, ts);
         return (None, trace);
     };
     let args = serde_json::json!({"name": raw_name});
@@ -795,32 +808,32 @@ fn explicit_skill_load<C: RunContext>(
     if verdict.decision != Decision::Allow {
         let message = denied_message("skill_load", raw_name, verdict.reason.as_ref());
         let output = ToolOutput::err("permission_denied", message);
-        let (_, trace) = explicit_skill_trace_from_output(&name, &output, ts);
+        let (_, trace) = explicit_skill_trace_from_output(&display_name, &output, ts);
         return (None, trace);
     }
     if !skill.invocation.valid {
         let output = ToolOutput::err(
             "skill_invocation_invalid",
-            format!("技能 {name} 的调用元数据非法"),
+            format!("技能 {display_name} 的调用元数据非法"),
         );
-        let (_, trace) = explicit_skill_trace_from_output(&name, &output, ts);
+        let (_, trace) = explicit_skill_trace_from_output(&display_name, &output, ts);
         return (None, trace);
     }
     if !skill.invocation.user_invocable {
         let output = ToolOutput::err(
             "skill_user_invocation_disabled",
-            format!("技能 {name} 不允许用户显式调用"),
+            format!("技能 {display_name} 不允许用户显式调用"),
         );
-        let (_, trace) = explicit_skill_trace_from_output(&name, &output, ts);
+        let (_, trace) = explicit_skill_trace_from_output(&display_name, &output, ts);
         return (None, trace);
     }
     let output = tools::load_explicit_skill(skill);
-    let (content, trace) = explicit_skill_trace_from_output(&name, &output, ts);
+    let (content, trace) = explicit_skill_trace_from_output(&display_name, &output, ts);
     let part = content.map(|content| {
         serde_json::json!({
             "type": "input_text",
-            "text": explicit_skill_text(&name, &content),
-            "lumir_skill": name,
+            "text": explicit_skill_text(raw_name, &content),
+            "lumir_skill": raw_name,
         })
     });
     (part, trace)
@@ -4695,7 +4708,7 @@ mod tests {
         );
         assert_eq!(trace_of("invalid")["code"], "skill_invocation_invalid");
         assert_eq!(trace_of("too-large")["code"], "skill_too_large");
-        assert_eq!(trace_of("no-file")["code"], "skill_not_found");
+        assert_eq!(trace_of("no-file")["code"], "skill_file_missing");
         assert_eq!(trace_of("bad grammar")["code"], "skill_name_invalid");
         assert_eq!(trace_of("unreadable")["code"], "skill_read_failed");
         assert!(
@@ -5026,6 +5039,129 @@ mod tests {
         assert_eq!(trace.status, "error");
         assert_eq!(trace.code.as_deref(), Some("skill_read_failed"));
         assert_eq!(trace.message.as_deref(), Some("读取 SKILL.md 失败"));
+    }
+
+    /// 评审 P2-2：目录在但 SKILL.md 缺席（发现层按既有口径跳过）必须与「没有这个 Skill」分开——
+    /// 前者稳定报 `skill_file_missing`，后者 `skill_not_found`；两者都留痕迹、都不静默。
+    #[test]
+    fn explicit_skill_trace_distinguishes_missing_manifest_from_unknown_name() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("trace-missing-manifest");
+        let runtime = Runtime::default();
+        runtime
+            .acquire_turn(&fixture.scope, &fixture.config)
+            .unwrap();
+        let mut client = llm::MockClient::from_str(
+            r#"{"responses":[{"text":"done"}]}"#,
+            "skill-trace-missing-manifest",
+        )
+        .unwrap();
+        let _counter_lock = tools::skill_content_test_lock();
+        tools::reset_skill_content_load_count();
+        run_turn_for_with_skills(
+            &NullSink,
+            &runtime,
+            &fixture.scope,
+            &fixture.config,
+            "question",
+            None,
+            vec!["no-file".into(), "missing".into()],
+            &mut client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert_eq!(tools::skill_content_load_count(), 0);
+        let input = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let user = input.iter().find(|item| item["role"] == "user").unwrap();
+        let traces = user["lumir_skill_trace"].as_array().unwrap();
+        let trace_of = |name: &str| traces.iter().find(|trace| trace["name"] == name).unwrap();
+        assert_eq!(trace_of("no-file")["code"], "skill_file_missing");
+        assert!(
+            trace_of("no-file")["message"]
+                .as_str()
+                .unwrap()
+                .contains("缺少 SKILL.md"),
+            "缺文件的原因必须可读"
+        );
+        assert_eq!(trace_of("missing")["code"], "skill_not_found");
+        assert_eq!(
+            trace_rows(&runtime.snapshot(&fixture.scope, &fixture.config).messages).len(),
+            2,
+            "两类失败都留行"
+        );
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    /// 评审 P2-1：合法长名字（>80 字）只在**展示字段**截断；进入正文标题与 `lumir_skill` 的
+    /// 必须是完整原名，注入行为与基线逐字一致。
+    #[test]
+    fn explicit_skill_long_name_keeps_full_name_in_body_and_marker() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("trace-long-name");
+        let long_name = format!("long-skill-{}", "a".repeat(80));
+        assert!(long_name.chars().count() > 80);
+        let dir = fixture.root.join(".agents/skills").join(&long_name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            "---\ndescription: 长名合成\n---\nUNIQUE-LONG-BODY",
+        )
+        .unwrap();
+        let runtime = Runtime::default();
+        runtime
+            .acquire_turn(&fixture.scope, &fixture.config)
+            .unwrap();
+        let mut client = llm::MockClient::from_str(
+            r#"{"responses":[{"text":"done"}]}"#,
+            "skill-trace-long-name",
+        )
+        .unwrap();
+        let _counter_lock = tools::skill_content_test_lock();
+        tools::reset_skill_content_load_count();
+        run_turn_for_with_skills(
+            &NullSink,
+            &runtime,
+            &fixture.scope,
+            &fixture.config,
+            "question",
+            None,
+            vec![long_name.clone()],
+            &mut client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert_eq!(tools::skill_content_load_count(), 1);
+        let input = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let user = input.iter().find(|item| item["role"] == "user").unwrap();
+        let parts = user["content"].as_array().unwrap();
+        let skill_part = parts
+            .iter()
+            .find(|part| part.get("lumir_skill").is_some())
+            .expect("成功加载必须有正文 part");
+        assert_eq!(
+            skill_part["lumir_skill"], long_name,
+            "本地标记必须是完整原名（截断只允许发生在展示层）"
+        );
+        let body_text = skill_part["text"].as_str().unwrap();
+        assert!(
+            body_text.starts_with(&format!("[已加载 Skill：{long_name}]")),
+            "正文标题必须是完整原名：{body_text}"
+        );
+        assert!(body_text.contains("UNIQUE-LONG-BODY"));
+        let trace = &user["lumir_skill_trace"][0];
+        assert_eq!(trace["status"], "done");
+        let display = trace["name"].as_str().unwrap();
+        assert_ne!(display, long_name.as_str(), "展示名必须截断");
+        assert_eq!(display.chars().count(), 81, "展示名 = 80 字 + 省略号");
+        let rows = trace_rows(&runtime.snapshot(&fixture.scope, &fixture.config).messages);
+        assert_eq!(trace_args_name(&rows[0].2), display, "面板参数格取展示名");
+        let wire = serde_json::to_string(client.received_inputs()).unwrap();
+        assert!(wire.contains(&long_name), "wire 的段头保留完整原名");
+        assert!(!wire.contains("lumir_skill"));
+        assert!(wire.contains("UNIQUE-LONG-BODY"));
+        let _ = std::fs::remove_dir_all(&fixture.root);
     }
 
     #[test]

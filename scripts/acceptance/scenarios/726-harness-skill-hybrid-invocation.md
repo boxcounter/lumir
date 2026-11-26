@@ -114,8 +114,8 @@ steps:
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: '/"lumir_skill_trace":\[[^\]]*"name":"tmp-acc","status":"done"/' }
       - label: 路径 Skill 的成功痕迹在场
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", has: '/"lumir_skill_trace":\[[^\]]*"name":"acc-skill-abc","status":"done"/' }
-      - label: 失败原因只活在痕迹字段，不冒充正文 part
-        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", not: '/"type":"input_text"[^}]*skill_user_invocation_disabled/' }
+      - label: 失败原因只活在痕迹字段，不冒充正文 part（反例实测见证据：text 键在任何位置都判红）
+        file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", not: '/"text":"(?:[^"\\]|\\.)*skill_user_invocation_disabled/' }
       - label: deny 的显式正文未注入
         file: { path: "env:harness/sessions/acc-hybrid/*.jsonl", not: "ACC-DENY-BODY" }
       - label: 禁手动正文未进入显式回合
@@ -131,10 +131,10 @@ steps:
     do: click
     target: { role: AXButton, name: "个工具调用 · 全部完成" }
     expect:
-      - label: 两个成功 Skill 各有已加载痕迹行
-        ax: { has: "/explicit_skill acc-skill-abc/" }
-      - label: 路径 Skill 的成功痕迹行在场
-        ax: { has: "/explicit_skill tmp-acc/" }
+      - label: 成功行必须带可见且 AX 可读的「已加载」终态（只有名字不算）
+        ax: { has: "/explicit_skill acc-skill-abc · 已加载/" }
+      - label: 路径 Skill 的成功痕迹同样带终态词
+        ax: { has: "/explicit_skill tmp-acc · 已加载/" }
       - label: 禁手动工具行同时绑定 acc-background 与专用错误
         ax: { has: "/explicit_skill acc-background · error · skill_user_invocation_disabled/" }
       - label: 非法工具行同时绑定 acc-invalid 与专用错误
@@ -300,10 +300,10 @@ steps:
     do: click
     target: { role: AXButton, name: "5 个工具调用 · 全部完成" }
     expect:
-      - label: 恢复后的成功行仍在
-        ax: { has: "/explicit_skill acc-skill-abc/" }
-      - label: 恢复后的路径 Skill 成功行仍在
-        ax: { has: "/explicit_skill tmp-acc/" }
+      - label: 恢复后的成功行仍在且保留「已加载」终态
+        ax: { has: "/explicit_skill acc-skill-abc · 已加载/" }
+      - label: 恢复后的路径 Skill 成功行同样保留终态词
+        ax: { has: "/explicit_skill tmp-acc · 已加载/" }
       - label: 恢复后的禁手动失败行仍带原因
         ax: { has: "/explicit_skill acc-background · error · skill_user_invocation_disabled/" }
       - label: 恢复后的权限拒绝行仍带原因
@@ -342,7 +342,10 @@ steps:
 本场景只证明 mock 链路下的注入、留存、投影、策略执行和发送行为，不证明真实模型会遵守索引提示。
 发现期按现状读取 SKILL.md 解析 description 与策略；负向判据只约束对应执行期输出面，不声称发现期零 IO。
 显式 Skill 的可见痕迹由会话留存里的 `lumir_skill_trace` 字段承载：成功与失败各一条工具名
-`explicit_skill` 的痕迹行，失败原因只在该字段与工具行上、不进正文 part；恢复路径从同一字段重建。
+`explicit_skill` 的痕迹行；成功行的终态词「已加载」是可见、AX 可读的文本（勾图标 aria-hidden，不承担
+语义），失败原因只在该字段与工具行上、不进正文 part；恢复路径从同一字段重建并保留终态词。
+「失败原因不冒充正文 part」的负向判据按 `"text":"…<code>…"` 形态匹配（键序无关），反例实测
+（text 在 type 前 / type 在 text 前 / 转义引号前缀）均判红，验证记录随本轮返修证据存档。
 provider wire 层面的剥离（`lumir_skill` / `lumir_skill_trace` 均不出现）由 Rust 单测覆盖，本场景不做
 wire 层断言。
 既有场景 77 是默认自动能力回归基线，文件与 fixture 均不由本场景修改；执行批次应连同 77 一起跑。

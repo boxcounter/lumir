@@ -2986,6 +2986,9 @@ const COPY_TABLE = {
     zh: "enabled 或 approval 非法：请选择有效值后再保存",
     en: "enabled or approval is invalid: choose valid values before saving",
   },
+  // 显式 Skill 痕迹的成功终态（change add-explicit-skill-trace-nov26 评审 P1-1）：痕迹行必须
+  // 有可见且 AX 可读的终态词——勾图标 aria-hidden，不承担语义；失败侧沿用失败尾注。
+  D1029: { zh: "已加载", en: "Loaded" },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

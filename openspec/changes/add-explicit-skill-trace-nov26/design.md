@@ -48,6 +48,10 @@ Live 与恢复 MUST 用同一个构造函数（`turn::explicit_skill_panel_messa
 `started` / `done` 事件仍发（复用既有 `tool_call` 事件与 call_id 配对），`done` 摘要沿用
 `summarize_result`（成功 = 「成功」，失败 = `状态 · 错误码: 原因`）。
 
+**成功终态必须可读**（评审 P1-1）：痕迹行的成功终态词 D1029「已加载」由前端
+`explicitSkillSuccessTail` 渲染在行尾注（live 与恢复共用），是可见文本、AX 可读；勾图标
+`aria-hidden`，MUST NOT 被当作终态的唯一载体。失败侧继续由失败尾注承担。
+
 ## 4. 执行顺序与去重
 
 1. 回合开始按当回合发现结果解析名字（既有顺序：grammar → 去重 → 发现 → 权限 → 元数据 → 入口策略 →
@@ -72,11 +76,17 @@ Live 与恢复 MUST 用同一个构造函数（`turn::explicit_skill_panel_messa
 | 权限判定非 Allow | `permission_denied`（文案沿用 `denied_message`） | denied |
 | 调用元数据非法 | `skill_invocation_invalid` | error |
 | `user-invocable: false` | `skill_user_invocation_disabled` | error |
-| SKILL.md 缺失 / 不可读 / 超限 | `skill_file_missing` / `skill_read_failed` / `skill_too_large`（加载器既有码） | error |
+| 目录在但 SKILL.md 缺席 | `skill_file_missing`（执行期按双根目录诊断；发现层仍按既有口径跳过、不改索引） | error |
+| 已发现条目在执行期缺文件 / 不可读 / 超限 | `skill_file_missing` / `skill_read_failed` / `skill_too_large`（加载器既有码） | error |
 | 加载成功但取不到正文字符串（防御分支） | `skill_content_missing` | error |
 
 消息文本不复制工具错误的整份可用列表：显式失败是用户面记录，`skill_not_found` 只写「技能 X 不存在」，
-避免把全部技能名塞进每条请求的留存里。
+避免把全部技能名塞进每条请求的留存里。**「目录在但缺 SKILL.md」与「没有这个 Skill」分列**（评审 P2-2）：
+前者报 `skill_file_missing`，后者报 `skill_not_found`；发现层行为不变。
+
+**名字截断只发生在展示层**（评审 P2-1）：痕迹项的 `name` 按工具行长度预算截断（80 字 + 省略号），
+但正文标题 `[已加载 Skill：<名字>]` 与本地标记 `lumir_skill` MUST 使用**完整原名**——它们进模型
+上下文，截断会改变既有注入内容。
 
 ## 6. 不改变的面（回归边界）
 
