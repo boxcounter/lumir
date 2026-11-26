@@ -10,7 +10,7 @@ seed:
   sessions:
     acc-save-all: { tabs: [tabs-a.md, tabs-b.md], active: tabs-a.md }
 steps:
-  - name: 等启动恢复把两个标签建出来
+  - name: 等启动恢复把两个标签建出来，并确认保存全部代次处于初始态
     do: waitFor
     waitFor:
       has: ["/AXRadioButton \\(tabs-a\\.md\\)/", "/AXRadioButton \\(tabs-b\\.md\\)/"]
@@ -18,6 +18,8 @@ steps:
       - shot: 恢复后的标签条
       - label: 前台是 tabs-a
         editor: { has: "标签场景 A" }
+      - label: 保存全部代次初始态（save-all#0 idle；本场景之前的操作没有触发过保存全部）
+        node: { role: AXStaticText, name: "^save-all#0 idle$", present: true }
 
   - name: 在第一个标签里键入（制造脏标签 A）
     do: type
@@ -56,17 +58,19 @@ steps:
     do: click
     target: { role: AXMenuItem, name: "^Save All$" }
 
-  - name: 等保存屏障的**正向完成信号**（D1035）
+  - name: 等**本次代次**的保存全部完成标记（K3 P1-3：只认 save-all#1 ok，不认旧 toast 文本）
     do: waitFor
     waitFor:
-      has: ["已保存全部更改"]
+      has: ["save-all#1 ok"]
     timeoutMs: 15000
     expect:
       - shot: 保存全部之后
-      - label: 完成终态上屏（缺它即判失败，不用「没有错误提示」冒充成功）
-        ax: { has: "已保存全部更改" }
-      - label: 失败终态 MUST NOT 出现
-        ax: { not: "未能保存全部更改" }
+      - label: 本次操作的完成标记是节点级精确形态（不是全树子串）
+        node: { role: AXStaticText, name: "^save-all#1 ok$", present: true }
+      - label: 旧代次 / 并发 busy / 失败态 MUST NOT 作为本次成功判据
+        node: { role: AXStaticText, name: "^save-all#1 busy$", present: false }
+      - label: 失败标记 MUST NOT 出现
+        node: { role: AXStaticText, name: "^save-all#1 failed$", present: false }
 
   - name: 两个标签的内容都真的落进了 vault（磁盘判据，不是「dirty 点消失」）
     do: settle
@@ -86,11 +90,16 @@ steps:
 - 这条场景守的是产品侧「保存全部」能力的真机链路：原生 **File → Save All** 菜单项（不带
   accelerator，默认不占键位）经 `MENU_COMMAND_EVENT` 回到命令层的 `document.save-all`，
   由保存屏障依次完成「保存全部脏标签 → 标签会话 flush → 阅读位置 flush → 后端 dirty 镜像同步」。
-- **正向完成信号是判据本体**：屏障全绿才发 D1035「已保存全部更改」；任一步失败发 D1036
-  并保留现场。验收通道（`--pause-installed`）正是等这条信号才允许 ⌘Q，所以这里必须证明
-  「信号真的会出现」，而不是只证明「文件写进去了」。
+- **正向完成信号是判据本体**（K3 P1-3）：产品在视觉隐藏、AX 可达的节点里维护
+  `save-all#<代次> <running|ok|failed|busy>`；只有屏障全绿才写 `ok`。验收通道（`--pause-installed`）
+  读取触发前的代次，只接受「代次更大且 ok」的标记，旧 toast 文本 / 同一代次的旧信号 / 并发
+  busy 都不可能让它放行。场景里因此用 `node` 精确断言 `save-all#1 ok`，不再用 `ax.has` 子串。
 - **磁盘判据不可省**：完成信号可能被将来的改动改成「无错误即成功」，两个 fixture 的
   `file.has` 把「内容真的落盘」钉死。
+- 会话 / 阅读位置 / 后端镜像写失败与竞态由机器测试覆盖：`tests/unit/save-all.test.ts`
+  （三种失败、同步等待期间新 dirty、并发单飞）与 Rust `put_reports_false_when_disk_write_fails`；
+  其中**会话写失败**另有真机场景 `880b`（`envChmod` 造真实权限失败）。镜像同步失败与竞态无法从
+  界面外部合成，保留在单测层。
 - 安装版暂停通道本身（`--pause-installed`、暂停锁、⌘Q 等原 pid 消失）不在本场景的面内：
   它需要同机常驻的 `/Applications/Lumir.app`，归 `scripts/acceptance/README.md`
   「安装版显式暂停」节与 `lib/installed-app.test.mjs` 的机器判据；真实安装版的整链路验收

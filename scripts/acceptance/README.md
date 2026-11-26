@@ -513,7 +513,7 @@ LaunchServices 复原 / `--recover-installed` 之类出口；崩溃 / 断电同�
 | 默认行为不变 | 没有 `--pause-installed` 时 `lib/installed-app.mjs` 一行都不执行；`--check` / `--list` 不会碰安装版 |
 | 只认唯一、canonical 的 `/Applications/Lumir.app` | `discoverInstalledApp`：dev 实例 / 验收 bundle / 别的 `.app` 副本 / 多实例 / pid 或 startedAt 读不到 / bundle id ≠ 产品 id ⇒ **退出码 2、零副作用**（不激活、不点菜单、不 ⌘Q） |
 | 保存前与 ⌘Q 前复核身份 | `verifyInstalledTarget`：pid + startedAt（±2s，抗 pid 复用）+ app 根 + bundle id；任一变化即停手 |
-| 保存屏障 | 经原生 **File → Save All** 触发产品侧 `document.save-all`；等**正向完成终态**（D1035「已保存全部更改」/ en 列），失败终态（D1036）出现或超时 ⇒ 不 ⌘Q、不跑批。屏障本身含 saveAllDirty → 标签会话 flush → 阅读位置 flush → 后端 dirty 镜像同步。**缺完成信号 / AX 空树 / AX 读失败一律判失败**——不得以「没有错误提示」「dirty 点消失」冒充成功 |
+| 保存屏障 | 经原生 **File → Save All** 触发产品侧 `document.save-all`。触发前先读产品维护的机器标记 `save-all#<代次> <state>`（视觉隐藏、AX 可达），触发后**只接受代次更大且 `ok`** 的标记；同一代次的旧 `ok`（上一次保存 / 旧 toast）、`busy`（并发被单飞拒绝）、`failed`、缺标记 / 空树 / 读失败 / 超时 ⇒ 不 ⌘Q、不跑批。屏障本身含 saveAllDirty → 标签会话真实 flush → 阅读位置真实 flush → 后端 dirty 镜像同步；两个 flush 的 `false` 来自后端的**真实磁盘写结果**（不是「resolved 即成功」） |
 | 只用按 pid 激活 + 正常 ⌘Q | System Events 按 `unix id` 置前（MUST NOT 按名字）；`press_key` 发真实 `cmd+q`（走菜单守卫）；等**原 pid** 消失。**禁止** Apple Event quit / SIGTERM / SIGKILL / pkill，禁止绕过 dirty 守卫 |
 | 保存或退出受阻 | 退出码 2、**现场原样保留**（不代点「放弃修改」、不补刀）；安装版仍开着，由用户处置 |
 | 暂停后仍是原样的 preflight | 暂停结束（安装版退出）后 `preflight()` / `assertNoForeignLumir` **原样执行**；验收仍隔离 XDG / 合成 vault / 独立端口 |
@@ -526,8 +526,9 @@ LaunchServices 复原 / `--recover-installed` 之类出口；崩溃 / 断电同�
 
 - 安装版必须是**含 `document.save-all` 的构建**（本 change 起）。旧构建没有 File → Save All，
   暂停会在「等不到菜单项」处退出码 2（不碰文档、不 ⌘Q）——重新安装当前构建后再用。
-- 完成信号按界面语言取 zh / en 两列（安装版用用户自己的配置）；两列与 `src/copy-data.ts`
-  的 D1035 / D1036 由 `lib/installed-app.test.mjs` 对账，漂移即红。
+- 完成信号是**机器标记**（`save-all#<代次> ok`），不是 toast 文案：安装版可能来自另一个文案版本，
+  文本判据会失效或误判；代次标记由产品 `src/save-all.ts` 维护，旧信号 / 并发触发结构上无法冒充。
+  安装版必须包含该标记的构建（本 change 起）；旧构建会在「找不到状态标记」处退出码 2（零副作用）。
 - 菜单可达性依赖 KimiCU 的 AX 树暴露菜单栏（`AXMenuBarItem` / `AXMenuItem`）。读不到即
   退出码 2，**不退回快捷键**（该命令按设计没有默认键位）。
 - **真实安装版的整链路（发现 → 菜单 → 完成信号 → ⌘Q）尚未在真机上跑过**（本轮 mission

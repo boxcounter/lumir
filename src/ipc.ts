@@ -398,15 +398,16 @@ export function vaultSessionGet(vaultId: string): Promise<VaultSession | null> {
 /** 写某 vault 的 pane 布局会话（M318：各 pane 的标签集合 / 顺序 / 激活项 + 分隔条比例，任一
  *  变化后防抖写，切换前与退出前 flush）。`harnessPane` 记 harness pane 是否在场（ADR 0008
  *  Decision 6 的 Phase 2 消费位，change move-harness-to-pane-chat-frame；会话内容不持久化）。
- *  写失败在后端降级为 warning 并照常 resolve：会话只影响「下次打开这个 vault 恢复什么」，不值得
- *  拦停用户的一次切换或退出。只有 vault_id 非法才 reject（路径逃逸防护）。 */
+ *  resolve 的布尔值是**真实落盘结果**：后端磁盘写失败会记 warning 并 resolve `false`（普通调用方
+ *  忽略它，仍只降级、不拦停切换或退出；`document.save-all` 的屏障据此判失败）。只有 vault_id
+ *  非法才 reject（路径逃逸防护）。 */
 export function vaultSessionPut(
   vaultId: string,
   panes: PaneSession[],
   paneSplitRatio: number,
   harnessPane: boolean,
-): Promise<void> {
-  return invoke<void>("vault_session_put", {
+): Promise<boolean> {
+  return invoke<boolean>("vault_session_put", {
     vault_id: vaultId,
     panes,
     pane_split_ratio: paneSplitRatio,
@@ -425,13 +426,14 @@ export function readingPositionGet(vaultId: string): Promise<ReadingPositions | 
 }
 
 /** 写某 vault 的阅读位置表（整份内存镜像；滚动停止后防抖写、切换文件 / 标签 / vault 前与退出
- *  前 flush）。写失败在后端降级为 warning 并照常 resolve：位置只影响「下次打开从哪里开始」，
- *  不值得拦停用户的一次切换或退出。只有 vault_id 非法才 reject（路径逃逸防护）。 */
+ *  前 flush）。resolve 的布尔值是**真实落盘结果**：后端磁盘写失败会记 warning 并 resolve `false`
+ *  （普通调用方忽略它，仍只降级、不拦停；`document.save-all` 的屏障据此判失败）。只有 vault_id
+ *  非法才 reject（路径逃逸防护）。 */
 export function readingPositionPut(
   vaultId: string,
   entries: ReadingPositions["entries"],
-): Promise<void> {
-  return invoke<void>("reading_position_put", { vault_id: vaultId, entries });
+): Promise<boolean> {
+  return invoke<boolean>("reading_position_put", { vault_id: vaultId, entries });
 }
 
 // ---------------------------------------------------------------------------

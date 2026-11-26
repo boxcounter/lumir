@@ -25,19 +25,22 @@ dirty 时照样退出，正是丢数据的那条路。
 
 - **产品侧：`document.save-all` 命令**（统一命令层，默认不绑键、登记进 `KEYLESS_COMMAND_IDS`）：
   依次执行「保存全部脏标签 → 标签会话真实 flush → 阅读位置真实 flush → 复查无新 dirty →
-  后端 dirty 镜像 awaited 同步」，全部成功才给**正向完成终态**（D1035），任一步失败给失败终态
-  （D1036）且不清 dirty、不冒充成功。
+  后端 dirty 镜像 awaited 同步 → **同步后再次复查 dirty**」，全部成功才写**带操作代次的完成标记**
+  （`save-all#<gen> ok`）并给正向终态（D1035），任一步失败给失败终态（D1036）且不清 dirty、
+  不冒充成功。旧完成信号 / 并发触发（单飞 busy）MUST NOT 让下一次操作提前放行。
 - **产品侧：原生 File → Save All 菜单项**（不带 accelerator；点击经 `MENU_COMMAND_EVENT` 回同一
   命令实现，MUST NOT 另开保存链路）。
-- **产品侧：两处 flush 增加真实落盘判据**：`VaultSessionStore.flush()` /
-  `ReadingPositionStore.flush()` 返回 `Promise<boolean>`（写失败 → false，warning 照旧）；既有
-  退出 / 切换调用方仍按 `void` 忽略，语义不变。
+- **产品侧：两处 flush 增加真实落盘判据**：`vault_session_put` / `reading_position_put` 返回
+  `Ok(true|false)`（磁盘写失败仍记 warning 但如实回 false，普通调用方照旧降级 / 不拦停）；
+  `VaultSessionStore.flush()` / `ReadingPositionStore.flush()` 返回 `Promise<boolean>` 并把
+  resolved false 原样上抛；既有退出 / 切换调用方仍按 `void` 忽略，语义不变。
 - **验收侧：`run.mjs --pause-installed`**（opt-in，默认行为一字不变）：只认唯一、canonical 的
   `/Applications/Lumir.app` + 产品 bundle id + 可读 pid / startedAt；dev / 验收 bundle / 多实例 /
   归属不明一律退出码 2 且零副作用；保存前与 ⌘Q 前各复核一次身份。
-- **验收侧：保存屏障与退出通道**：经原生 File → Save All 触发；等正向完成信号（zh / en 两列，
-  与文案表 D1035 对账）后才按 pid 激活并发真实 `cmd+q`，等**原 pid** 消失；禁止 Apple Event quit /
-  SIGTERM / SIGKILL / pkill；保存或退出受阻即退出码 2、现场保留。
+- **验收侧：保存屏障与退出通道**：经原生 File → Save All 触发；触发前读取机器标记
+  `save-all#<代次> <state>` 的基线，只接受**代次更大且 ok** 的完成标记（旧 toast / 同一代次旧信号 /
+  并发 busy 一律不放行）后才发真实 `cmd+q`，等**原 pid** 消失；禁止 Apple Event quit / SIGTERM /
+  SIGKILL / pkill；保存或退出受阻即退出码 2、现场保留。
 - **验收侧：全机独占**：独立暂停锁 `/tmp/lumir-acceptance-installed-pause.lock` + 活动 runner 登记
   `/tmp/lumir-acceptance-runners/<pid>.json`；第二次暂停、暂停与普通跑批并发都拒绝；自定义 vault
   的普通并行保留。锁 / 登记只释放自己的 session，无自动恢复逻辑。
@@ -45,7 +48,8 @@ dirty 时照样退出，正是丢数据的那条路。
   并在结果与 `run.log` 写明「安装版按请求保持关闭，需时由用户自行启动」。
 - **验收侧：证据口径**：只记 pid / app path / bundle id / 阶段 / 计数 / 错误；不记真实 vault 名、
   标签标题或正文；安装版阶段默认不截图。
-- **验收制品**：新增真机场景 880（File → Save All 的多标签落盘 + 正向完成信号），更新
+- **验收制品**：新增真机场景 880（File → Save All 的多标签落盘 + 代次标记）与 880b（会话真实写失败 →
+  failed、恢复后新代次 ok），更新
   `scripts/acceptance/README.md`（用法、边界、待真机项），新增 `lib/installed-app.mjs` 及 36 条
   单测并挂进 `check-suite.sh`。
 

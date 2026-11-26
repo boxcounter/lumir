@@ -153,14 +153,18 @@ pub fn reading_position_get(vault_id: String) -> Result<Option<ReadingPositions>
 /// 载荷是**整份内存镜像**（前端合并后的全量条目，≤ 上限），不是增量补丁：并发写同一份文件只
 /// 可能「后写覆盖先写」（design §7 第 9 条接受的最坏结果），不需要合并语义。
 ///
-/// 写失败返回 `Ok(())` 并记 warning——与 `last_vault`、标签会话写失败同口径：位置只影响「下次
-/// 打开这份文档从哪里开始」，不值得让用户的一次切换或退出失败。只有 `vault_id` 非法才返回错误
-/// 信封：id 是文件名，这是路径逃逸防护（`vault_registry::valid_id`），不是写失败。
+/// 返回 `Ok(true)` = 已落盘、`Ok(false)` = 磁盘写失败（warning 已记）——**普通调用方**（防抖写、
+/// 切换文件 / 标签 / vault、beforeunload）照旧忽略这个布尔值，失败仍只降级、MUST NOT 拦停：
+/// 位置只影响「下次打开这份文档从哪里开始」。只有 `vault_id` 非法才返回错误信封：id 是文件名，
+/// 这是路径逃逸防护（`vault_registry::valid_id`），不是写失败。
+///
+/// `false` 是「保存全部」屏障的真实落盘判据（change add-acceptance-installed-app-pause）：
+/// 与 [`crate::vault_session::vault_session_put`] 同一条合同。
 #[tauri::command(rename_all = "snake_case")]
 pub fn reading_position_put(
     vault_id: String,
     entries: HashMap<String, ReadingPositionEntry>,
-) -> Result<(), CommandError> {
+) -> Result<bool, CommandError> {
     vault_registry::valid_id(&vault_id)?;
     let dir = positions_dir()?;
     // 入口同一校验（见 [`sanitize`]）：盘上不出现绝对路径 / 越界键，条目数不超上限。
@@ -168,13 +172,22 @@ pub fn reading_position_put(
         version: READING_POSITION_VERSION,
         entries,
     });
-    if let Err(e) = save_to(&dir, &vault_id, &positions) {
-        eprintln!(
-            "lumir: 记录阅读位置失败（已忽略，打开与切换不受影响）：{}：{e}",
-            dir.join(format!("{vault_id}.json")).display()
-        );
+    Ok(put_into(&dir, &vault_id, &positions))
+}
+
+/// 写一份阅读位置并返回真实结果：`false` = 磁盘写失败（warning 已记，调用方可降级）。
+/// 抽出来是为了让「失败返回 false」这条判据可单测——命令本身要读真实配置目录，测试不碰。
+fn put_into(dir: &Path, vault_id: &str, positions: &ReadingPositions) -> bool {
+    match save_to(dir, vault_id, positions) {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!(
+                "lumir: 记录阅读位置失败（已忽略，打开与切换不受影响）：{}：{e}",
+                dir.join(format!("{vault_id}.json")).display()
+            );
+            false
+        }
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -235,6 +248,25 @@ mod tests {
                 .map(|(key, pos, at)| (key.to_string(), entry(*pos, *at)))
                 .collect(),
         }
+    }
+
+    /// P1-1（K3 verdict）：真实磁盘写失败必须从 `put` 路径如实返回 `false`，不能只打 warning
+    /// 后回 `true`——否则「保存全部」的屏障会在未落盘时发成功终态。
+    #[test]
+    fn put_reports_false_when_disk_write_fails() {
+        let dir = TempDir::new();
+        let payload = positions(&[("a.md", 900.0, 1)]);
+        assert!(put_into(dir.path(), "a", &payload), "正常目录必须返回 true");
+
+        // 目标目录的父路径是一个普通文件 → create_dir_all 必失败
+        let blocker = dir.path().join("blocker");
+        fs::write(&blocker, "x").unwrap();
+        let failed_dir = blocker.join("reading-positions");
+        assert!(
+            !put_into(&failed_dir, "b", &payload),
+            "磁盘写失败必须返回 false（warning 仍由 put_into 记）"
+        );
+        assert!(!failed_dir.join("b.json").exists(), "失败不得留下半份文件");
     }
 
     #[test]

@@ -57,6 +57,7 @@ import type { NamingOutcome } from "./bindings/NamingOutcome";
 import type { RemovedVault } from "./bindings/RemovedVault";
 import type { SemanticNameTask } from "./paste-image";
 import { createSaveController, SAVE_GUARD_TOAST_CLASS } from "./save-controller";
+import { createSaveAllBarrier } from "./save-all";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getName, getVersion } from "@tauri-apps/api/app";
@@ -3776,6 +3777,71 @@ function composerTextFaceCommands(): Partial<Record<CommandId, CommandRunner>> {
   return wrapped;
 }
 
+/** 已推给后端的 dirty 镜像值（M149）：只在**变化**时上报。
+ *
+ *  标签切换会频繁调用 syncActiveDocument → syncBackendDirty，每切换一次就 invoke 一遍
+ *  是白费（后端是覆盖式写入，同一个值重复推没有语义），而且会破坏 M107 的「启动只推一次
+ *  复位镜像」这条既有断言（它的意图正是「别在上报通道上乱喷」）。undefined = 还没推过，
+ *  启动时必然推一次。 */
+let pushedDirty: boolean | undefined;
+
+/**
+ * 保存全部的机器可读状态标记（change add-acceptance-installed-app-pause）：文本形如
+ * `save-all#<generation> <running|ok|failed|busy>`，**视觉隐藏、AX 可达**。
+ *
+ * 为什么需要它：成功 toast（D1035）只活 3.5s，验收通道若只认文本，会把上一次保存的旧 toast
+ * 当成这一次的完成信号（K3 P1-3）。这个标记带**操作代次**：每次真正开始的保存全部加一代，
+ * 并发触发的第二次不增加代次、只把同一代次标成 `busy`。验收通道读取触发前的代次，只接受
+ * 「代次更大且 ok」的标记；旧信号、并发信号、失败都不可能让它提前放行。
+ *
+ * 视觉隐藏不改变任何像素（inline 样式，不占布局），也不进 toast / 文案表——它是机器标记，
+ * 不是用户文案。
+ */
+const saveAllMarker = document.createElement("span");
+saveAllMarker.style.cssText =
+  "position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;";
+saveAllMarker.textContent = "save-all#0 idle";
+document.body.append(saveAllMarker);
+
+/** 把后端 dirty 镜像 await 同步为 `dirty`；失败时清掉本地镜像缓存，让下一次同步重推。
+ *  （既有 `syncBackendDirty` 是「变化才推」的 fire-and-forget；保存全部屏障需要真实往返。） */
+async function pushDirtyMirror(dirty: boolean): Promise<void> {
+  try {
+    await documentSetDirty(dirty);
+    pushedDirty = dirty;
+  } catch (e) {
+    pushedDirty = undefined;
+    throw e;
+  }
+}
+
+/**
+ * 保存全部（change add-acceptance-installed-app-pause）：一条有终态、有代次的保存屏障。
+ * 步骤与判据见 `src/save-all.ts` 的文件头与 `createSaveAllBarrier`——本处只装配真实依赖：
+ *
+ *   - `saveAllDirty` / `switcher.flush` / `readingPositions.flush`：前者的返回值是「全部闭环」，
+ *     后两者的返回值是**真实落盘**（后端磁盘写失败 resolve false，warning 已记）。
+ *   - `anyDirty`：全部 pane 的任一会话。
+ *   - `syncDirty`：awaited `document_set_dirty`；失败即屏障失败。
+ *   - `marker`：机器可读的代次标记（验收通道的唯一成功判据）。
+ *   - toast：用户可读的成功 / 失败 / 并发提示（D1035 / D1036 / D1037）。
+ *
+ * 只读会话（`external`）没有保存落点，但结构上不可能 dirty；图片会话同理（saveAllDirty 跳过）。
+ */
+const saveAll = createSaveAllBarrier({
+  saveAllDirty: () => save.saveAllDirty(),
+  flushSessions: () => switcher.flush(),
+  flushPositions: () => readingPositions.flush(),
+  anyDirty: () => editor.sessions().some((session) => session.dirty),
+  syncDirty: (dirty) => pushDirtyMirror(dirty),
+  marker: (state, generation) => {
+    saveAllMarker.textContent = `save-all#${generation} ${state}`;
+  },
+  toastSuccess: () => toast(t("D1035"), [], false, "success"),
+  toastFailure: () => toast(t("D1036")),
+  toastBusy: () => toast(t("D1037")),
+});
+
 const commands: CommandRuntime = {
   ...editor.commands,
   ...composerTextFaceCommands(),
@@ -3787,9 +3853,9 @@ const commands: CommandRuntime = {
     void save.save();
   },
   // 保存全部（change add-acceptance-installed-app-pause）：File → Save All 与验收通道
-  // 共用的一条屏障实现（见 `saveAllBarrier`）。默认不绑键——菜单是鼠标入口，键盘入口留给
+  // 共用的一条屏障实现（见 `saveAll`）。默认不绑键——菜单是鼠标入口，键盘入口留给
   // 用户在 [keys] 里自绑。
-  "document.save-all": () => void saveAllBarrier(),
+  "document.save-all": () => void saveAll.run(),
   // 轨道 A 原样迁入（键位与作用域不变）；M144 起跟随光标/选区处的链接——外链交系统
   // 浏览器、wikilink 走既有跳转链路；M145 补齐其余形态：相对路径 md 走应用内跳转、
   // vault 内非 md 交系统默认应用、纯锚点只提示。落在非链接处无操作（不假装有反馈）。
@@ -4197,14 +4263,6 @@ onRelabel(() => {
   }
 });
 
-/** 已推给后端的 dirty 镜像值（M149）：只在**变化**时上报。
- *
- *  标签切换会频繁调用 syncActiveDocument → syncBackendDirty，每切换一次就 invoke 一遍
- *  是白费（后端是覆盖式写入，同一个值重复推没有语义），而且会破坏 M107 的「启动只推一次
- *  复位镜像」这条既有断言（它的意图正是「别在上报通道上乱喷」）。undefined = 还没推过，
- *  启动时必然推一次。 */
-let pushedDirty: boolean | undefined;
-
 /** 后端退出守卫（Cmd+Q / 关窗拦截）的 dirty 镜像：判据是「**任一**标签有未保存修改」。
  *  旧实现只有一个文档，取单个 dirty 即可；多标签下必须取并集，否则后台标签里的修改在
  *  退出时会被静默放行。无 Tauri 后端（纯浏览器预览）时同步失败无害，静默忽略。 */
@@ -4213,52 +4271,6 @@ function syncBackendDirty(): void {
   if (any === pushedDirty) return;
   pushedDirty = any;
   documentSetDirty(any).catch(() => {});
-}
-
-/**
- * 保存全部（change add-acceptance-installed-app-pause）：**一条有终态的保存屏障**。
- *
- * 为什么不是「调用 saveAllDirty 就算保存全部」：验收通道要在退出安装版之前拿到一个
- * 「所有会丢的东西都真的落盘了」的正观测——脏标签写盘只是第一步，标签会话、阅读位置与
- * 后端 dirty 镜像各自还有一条写入路径；任何一条失败，⌘Q 都可能丢标签结构 / 阅读位置，
- * 或者被退出守卫挡住。屏障把五步串成一条链，**只有全部成功才发正向完成信号**（D1035），
- * 任一步失败发终态失败提示（D1036）并返回 false。验收通道据此「不⌘Q、不跑批」——它
- * MUST NOT 拿「没有错误提示 / AX 树是空的 / 标签上的 dirty 点消失」冒充成功
- * （那三种都是「没读到」而不是「真的成了」）。
- *
- * 步骤与判据：
- *   1. `saveAllDirty()`：逐标签保存；返回 false = 至少一条没闭环（冲突 / 写失败 / 无基准）。
- *   2. `switcher.flush()`：标签会话**真实落盘**（无条件写一份当前快照）；返回值区分写失败
- *      与无需写，写失败时 warning 已由 store 给出，这里只把屏障判失败。
- *   3. `readingPositions.flush()`：阅读位置真实落盘（仅 pending；无 pending 算成功）。
- *   4. **复查新 dirty**：前两步的 await 期间用户可能继续编辑——出现新 dirty 即不宣布成功
- *      （否则「保存全部」会对着一个已经又变脏的界面报成功）。
- *   5. **后端 dirty 镜像同步**：await 一次 `document_set_dirty(false)` 真实往返（不是
- *      fire-and-forget），失败即屏障失败；成功后才允许退出守卫放行 ⌘Q。
- *
- * 只读会话（`external`）没有保存落点，但它们结构上不可能 dirty，屏障对它们等同空操作；
- * 图片会话同理（saveAllDirty 跳过）。
- */
-async function saveAllBarrier(): Promise<boolean> {
-  const fail = (): false => {
-    toast(t("D1036"));
-    return false;
-  };
-  if (!(await save.saveAllDirty())) return fail();
-  if (!(await switcher.flush())) return fail();
-  if (!(await readingPositions.flush())) return fail();
-  if (editor.sessions().some((session) => session.dirty)) return fail();
-  try {
-    // 覆盖式写入：镜像此刻的真相是「没有脏标签」。await 到命令回包才继续——回包即
-    // Rust 侧已把 AtomicBool 置 false 并返回（不是「发出去就算同步」）。
-    await documentSetDirty(false);
-    pushedDirty = false;
-  } catch {
-    return fail();
-  }
-  // 正向完成信号：走到这里五步全成功。成功的 toast 只在这里发，别处不得代发。
-  toast(t("D1035"), [], false, "success");
-  return true;
 }
 
 editor.onDirty((dirty) => {

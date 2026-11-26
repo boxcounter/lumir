@@ -19,7 +19,7 @@ Alex 2026-11-26（节点 1）：除恢复外无异议；**「退出后就不需�
 ## 2. 产品侧：`document.save-all` 是「保存屏障」而不是「多按几次 ⌘S」
 
 验收通道要在退出安装版之前拿到一个**正观测**：所有会丢的东西都真的落盘了。五步串成一条链
-（`src/main.ts` 的 `saveAllBarrier`）：
+（`src/save-all.ts` 的 `createSaveAllBarrier`；`src/main.ts` 只注入真实依赖）：
 
 1. `save.saveAllDirty()`：全部 pane 的全部脏标签逐条保存（既有实现；一条失败不打断其余）；
    `false` = 至少一条没闭环（冲突 / 写失败 / 无落盘基准）。
@@ -30,15 +30,24 @@ Alex 2026-11-26（节点 1）：除恢复外无异议；**「退出后就不需�
 5. **后端 dirty 镜像同步**：`await document_set_dirty(false)` 的真实往返（不是 fire-and-forget）；
    失败即屏障失败。成功后才允许退出守卫放行 ⌘Q。
 
-**正向完成信号**：只有五步全绿才发 D1035「已保存全部更改」（success toast）；任一步失败发 D1036。
-验收通道只认这条信号——**不得**以「没有错误提示」「AX 空树」「dirty 点消失」冒充成功
-（REVIEW.md「读不到当成空」「断言等价于子串」条）。
+**正向完成信号**：产品维护一个**带操作代次的机器标记**（`save-all#<gen> <running|ok|failed|busy>`，
+视觉隐藏、AX 可达）；只有五步全绿才写 `ok`，任一步失败写 `failed`。用户可读 toast（D1035 / D1036）
+照旧发，但**验收判据是代次标记**——旧 toast（3.5s）、同一代次的旧标记、并发触发的 `busy` 都不可能
+让下一次触发提前放行（K3 P1-3）。并发 / 重复触发采用**单飞**：第二次不开新代次、只写 `busy` 并给
+D1037 中性提示，MUST NOT 复用前一次的成功信号。
 
 **为什么 flush 要返回 boolean**：会话 / 阅读位置的写失败在既有实现里只降级为 warning（不拦停
 切换 / 退出），这是对的；但「保存全部」需要区分「写成功」与「写失败但只 warning」。两个 store 的
-`flush()` 因此改成 `Promise<boolean>`：写失败 → `false`（warning 照旧由 `deps.warn` 给出），
-无内容可写 / 写成功 → `true`。既有调用方（`beforeunload`、`syncActiveDocument`、切 vault）继续
-`void` 忽略返回值，行为逐字不变。
+`flush()` 因此改成 `Promise<boolean>`。**真实失败必须从后端来**（K3 P1-1）：`vault_session_put` /
+`reading_position_put` 以前把 `save_to` 错误打成 warning 后仍回 `Ok(())`，前端只能看到 resolved；
+现在两条命令返回 `Ok(true|false)`（warning 照旧记），store 的 `write` 把 false 原样上抛为 flush
+false。普通调用方（`beforeunload`、`syncActiveDocument`、切 vault）继续 `void` 忽略返回值，
+行为逐字不变；只有保存全部屏障据此判失败。Rust 与前端各有失败链测试。
+
+**最后同步窗口的竞态**（K3 P1-4）：`syncDirty(false)` 的 await 期间用户可能继续编辑。屏障在
+命令回包后**再查一次** dirty；有新 dirty 时先 `await syncDirty(true)` 把镜像恢复成 true（MUST NOT
+用 false 覆盖新 dirty），再走失败终态。恢复之后到发成功之间没有任何 await，复查与成功是一个同步
+原子段。`save-all.test.ts` 用 deferred `syncDirty` 在等待期间制造新 dirty，旧实现（无复查）必红。
 
 **为什么是普通命令 + 菜单项**：`document.save-all` 进 `COMMAND_IDS` 并登记
 `KEYLESS_COMMAND_IDS`（默认不占键位——⌘S 仍是单文档保存；⌘⇧S 语义在不同应用里分歧，且菜单键
@@ -66,9 +75,9 @@ MUST NOT 另开保存链路。菜单插在 File 子菜单**开头**：关闭项�
   按名字（会解析到别的副本）；MUST NOT Apple Event quit（直连 `terminate:`，不经过 ⌘Q 守卫）。
 - **菜单**：AX 节点 `AXMenuBarItem (File)` → AXPress，再 `AXMenuItem (Save All)` → AXPress；
   读不到即失败，不退回快捷键（该命令按设计没有默认键位）。
-- **完成信号**：节点级**精确相等**（`AXStaticText` 的 title / label / value 等于 D1035 的 zh 或
-  en 列），不是全树子串——正文里写着同一句话不得冒充。失败终态（D1036）出现即失败；空树 /
-  读失败 / 超时一律失败，**不 ⌘Q、不跑批**。
+- **完成信号**：触发前读取 `save-all#<gen> <state>` 基线（running 表示已有保存全在跑 → 直接停手）；
+  触发后只接受**代次大于基线且 `ok`** 的标记。同一代次的旧 `ok` / 旧 toast 不算、`busy` 立即失败、
+  `failed` 失败、缺标记 / 空树 / 读失败 / 超时一律失败，**不 ⌘Q、不跑批**（K3 P1-3）。
 - **退出**：真实 `press_key(pid, "cmd+q")`，轮询 `listLumirInstances()` 直到**原 pid** 消失。
   超时（dirty 守卫挡住 / 无响应）→ `PauseFailed`，现场保留；不补 SIGTERM / SIGKILL。
 
@@ -106,22 +115,34 @@ vault 名、标签标题或正文；AX 读取一律 `mode: "ax"`（不带截图�
 
 ## 4. 测试与反向验证
 
-- `scripts/acceptance/lib/installed-app.test.mjs`（39 条，挂进 `check-suite.sh`）：发现 / 身份 /
-  编排顺序 / 完成信号 / 菜单 / ⌘Q / 锁与登记 / 文案对账。平台副作用全部注入假实现。
+- `scripts/acceptance/lib/installed-app.test.mjs`（45 条，挂进 `check-suite.sh`）：发现 / 身份 /
+  编排顺序 / 代次标记 / 菜单 / ⌘Q / 锁与登记 / 默认 exec 真实可执行探针。平台副作用全部注入假实现
+  （默认 exec 除外——用 `/usr/bin/printf` 与临时 shell 桩覆盖真实默认通道）。
+- `tests/unit/save-all.test.ts`（9 条）：成功 / 会话写失败 / 阅读位置写失败 / 镜像同步失败 /
+  前置新 dirty / **同步等待期间新 dirty**（deferred，旧实现必红）/ 并发单飞 / 代次单调。
+- Rust：`vault_session::put_reports_false_when_disk_write_fails` 与
+  `reading_position::put_reports_false_when_disk_write_fails`（写失败返回 false、不留半份文件），
+  以及 workspace 场景里的真实权限失败断言 `Ok(false)`。
 - **必红的反向验证**（本轮实测并留证据）：
-  1. 去掉「等完成信号」（把等待改成直接返回）→ 编排测试必红；
-  2. 完成信号退回全树子串（正文命中）→ 「正文里同句不算」用例必红；
-  3. 删掉暂停排他检查 → 「别的活动 runner 必须拒绝」用例必红。
+  1. 去掉「等本次代次完成」（编排里跳过 waitSaveAll / 直接返回）→ 编排顺序与保存前 ⌘Q=0 必红；
+  2. 完成信号退回旧口径（接受同一代次的旧 ok / 全树文本）→ 「旧信号不放行」用例必红；
+  3. 删掉暂停排他检查 → 「别的活动 runner 必须拒绝」用例必红；
+  4. 删掉屏障的最后 dirty 复查（旧 P1-4 实现）→ deferred 竞态用例必红；
+  5. 让 Rust put 在磁盘失败时回 `true` → Rust 失败链测试必红；
+  6. 让验收通道接受任意 D1035 文本（旧 P1-3 实现）→ 旧信号用例必红。
+  每项的 diff、失败输出与还原后绿色结果落在 `.local/missions/add-acceptance-installed-app-pause/mutations/`。
 - 产品侧：`tests/unit/vault-switcher.test.ts` / `reading-position.test.ts` 断言 flush 的 boolean
   语义（失败 false、成功 / 无内容 true）；`command-meta.test.ts` 断言 `document.save-all` 的
   标签 / KEYLESS / 无默认绑定。
-- 真机场景 880（File → Save All）：两标签脏内容一次落盘 + 正向完成信号 + 磁盘判据。
+- 真机场景 880（File → Save All）：两标签脏内容一次落盘 + **代次标记**（`save-all#1 ok` 节点级
+  精确断言）+ 磁盘判据；880b：`envChmod` 制造会话语义真实写失败 → `save-all#1 failed`、无 ok、
+  文档本身已保存；恢复权限后第二次 `save-all#2 ok`（旧 failed 不放行）。
 - **待真机项**（本轮不执行）：真实安装版的发现 → 菜单 → 完成信号 → ⌘Q 整链路；AX 菜单栏可达性；
   两个语言面的完成文案。
 
 ## 5. 已知边界
 
 - 安装版必须是含 `document.save-all` 的构建；旧构建会在「等不到菜单项」处退出码 2（不碰文档）。
-- 完成信号文案取自本仓文案表（zh / en 两列）；若安装版来自另一个文案版本，匹配会失败（安全侧：
-  不 ⌘Q）。菜单项固定 en（原生菜单先例）。
+- 完成信号是机器标记（ASCII、视觉隐藏），不再依赖界面语言或文案版本；旧构建没有该标记时
+  会在「找不到状态标记」处退出码 2（零副作用）。菜单项固定 en（原生菜单先例）。
 - 菜单可达性依赖 KimiCU 暴露菜单栏节点；读不到即失败，不退回快捷键。

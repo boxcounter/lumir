@@ -3018,6 +3018,8 @@ const COPY_TABLE = {
     zh: "未能保存全部更改，请按提示处理后重试",
     en: "Couldn't save all changes. Follow the prompts above and try again.",
   },
+  // 并发 / 重复触发保存全部：前一次屏障还在跑，第二次不开新代次（单飞），给一条中性提示。
+  D1037: { zh: "正在保存全部更改", en: "Saving all changes" },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

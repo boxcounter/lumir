@@ -66,13 +66,14 @@ import {
   pauseFailureExitCode,
   pauseClosingNote,
   quitInstalledByCmdQ,
+  readSaveAllMarker,
   registerActiveRunner,
   releasePauseLock,
   runInstalledPause,
   runPauseThenPreflight,
   triggerSaveAllMenuItem,
   unregisterActiveRunner,
-  waitSaveAllSignal,
+  waitSaveAllCompletion,
 } from "./lib/installed-app.mjs";
 import { Evidence, appendRunLog, writeSummary } from "./lib/evidence.mjs";
 import { checkScenario, loadScenario, runScenario } from "./lib/execute.mjs";
@@ -587,6 +588,7 @@ async function runPausePhase() {
     productId: productBundleId(),
     readBundleId: (appPath) => readBundleId(appPath),
     activate: (pid) => activateByPid({ pid }).then(() => undefined),
+    readMarker: (pid) => readSaveAllMarker({ pid, readState }),
     triggerSaveAll: async (pid) => {
       const client = await ensureCu();
       await triggerSaveAllMenuItem({
@@ -595,7 +597,8 @@ async function runPausePhase() {
         click: (targetPid, index) => client.click(targetPid, { index }),
       });
     },
-    waitSaveAll: (pid) => waitSaveAllSignal({ pid, readState }),
+    waitSaveAll: (pid, baselineGeneration) =>
+      waitSaveAllCompletion({ pid, readState, baselineGeneration }),
     quit: async (pid) => {
       const client = await ensureCu();
       return quitInstalledByCmdQ({

@@ -6,10 +6,11 @@
 //
 // 重点钉住的三条「不安全的成功」形态（REVIEW.md「断言等价于子串」「读不到当成空」条）：
 //   1. **保存前绝不 ⌘Q**：屏障失败 / 超时 / AX 空树时，quit 一次都不能被调用；
-//   2. **缺完成信号不是成功**：全树子串命中（正文里写着同一句话）不算，必须节点级精确相等；
+//   2. **旧完成信号不是本次成功**：完成标记带操作代次，只接受触发前代次之后的新标记；
+//      同一代次的旧 ok、并发 busy、缺标记 / 空树 / 超时都判失败；
 //   3. **锁/登记只释放自己的 session**：别人的活锁不删、别人的登记不删。
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -21,22 +22,23 @@ import {
   assertPauseExclusive,
   canonicalAppPath,
   discoverInstalledApp,
+  execText,
   listActiveRunners,
   pauseClosingNote,
   PauseFailed,
   PauseRefused,
+  parseSaveAllMarker,
   pauseFailureExitCode,
   quitInstalledByCmdQ,
+  readSaveAllMarker,
   registerActiveRunner,
   releasePauseLock,
   runInstalledPause,
   runPauseThenPreflight,
-  SAVE_ALL_FAILURE_TEXTS,
-  SAVE_ALL_SUCCESS_TEXTS,
   triggerSaveAllMenuItem,
   unregisterActiveRunner,
   verifyInstalledTarget,
-  waitSaveAllSignal,
+  waitSaveAllCompletion,
 } from "./installed-app.mjs";
 
 const APP = "/Applications/Lumir.app";
@@ -215,7 +217,7 @@ test("复核：pid / startedAt / bundle id 任一变化都拒绝（pid 复用不
 // 编排顺序：先保存屏障、后 ⌘Q；失败 / 超时 / AX 不可读一律不 ⌘Q
 // ---------------------------------------------------------------------------
 
-function pauseHarness({ waitError = null, verifyErrorAt = null } = {}) {
+function pauseHarness({ waitError = null, verifyErrorAt = null, baselineRunning = false } = {}) {
   const calls = [];
   let verifyCount = 0;
   const deps = {
@@ -233,11 +235,15 @@ function pauseHarness({ waitError = null, verifyErrorAt = null } = {}) {
       return target;
     },
     activate: async (pid) => void calls.push(`activate-${pid}`),
+    readMarker: async (pid) => {
+      calls.push(`marker-${pid}`);
+      return { generation: 3, state: baselineRunning ? "running" : "ok" };
+    },
     triggerSaveAll: async (pid) => void calls.push(`trigger-${pid}`),
-    waitSaveAll: async (pid) => {
-      calls.push(`wait-${pid}`);
+    waitSaveAll: async (pid, baselineGeneration) => {
+      calls.push(`wait-${pid}-${baselineGeneration}`);
       if (waitError) throw waitError;
-      return { reads: 3 };
+      return { generation: baselineGeneration + 1, reads: 3 };
     },
     quit: async (pid) => {
       calls.push(`quit-${pid}`);
@@ -258,8 +264,9 @@ test("编排：顺序 = 复核 → 激活 → 菜单屏障 → 完成信号 → 
     "list",
     "verify-1",
     `activate-${PID}`,
+    `marker-${PID}`,
     `trigger-${PID}`,
-    `wait-${PID}`,
+    `wait-${PID}-3`,
     "list",
     "verify-2",
     `quit-${PID}`,
@@ -270,7 +277,7 @@ test("编排：顺序 = 复核 → 激活 → 菜单屏障 → 完成信号 → 
 });
 
 test("编排：保存屏障失败 / 超时 → ⌘Q 一次都不调用（保存前 ⌘Q = 0），现场保留", async () => {
-  for (const message of ["保存屏障报告失败", "等保存屏障完成信号超时", "安装版 AX 树为空"]) {
+  for (const message of ["保存屏障报告失败", "等本次保存全部完成超时", "安装版 AX 树为空"]) {
     const { calls, deps } = pauseHarness({ waitError: new PauseFailed(message) });
     const state = {};
     await assert.rejects(() => runInstalledPause({ ...deps, state }), new RegExp(message));
@@ -291,6 +298,13 @@ test("编排：保存前的身份复核失败 → 不激活、不点菜单、不
 test("编排：⌘Q 前的身份复核失败 → 不 ⌘Q（换了进程就不是那个安装版）", async () => {
   const { calls, deps } = pauseHarness({ verifyErrorAt: 2 });
   await assert.rejects(() => runInstalledPause({ ...deps, state: {} }), /复核失败/);
+  assert.equal(calls.filter((c) => c.startsWith("quit-")).length, 0);
+});
+
+test("编排：触发前已有保存全部在跑（baseline running）→ 不触发菜单、不 ⌘Q", async () => {
+  const { calls, deps } = pauseHarness({ baselineRunning: true });
+  await assert.rejects(() => runInstalledPause({ ...deps, state: {} }), /已有保存全部在跑/);
+  assert.equal(calls.filter((c) => c.startsWith("trigger-")).length, 0);
   assert.equal(calls.filter((c) => c.startsWith("quit-")).length, 0);
 });
 
@@ -352,42 +366,88 @@ test("第二次调用：安装版已关闭 → not-running，零副作用（不 
 });
 
 // ---------------------------------------------------------------------------
-// 完成信号：节点级精确相等；空树 / 读失败 / 缺信号都不是成功
+// 完成信号：按**操作代次**判定；旧 toast / 旧标记 / 并发 busy / 空树 / 超时都不是成功
 // ---------------------------------------------------------------------------
 
 const axWith = (line) => `- app: X\n- pid: ${PID}\n\`\`\`\n${line}\n\`\`\``;
+const markerAx = (generation, state) => axWith(`- [7] AXStaticText = "save-all#${generation} ${state}"`);
 
-test("完成信号：AXStaticText 精确等于成功文案 → 成立", async () => {
-  const result = await waitSaveAllSignal({
-    pid: PID,
-    readState: async () => axWith('- [3] AXStaticText = "已保存全部更改"'),
+test("标记解析：只认 AXStaticText 的精确形态；正文（AXTextArea）里同形的字不算", () => {
+  assert.deepEqual(parseSaveAllMarker([{ role: "AXStaticText", title: "save-all#4 ok" }]), {
+    generation: 4,
+    state: "ok",
   });
-  assert.equal(result.reads, 1);
-  assert.equal(result.text, "已保存全部更改");
+  assert.equal(parseSaveAllMarker([{ role: "AXTextArea", title: "save-all#4 ok" }]), null);
+  assert.equal(parseSaveAllMarker([{ role: "AXStaticText", title: "save-all#x ok" }]), null);
 });
 
-test("完成信号：英文界面同样成立（安装版用用户自己的语言配置）", async () => {
-  const result = await waitSaveAllSignal({
+test("完成信号：触发前代次 3，出现 save-all#4 ok → 成功（本次操作的新标记）", async () => {
+  const result = await waitSaveAllCompletion({
     pid: PID,
-    readState: async () => axWith('- [3] AXStaticText = "All changes saved"'),
+    baselineGeneration: 3,
+    readState: async () => markerAx(4, "ok"),
   });
-  assert.equal(result.text, "All changes saved");
+  assert.deepEqual(result, { generation: 4, reads: 1 });
 });
 
-test("完成信号：失败终态出现 → 立即失败（不 ⌘Q、不跑批）", async () => {
+test("完成信号：旧 toast（D1035 文本）+ 同一代次的旧 ok 不得放行（K3 P1-3）", async () => {
+  // 上一次保存留下的成功 toast 还在（3.5s），标记仍是 #3 ok；本次触发前代次也是 3。
+  const oldToastAndMarker = axWith(
+    '- [5] AXStaticText = "已保存全部更改"\n- [7] AXStaticText = "save-all#3 ok"',
+  );
   await assert.rejects(
     () =>
-      waitSaveAllSignal({
+      waitSaveAllCompletion({
         pid: PID,
-        readState: async () => axWith('- [3] AXStaticText = "未能保存全部更改，请按提示处理后重试"'),
+        baselineGeneration: 3,
+        timeoutMs: 30,
+        everyMs: 5,
+        readState: async () => oldToastAndMarker,
+      }),
+    /同一代次的旧信号不算数/,
+  );
+});
+
+test("完成信号：本次代次的 failed → 失败（不 ⌘Q、不跑批）", async () => {
+  await assert.rejects(
+    () =>
+      waitSaveAllCompletion({
+        pid: PID,
+        baselineGeneration: 3,
+        readState: async () => markerAx(4, "failed"),
       }),
     /保存屏障报告失败/,
   );
 });
 
+test("完成信号：busy（并发 / 重复触发被单飞拒绝）→ 立即失败，即使代次未变", async () => {
+  await assert.rejects(
+    () =>
+      waitSaveAllCompletion({
+        pid: PID,
+        baselineGeneration: 3,
+        readState: async () => markerAx(3, "busy"),
+      }),
+    /被并发触发拒绝/,
+  );
+});
+
+test("完成信号：本次代次先 running 后 ok → 成功（不会把 running 当失败）", async () => {
+  const responses = [markerAx(4, "running"), markerAx(4, "ok")];
+  let index = 0;
+  const result = await waitSaveAllCompletion({
+    pid: PID,
+    baselineGeneration: 3,
+    everyMs: 1,
+    readState: async () => responses[Math.min(index++, responses.length - 1)],
+  });
+  assert.equal(result.generation, 4);
+  assert.equal(result.reads, 2);
+});
+
 test("完成信号：空 AX 树 → PauseFailed（不可读 ≠ 成功）", async () => {
   await assert.rejects(
-    () => waitSaveAllSignal({ pid: PID, readState: async () => "" }),
+    () => waitSaveAllCompletion({ pid: PID, baselineGeneration: 3, readState: async () => "" }),
     /AX 树为空/,
   );
 });
@@ -395,8 +455,9 @@ test("完成信号：空 AX 树 → PauseFailed（不可读 ≠ 成功）", asyn
 test("完成信号：AX 读失败 → PauseFailed（不把通道故障当成功）", async () => {
   await assert.rejects(
     () =>
-      waitSaveAllSignal({
+      waitSaveAllCompletion({
         pid: PID,
+        baselineGeneration: 3,
         readState: async () => {
           throw new Error("MCP 超时");
         },
@@ -405,16 +466,19 @@ test("完成信号：AX 读失败 → PauseFailed（不把通道故障当成功�
   );
 });
 
-test("完成信号：同样的字只出现在正文（AXTextArea）里 → 必须超时失败，不得冒充完成", async () => {
+test("完成信号：缺失状态标记 → PauseFailed（没有标记就无法绑定本次操作）", async () => {
   await assert.rejects(
     () =>
-      waitSaveAllSignal({
+      waitSaveAllCompletion({
         pid: PID,
-        timeoutMs: 30,
-        everyMs: 5,
-        readState: async () => axWith('- [5] AXTextArea = "已保存全部更改"'),
+        baselineGeneration: 3,
+        readState: async () => axWith('- [5] AXStaticText = "已保存全部更改"'),
       }),
-    /等保存屏障完成信号超时/,
+    /找不到保存全部状态标记/,
+  );
+  await assert.rejects(
+    () => readSaveAllMarker({ pid: PID, readState: async () => axWith("- [5] AXStaticText = x") }),
+    /找不到保存全部状态标记/,
   );
 });
 
@@ -521,6 +585,45 @@ test("激活：frontmost 读不到 true → 失败（不静默继续）", async 
       }),
     /按 pid 激活安装版失败/,
   );
+});
+
+test("默认执行器：真实可执行 /usr/bin/printf 的 stdout 被正确读出（不是 [object Object]）", () => {
+  // K3 P1-2：默认 exec 曾把 spawnSync 返回对象字符串化。这里用真实可执行验证默认通道，
+  // 不注入 mock 函数。
+  assert.equal(execText("/usr/bin/printf", ["true\n"]), "true\n");
+});
+
+test("默认执行器：真实可执行非零退出 → 抛错并带 status（不把失败当 stdout）", () => {
+  assert.throws(
+    () => execText("/usr/bin/false", []),
+    (error) => error?.status === 1,
+  );
+});
+
+test("默认激活通道：临时可执行桩 + 真实默认 exec 端到端（成功 / 失败两档）", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "lumir-pause-exec-"));
+  try {
+    const okStub = path.join(dir, "ok-osascript");
+    writeFileSync(okStub, "#!/bin/sh\nprintf 'true\\n'\n", { mode: 0o755 });
+    const result = await activateByPid({ pid: PID, osascriptPath: okStub, attempts: 1 });
+    assert.equal(result.attempts, 1, "真实默认 exec 必须读到 stdout=true 并成功");
+
+    const falseStub = path.join(dir, "false-osascript");
+    writeFileSync(falseStub, "#!/bin/sh\nprintf 'false\\n'\n", { mode: 0o755 });
+    await assert.rejects(
+      () => activateByPid({ pid: PID, osascriptPath: falseStub, attempts: 1 }),
+      /按 pid 激活安装版失败/,
+    );
+
+    const exitStub = path.join(dir, "exit-osascript");
+    writeFileSync(exitStub, "#!/bin/sh\nexit 3\n", { mode: 0o755 });
+    await assert.rejects(
+      () => activateByPid({ pid: PID, osascriptPath: exitStub, attempts: 1 }),
+      /按 pid 激活安装版失败（pid 4242）.*退出码 3/,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -741,17 +844,3 @@ test("退出码：暂停拒绝 / 失败都映射为 2（本次读数不算数）
 // ---------------------------------------------------------------------------
 // 文案与产品文案表的对账（避免第二份真源漂移）
 // ---------------------------------------------------------------------------
-
-test("完成 / 失败信号文案与 src/copy-data.ts 的 D1035 / D1036 逐字一致", () => {
-  const source = readFileSync(new URL("../../../src/copy-data.ts", import.meta.url), "utf8");
-  const fieldOf = (key, field) => {
-    const at = source.indexOf(`${key}:`);
-    assert.ok(at >= 0, `copy-data.ts 里找不到 ${key}`);
-    const window = source.slice(at, at + 500);
-    const match = new RegExp(`${field}:\\s*"((?:[^"\\\\]|\\\\.)*)"`).exec(window);
-    assert.ok(match, `${key} 缺 ${field}`);
-    return match[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
-  };
-  assert.deepEqual(SAVE_ALL_SUCCESS_TEXTS, [fieldOf("D1035", "zh"), fieldOf("D1035", "en")]);
-  assert.deepEqual(SAVE_ALL_FAILURE_TEXTS, [fieldOf("D1036", "zh"), fieldOf("D1036", "en")]);
-});

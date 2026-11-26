@@ -58,8 +58,9 @@ export interface ReadingPositionStoreDeps {
   applyPosition(position: ScrollPosition): void;
   /** 读某 vault 的阅读位置表；无历史（首次 / 损坏 / 版本不符）resolve 为 null。 */
   getPositions(vaultId: string): Promise<ReadingPositions | null>;
-  /** 写某 vault 的阅读位置表（整份镜像；写失败由后端降级为 warning）。 */
-  putPositions(vaultId: string, entries: ReadingPositionMap): Promise<void>;
+  /** 写某 vault 的阅读位置表（整份镜像）。resolve 的布尔值是**真实落盘结果**：磁盘写失败为
+   *  false（warning 由后端记）。普通调用方忽略它；`document.save-all` 的屏障据此判失败。 */
+  putPositions(vaultId: string, entries: ReadingPositionMap): Promise<boolean>;
   /** 一组 vault 相对路径的**批量**存在探测（后端 `fs_paths_exist`），返回其中确实存在的那些。
    *
    *  它补的是「装载时的枚举结果不再是 vault 内文件的全集」这件事：被 vault 自己的忽略声明
@@ -213,8 +214,9 @@ export function createReadingPositionStore(
 
   async function write(vaultId: string, entries: ReadingPositionMap): Promise<boolean> {
     try {
-      await deps.putPositions(vaultId, entries);
-      return true;
+      // 后端把磁盘写失败降级成 resolved `false`（warning 已在 Rust 侧记）；IPC 本身失败才是 reject。
+      // 两者都必须让保存全部屏障看见 false——普通调用方照旧忽略返回值。
+      return await deps.putPositions(vaultId, entries);
     } catch (e) {
       // 写失败只降级（与 last_vault、标签会话写失败同口径）：位置只影响「下次打开从哪里开始」，
       // 不值得拦停用户的一次打开、切换或退出。返回值只给需要「真实落盘」判据的调用方

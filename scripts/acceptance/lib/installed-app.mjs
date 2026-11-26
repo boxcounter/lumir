@@ -36,21 +36,15 @@ export const PAUSE_LOCK = "/tmp/lumir-acceptance-installed-pause.lock";
 /** 活动 runner 登记目录：每条真跑批一个 `<pid>.json`，暂停据此判断「同机有没有别人在跑」。 */
 export const RUNNER_REGISTRY_DIR = "/tmp/lumir-acceptance-runners";
 
-/** 保存屏障的正向 / 失败终态文案（产品文案 D1035 / D1036 的 zh + en 两列）。
+/** 保存全部的**机器可读状态标记**（产品 `src/save-all.ts` 维护）：`save-all#<代次> <状态>`。
  *
- *  为什么要两列：安装版用的是**用户自己的配置**，界面语言可能是 zh 或 en（产品只有这两档）。
- *  为什么常量而不是运行时读 `src/copy-data.ts`：安装版可能是比当前 checkout 更早 / 更晚的
- *  构建，读本仓源码得到的文案不一定等于被暂停进程里的那一份；真正的事实源是**那个进程的
- *  界面**。这里的常量由 `installed-app.test.mjs` 与本仓 `src/copy-data.ts` 对账（漂移即红），
- *  且只在「完成 / 失败信号」这两个字符串上依赖文案——菜单项文案固定 en（原生菜单先例）。
- *
- *  匹配是**节点级精确相等**（`AXStaticText` 的 title / label / value），不是全树子串：正文里
- *  恰好写着同一句话时不得冒充完成信号（REVIEW.md「断言等价于子串」条）。 */
-export const SAVE_ALL_SUCCESS_TEXTS = ["已保存全部更改", "All changes saved"];
-export const SAVE_ALL_FAILURE_TEXTS = [
-  "未能保存全部更改，请按提示处理后重试",
-  "Couldn't save all changes. Follow the prompts above and try again.",
-];
+ *  为什么不用 toast 文本当判据（K3 P1-3）：toast 只活 3.5s，且每次成功都发同一句文本——验收
+ *  通道若只认文本，会把上一次保存的旧 toast（或并发第二次触发的 toast）当成这一次的完成信号。
+ *  标记带**操作代次**：验收通道读取触发前的代次，只接受「代次更大且状态 ok」的标记；旧信号、
+ *  并发 busy、失败都不可能让它提前放行。标记是视觉隐藏的机器面（`main.ts` 的 saveAllMarker），
+ *  与用户可读 toast 并存但彼此独立。
+ */
+export const SAVE_ALL_MARKER_RE = /^save-all#(\d+) (idle|running|ok|failed|busy)$/;
 
 /** `etime` 反推的 startedAt 只有秒级精度：两次复核之间允许 2s 的读数漂移，超出即视为
  *  「pid 被复用 / 换了进程」。 */
@@ -61,7 +55,27 @@ export const STARTED_AT_TOLERANCE_MS = 2_000;
 export class PauseRefused extends Error {}
 export class PauseFailed extends Error {}
 
-const defaultExec = (cmd, args) => spawnSync(cmd, args, { encoding: "utf8" });
+/**
+ * 真实默认执行器：返回 **stdout 文本**；spawn 失败或退出码非零一律抛错（带 `status` / `stderr`）。
+ *
+ * 不能把 `spawnSync` 的返回对象直接当字符串用（那会固定得到 `[object Object]`，K3 P1-2）：
+ * 这是激活通道的默认实现，真机上每一次「按 pid 激活」都会走它。测试用真实可执行
+ * （`/usr/bin/printf` / 临时 shell 桩）覆盖这条默认通道，不只 mock `exec` 函数。
+ */
+export function execText(cmd, args, { spawnSync: spawn = spawnSync } = {}) {
+  const result = spawn(cmd, args, { encoding: "utf8" });
+  if (result?.error) throw result.error;
+  if (result?.status !== 0) {
+    const stderr = String(result?.stderr ?? "").trim();
+    const error = new Error(`${cmd} 退出码 ${result?.status ?? "未知"}${stderr ? `：${stderr}` : ""}`);
+    error.status = result?.status;
+    error.stderr = result?.stderr;
+    throw error;
+  }
+  return String(result?.stdout ?? "");
+}
+
+const defaultExec = execText;
 
 /** `/Applications/Lumir.app` 的 canonical 形态（存在则 realpath，不存在则按字面 resolve）。 */
 export function canonicalAppPath(appPath = INSTALLED_APP_PATH, { realpath = realpathSync } = {}) {
@@ -489,6 +503,7 @@ export function assertNoActivePause({ pauseLockDir = PAUSE_LOCK, fs = defaultFs,
 export async function activateByPid({
   pid,
   exec = defaultExec,
+  osascriptPath = "/usr/bin/osascript",
   attempts = 3,
   everyMs = 300,
   sleepFn = (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -503,7 +518,7 @@ export async function activateByPid({
   let last = "";
   for (let i = 0; i < attempts; i++) {
     try {
-      last = String(exec("/usr/bin/osascript", ["-e", script]) ?? "").trim();
+      last = String(exec(osascriptPath, ["-e", script]) ?? "").trim();
     } catch (e) {
       last = `osascript 失败：${e?.stderr ? String(e.stderr).trim() : e?.message ?? String(e)}`;
     }
@@ -602,33 +617,50 @@ export async function triggerSaveAllMenuItem({
   return { reads: menuBar.reads + item.reads };
 }
 
-/** 完成信号的节点级判据：`AXStaticText`（或带 label 的 AXGroup）的文本**逐字等于**某条终态文案。 */
-function findSignalNode(nodes, texts) {
-  for (const text of texts) {
-    const escaped = text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const exact = new RegExp(`^${escaped}$`);
-    const hit =
-      findNode(nodes, { role: "AXStaticText", name: exact }) ??
-      nodes.find((n) => n.role === "AXGroup" && n.label === text) ??
-      nodes.find((n) => n.role === "AXGroup" && n.title === text);
-    if (hit) return { text, node: hit };
+/** 从 AX 节点里解析保存全部状态标记；找不到 / 形态不符回 null（不猜）。 */
+export function parseSaveAllMarker(nodes) {
+  // 标记是视觉隐藏的 span：WKWebView 可能把它暴露成 AXStaticText，也可能挂在 AXGroup 的
+  // label 上——两种都收；正文（AXTextArea）里恰好写着同形文本**不算**（它不是标记节点）。
+  const candidate =
+    findNode(nodes, { role: "AXStaticText", name: SAVE_ALL_MARKER_RE }) ??
+    nodes.find((node) => {
+      if (node.role !== "AXGroup") return false;
+      const text = String(node.label ?? node.title ?? "").trim();
+      return SAVE_ALL_MARKER_RE.test(text);
+    });
+  if (!candidate) return null;
+  const text = String(candidate.title ?? candidate.label ?? candidate.value ?? "").trim();
+  const match = SAVE_ALL_MARKER_RE.exec(text);
+  return match ? { generation: Number(match[1]), state: match[2] } : null;
+}
+
+/** 读一次当前标记；读不到 / 形态不符即 `PauseFailed`（没有标记就没法把完成信号绑定到本次操作）。 */
+export async function readSaveAllMarker({ pid, readState } = {}) {
+  const text = await readAxOrFail(readState, pid, "save-all-marker");
+  const nodes = axNodesOrFail(text, "save-all-marker");
+  const marker = parseSaveAllMarker(nodes);
+  if (!marker) {
+    throw new PauseFailed(
+      "安装版 AX 里找不到保存全部状态标记（save-all#N …）——无法把完成信号绑定到本次操作，不⌘Q、不跑批",
+    );
   }
-  return null;
+  return marker;
 }
 
 /**
- * 等保存屏障的**正向完成信号**（产品文案 D1035），失败信号（D1036）出现即抛。
+ * 等**本次操作**的保存全部完成（K3 P1-3）：只接受代次大于 `baselineGeneration` 的标记。
  *
- * 三条负向口径（REVIEW.md「读不到当成空」条）：
- *   - AX 读失败 / 空树 → 立即 `PauseFailed`（不可读 ≠ 成功）；
- *   - 超时 → `PauseFailed`（缺完成信号 ≠ 成功）；
- *   - 只认**节点级精确相等**，不做全树子串（正文里写着同样一句话不算数）。
+ * 判据：
+ *   - 触发前代次（baseline）由调用方在**点菜单之前**读取；同一代次的旧 `ok` / `failed` 一律
+ *     不算数（继续等到超时），因此上一次保存留下的旧信号不可能放行。
+ *   - 代次更大且 `ok` → 成功；代次更大且 `failed` → 失败；代次更大且 `running` → 继续等。
+ *   - `busy`（并发 / 重复触发被单飞拒绝）→ 立即失败，不等待、不把别人的成功当自己的。
+ *   - 空树 / 读失败 / 缺标记 / 超时 → 失败（不可读 ≠ 成功）。
  */
-export async function waitSaveAllSignal({
+export async function waitSaveAllCompletion({
   pid,
   readState,
-  successTexts = SAVE_ALL_SUCCESS_TEXTS,
-  failureTexts = SAVE_ALL_FAILURE_TEXTS,
+  baselineGeneration,
   timeoutMs = 20_000,
   everyMs = 300,
   sleepFn = (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -636,20 +668,37 @@ export async function waitSaveAllSignal({
 } = {}) {
   const deadline = now() + timeoutMs;
   let reads = 0;
+  let last = null;
   for (;;) {
-    const text = await readAxOrFail(readState, pid, "save-all-signal");
+    const text = await readAxOrFail(readState, pid, "save-all-completion");
     reads += 1;
-    const nodes = axNodesOrFail(text, `save-all-signal（第 ${reads} 次读取）`);
-    const failure = findSignalNode(nodes, failureTexts);
-    if (failure) {
-      throw new PauseFailed(`保存屏障报告失败（${reads} 次读取命中失败终态「${failure.text}」）——不⌘Q、不跑批`);
+    const nodes = axNodesOrFail(text, `save-all-completion（第 ${reads} 次读取）`);
+    const marker = parseSaveAllMarker(nodes);
+    if (!marker) {
+      throw new PauseFailed(
+        "安装版 AX 里找不到保存全部状态标记（save-all#N …）——无法把完成信号绑定到本次操作，不⌘Q、不跑批",
+      );
     }
-    const success = findSignalNode(nodes, successTexts);
-    if (success) return { reads, text: success.text };
+    last = marker;
+    if (marker.state === "busy") {
+      throw new PauseFailed(
+        `保存全部被并发触发拒绝（busy#${marker.generation}，触发前代次 ${baselineGeneration}）——` +
+          "单飞不开新代次，本次没有属于它的完成信号；不⌘Q、不跑批",
+      );
+    }
+    if (marker.generation > baselineGeneration) {
+      if (marker.state === "ok") return { generation: marker.generation, reads };
+      if (marker.state === "failed") {
+        throw new PauseFailed(
+          `保存屏障报告失败（save-all#${marker.generation} failed，触发前代次 ${baselineGeneration}）——不⌘Q、不跑批`,
+        );
+      }
+    }
     if (now() >= deadline) {
       throw new PauseFailed(
-        `等保存屏障完成信号超时（${timeoutMs}ms，${reads} 次读取）：未见「${successTexts.join(" / ")}」——` +
-          "缺完成信号即判失败，不⌘Q、不跑批",
+        `等本次保存全部完成超时（${timeoutMs}ms，${reads} 次读取；触发前代次 ${baselineGeneration}，` +
+          `最后标记 ${last ? `save-all#${last.generation} ${last.state}` : "无"}）——` +
+          "同一代次的旧信号不算数，不⌘Q、不跑批",
       );
     }
     await sleepFn(everyMs);
@@ -713,6 +762,7 @@ export async function runInstalledPause({
   realpath = realpathSync,
   verifyTarget = verifyInstalledTarget,
   activate,
+  readMarker,
   triggerSaveAll,
   waitSaveAll,
   quit,
@@ -764,9 +814,24 @@ export async function runInstalledPause({
     state.touched = true;
     await phase("activate", `result=ok pid=${target.pid}`);
 
+    // 触发前读取代次基线：只接受比它更大的完成标记（K3 P1-3）。基线本身正在跑（running）
+    // 说明另一次保存全部在途——不并发触发，直接停手。
+    const baseline = await readMarker(target.pid);
+    await phase(
+      "save-all-baseline",
+      `result=ok pid=${target.pid} generation=${baseline.generation} state=${baseline.state}`,
+    );
+    if (baseline.state === "running") {
+      throw new PauseFailed(
+        `触发前已有保存全部在跑（save-all#${baseline.generation} running）——不并发触发，不⌘Q、不跑批`,
+      );
+    }
     await triggerSaveAll(target.pid);
-    const signal = await waitSaveAll(target.pid);
-    await phase("save-all", `result=ok pid=${target.pid} reads=${signal?.reads ?? 0}`);
+    const signal = await waitSaveAll(target.pid, baseline.generation);
+    await phase(
+      "save-all",
+      `result=ok pid=${target.pid} generation=${signal?.generation ?? "?"} baseline=${baseline.generation} reads=${signal?.reads ?? 0}`,
+    );
 
     await reverify("before-quit");
     const quitInfo = await quit(target.pid);

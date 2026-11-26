@@ -694,18 +694,19 @@ fn scenario_session_put_degrades_write_failure_to_warning() {
     fs::create_dir_all(&dir).unwrap();
     // 会话目录被一个普通文件占位 → create_dir_all 必失败
     fs::write(dir.join("vault-sessions"), "x").unwrap();
+    let written = vault_session::vault_session_put(
+        "v1".into(),
+        vec![vault_session::PaneSession {
+            tabs: vec!["a.md".into()],
+            active: None,
+        }],
+        0.5,
+        false,
+    )
+    .expect("磁盘写失败不是错误信封：普通调用方照旧不被拦停");
     assert!(
-        vault_session::vault_session_put(
-            "v1".into(),
-            vec![vault_session::PaneSession {
-                tabs: vec!["a.md".into()],
-                active: None,
-            }],
-            0.5,
-            false,
-        )
-        .is_ok(),
-        "写失败降级为 warning（Ok）：切换与打开不被拦停"
+        !written,
+        "磁盘写失败必须如实返回 false（warning 已记）：保存全部的屏障据此判失败"
     );
     assert_eq!(vault_session::vault_session_get("v1".into()).unwrap(), None);
 }

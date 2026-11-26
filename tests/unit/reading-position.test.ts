@@ -64,6 +64,8 @@ interface Rig {
   getPositionsImpl: (vaultId: string) => Promise<ReadingPositions | null>;
   failRead: boolean;
   failWrite: boolean;
+  /** 后端 resolved false（真实磁盘写失败，warning 由后端记）——与 reject 档分开。 */
+  writeSucceeds: boolean;
   writes: Array<{ vaultId: string; entries: ReadingPositionMap }>;
   warns: string[];
   /** 批量存在探测的假实现：默认「都不在 vault 内」（= 只看枚举集合的旧口径）。 */
@@ -85,6 +87,7 @@ function createRig(): Rig {
     },
     failRead: false,
     failWrite: false,
+    writeSucceeds: true,
     writes: [],
     warns: [],
     pathsExistImpl: async () => [],
@@ -97,7 +100,9 @@ function createRig(): Rig {
     getPositions: (vaultId) => rig.getPositionsImpl(vaultId),
     putPositions: async (vaultId, entries) => {
       if (rig.failWrite) throw { code: "io", message: "磁盘只读" };
+      if (!rig.writeSucceeds) return false;
       rig.writes.push({ vaultId, entries });
+      return true;
     },
     pathsExist: (paths) => {
       rig.probes.push([...paths]);
@@ -487,6 +492,15 @@ test("降级四种：读不到 / 无历史 / 版本不符（后端已归成 null
   rig.store.scrolled();
   assert.equal(await rig.store.flush(), false);
   assert.deepEqual(rig.warns, ["磁盘只读"]);
+  assert.equal(rig.writes.length, 0);
+
+  // ③b 后端 resolved false（真实磁盘写失败，warning 已在 Rust 侧记）：同样 false，前端不重复 warning
+  rig.failWrite = false;
+  rig.writeSucceeds = false;
+  rig.view = position(800);
+  rig.store.scrolled();
+  assert.equal(await rig.store.flush(), false);
+  assert.deepEqual(rig.warns, ["磁盘只读"], "resolved false 不新增前端 warning");
   assert.equal(rig.writes.length, 0);
 
   // ④ 未装载 vault 时恢复是 no-op（启动早期）
