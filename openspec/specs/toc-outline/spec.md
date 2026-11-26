@@ -473,12 +473,13 @@ SHALL 仍常驻可见；MUST NOT 关闭浮层，MUST NOT 复用「文档没有�
 最终查询串刷新**恰一次**——真实引擎在 `compositionend` 之后补发的同值 `input` MUST NOT 触发第二次
 刷新。
 
-筛选输入框是**输入面**的一种，`⌘A` SHALL 沿用 `quick-open` 的「输入面内的全选（⌘A）」条：输入框
-持焦时由浮层的就地键处理**显式接管**（`preventDefault` 后选中输入框内的全部输入内容），MUST NOT
-依赖 webview / 原生 Select All 菜单的默认行为，MUST NOT 被 `editor.select-all` 截走（那会选中正文、
-丢掉输入串）。其余文本编辑键（复制 / 剪切 / 粘贴 / 撤销 / 重做 / 移动 / 删除 / `⌫` / `⌥⌫` / `⌦` /
-左右方向键）SHALL 继续走原生输入框路径；组合期的 `⌘A` MUST NOT 由该分支消费、MUST NOT 改变输入框
-选区。浮层关闭后编辑器内的 `⌘A` SHALL 保持既有 `editor.select-all` 语义。
+筛选输入框是**输入面**的一种，`⌘A` SHALL 沿用 `quick-open` 的「输入面内的全选（⌘A）」条：由**统一键位层**
+按输入面**显式接管**（change fix-text-input-select-all-nov26：`selectAllAt` 落到筛选框、选中其全部输入
+内容并 `preventDefault`；浮层 MUST NOT 再保留本地的 `input.select()` 副本），MUST NOT 依赖 webview /
+原生 Select All 菜单的默认行为，MUST NOT 被 `editor.select-all` 截走（那会选中正文、丢掉输入串）。
+其余文本编辑键（复制 / 剪切 / 粘贴 / 撤销 / 重做 / 移动 / 删除 / `⌫` / `⌥⌫` / `⌦` / 左右方向键）SHALL
+继续走原生输入框路径；组合期的 `⌘A` MUST NOT 由统一分派消费、MUST NOT 改变输入框选区。浮层关闭后
+编辑器内的 `⌘A` SHALL 保持既有 `editor.select-all` 语义。
 
 `aria-selected` SHALL 只表示**键盘游标**：任意时刻至多一条 option 为 `aria-selected="true"`，且它
 SHALL 是 `aria-activedescendant` 指向的那一条。当前段是**另一件事**：它 SHALL 用 `aria-current="true"`

@@ -553,11 +553,12 @@ MUST NOT 消费按键（它解释为什么没有反应，不是输入行为的�
 
 ### Requirement: 输入面内的全选（⌘A）
 
-输入面打开且输入框持焦时，`⌘A` SHALL 全选输入框内的**全部输入内容**（选中的是输入串本身，
-不是编辑器文档，也不是候选列表），且 MUST NOT 被编辑器命令或全局命令截走。实现 SHALL 在输入面的
-就地键处理中显式接管该键（选中输入框内容并阻止默认行为），MUST NOT 依赖 webview / 原生 Select
-All 菜单的默认行为——M627 起原生菜单的预置 Select All 已让出 `⌘A` 加速键，是否送达 input 不在
-本仓的合同内。
+输入面（本浮层的筛选框，以及任何原生文本输入宿主）持焦时，`⌘A` SHALL 全选该输入面的**全部输入内容**
+（选中的是输入串本身，不是编辑器文档，也不是候选列表），且 MUST NOT 被编辑器命令或全局命令截走。
+实现 SHALL 由**统一键位层**显式接管该键（change fix-text-input-select-all-nov26：`selectAllAt` 落到
+当前输入面、选中其全部内容并 `preventDefault`），浮层 MUST NOT 再保留本地的 `input.select()` 副本；
+MUST NOT 依赖 webview / 原生 Select All 菜单的默认行为——M627 起原生菜单的预置 Select All 已让出
+`⌘A` 加速键，是否送达 input 不在本仓的合同内。合同本体见 `docs/specs/text-input-faces.md`。
 
 其余文本编辑键（复制 / 剪切 / 粘贴 / 撤销 / 重做 / 移动 / 删除）SHALL 继续由原生输入框路径处理，
 输入面 MUST NOT 拦截它们；输入法组合期间 `⌘A` 仍归输入法 / 原生路径（MUST NOT 在组合期接管）。
