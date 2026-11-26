@@ -7,11 +7,16 @@
 # tests/visual/scenes/no-tab-empty-state-nov27.spec.ts；真机像素归 Alex 过目，不在本场景判红）。
 # 首启 tips / 老用户 D107 覆盖层收窄的判据同样在视觉场景；本场景不伪造首启状态。
 #
-# 2026-11-27 真机首跑：`open goto-line-long.md` 等待「第 1 行」60s 超时。证据
-# `.local/acceptance/2026-11-27-ux-goal/885-no-tab-empty-state/` 的 AX 快照显示文档其实已装载
-# （AXTextArea 全文在场、标签选中），只是 fixture 以 `## 段一` 开头、没有「第 1 行」这一行——
-# 是场景 marker 写错，不是 tips 遮挡 / 打开意图 / fixture 或窗口状态 / 产品回归。marker 改为
-# fixture 实有的 `段一`；本批只跑 `--check`，真机待主会话重排。
+# 2026-11-27 真机两轮定位：
+# 1) 首跑 `open` 等待「第 1 行」60s 超时——AX 快照显示文档其实已装载，只是 fixture 以
+#    `## 段一` 开头、没有「第 1 行」；marker 改为 fixture 实有的 `段一`。
+# 2) r2 打开 / 单 pane scratch 通过，但 F2 分栏无效果。证据
+#    `.local/acceptance/2026-11-27-ux-goal-r2-885.log`：隔离 config.json 已写入
+#    `"keys": {"F2": "pane.split"}`，诊断日志无 keys 的 config_warning；同一产品路径在
+#    chromium 视觉层（m320）与真机默认键（场景 79 的 `alt+s`）均成立。F2 是功能键注入 /
+#    配置键名匹配的不可靠腿，不作为本场景的分栏通道。改用产品**默认** `⌥S`（`Alt-KeyS`，
+#    scope global，场景 79 已真机验证）——真实用户路径，不依赖 [keys] 覆盖。
+# 本轮只跑 `--check`；真机待主会话重排。
 id: "885-no-tab-empty-state"
 item: 885
 tier: full
@@ -21,7 +26,6 @@ open: goto-line-long.md
 marker: "段一"
 config:
   lineNumbers: "on"
-  keys: { F2: "pane.split" }
 steps:
   - name: 起点：文档打开、on 档 gutter 在场（后面「无标签后没有 gutter」的对照面）
     do: settle
@@ -64,9 +68,9 @@ steps:
         editor: { has: "第 2 行：填充段落" }
       - shot: 04-重开文档-gutter-恢复
 
-  - name: 分栏得到空 pane（F2 由本场景 config 绑定）
+  - name: 分栏得到空 pane（产品默认 ⌥S；场景 79 同一条真机路径）
     do: key
-    key: "f2"
+    key: "alt+s"
     expect:
       - label: 分栏已发生（分隔条在场）
         ax: { has: "分隔条" }
