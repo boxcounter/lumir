@@ -50,9 +50,11 @@ test("/tmp 有唯一候选时高亮即 armed，Enter 接受 tmp-acc（Alex 2026-
     assert.equal(state.armed, true, "有效高亮必须 armed：/tmp 不再享有「不是全名」豁免");
     const selected = skillSelectionSpec(text, state)!;
     assert.equal(selected.skill.name, "tmp-acc");
-    assert.equal(selected.changes.from, text.indexOf("/"));
-    assert.equal(selected.changes.to, text.length);
-    assert.equal(selected.changes.insert, "/tmp-acc ");
+    const changes = selected.changes;
+    assert.ok(changes && "from" in changes && "to" in changes && "insert" in changes);
+    assert.equal(changes.from, text.indexOf("/"));
+    assert.equal(changes.to, text.length);
+    assert.equal(changes.insert, "/tmp-acc ");
   }
   // token 边界不受新合同影响
   assert.equal(skillTokenAt("x/tmp", 5), null);
