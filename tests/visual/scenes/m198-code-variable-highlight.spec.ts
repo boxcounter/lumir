@@ -222,8 +222,10 @@ async function decorations(page: Page): Promise<Position[]> {
 const positions = (doc: string, specs: readonly Locate[]): Position[] => specs.map((spec) => locate(doc, spec));
 
 /** 打开 fixture 并等到内容上屏。 */
-async function open(page: Page, path: string, marker: string): Promise<void> {
-  await page.locator(`.ft-row[title="${path}"]`).click();
+async function open(page: Page, path: string, marker: string, options: { newTab?: boolean } = {}): Promise<void> {
+  // newTab：⌘-点击新开标签（change improve-file-open-harness-affordance-nov26 起普通点击 =
+  // 当前标签就地打开；需要「两个标签」现场的用例显式声明）。
+  await page.locator(`.ft-row[title="${path}"]`).click(options.newTab ? { modifiers: ["Meta"] } : {});
   await expect(page.locator(VIEW)).toContainText(marker);
 }
 
@@ -683,10 +685,10 @@ test("生命周期：光标移走即清除、点另一个变量改为新源、�
     positions(doc, [{ after: "const LIMIT = 1;\n  return ", at: "LIMIT" }, { after: "return LIMIT + ", at: "LIMIT" }]),
   );
 
-  // ③ 切文件：新文件在自己**新开的标签**里是空选区 ⇒ 零装饰；回到原文件时它已经是另一个标签，
-  //    单击只是切过去（M254：不再就地替换）——装饰按那个标签自己的选区重建（逐标签保留语义），
-  //    不是「残留」，也不是「清零」。
-  await open(page, "binding.py", "LIMIT = 42");
+  // ③ 切文件：新文件在自己**新开的标签**里是空选区 ⇒ 零装饰（⌘-点击建立第二个标签）；
+  //    回到原文件时它已经是另一个标签，单击只是切过去——装饰按那个标签自己的选区重建
+  //    （逐标签保留语义），不是「残留」，也不是「清零」。
+  await open(page, "binding.py", "LIMIT = 42", { newTab: true });
   expect(await decorations(page)).toEqual([]);
   await open(page, "binding-shadow.js", "const LIMIT = 42;");
   await expect

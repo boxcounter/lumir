@@ -448,7 +448,7 @@ test("显示门时序：布局未落定时到达的终态按「不在屏幕上�
   await expect(page.locator(".ft-vault-name")).toHaveText("lumir-activity-b");
   await expect(page.locator(".lumir-harness")).toBeHidden();
   await expect(toggle(page)).toHaveAttribute("data-activity", "reply");
-  await expect(toggle(page)).toHaveAttribute("title", "对话面板 · 有新的回复");
+  await expect(toggle(page)).toHaveAttribute("title", "Harness 面板 · 有新的回复");
 
   // 切回 A 再切回 B：未读仍在（切换不清），打开面板才清。
   await switchTo(page, "act-a", "lumir-activity-a");

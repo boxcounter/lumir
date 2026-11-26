@@ -348,7 +348,9 @@ test("vault 外绝对路径只读打开：标签与 modeline 的只读标记、�
   await expect(tab).toHaveAttribute("aria-label", "draft.md（vault 外只读）");
   // 负向对照：vault 内标签不得带这枚图标（判据是 `session.external`，不是「所有标签」）。
   // 开一个 vault 内文件看一眼再关掉——用例末尾按「标签总数 1」判去重，这里不能留残局。
-  await page.locator('.ft-row[title="notes/plan.md"]').click();
+  // ⌘-点击新开标签（change improve-file-open-harness-affordance-nov26 起普通点击会就地替换
+  // 当前标签——draft.md 的外只读标签必须留着，末尾按标签总数 1 判去重）。
+  await page.locator('.ft-row[title="notes/plan.md"]').click({ modifiers: ["Meta"] });
   const vaultTab = page.locator(".tab").filter({ hasText: "plan.md" });
   await expect(vaultTab.locator(".tab-readonly")).toHaveCount(0);
   await vaultTab.locator(".tab-close").click();

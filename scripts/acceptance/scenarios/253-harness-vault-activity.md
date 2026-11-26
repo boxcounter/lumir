@@ -88,9 +88,9 @@ steps:
       - label: 切回后指示仍是「处理中」——不呈假空闲（本场景的核心判据）
         ax: { has: "处理中" }
       # 角色是 AXCheckBox 而不是 AXButton：带 `aria-pressed` 的 button 在 WKWebView 的 AX 树里
-      # 映射成复选框（场景 86 的实证与注释同口径）。读屏名仍是 D327「对话面板」。
+      # 映射成复选框（场景 86 的实证与注释同口径）。读屏名仍是 D327「Harness 面板」。
       - label: 标题栏 toggle 钮在场上（面板仍是收起的）
-        node: { role: AXCheckBox, name: "对话面板", present: true }
+        node: { role: AXCheckBox, name: "Harness 面板", present: true }
       - shot: 02-切回仍在途
 
   - name: 打开面板：发送钮必须是停止态（不是「看似可发送」的空闲）
@@ -172,7 +172,7 @@ steps:
       # 该轮在 B 期间结束、A 的 transcript 不在屏幕上 ⇒ **记未读**。旧口径（「不伪造未读」）
       # 已被本 change 显式修订；切换本身不是已读，打开面板才清（下一条判据）。
       - label: 跨 vault 完成的终态呈未读（标题栏钮「有新的回复」，不是空闲）
-        ax: { has: "对话面板 · 有新的回复" }
+        ax: { has: "Harness 面板 · 有新的回复" }
       - shot: 06-完成后往返-呈未读
 
   - name: 打开面板：回答按快照完整铺开
@@ -190,7 +190,7 @@ steps:
     keys: ["cmd+shift+a"]
     expect:
       - label: 打开过面板（transcript 真的在屏幕上）⇒ 未读已清，钮不含任何状态词
-        ax: { not: "/对话面板 · (处理中|有新的回复|有失败结果)/" }
+        ax: { not: "/Harness 面板 · (处理中|有新的回复|有失败结果)/" }
   - name: 重新打开面板（下一轮在面板里发起）
     do: keys
     keys: ["cmd+shift+a"]

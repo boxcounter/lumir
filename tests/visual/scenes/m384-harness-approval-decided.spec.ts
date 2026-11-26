@@ -349,7 +349,7 @@ test("待批状态：running 桩下正断言等待批准；两项逐个清算；
   await expect(stage).toHaveText("等待批准…");
   await expect(segStatus).toHaveText("等待批准");
   await expect(toggleStatus).toHaveText("等待批准");
-  await expect(page.locator(".lumir-hp-toggle")).toHaveAttribute("title", "对话面板 · 等待批准");
+  await expect(page.locator(".lumir-hp-toggle")).toHaveAttribute("title", "Harness 面板 · 等待批准");
   await fire(page, request("call_multi_2"));
   await expect(page.locator(".lumir-hp-pend")).toHaveCount(2);
   await expect(page.locator('button[data-act="approve"]')).toHaveCount(2);

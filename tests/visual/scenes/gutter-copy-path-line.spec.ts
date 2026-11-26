@@ -379,7 +379,9 @@ test("非首屏滚动快照：右键不改视口；切走再切回恢复同一�
   expect(await topVisibleLine(page)).toBe(clicked.topBefore); // 右键没有推视口
   const beforeSwitchScroll = await scrollTop(page);
 
-  await page.locator(`.ft-row[title="${CODE_PATH}"]`).click();
+  // 切走再切回：⌘-点击新开标签（change improve-file-open-harness-affordance-nov26 起
+  // 普通点击会就地替换当前标签，MD 的滚动现场就没了）。
+  await page.locator(`.ft-row[title="${CODE_PATH}"]`).click({ modifiers: ["Meta"] });
   await expect(page.locator(".modeline-path")).toHaveText(CODE_PATH);
   await page.locator(".tab-open").filter({ hasText: MD_PATH }).click();
   await expect(page.locator(".modeline-path")).toHaveText(MD_PATH);

@@ -36,9 +36,10 @@ const VAULT: VaultFixture = {
   links: {},
 };
 
-/** 按顺序开若干标签（单击树文件 = 打开一个正式标签，M254）。 */
+/** 按顺序开若干标签（change improve-file-open-harness-affordance-nov26 起普通点击 =
+ *  当前标签就地打开，多标签现场一律 ⌘-点击）。 */
 async function openTabs(page: Page, paths: string[]): Promise<void> {
-  for (const path of paths) await page.locator(`.ft-row[title="${path}"]`).click();
+  for (const path of paths) await page.locator(`.ft-row[title="${path}"]`).click({ modifiers: ["Meta"] });
   await expect(page.locator(".tab")).toHaveCount(paths.length);
   // 顺序 = 打开顺序：断言出来，后面「右侧」的判据才有确定的锚点。
   await expect(page.locator(".tab-name")).toHaveText(paths);
@@ -719,8 +720,9 @@ test("Close All Tabs：作用域是右键所在 pane 的标签条——另一个
   const strips = page.locator(".tabstrip");
   await expect(strips).toHaveCount(2);
   // 右 pane 开 gamma / delta（树单击落活跃 pane；分栏后焦点在右 pane）
-  await page.locator('.ft-row[title="gamma.md"]').click();
-  await page.locator('.ft-row[title="delta.md"]').click();
+  // 分栏后树单击落活跃 pane；两条都要留在右 pane（⌘-点击新开，普通点击会就地替换）。
+  await page.locator('.ft-row[title="gamma.md"]').click({ modifiers: ["Meta"] });
+  await page.locator('.ft-row[title="delta.md"]').click({ modifiers: ["Meta"] });
   await expect(strips.nth(1).locator(".tab-name")).toHaveText(["gamma.md", "delta.md"]);
   await expect(strips.nth(0).locator(".tab-name")).toHaveText(["alpha.md", "beta.md"]);
 
@@ -743,8 +745,9 @@ test("Close All Tabs：双 pane 停手——焦点落在右键 pane 的编辑器
   await page.keyboard.press("F2");
 
   const strips = page.locator(".tabstrip");
-  await page.locator('.ft-row[title="gamma.md"]').click();
-  await page.locator('.ft-row[title="delta.md"]').click();
+  // 分栏后树单击落活跃 pane；两条都要留在右 pane（⌘-点击新开，普通点击会就地替换）。
+  await page.locator('.ft-row[title="gamma.md"]').click({ modifiers: ["Meta"] });
+  await page.locator('.ft-row[title="delta.md"]').click({ modifiers: ["Meta"] });
   await expect(strips.nth(1).locator(".tab-name")).toHaveText(["gamma.md", "delta.md"]);
 
   // 把右 pane 的前台 delta 弄脏（右键 gamma → 目标顺序 [gamma(clean), delta(dirty)]）

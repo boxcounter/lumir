@@ -24,8 +24,8 @@ steps:
         ax: { count: { pattern: "关闭 ", exact: 1 } }
       - label: 编辑器正文是 tabs-a
         editor: { has: "标签场景 A" }
-      - label: 标题栏 harness toggle 钮在场（M370 起钮面是火花 SVG 图标；aria-pressed 钮在 WKWebView 读作 AXCheckBox，读屏名仍是 D327「对话面板」）
-        ax: { has: "/AXCheckBox \\(对话面板\\)/" }
+      - label: 标题栏 harness toggle 钮在场（M370 起钮面是火花 SVG 图标；aria-pressed 钮在 WKWebView 读作 AXCheckBox，读屏名仍是 D327「Harness 面板」）
+        ax: { has: "/AXCheckBox \\(Harness 面板\\)/" }
 
   - name: ⌘⇧A 打开 harness pane——无第二 pane 时自动分栏
     do: keys
@@ -113,7 +113,7 @@ pane 打开/收起 harness」，且 **harness 在场时文档 pane 至多一个*
    只在非 root pane 在场时建元素，是分栏的唯一结构证据（与场景 79 同源）。
 - **面板在位**：`AXButton (发送)`（D329）——面板已挂进 pane 挂载元素，发送钮在场即面板在位。
 - **标题栏 toggle 钮**（M370 适配）：钮面是原型同款火花 SVG（可见文字「对话 / Chat」退场，
-  可读身份 = D327 读屏名「对话面板」）——单 pane 态断 `/AXCheckBox \(对话面板\)/`（带
+  可读身份 = D327 读屏名「Harness 面板」）——单 pane 态断 `/AXCheckBox \(Harness 面板\)/`（带
   aria-pressed 的 button 在 WKWebView AX 树里映射成 AXCheckBox，不是 AXButton）；
   分栏态它按退让条款隐藏（步骤「⌘⇧A 打开」后看不到它是预期，不是缺失）。
 - **标题栏 harness 段**：`AXButton (新会话)`（D330）——段内的会话名下拉钮与新建会话钮在未命名

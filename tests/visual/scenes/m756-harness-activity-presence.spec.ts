@@ -178,7 +178,7 @@ test("活动在场：三态结构 / 点锚在钮内 / 收起不复位 / 空闲�
   // 悬停提示是三态的 **AX 可读**承载（252 首跑定案）：WKWebView 把 button 当叶子节点，
   // 嵌在钮内的状态文本不进 AX 树、`aria-describedby` 只进 AXDescription（dump 不打印），
   // 只有 `title`（dump 的 help=）读得到。空闲态逐字等于 D327（既有口径不变）。
-  await expect(toggle).toHaveAttribute("title", "对话面板");
+  await expect(toggle).toHaveAttribute("title", "Harness 面板");
 
   // ── ② 在途：相位推进（面板展开时 toggle 按退让条款隐藏，三态的**可见**形态在收起态判）──
   await toggle.click();
@@ -188,7 +188,7 @@ test("活动在场：三态结构 / 点锚在钮内 / 收起不复位 / 空闲�
   await page.locator(".lumir-hp-send").click();
   await expect(toggle).toHaveAttribute("data-activity", "inflight");
   await expect(status).toHaveText("处理中"); // D870
-  await expect(toggle).toHaveAttribute("title", "对话面板 · 处理中"); // AX 通道上的同一句话
+  await expect(toggle).toHaveAttribute("title", "Harness 面板 · 处理中"); // AX 通道上的同一句话
   // 展开态：送钮自己就是「停止」态（钮面 glyph 已换），与标题栏的状态点同一份相位。
   await expect(page.locator(".lumir-hp-send")).toHaveAttribute("aria-label", "停止");
 
@@ -230,7 +230,7 @@ test("活动在场：三态结构 / 点锚在钮内 / 收起不复位 / 空闲�
   expect(Number.parseFloat(reply.borderTopWidth)).toBe(0); // 无环 = 实心点
   expect(reply.boxShadow).toBe("none"); // 无外环 = 与失败档可分
   await expect(status).toHaveText("有新的回复"); // D871
-  await expect(toggle).toHaveAttribute("title", "对话面板 · 有新的回复");
+  await expect(toggle).toHaveAttribute("title", "Harness 面板 · 有新的回复");
 
   // ── ④ 打开面板即已读：未读清算、点回到零上屏 ────────────────────────────
   await page.keyboard.press("Meta+Shift+A");
@@ -238,7 +238,7 @@ test("活动在场：三态结构 / 点锚在钮内 / 收起不复位 / 空闲�
   await expect(toggle).toHaveAttribute("data-activity", "idle");
   await expect(dot).toBeHidden();
   await expect(status).toHaveText("");
-  await expect(toggle).toHaveAttribute("title", "对话面板"); // 空闲回到 D327 逐字
+  await expect(toggle).toHaveAttribute("title", "Harness 面板"); // 空闲回到 D327 逐字
 
   // ── ⑤ 失败档：实心点 + 外环（与回复档同样不单靠颜色）────────────────────
   await composer.locator(".cm-content").fill("这一轮会失败");
@@ -252,7 +252,7 @@ test("活动在场：三态结构 / 点锚在钮内 / 收起不复位 / 空闲�
   expect(failure.background).not.toBe("rgba(0, 0, 0, 0)"); // 实心
   expect(failure.boxShadow).toContain("rgb("); // 1px 外环
   await expect(status).toHaveText("有失败结果"); // D872
-  await expect(toggle).toHaveAttribute("title", "对话面板 · 有失败结果");
+  await expect(toggle).toHaveAttribute("title", "Harness 面板 · 有失败结果");
 
   // ── ⑥ 用户主动停止不产生未读（D2）──────────────────────────────────────
   await page.keyboard.press("Meta+Shift+A"); // 打开 = 已读清算
@@ -661,7 +661,7 @@ test("进入快照带待批：toggle 与段状态词同源，面板开合是本�
   // 面板收起：toggle 是唯一可见承载，三个字段同源。
   await expect(toggle).toHaveAttribute("data-activity", "inflight");
   await expect(status).toHaveText("等待批准");
-  await expect(toggle).toHaveAttribute("title", "对话面板 · 等待批准");
+  await expect(toggle).toHaveAttribute("title", "Harness 面板 · 等待批准");
   await expect(segStatus).toBeHidden();
 
   // 打开面板：toggle 被退让条款隐藏，段状态词接手（唯一在場的 live 区域）。
@@ -685,7 +685,7 @@ test("进入快照带待批：toggle 与段状态词同源，面板开合是本�
   await expect(segStatus).toBeHidden();
   await expect(toggle).toBeVisible();
   await expect(status).toHaveText("等待批准");
-  await expect(toggle).toHaveAttribute("title", "对话面板 · 等待批准");
+  await expect(toggle).toHaveAttribute("title", "Harness 面板 · 等待批准");
 
   await page.keyboard.press("Meta+Shift+A");
   await expect(page.locator(".lumir-harness")).toBeVisible();
@@ -770,7 +770,7 @@ test("终态撤回：done / error 标未执行、aborted 标已停止，下一�
     await expect(page.locator(".lumir-hp-stage")).toBeHidden();
     await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
     await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("");
-    await expect(page.locator(".lumir-hp-toggle")).toHaveAttribute("title", "对话面板");
+    await expect(page.locator(".lumir-hp-toggle")).toHaveAttribute("title", "Harness 面板");
 
     // 下一轮：旧待批不复活（未执行 / 已停止的卡不回到 transcript）。
     await startLocalTurn(page, `下一轮：${item.label}`);
@@ -825,11 +825,11 @@ test("content 对账 · 非空列表 + 面板开：相位 idle 下不复活待�
 test("content 对账 · 非空列表 + 面板收：未读回复在场，重开无卡", async ({ page }) => {
   await openContentCell(page, { open: false, pending: PENDING_ONE });
   const toggle = page.locator(".lumir-hp-toggle");
-  await expect(toggle).toHaveAttribute("title", "对话面板 · 等待批准");
+  await expect(toggle).toHaveAttribute("title", "Harness 面板 · 等待批准");
   await fireTerminalAndWaitSnapshot(page);
   await expect(toggle).toHaveAttribute("data-activity", "reply");
   await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("有新的回复");
-  await expect(toggle).toHaveAttribute("title", "对话面板 · 有新的回复");
+  await expect(toggle).toHaveAttribute("title", "Harness 面板 · 有新的回复");
   await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
   await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
   // 重开：非空列表不复活卡或待批状态。
@@ -855,7 +855,7 @@ test("content 对账 · 空列表 + 面板开：终态后无待批状态", async
 
 test("content 对账 · 空列表 + 面板收：未读回复在场，不产生待批状态", async ({ page }) => {
   await openContentCell(page, { open: false, pending: [] });
-  await expect(page.locator(".lumir-hp-toggle")).toHaveAttribute("title", "对话面板 · 处理中");
+  await expect(page.locator(".lumir-hp-toggle")).toHaveAttribute("title", "Harness 面板 · 处理中");
   await fireTerminalAndWaitSnapshot(page);
   await expect(page.locator(".lumir-hp-toggle")).toHaveAttribute("data-activity", "reply");
   await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("有新的回复");

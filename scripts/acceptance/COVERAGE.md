@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：305
-- 验收项（不同 item 编号）：273
-- 分档：core 32 / full 263 / bundle 5 / evidence 5（full 批 = 全部 305 个，含其余各档）
+- 场景：306
+- 验收项（不同 item 编号）：274
+- 分档：core 32 / full 264 / bundle 5 / evidence 5（full 批 = 全部 306 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -290,4 +290,5 @@
 | 880 | `880-save-all`<br>`880b-save-all-session-flush-failure` | 保存全部（File → Save All）：多标签脏内容一次落盘，完成终态是正向信号<br>保存全部——标签会话真实写失败时判失败、不出本次完成标记；恢复权限后可再次成功 | full<br>full |
 | 881 | `881-text-input-select-all-nov26` | 文本输入面的 ⌘A——文件内搜索 / 跳转到行由应用接管（整串替换），正文逐字节不变 | full |
 | 882 | `882-harness-withdraw-message` | 撤回最近一条用户消息：transcript 移除、原文回 composer、新会话 B 唯一且上下文不再含它 | full |
+| 883 | `883-file-open-harness-affordance` | 文件树打开意图（普通点击=当前标签、⌘点击=新标签并保留）与无标签时 Harness 图标贴右缘 / 文案 | full |
 | 884 | `884-quit-save-all-dialog` | 退出前的保存全部确认弹框：⌘Q 弹居中模态、Escape 取消留场、保存失败留场不退出、保存全部并退出落盘 | full |
