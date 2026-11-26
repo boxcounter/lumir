@@ -32,7 +32,12 @@
 > 5. **规格对账（归档前读数）**：`openspec-archive-check.mjs` 门禁模式 PASS（18 份 delta / 14 条
 >    MODIFIED / 244 段 / 无静默丢段）；`validate --all --strict` 41 passed / 0 failed；归档队列有且
 >    仅有一条条目（docs-check 门禁）。
-> 归档执行与归档后审计读数见本块末尾（归档提交后追加）。
+> **归档完成（2026-11-27）**：归档提交 `55b938af`；包装器 `openspec archive` 输出
+> `Totals: + 1, ~ 5, - 0, → 0`（file-tree +1 ADDED；keymap-commands 2 MODIFIED；quick-open /
+> toc-outline / vault-workspace 各 1 MODIFIED）；归档后修链 1 处（proposal.md:13
+> `../../../docs/specs/text-input-faces.md` → `../../../../docs/specs/text-input-faces.md`），
+> `openspec-links` PASS（710 条全可达）；`node scripts/openspec-archive-check.mjs --archived
+> fix-text-input-select-all-nov26` PASS（5 条 MODIFIED / 对比 86 段 / 人工恢复 0 段 / 声明认领 0 段）。
 
 ## Why
 
