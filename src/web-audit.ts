@@ -110,3 +110,45 @@ function nullableString(value: unknown): boolean {
 function nonNegativeInteger(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
 }
+
+/** 面板工具记录随记录持久化的完整 Web 输入（`PanelWebInput`，评审 P1-1）。
+ *  与 live started 的参数摘要同一份 arguments，但不截断；旧记录缺键 → undefined。 */
+export interface WebPanelInput {
+  query: string | null;
+  url: string | null;
+}
+
+/** 宽容解析 `PanelMessage.web_input`：非对象 / 空值 → undefined；空串按缺席处理。 */
+export function parseWebPanelInput(value: unknown): WebPanelInput | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const raw = value as Record<string, unknown>;
+  const query = typeof raw.query === "string" && raw.query !== "" ? raw.query : null;
+  const url = typeof raw.url === "string" && raw.url !== "" ? raw.url : null;
+  if (query === null && url === null) return undefined;
+  return { query, url };
+}
+
+/** 用持久化输入补全审计投影的 query / url（信封里的失败记录可能没有这两个值）。
+ *  已有审计字段优先保留；输入只填空缺，MUST NOT 用输入覆盖不同的审计事实。 */
+export function withWebPanelInput(
+  audit: WebAuditMetadata | undefined,
+  input: WebPanelInput | undefined,
+): WebAuditMetadata | undefined {
+  if (audit === undefined || input === undefined) return audit;
+  const query = audit.query !== null && audit.query !== "" ? audit.query : input.query;
+  const url = audit.url !== null && audit.url !== "" ? audit.url : input.url;
+  return { ...audit, query, url };
+}
+
+/** 默认行应显示的 Web 输入：持久化完整输入 → 审计投影 → 空串（旧记录安全降级）。
+ *  这是恢复行与乱序 live done 的**同一份**取值口径；不猜、不伪造。 */
+export function webInputText(
+  input: WebPanelInput | undefined,
+  audit: WebAuditMetadata | undefined,
+): string {
+  if (input?.query !== null && input?.query !== undefined) return input.query;
+  if (input?.url !== null && input?.url !== undefined) return input.url;
+  if (audit?.operation === "search" && audit.query !== null) return audit.query;
+  if (audit?.operation === "fetch" && audit.url !== null) return audit.url;
+  return "";
+}

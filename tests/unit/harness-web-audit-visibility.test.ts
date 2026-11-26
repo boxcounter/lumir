@@ -1032,3 +1032,324 @@ test("恢复的 Web 工具行不把 provider_message / request_id / 正文里的
     "panel DOM 不得出现 Key / provider 原始字段（含默认关闭的详情）",
   );
 });
+
+// ── 恢复失败行的参数可见性（评审 P1-1）────────────────────────────────────────
+//
+// 真实生产形状：快照失败记录的 summary 是 `状态 · code: message`（不是参数），完整输入由
+// 面板记录随记录持久化的 `web_input` 提供；JSONL 恢复的 summary 是纯参数摘要、旧记录可能
+// 没有 web_input。两条恢复路径都必须让默认行看到 query / URL，详情仍默认关闭；旧快照缺
+// 输入时安全降级为空，MUST NOT 把错误摘要抄进参数格。
+
+const SEARCH_FAILURE_ENVELOPE = {
+  ok: false,
+  operation: "search",
+  provider: null,
+  provider_id: null,
+  attempts: 0,
+  trust: "untrusted",
+  truncated: false,
+  truncated_fields: [],
+  code: "web_provider_unconfigured",
+  message: "没有唯一可用的官方 DeepSeek Web provider",
+  result_count: null,
+  result_text_bytes: null,
+};
+
+const FETCH_FAILURE_ENVELOPE = {
+  ok: false,
+  operation: "fetch",
+  provider: null,
+  provider_id: null,
+  attempts: 0,
+  trust: "untrusted",
+  truncated: false,
+  truncated_fields: [],
+  code: "permission_denied",
+  message: "命中 deny 规则 web_fetch(https://example.com)",
+  source: {
+    url: "https://example.com/a",
+    title: "",
+    snippet: null,
+    summary: null,
+    content: null,
+    content_format: null,
+    site: null,
+    date: null,
+    authority: null,
+  },
+  result_count: null,
+  result_text_bytes: null,
+};
+
+const SEARCH_SUCCESS_ENVELOPE = {
+  ok: true,
+  operation: "search",
+  query: "synthetic query",
+  provider: "deepseek",
+  provider_id: "deepseek-work",
+  attempts: 1,
+  trust: "untrusted",
+  truncated: false,
+  truncated_fields: [],
+  total_results: 2,
+  results: [],
+  result_count: 2,
+  result_text_bytes: 1536,
+};
+
+const FETCH_SUCCESS_ENVELOPE = {
+  ok: true,
+  operation: "fetch",
+  provider: "deepseek",
+  provider_id: "deepseek-work",
+  attempts: 1,
+  trust: "untrusted",
+  truncated: false,
+  truncated_fields: [],
+  source: {
+    url: "https://example.com/a",
+    title: "",
+    snippet: null,
+    summary: null,
+    content: "# body",
+    content_format: "markdown",
+    site: "example.com",
+    date: null,
+    authority: null,
+  },
+  result_count: null,
+  result_text_bytes: null,
+};
+
+/** 工具行参数格的文本（`createToolText` 的 `.lumir-hp-tool-args`）。 */
+function argsCell(mount: FakeEl): string {
+  const row = toolsBlock(mount).querySelector(".lumir-hp-tool-row");
+  assert.ok(row !== null, "工具行应在场");
+  const cell = row.querySelector(".lumir-hp-tool-args");
+  return cell?.textContent ?? "";
+}
+
+function restoredSnapshot(record: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...EMPTY_SNAPSHOT,
+    messages: [{ role: "tool", ts: 1_759_000_100, ...record }],
+  };
+}
+
+test("快照失败恢复：真实生产形状（错误摘要 + web_input）默认行保留 query，详情仍默认关闭", async () => {
+  const { mount } = await mountPanel(() =>
+    restoredSnapshot({
+      name: "web_search",
+      summary: "error · web_provider_unconfigured: 没有唯一可用的官方 DeepSeek Web provider",
+      status: "error",
+      text: JSON.stringify(SEARCH_FAILURE_ENVELOPE),
+      web_input: { query: "synthetic query" },
+    }),
+  );
+  assert.equal(argsCell(mount), "synthetic query", "默认行必须看到 query");
+  const { audit, toggle } = assertAuditUnitAfterRow(mount);
+  toggle.fire("click");
+  assert.match(audit.textContent, /synthetic query/);
+  assert.match(audit.textContent, /尝试次数/);
+  assert.match(audit.textContent, /未解析/);
+  assert.match(audit.textContent, /untrusted data/);
+});
+
+test("快照失败恢复：web_input 的 Fetch URL 在默认行可见，详情仍默认关闭", async () => {
+  const { mount } = await mountPanel(() =>
+    restoredSnapshot({
+      name: "web_fetch",
+      summary: "denied · permission_denied: 命中 deny 规则 web_fetch(https://example.com)",
+      status: "denied",
+      text: JSON.stringify(FETCH_FAILURE_ENVELOPE),
+      web_input: { url: "https://example.com/a" },
+    }),
+  );
+  assert.equal(argsCell(mount), "https://example.com/a");
+  const { audit, toggle } = assertAuditUnitAfterRow(mount);
+  toggle.fire("click");
+  assert.match(audit.textContent, /https:\/\/example\.com\/a/);
+  assert.match(audit.textContent, /尝试次数/);
+});
+
+test("JSONL 恢复失败：纯参数摘要没有 web_input 也能恢复 query / URL", async () => {
+  for (const { name, summary, text } of [
+    { name: "web_search", summary: "synthetic query", text: SEARCH_FAILURE_ENVELOPE },
+    { name: "web_fetch", summary: "https://example.com/a", text: FETCH_FAILURE_ENVELOPE },
+  ]) {
+    const { mount } = await mountPanel(() =>
+      restoredSnapshot({ name, summary, status: "error", text: JSON.stringify(text) }),
+    );
+    assert.equal(argsCell(mount), summary, `${name} 的纯参数摘要必须上屏`);
+    assertAuditUnitAfterRow(mount);
+  }
+});
+
+test("JSONL 恢复失败：带 web_input 的新生产形状同样显示 query / URL", async () => {
+  const { mount: queryMount } = await mountPanel(() =>
+    restoredSnapshot({
+      name: "web_search",
+      summary: "synthetic query",
+      status: "error",
+      text: JSON.stringify(SEARCH_FAILURE_ENVELOPE),
+      web_input: { query: "synthetic query" },
+    }),
+  );
+  assert.equal(argsCell(queryMount), "synthetic query");
+  const { mount: urlMount } = await mountPanel(() =>
+    restoredSnapshot({
+      name: "web_fetch",
+      summary: "https://example.com/a",
+      status: "denied",
+      text: JSON.stringify(FETCH_FAILURE_ENVELOPE),
+      web_input: { url: "https://example.com/a" },
+    }),
+  );
+  assert.equal(argsCell(urlMount), "https://example.com/a");
+});
+
+test("快照 / JSONL 成功恢复：Search query 与 Fetch URL 都保留在默认行", async () => {
+  const { mount: queryMount } = await mountPanel(() =>
+    restoredSnapshot({
+      name: "web_search",
+      summary: "synthetic query",
+      status: "done",
+      text: JSON.stringify(SEARCH_SUCCESS_ENVELOPE),
+      web_input: { query: "synthetic query" },
+    }),
+  );
+  assert.equal(argsCell(queryMount), "synthetic query");
+  assertAuditUnitAfterRow(queryMount);
+  const { mount: urlMount } = await mountPanel(() =>
+    restoredSnapshot({
+      name: "web_fetch",
+      summary: "https://example.com/a",
+      status: "done",
+      text: JSON.stringify(FETCH_SUCCESS_ENVELOPE),
+      web_input: { url: "https://example.com/a" },
+    }),
+  );
+  assert.equal(argsCell(urlMount), "https://example.com/a");
+  assertAuditUnitAfterRow(urlMount);
+});
+
+test("旧快照失败记录（无 web_input）：参数格安全降级，不把错误摘要当参数", async () => {
+  const { mount } = await mountPanel(() =>
+    restoredSnapshot({
+      name: "web_search",
+      summary: "error · web_provider_unconfigured: 没有唯一可用的官方 DeepSeek Web provider",
+      status: "error",
+      text: JSON.stringify(SEARCH_FAILURE_ENVELOPE),
+    }),
+  );
+  assert.equal(argsCell(mount), "", "没有可信参数源时留空，不伪造");
+  const row = toolsBlock(mount).querySelector(".lumir-hp-tool-row");
+  assert.ok(row !== null);
+  assert.match(row.textContent, /web_provider_unconfigured/);
+  const { audit } = assertAuditUnitAfterRow(mount);
+  assertNoMatch(audit.textContent, /synthetic/, "旧记录不伪造 query");
+});
+
+test("旧快照 Fetch 失败记录：信封里的 source.url 是可恢复的可信输入", async () => {
+  const { mount } = await mountPanel(() =>
+    restoredSnapshot({
+      name: "web_fetch",
+      summary: "denied · permission_denied: 命中 deny 规则 web_fetch(https://example.com)",
+      status: "denied",
+      text: JSON.stringify(FETCH_FAILURE_ENVELOPE),
+    }),
+  );
+  assert.equal(argsCell(mount), "https://example.com/a");
+  assertAuditUnitAfterRow(mount);
+});
+
+test("live 失败与快照失败同形：默认行参数格一致，详情都默认关闭", async () => {
+  const live = await mountDone(
+    "web_search",
+    "synthetic query",
+    searchAudit({
+      provider: null,
+      provider_id: null,
+      attempts: 0,
+      provider_fetch: false,
+      code: "web_provider_unconfigured",
+      result_count: null,
+      result_text_bytes: null,
+    }),
+    "error · web_provider_unconfigured: 没有唯一可用的官方 DeepSeek Web provider",
+  );
+  const restored = await mountPanel(() =>
+    restoredSnapshot({
+      name: "web_search",
+      summary: "error · web_provider_unconfigured: 没有唯一可用的官方 DeepSeek Web provider",
+      status: "error",
+      text: JSON.stringify(SEARCH_FAILURE_ENVELOPE),
+      web_input: { query: "synthetic query" },
+    }),
+  );
+  assert.equal(argsCell(live), "synthetic query");
+  assert.equal(argsCell(restored.mount), "synthetic query");
+  assertAuditUnitAfterRow(live);
+  assertAuditUnitAfterRow(restored.mount);
+
+  const liveFetch = await mountDone(
+    "web_fetch",
+    "https://example.com/a",
+    {
+      operation: "fetch",
+      query: null,
+      url: "https://example.com/a",
+      provider: null,
+      provider_id: null,
+      attempts: 0,
+      cost_per_1000_success_cny: 5,
+      local_precheck: false,
+      provider_fetch: false,
+      trust: "untrusted",
+      truncated: false,
+      truncated_fields: [],
+      code: "permission_denied",
+      result_count: null,
+      result_text_bytes: null,
+    },
+    "denied · permission_denied: 命中 deny 规则 web_fetch(https://example.com)",
+  );
+  const restoredFetch = await mountPanel(() =>
+    restoredSnapshot({
+      name: "web_fetch",
+      summary: "denied · permission_denied: 命中 deny 规则 web_fetch(https://example.com)",
+      status: "denied",
+      text: JSON.stringify(FETCH_FAILURE_ENVELOPE),
+      web_input: { url: "https://example.com/a" },
+    }),
+  );
+  assert.equal(argsCell(liveFetch), "https://example.com/a");
+  assert.equal(argsCell(restoredFetch.mount), "https://example.com/a");
+  assertAuditUnitAfterRow(liveFetch);
+  assertAuditUnitAfterRow(restoredFetch.mount);
+});
+
+test("乱序 live 失败 done 没有 started 行：用同一 done 的审计输入补 query", async () => {
+  const { mount, emit } = await mountPanel(() => EMPTY_SNAPSHOT);
+  emit({ type: "auto_turn_started", chain_index: 1, vault: VAULT });
+  emit({
+    type: "tool_call",
+    name: "web_search",
+    status: "done",
+    summary: "error · web_provider_unconfigured: 没有唯一可用的官方 DeepSeek Web provider",
+    call_id: "call-stray-web",
+    web: searchAudit({
+      provider: null,
+      provider_id: null,
+      attempts: 0,
+      provider_fetch: false,
+      code: "web_provider_unconfigured",
+      result_count: null,
+      result_text_bytes: null,
+    }),
+    vault: VAULT,
+  });
+  await flush();
+  assert.equal(argsCell(mount), "synthetic query");
+  assertAuditUnitAfterRow(mount);
+});

@@ -67,6 +67,49 @@ pub struct WebProviderIdentity {
     pub provider_id: String,
 }
 
+/// Web 工具调用的完整输入（change compact-web-search-result-summary-nov26，评审 P1-1）：
+/// 面板工具记录随记录持久化，供快照 / 会话恢复的默认行与「查看详情」使用。
+///
+/// 与 live `started` 事件的参数摘要**同一语义源**（同一份 arguments），但不截断——恢复
+/// 失败记录不能只靠 `summary`（失败摘要是 `状态 · code: message`，不是参数）。非 Web 工具 /
+/// 旧记录缺省；恢复端按缺省安全降级，MUST NOT 伪造 query / URL。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct PanelWebInput {
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+impl PanelWebInput {
+    /// 从工具名 + arguments JSON 取完整输入；非 Web / 非法 JSON / 空值 → None。
+    pub fn from_arguments(name: &str, arguments: &str) -> Option<Self> {
+        let operation = super::operation(name)?;
+        let parsed: serde_json::Value = serde_json::from_str(arguments).ok()?;
+        match operation {
+            WebOperation::Search => parsed
+                .get("query")
+                .and_then(serde_json::Value::as_str)
+                .filter(|query| !query.is_empty())
+                .map(|query| Self {
+                    query: Some(query.to_string()),
+                    url: None,
+                }),
+            WebOperation::Fetch => parsed
+                .get("url")
+                .and_then(serde_json::Value::as_str)
+                .filter(|url| !url.is_empty())
+                .map(|url| Self {
+                    query: None,
+                    url: Some(url.to_string()),
+                }),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct WebApprovalPayload {
@@ -397,6 +440,45 @@ mod tests {
                 "{operation:?} attempts={attempts}"
             );
         }
+    }
+
+    #[test]
+    fn panel_web_input_reads_full_query_or_url_from_arguments() {
+        assert_eq!(
+            PanelWebInput::from_arguments(
+                "web_search",
+                r#"{"query":"synthetic query","count":5,"need_content":false}"#
+            ),
+            Some(PanelWebInput {
+                query: Some("synthetic query".to_string()),
+                url: None,
+            })
+        );
+        assert_eq!(
+            PanelWebInput::from_arguments("web_fetch", r#"{"url":"https://example.com/a"}"#),
+            Some(PanelWebInput {
+                query: None,
+                url: Some("https://example.com/a".to_string()),
+            })
+        );
+        assert_eq!(
+            PanelWebInput::from_arguments("web_search", r#"{"query":"","count":5}"#),
+            None
+        );
+        assert_eq!(
+            PanelWebInput::from_arguments("cli_run", r#"{"command":"ls"}"#),
+            None
+        );
+        assert_eq!(
+            PanelWebInput::from_arguments("web_search", "{bad-json"),
+            None
+        );
+        let value = serde_json::to_value(PanelWebInput {
+            query: Some("synthetic query".to_string()),
+            url: None,
+        })
+        .unwrap();
+        assert_eq!(value, serde_json::json!({"query": "synthetic query"}));
     }
 
     #[test]

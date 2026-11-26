@@ -2,8 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   parseWebAudit,
+  parseWebPanelInput,
   webAuditFromEnvelope,
   webAuditFromPanelText,
+  webInputText,
+  withWebPanelInput,
 } from "../../src/web-audit.ts";
 
 test("live Web 审计保留完整 query、provider、attempts、费用与 untrusted，且不携带正文", () => {
@@ -232,4 +235,54 @@ test("恢复投影透传信封的结果读数（不重算）", () => {
   });
   assert.equal(metric(audit, "result_count"), 2);
   assert.equal(metric(audit, "result_text_bytes"), 6);
+});
+
+
+test("面板 Web 输入：完整 query / URL 的宽容解析与审计补全", () => {
+  assert.deepEqual(parseWebPanelInput({ query: "synthetic query" }), {
+    query: "synthetic query",
+    url: null,
+  });
+  assert.deepEqual(parseWebPanelInput({ url: "https://example.com/a" }), {
+    query: null,
+    url: "https://example.com/a",
+  });
+  assert.deepEqual(parseWebPanelInput({ query: "", url: "" }), undefined);
+  for (const malformed of [null, undefined, {}, "synthetic", 42]) {
+    assert.equal(parseWebPanelInput(malformed), undefined, JSON.stringify(malformed));
+  }
+
+  const base = {
+    operation: "search" as const,
+    query: null,
+    url: null,
+    provider: null,
+    provider_id: null,
+    attempts: 0,
+    cost_per_1000_success_cny: 5 as const,
+    local_precheck: false,
+    provider_fetch: false,
+    trust: "untrusted" as const,
+    truncated: false,
+    truncated_fields: [],
+    code: "web_provider_unconfigured",
+    result_count: null,
+    result_text_bytes: null,
+  };
+  const filled = withWebPanelInput(base, { query: "synthetic query", url: null });
+  assert.equal(filled?.query, "synthetic query");
+  assert.equal(webInputText({ query: "synthetic query", url: null }, base), "synthetic query");
+  assert.equal(webInputText(undefined, filled), "synthetic query");
+  assert.equal(webInputText(undefined, base), "", "旧记录无输入 / 审计无 query 时为空");
+
+  // 已有审计事实优先：输入只填空缺，不覆盖不同的 URL / query。
+  const fetch = {
+    ...base,
+    operation: "fetch" as const,
+    code: null,
+    url: "https://final.example/b",
+  };
+  const merged = withWebPanelInput(fetch, { query: null, url: "https://input.example/a" });
+  assert.equal(merged?.url, "https://final.example/b");
+  assert.equal(webInputText({ query: null, url: "https://input.example/a" }, fetch), "https://input.example/a");
 });

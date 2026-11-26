@@ -1,7 +1,8 @@
 ---
 # change add-harness-web-fetch-search-nov24 阶段5：Web 失败不自动降级 curl；后续 curl 仍按原权限进闸。
 # 本场景覆盖 enabled=true（默认）但 DeepSeek provider 未配置的失败分支；总开关关闭由 872 覆盖。
-# change compact-web-search-result-summary-nov26：两条真实调用 + 两个审计仍折叠为 2。
+# change compact-web-search-result-summary-nov26：两条真实调用（Web + curl）；Web 附属审计不计数，
+# 组摘要仍为 2。
 id: "873-harness-web-no-auto-curl"
 item: 873
 tier: full
@@ -51,7 +52,7 @@ steps:
     waitFor:
       has: ["WEB-FALLBACK-DONE"]
     timeoutMs: 30000
-  - name: 展开工具清单（两项真实调用：Web + curl；两个审计不计入）
+  - name: 展开工具清单（两项真实调用：Web + curl；Web 附属审计不计入）
     do: click
     target: { role: AXButton, name: "个工具调用 · 全部完成" }
     expect:

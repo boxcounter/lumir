@@ -55,7 +55,8 @@ snippet → 整条移除 results），读数在这里算一次即可同时服务
    （状态 + 纯 query / URL，不显示原始 JSON / 默认参数）；done 显示 query / URL + 第二行结果健康
    摘要（四种形态见 proposal 评审记录）；失败直接显示稳定 code + 人话原因，不显示条数 / 大小。
    provider、attempts、完整 query / URL、截断字段、实际外发与费用、untrusted 移入默认关闭的
-   「查看详情」。live 与 restored 同形，旧留存缺读数不显示条数 / 大小；Ask 待决卡不变。
+   「查看详情」。live 与 restored 同形：恢复行从面板记录持久化的完整 Web 输入恢复 query / URL，
+   不再把失败摘要当参数；旧留存缺输入 / 读数时安全降级为空，不显示条数 / 大小；Ask 待决卡不变。
    本条 supersede living 里「工具行与结果 SHALL 仍完整展示 … MUST NOT 只靠 80 字摘要满足可见性」
    的旧措辞。
 3. **工具调用呈现**：组摘要的计数只计真实工具调用行；Web 结果健康摘要与审计详情是该调用的附属
@@ -85,7 +86,9 @@ snippet → 整条移除 results），读数在这里算一次即可同时服务
     （live 事件、面板持久化、JSONL 恢复同源）。
   - `src/web-audit.ts`：审计投影新增两个可空读数（旧记录缺键 → null）。
   - `src/harness-panel.ts`：紧凑工具行 + 结果健康摘要 + 默认关闭的「查看详情」；审计单元不计入
-    组摘要行数。
+    组摘要行数；恢复失败行从持久化的完整 Web 输入恢复 query / URL。
+  - `src-tauri/src/harness/session.rs` / `turn.rs` / `harness.rs`：面板工具记录持久化完整
+    Web 输入 `web_input`（与 live started 摘要同一份 arguments，不截断），快照 / JSONL 恢复共用。
   - `src/harness-panel.css`：新附属单元的第二行样式，复用既有 token 与「查看详情」形态。
   - `src/copy-data.ts` / `文案-Copy.md`：结果健康摘要四条双语模板（D1030–D1033；D1029 由并行 change add-explicit-skill-trace-nov26 占用）。
   - 新增 `src/byte-size.ts`：字节读数格式化单一来源（与图片 modeline 的既有读数同源）。

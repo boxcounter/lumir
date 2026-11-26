@@ -356,8 +356,10 @@ Search 的 permission subject SHALL 为完整 query；Fetch 的 subject SHALL �
 工具」条）。失败时直接显示稳定错误码与人话原因，MUST NOT 显示条数或文本大小。provider id、
 attempts、完整 query / URL、截断字段、实际外发与费用、`trust:"untrusted"` SHALL 全部保留在默认
 关闭的「查看详情」中，可展开完整回看；MUST NOT 删除事件 / 面板记录 / JSONL / 安全元数据。Ask
-待决卡的完整预览信息不变。live 事件与快照 / 会话恢复两条路径 SHALL 同形同默认态；旧留存缺结果
-读数时 SHALL 不显示条数与文本大小（MUST NOT 补零）。
+待决卡的完整预览信息不变。live 事件与快照 / 会话恢复两条路径 SHALL 同形同默认态：恢复行的
+query / URL SHALL 从该调用的持久化输入（同一份 arguments，完整不截断）恢复，MUST NOT 把失败
+摘要（`状态 · code: message`）当参数；旧留存缺该输入时 SHALL 安全降级为空、MUST NOT 伪造。
+旧留存缺结果读数时 SHALL 不显示条数与文本大小（MUST NOT 补零）。
 `harness.permissions.deny` 中的 `web_fetch(origin)` SHALL 在初始调用与每跳重定向重新判定。
 
 跨 origin 重定向不是新工具调用，MUST NOT 另开批准。预检 SHALL 先校验 Location 的 scheme / 凭据 /
@@ -408,5 +410,5 @@ host，再检查目标 origin deny；未封禁才继续 DNS / 连接 / 内容类
 #### Scenario: 实时与恢复同形
 
 - **WHEN** 同一 Web 调用分别经 live 事件与快照 / 会话恢复重建
-- **THEN** 两者工具行、第二行健康摘要、详情入口与默认关闭态一致；旧留存缺结果读数时两者都
-  不显示条数与大小
+- **THEN** 两者工具行（含默认行可见的 query / URL）、第二行健康摘要、详情入口与默认关闭态一致；
+  旧留存缺输入 / 读数时不显示 query / URL / 条数 / 大小（MUST NOT 伪造）

@@ -641,6 +641,7 @@ fn emit_explicit_skill_error<C: RunContext>(ctx: &mut C, name: &str, output: Too
             text: Some(output.value.to_string()),
             summary: Some(result_summary),
             name: Some("skill_load".into()),
+            web_input: None,
             status: Some(status.into()),
             reasoning: None,
             decision: None,
@@ -769,6 +770,7 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
                 text: Some(panel_text),
                 summary: None,
                 name: None,
+                web_input: None,
                 status: None,
                 reasoning: None,
                 decision: None,
@@ -1019,6 +1021,7 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
                     text: Some(assistant_text.clone()),
                     summary: None,
                     name: None,
+                    web_input: None,
                     status: None,
                     reasoning: None,
                     decision: None,
@@ -1236,6 +1239,7 @@ fn abort_turn<C: RunContext>(ctx: &mut C, panel_base: usize, output: &llm::TurnO
                 text: Some(assistant_text.clone()),
                 summary: None,
                 name: None,
+                web_input: None,
                 status: Some("stopped".into()),
                 reasoning: None,
                 decision: None,
@@ -1687,12 +1691,14 @@ fn finish_call<C: RunContext>(
         result_summary
     };
     let output_text = serde_json::to_string(&output.value).unwrap_or_default();
+    let web_input = super::web::output::PanelWebInput::from_arguments(&call.name, &call.arguments);
     let _ = ctx.with_session(|s| {
         s.push_panel(PanelMessage {
             role: "tool".into(),
             text: Some(output_text.clone()),
             summary: Some(panel_summary),
             name: Some(call.name.clone()),
+            web_input,
             status: Some(status.to_string()),
             reasoning: None,
             decision: gate_decision.map(str::to_string),
@@ -4995,6 +5001,27 @@ mod tests {
             .unwrap()
             .iter()
             .all(|event| event["type"] != "approval_request"));
+        // 生产形状（评审 P1-1）：失败面板记录的 summary 是错误摘要，完整输入在 web_input；
+        // 恢复端必须能从后者拿到 query，而不是把 summary 当参数。
+        let state = runtime.snapshot(&fixture.scope, &config);
+        let tool = state
+            .messages
+            .iter()
+            .find(|message| message.role == "tool" && message.name.as_deref() == Some("web_search"))
+            .expect("Web 搜索应落一条面板工具记录");
+        assert!(
+            tool.summary
+                .as_deref()
+                .is_some_and(|summary| summary.starts_with("error · web_provider_unconfigured")),
+            "失败 summary 保持错误摘要，不改成参数"
+        );
+        assert_eq!(
+            tool.web_input
+                .as_ref()
+                .and_then(|input| input.query.as_deref()),
+            Some("synthetic query"),
+            "完整 query 必须随面板记录持久化"
+        );
         let input = runtime
             .with_session(&fixture.scope, |session| session.input().to_vec())
             .unwrap();
@@ -5106,6 +5133,22 @@ mod tests {
             assert_eq!(done["web"]["local_precheck"], false, "{name}");
             assert_eq!(done["web"]["provider_fetch"], false, "{name}");
             assert_eq!(done["web"]["attempts"], 0, "{name}");
+            drop(events);
+            let state = runtime.snapshot(&fixture.scope, &config);
+            let tool = state
+                .messages
+                .iter()
+                .find(|message| {
+                    message.role == "tool" && message.name.as_deref() == Some("web_fetch")
+                })
+                .unwrap_or_else(|| panic!("{name} 缺少 Web 面板工具记录"));
+            assert_eq!(
+                tool.web_input
+                    .as_ref()
+                    .and_then(|input| input.url.as_deref()),
+                Some("https://example.com/a"),
+                "{name} 的完整 URL 必须随面板记录持久化"
+            );
             let _ = std::fs::remove_dir_all(&fixture.root);
         }
     }

@@ -134,8 +134,14 @@ import type { HarnessEvent } from "./ipc";
 import type { DecisionReason } from "./bindings/DecisionReason";
 import type { WebApprovalPayload } from "./bindings/WebApprovalPayload";
 import type { WebProviderStatus } from "./bindings/WebProviderStatus";
-import { parseWebAudit, webAuditFromPanelText } from "./web-audit";
-import type { WebAuditMetadata } from "./web-audit";
+import {
+  parseWebAudit,
+  parseWebPanelInput,
+  webAuditFromPanelText,
+  webInputText,
+  withWebPanelInput,
+} from "./web-audit";
+import type { WebAuditMetadata, WebPanelInput } from "./web-audit";
 import type { ThinkingEffort } from "./bindings/ThinkingEffort";
 import {
   assembleHarnessContext,
@@ -1792,6 +1798,34 @@ const WEB_TOOL_NAMES = new Set(["web_search", "web_fetch"]);
  */
 function webFailureTail(name: string, summary: string): string {
   return WEB_TOOL_NAMES.has(name) ? summary.replace(/^(?:error|denied|rejected) · /, "") : summary;
+}
+
+/** 恢复行的 Web 参数格：持久化完整输入 → 审计投影 → 参数摘要（纯 query / URL / JSON）。
+ *  失败摘要（`状态 · code: message`）不是参数，`toolArgsText` 会返回空串——旧记录因此安全
+ *  降级为空，MUST NOT 把错误原因抄进参数格。 */
+function restoredWebArgsText(
+  name: string,
+  summary: string,
+  input: WebPanelInput | undefined,
+  audit: WebAuditMetadata | undefined,
+): string {
+  if (!WEB_TOOL_NAMES.has(name)) return toolArgsText(name, summary);
+  const web = webInputText(input, audit);
+  return web !== "" ? web : toolArgsText(name, summary);
+}
+
+/** 乱序 live done 的参数格：优先用同一 done 事件里的 Web 审计输入（含完整 query / URL），
+ *  没有再按严格摘要口径回落。非 Web 工具行为不变。 */
+function doneWebArgsText(
+  name: string,
+  summary: string,
+  audit: WebAuditMetadata | undefined,
+): string {
+  if (WEB_TOOL_NAMES.has(name)) {
+    const web = webInputText(undefined, audit);
+    if (web !== "") return web;
+  }
+  return humanizeToolArgsStrict(name, summary);
 }
 
 /**
@@ -7843,14 +7877,22 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       startedCallIds.delete(row);
       const failed = TOOL_FAILED_SUMMARY.test(summary);
       row.classList.replace("is-running", failed ? "is-fail" : "is-done");
+      // 参数格恒取 `started` 那份**参数摘要**（M528 r1）：`args` 与行的成败无关——失败文本
+      // 走第三参（尾注），故两侧同走参数格口径（`toolArgsText`）。旧写法在失败侧用严格版
+      // （判据「是 JSON 才取参数」），而 M528 起 core 的成品摘要不是 JSON ⇒ 失败行的参数格
+      // 整格空掉、命令本体消失（修前：arguments ≤80 字的调用严格版能解析出命令、看得见；
+      // >80 字的调用原文截断后照样看不见——M528 与这处一并收口）。
+      // Web 调用若 started 摘要缺席（旧后端 / 事件缺口），用同一 done 事件的审计输入补位。
+      const directArgs = toolArgsText(name, args);
+      const argsText =
+        directArgs !== ""
+          ? directArgs
+          : WEB_TOOL_NAMES.has(name)
+            ? webInputText(undefined, audit)
+            : "";
       row.replaceChildren(
         createToolIcon(failed ? "fail" : "done"),
-        // 参数格恒取 `started` 那份**参数摘要**（M528 r1）：`args` 与行的成败无关——失败文本
-        // 走第三参（尾注），故两侧同走参数格口径（`toolArgsText`）。旧写法在失败侧用严格版
-        // （判据「是 JSON 才取参数」），而 M528 起 core 的成品摘要不是 JSON ⇒ 失败行的参数格
-        // 整格空掉、命令本体消失（修前的可见性本来就分两半：arguments ≤80 字的调用严格版能
-        // 解析出命令、看得见；>80 字的调用原文截断后照样看不见——M528 与这处一并收口）。
-        createToolText(name, toolArgsText(name, args), failed ? webFailureTail(name, summary) : undefined, toolPathTargetsOf(name, args)),
+        createToolText(name, argsText, failed ? webFailureTail(name, summary) : undefined, toolPathTargetsOf(name, args)),
       );
     } else {
       // 无 running 行（乱序 done / 桩环境）：没有更早的那份摘要可用，done 原文按形状判定。
@@ -7861,7 +7903,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         createToolIcon(failed ? "fail" : "done"),
         createToolText(
           name,
-          humanizeToolArgsStrict(name, summary),
+          doneWebArgsText(name, summary, audit),
           failed ? webFailureTail(name, summary) : undefined,
           toolPathTargetsOf(name, summary),
         ),
@@ -10129,6 +10171,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const name = record.name;
     const summary = typeof record.summary === "string" ? record.summary : "";
     const status = typeof record.status === "string" ? record.status : "";
+    // Web 输入的唯一恢复来源（评审 P1-1）：面板记录随记录持久化的完整 query / URL；
+    // 旧记录缺键时用信封审计的 query / URL 补位，再退到 summary（纯参数摘要），最后为空。
+    // MUST NOT 把失败摘要（`状态 · code: message`）当参数上屏。
+    const webInput = parseWebPanelInput(record.web_input);
+    const webAudit = withWebPanelInput(webAuditFromPanelText(record.text), webInput);
+    const isWeb = WEB_TOOL_NAMES.has(name);
     const block = ensureToolsBlock();
     // 历史 `task` 行（design §19.1：历史任务的详情从 transcript 的 task 行点开）：正文是
     // 结果信封 JSON（`text`），解析出 agent / 终态 / 摘要；解析失败退回通用工具行——不丢记录。
@@ -10192,7 +10240,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         createToolIcon(approved ? "done" : "fail"),
         // M528：core 的参数摘要已是成品人话文本（不再是 JSON），用参数格口径取值——
         // 严格版会把成品摘要判成「没有参数」，恢复后「已采纳」行的命令就此消失。
-        createToolText(name, toolArgsText(name, summary), undefined, toolPathTargetsOf(name, summary)),
+        // Web 行优先用持久化的完整输入（失败记录的 summary 是错误摘要，不能当参数）。
+        createToolText(
+          name,
+          isWeb ? restoredWebArgsText(name, summary, webInput, webAudit) : toolArgsText(name, summary),
+          undefined,
+          toolPathTargetsOf(name, summary),
+        ),
       );
       const tres = document.createElement("span");
       tres.className = "lumir-hp-tool-res";
@@ -10228,8 +10282,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       if (approved) {
         // 与 live 的 ask 批准后路径同形：恢复出来的已批准 Web 调用也显示完整审计
         // （attempts / truncated / provider 错误细节）。拒绝没有执行，不建块。
-        const audit = webAuditFromPanelText(record.text);
-        if (audit !== undefined) appendWebAuditToBlock(block, audit);
+        if (webAudit !== undefined) appendWebAuditToBlock(block, webAudit);
       }
       return;
     }
@@ -10244,15 +10297,18 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       createToolIcon(failed ? "fail" : "done"),
       createToolText(
         name,
-        failed ? humanizeToolArgsStrict(name, summary) : humanizeToolArgs(name, summary),
+        isWeb
+          ? restoredWebArgsText(name, summary, webInput, webAudit)
+          : failed
+            ? humanizeToolArgsStrict(name, summary)
+            : humanizeToolArgs(name, summary),
         tail,
         toolPathTargetsOf(name, summary),
       ),
     );
     block.el.append(row);
     block.rows.push(row);
-    const audit = webAuditFromPanelText(record.text);
-    if (audit !== undefined) appendWebAuditToBlock(block, audit);
+    if (webAudit !== undefined) appendWebAuditToBlock(block, webAudit);
   }
 
   /**

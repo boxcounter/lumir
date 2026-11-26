@@ -127,8 +127,16 @@ field truncation → aggregate content → summary → snippet → pop whole res
 ### 3.3 live 与恢复同形
 
 live（`tool_call done` 的 `web` 载荷）与 restored（`tool` 面板记录的 `text` 信封）都走同一个
-`createWebAuditUnit(metadata)`；健康摘要与详情内容从 `WebAuditMetadata` 单份渲染。恢复路径的
-行文本沿用既有 `toolArgsText`（新摘要为纯 query；旧 JSON 经 `keyArgOf` 人话化为纯 query）。
+`createWebAuditUnit(metadata)`；健康摘要与详情内容从 `WebAuditMetadata` 单份渲染。
+
+恢复行的参数格不能只靠 `summary`：失败记录的 `summary` 是 `状态 · code: message`，不是参数；
+JSONL 恢复的 `summary` 虽是纯 query / URL，但旧实现用只接受 JSON 的 `humanizeToolArgsStrict`
+解析，于是两条恢复路径都丢参数（评审 P1-1）。修法是把**完整 Web 输入**随面板工具记录持久化：
+`PanelMessage.web_input = { query } | { url }`，由 `finish_call` 从同一份 arguments 写入
+（JSONL 恢复在 `harness.rs` 用同一份 arguments 重建）。恢复行按「`web_input` → 信封审计的
+query / URL → 参数摘要（`toolArgsText`）」取值，失败摘要永远不会被当成参数；旧记录缺
+`web_input` 时安全降级为空，MUST NOT 伪造。详情正文用 `withWebPanelInput` 把完整输入补进审计
+投影，因此失败恢复的完整 query / URL 仍在默认关闭的「查看详情」里。
 
 语言切换：附属单元登记进 `webAuditUnits`，`applyLabels` 重渲同一份 metadata（保留各详情展开态），
 健康摘要、`查看详情`、审计键名随语言重取；不改写行文本。
@@ -160,7 +168,8 @@ provider / attempts / truncated fields / 外发 / untrusted 渲染。不做迁�
   `audit_metadata` 的透传与失败 null；`summarize_args` 的 Web 纯 query / URL。
 - 前端单测（DOM）：单 Web 调用不出摘要；两个真实调用 + 两个审计仍显示 2；组展开后审计仍默认
   关闭；健康摘要四形态；失败不显示条数 / 大小；旧记录降级；live 与 restored 同形；
-  secret-canary 不因详情展开而上屏；Ask 待决卡不变。
+  **真实生产形状的失败恢复**（快照错误摘要 + `web_input`、JSONL 纯参数摘要、旧记录缺
+  `web_input`，query 与 fetch URL 都覆盖）；secret-canary 不因详情展开而上屏；Ask 待决卡不变。
 - 视觉结构（m384）：默认收起 / 展开后内容完整 / 计数不变量；不新增像素基线。
 - 真机（本轮不执行，只改场景期望）：869 / 871 / 872 单调用不再有组摘要，需点「查看详情」看
   审计；873 / 876 两条真实调用仍折叠为 2；870 Ask 不变。
