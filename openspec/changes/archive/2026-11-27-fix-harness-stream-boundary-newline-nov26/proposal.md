@@ -15,9 +15,11 @@
 >    与「What Changes」逐条对应，未动视觉、渲染策略或 Markdown 语义。
 > 2. **独立评审 clean / merge**：K3 主会话终审通过（clean / merge，会话内裁决；本批无独立
 >    verdict 文件落 `.local/reviews/`）。评审绑定实现 tip `e91c33b0`（分支
->    `fix/harness-stream-trailing-newline-nov26`）；该 tip 之后 change 相关文件零改动
->    （`git log -- openspec/changes/fix-harness-stream-boundary-newline-nov26` 仅 `e91c33b0`），
->    合并入 master 后本 change 的代码 / 测试 / 场景文件亦无再改。
+>    `fix/harness-stream-trailing-newline-nov26`）。该 tip 之后本 change 的测试 / 验收场景 /
+>    fixture 零改动（`git log e91c33b0..HEAD -- tests/unit/harness-stream-boundary.test.ts
+>    scripts/acceptance/scenarios/879-harness-stream-boundary-newline.md` 为空）；`src/harness-panel.ts`
+>    在合并后另被几个不相关 change 改过（session-token / withdraw / 品牌文案等），但本批复跑
+>    `finalizedUpTo` 的单测仍 2145 pass / 0 fail，归档批未改任何代码、测试或场景。
 > 3. **tasks 完成**：全部勾选；原先未勾的两项（4.4 真机执行、6.3 backlog 条目 + 节点 2）由本批
 >    以真机 PASS 与归档动作闭合，未放弃任何任务项。
 > 4. **门禁与真机证据**：quick 合并后 `GATE RESULT: 13/13 PASS（SKIP 0）`（主会话读数）；
@@ -29,7 +31,17 @@
 >    `validate --all --strict` PASS（45 passed / 0 failed）；归档跟踪队列有且仅有一条条目
 >    （`docs/backlog.md`，本批落条目时删一条已归档历史记录以守 80 行硬上限）。
 >
-> 归档后：待归档提交后回填（归档提交 hash、包装器输出、修链读数、`--archived` PASS 与时间）。
+> **归档后**（2026-11-27）：归档提交 `08999fad`（`chore(openspec): archive fix-harness-stream-boundary-newline-nov26`）。
+> 包装器 `node scripts/openspec-archive.mjs fix-harness-stream-boundary-newline-nov26` 输出：
+> `Task status: ✓ Complete` / `Applying changes to openspec/specs/harness/spec.md: + 1 added` /
+> `Totals: + 1, ~ 0, - 0, → 0` / `Change 'fix-harness-stream-boundary-newline-nov26' archived as
+> '2026-11-27-fix-harness-stream-boundary-newline-nov26'`；归档后修链 **0 处**（扫过 3 篇 Markdown /
+> 0 条相对链接），`openspec-links: PASS（校验 712 条相对链接，全部可达）`。
+> 归档提交后审计 `node scripts/openspec-archive-check.mjs --archived fix-harness-stream-boundary-newline-nov26`
+> → `PASS（openspec/changes/archive/2026-11-27-fix-harness-stream-boundary-newline-nov26：0 条 MODIFIED，
+> 对比 0 段；人工恢复 0 段，声明认领 0 段）`。本 change 是纯 ADDED delta，对账脚本只审 MODIFIED 段，
+> 故「0 条 MODIFIED / 0 段」是预期读数；新 requirement「流式分片定稿的边界与字符守恒」已随
+> 归档并入 `openspec/specs/harness/spec.md`（validate 44 passed / 0 failed）。
 
 ## Why
 
