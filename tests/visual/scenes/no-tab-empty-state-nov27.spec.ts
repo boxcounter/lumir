@@ -85,7 +85,7 @@ function readOnlyPresentation(page: Page, paneIndex: number): Promise<{
   }, paneIndex);
 }
 
-test("S5 单 pane scratch：on 档关掉最后标签后无 gutter，但 scratch 可输入、光标可见；重开文档恢复", async ({
+test("S5 单 pane scratch：on 档关掉最后标签后无 gutter（⌥G 也不带出），但 scratch 可输入、光标可见；重开文档恢复", async ({
   page,
 }) => {
   await bootDoc(page, "a.md", { config: { line_numbers: "on" } });
@@ -99,13 +99,21 @@ test("S5 单 pane scratch：on 档关掉最后标签后无 gutter，但 scratch 
   // 核心格：无标签后 on 档也不能出行号。
   await expect.poll(() => gutterCountsPerPane(page)).toEqual([0]);
 
+  // ⌥G 临时档的**真实按键**覆盖（K3 r2 P3）：空 pane 打开跳转输入条时也不得带出 gutter。
+  const content = page.locator(".editor-pane .cm-content");
+  await content.click();
+  await page.keyboard.press("Alt+g");
+  await expect(page.locator(".lumir-goto")).toBeVisible();
+  await expect.poll(() => gutterCountsPerPane(page)).toEqual([0]);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".lumir-goto")).toBeHidden();
+
   // scratch 仍是 M149 的可编辑形态：无结构只读类、光标层可见、键入落字。
   const presentation = await readOnlyPresentation(page, 0);
   expect(presentation.structural, "单 pane scratch MUST NOT 进入结构性只读").toBe(false);
   expect(presentation.cursorLayerVisibility).toBe("visible");
   expect(presentation.contenteditable).not.toBe("false");
 
-  const content = page.locator(".editor-pane .cm-content");
   await content.click();
   await page.keyboard.type("scratch stays editable");
   await expect(content).toContainText("scratch stays editable");

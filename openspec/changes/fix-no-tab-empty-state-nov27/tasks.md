@@ -40,12 +40,14 @@
 ## 4. 视觉与单测
 
 - [x] 4.1 新增 `tests/visual/scenes/no-tab-empty-state-nov27.spec.ts`：
-      S5 单 pane scratch（on 档关标签后无 gutter / 可输入 / 光标可见 / 重开恢复）；
+      S5 单 pane scratch（on 档关标签后无 gutter / **⌥G 真实按键也不带出临时 gutter** / 可输入 /
+      光标可见 / 重开恢复）；
       S4 分栏空 pane（无 gutter / 光标层 hidden / 键入无效 / 点击激活 / 打开文档后恢复）；
       S3 首启 tips（无 gutter / 光标 hidden / 不盖 harness）；
       S2 老用户空 vault（D107 收窄在 doc pane、harness 与 composer 可见可输入）。
 - [x] 4.2 更新 `tests/visual/scenes/m281-goto-line.spec.ts` 的「新 pane」用例：空 pane
-      0 条 gutter（on 档 + ⌥G 临时档都不例外），打开文档后 `[1,1]`。
+      0 条 gutter（on 档），打开文档后 `[1,1]`。该用例不按 ⌥G；⌥G 临时档的真实按键覆盖在
+      4.1 的 S5，`gutterVisible` 真值表见 1.4。
 - [x] 4.3 更新 `tests/visual/scenes/gutter-copy-path-line.spec.ts` 的「关闭最后标签」：on 档
       无 gutter、原位置右键不复制不反馈、重开文档恢复；旧断言「空文档继承 always 档」删除。
 - [x] 4.4 `tests/unit/harness.ts` 替身补 `structuralReadOnly: false`，与真编辑器初值一致。
