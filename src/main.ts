@@ -3786,6 +3786,10 @@ const commands: CommandRuntime = {
     if (editor.activeSession().external === true) return;
     void save.save();
   },
+  // 保存全部（change add-acceptance-installed-app-pause）：File → Save All 与验收通道
+  // 共用的一条屏障实现（见 `saveAllBarrier`）。默认不绑键——菜单是鼠标入口，键盘入口留给
+  // 用户在 [keys] 里自绑。
+  "document.save-all": () => void saveAllBarrier(),
   // 轨道 A 原样迁入（键位与作用域不变）；M144 起跟随光标/选区处的链接——外链交系统
   // 浏览器、wikilink 走既有跳转链路；M145 补齐其余形态：相对路径 md 走应用内跳转、
   // vault 内非 md 交系统默认应用、纯锚点只提示。落在非链接处无操作（不假装有反馈）。
@@ -4084,6 +4088,9 @@ const MENU_COMMANDS: Record<string, CommandRunner | undefined> = {
   // change add-model-automation-settings-oct24：应用菜单「设置…」与 ⌘, 走同一条命令实现
   // （`app.settings-open` 的 toggle）；菜单项本身不带 accelerator（spec「设置面板入口」）。
   settings: () => settingsPanel.toggle(),
+  // change add-acceptance-installed-app-pause：File → Save All 与命令层同一条实现
+  // （`document.save-all`），不新开第二条保存链路或第二个屏障。
+  saveAll: commands["document.save-all"],
 };
 onMenuCommand((payload) => {
   MENU_COMMANDS[payload]?.();
@@ -4206,6 +4213,52 @@ function syncBackendDirty(): void {
   if (any === pushedDirty) return;
   pushedDirty = any;
   documentSetDirty(any).catch(() => {});
+}
+
+/**
+ * 保存全部（change add-acceptance-installed-app-pause）：**一条有终态的保存屏障**。
+ *
+ * 为什么不是「调用 saveAllDirty 就算保存全部」：验收通道要在退出安装版之前拿到一个
+ * 「所有会丢的东西都真的落盘了」的正观测——脏标签写盘只是第一步，标签会话、阅读位置与
+ * 后端 dirty 镜像各自还有一条写入路径；任何一条失败，⌘Q 都可能丢标签结构 / 阅读位置，
+ * 或者被退出守卫挡住。屏障把五步串成一条链，**只有全部成功才发正向完成信号**（D1035），
+ * 任一步失败发终态失败提示（D1036）并返回 false。验收通道据此「不⌘Q、不跑批」——它
+ * MUST NOT 拿「没有错误提示 / AX 树是空的 / 标签上的 dirty 点消失」冒充成功
+ * （那三种都是「没读到」而不是「真的成了」）。
+ *
+ * 步骤与判据：
+ *   1. `saveAllDirty()`：逐标签保存；返回 false = 至少一条没闭环（冲突 / 写失败 / 无基准）。
+ *   2. `switcher.flush()`：标签会话**真实落盘**（无条件写一份当前快照）；返回值区分写失败
+ *      与无需写，写失败时 warning 已由 store 给出，这里只把屏障判失败。
+ *   3. `readingPositions.flush()`：阅读位置真实落盘（仅 pending；无 pending 算成功）。
+ *   4. **复查新 dirty**：前两步的 await 期间用户可能继续编辑——出现新 dirty 即不宣布成功
+ *      （否则「保存全部」会对着一个已经又变脏的界面报成功）。
+ *   5. **后端 dirty 镜像同步**：await 一次 `document_set_dirty(false)` 真实往返（不是
+ *      fire-and-forget），失败即屏障失败；成功后才允许退出守卫放行 ⌘Q。
+ *
+ * 只读会话（`external`）没有保存落点，但它们结构上不可能 dirty，屏障对它们等同空操作；
+ * 图片会话同理（saveAllDirty 跳过）。
+ */
+async function saveAllBarrier(): Promise<boolean> {
+  const fail = (): false => {
+    toast(t("D1036"));
+    return false;
+  };
+  if (!(await save.saveAllDirty())) return fail();
+  if (!(await switcher.flush())) return fail();
+  if (!(await readingPositions.flush())) return fail();
+  if (editor.sessions().some((session) => session.dirty)) return fail();
+  try {
+    // 覆盖式写入：镜像此刻的真相是「没有脏标签」。await 到命令回包才继续——回包即
+    // Rust 侧已把 AtomicBool 置 false 并返回（不是「发出去就算同步」）。
+    await documentSetDirty(false);
+    pushedDirty = false;
+  } catch {
+    return fail();
+  }
+  // 正向完成信号：走到这里五步全成功。成功的 toast 只在这里发，别处不得代发。
+  toast(t("D1035"), [], false, "success");
+  return true;
 }
 
 editor.onDirty((dirty) => {

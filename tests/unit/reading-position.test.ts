@@ -225,8 +225,8 @@ test("flush：取消防抖并立刻落盘待写内容；没有待写内容不写
   mock.timers.enable({ apis: ["setTimeout"] });
   try {
     const rig = createRig();
-    // 还没装载任何 vault：没有可写的键
-    await rig.store.flush();
+    // 还没装载任何 vault：没有可写的键——这一档算成功（没有待写内容 ≠ 写失败）
+    assert.equal(await rig.store.flush(), true);
     assert.equal(rig.writes.length, 0);
 
     rig.activePath = "a.md";
@@ -236,12 +236,13 @@ test("flush：取消防抖并立刻落盘待写内容；没有待写内容不写
     // 没有待写内容就不写盘：这个时点挂在**每次开文件 / 切标签**上，无条件写等于一次打开一次
     // tmp+rename，还会在「什么都没读」的启动路径上落一份空表（真机场景 28 实测到过：scroll 之前
     // 位置文件就已存在）
-    await rig.store.flush();
+    assert.equal(await rig.store.flush(), true);
     assert.equal(rig.writes.length, 0);
 
     rig.view = position(900);
     rig.store.scrolled();
-    await rig.store.flush(); // 窗口未到就切走
+    // 真实写入成功 = true（document.save-all 的屏障拿它作「阅读位置真的落盘」判据）。
+    assert.equal(await rig.store.flush(), true); // 窗口未到就切走
     assert.equal(rig.writes.length, 1);
     assert.equal(rig.writes[0].entries["a.md"]?.pos, 900);
     mock.timers.tick(READING_POSITION_DEBOUNCE_MS * 2);
@@ -480,11 +481,11 @@ test("降级四种：读不到 / 无历史 / 版本不符（后端已归成 null
   rig.store.restoreFor("a.md");
   assert.deepEqual(rig.applied, []);
 
-  // ③ 写失败只记一条 warning，不抛出、不拦停
+  // ③ 写失败只记一条 warning，不抛出、不拦停；返回 false 让「保存全部」的屏障判失败
   rig.failWrite = true;
   rig.view = position(700);
   rig.store.scrolled();
-  await rig.store.flush();
+  assert.equal(await rig.store.flush(), false);
   assert.deepEqual(rig.warns, ["磁盘只读"]);
   assert.equal(rig.writes.length, 0);
 

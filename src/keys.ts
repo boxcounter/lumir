@@ -368,6 +368,11 @@ export const TAB_COMMAND_IDS = ["tab.close", "tab.next", "tab.prev", ...TAB_GOTO
 /** 非标签的全局命令 id（键位面板「全局」组的成员；实现落在装配层 main.ts）。 */
 export const NON_TAB_GLOBAL_COMMAND_IDS = [
   "document.save",
+  // 保存全部（change add-acceptance-installed-app-pause）：把「保存 → 标签会话 flush →
+  // 阅读位置 flush → 后端 dirty 镜像同步」做成一条有终态的屏障，供原生 File → Save All
+  // 与验收通道调用。**默认不绑键**（登记进 KEYLESS_COMMAND_IDS）——菜单是它的鼠标入口，
+  // 键盘入口由用户在 [keys] 里自绑；⌘S 仍只保存前台文档。
+  "document.save-all",
   // M144：`wikilink.follow` → `link.follow`——命令现在跟随光标/点击处的**链接**，
   // 外链交给系统浏览器、wikilink 走既有跳转链路。名字不再只覆盖 wikilink。
   "link.follow",
@@ -524,6 +529,10 @@ export const KEYLESS_COMMAND_IDS: readonly string[] = [
   // M316：双栏三条容器命令（pane.split / pane.other / pane.close）M319 起**有默认绑定**
   //（⌥S / ⌥O / ⌥W，Alex 节点 1 落槌），故 MUST NOT 登记在本「默认不绑键」清单里——清单与
   // 绑定表无交集由本文件末尾的 typecheck 与 tests/unit/keys.test.ts 的三项对账各守一遍。
+  // change add-acceptance-installed-app-pause：保存全部**有意不占物理键位**（⌘S 仍是单文档
+  // 保存；⌘⇧S 在不同应用里语义分歧，且菜单键等价会截走 webview 的键位分发——M131 / M149 /
+  // M627 同一机制）。鼠标入口是 File → Save All（lib.rs 的自定义菜单项）。
+  "document.save-all",
 ];
 
 export type EditorCommandId = (typeof EDITOR_COMMAND_IDS)[number];

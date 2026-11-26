@@ -527,7 +527,8 @@ test("会话存储：flush 写最新快照并取消防抖（切换前 / 退出�
     rig.setSessions(tab("a.md"), tab("c.md"));
     rig.setActivePath("c.md");
     rig.store.sessionChanged(); // 窗口内的第二次变化
-    await rig.store.flush();
+    // 返回值是 document.save-all 屏障的判据：真写成功 = true（既有调用方仍 void 忽略）。
+    assert.equal(await rig.store.flush(), true);
     assert.deepEqual(rig.writes.at(-1), {
       vaultId: "vault-a",
       panes: [{ tabs: ["a.md", "c.md"], active: "c.md" }],
@@ -547,7 +548,8 @@ test("会话存储：写失败只降级（一条 warning，不抛出、不拦停
   rig.setActivePath("a.md");
   await rig.store.onVaultLoaded("vault-a", []);
   rig.setWritesFail(true);
-  await rig.store.flush();
+  // 写失败只降级（warning 保留），但返回 false——保存全部的屏障据此判失败，不得报成功。
+  assert.equal(await rig.store.flush(), false);
   assert.deepEqual(rig.warns, ["磁盘只读"]);
   assert.equal(rig.writes.length, 0);
 });

@@ -528,8 +528,12 @@ export interface VaultSessionStore {
   /** 标签集合 / 顺序 / 激活项变化后调用（防抖落盘）。 */
   sessionChanged(): void;
   /** 把待写内容立刻落盘（切换前 / 退出前）。没有待写内容也会写一份当前快照——退出路径上
-   *  没有第二次机会，多写一次几百字节比漏一次便宜。 */
-  flush(): Promise<void>;
+   *  没有第二次机会，多写一次几百字节比漏一次便宜。
+   *
+   *  返回是否真的写成功（`false` = 后端拒写 / IO 失败，warning 已由 `deps.warn` 给出）。
+   *  既有调用方（退出 / 切换）按 `void` 忽略它，语义不变；`document.save-all` 的屏障拿它
+   *  作为「会话真的落盘了」的判据——写失败时不得把一次保存全部报成成功。 */
+  flush(): Promise<boolean>;
   /** 当前 vault 装载完成：登记当前项（写盘的键），按会话**先建壳、再装载激活项的正文**
    *  （M283 的 3.2：标签栏当帧齐，内容按需）。
    *  返回的 Promise 在「壳建齐 + 激活项内容装载完 + 跳过计数给出」那一刻 resolve（测试与
@@ -587,13 +591,16 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
     timer = null;
   }
 
-  async function write(vaultId: string, payload: SessionSnapshot): Promise<void> {
+  async function write(vaultId: string, payload: SessionSnapshot): Promise<boolean> {
     try {
       await deps.putSession(vaultId, payload.panes, payload.ratio, payload.harnessPane);
+      return true;
     } catch (e) {
       // 写失败只降级（与 last_vault 写失败同口径）：会话只影响「下次打开恢复什么」，
-      // 不值得拦停用户的一次切换或退出。
+      // 不值得拦停用户的一次切换或退出。返回值只给需要「真实落盘」判据的调用方
+      //（document.save-all 的屏障），其余调用方照旧忽略。
       deps.warn(errorText(e));
+      return false;
     }
   }
 
@@ -799,13 +806,13 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
     }, SESSION_WRITE_DEBOUNCE_MS);
   }
 
-  async function flush(): Promise<void> {
+  async function flush(): Promise<boolean> {
     cancelTimer();
     const payload = pending ?? snapshot();
     pending = null;
     const vaultId = currentId;
-    if (vaultId === undefined) return; // 还没有 vault（启动路径）：没有可写的键
-    await write(vaultId, payload);
+    if (vaultId === undefined) return true; // 还没有 vault（启动路径）：没有可写的键，也没有待落盘内容
+    return write(vaultId, payload);
   }
 
   async function onVaultLoaded(vaultId: string, entries: readonly FsEntry[]): Promise<void> {
@@ -1054,7 +1061,7 @@ class VaultSwitcher implements VaultSwitcherHandle {
     this.store.sessionChanged();
   }
 
-  flush(): Promise<void> {
+  flush(): Promise<boolean> {
     return this.store.flush();
   }
 

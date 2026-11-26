@@ -76,6 +76,9 @@ export const COMMAND_META: Record<CommandId, CommandMeta> = {
 
   // ── 全局（非标签）────────────────────────────────────────────────────────
   "document.save": { labelKey: "D631", aliases: ["save"] },
+  // 保存全部（change add-acceptance-installed-app-pause）：菜单 / 验收通道的鼠标与脚本入口，
+  // 默认不绑键（见 keys.ts 的 KEYLESS_COMMAND_IDS）。别名写成自然短语，便于在键位面板里查。
+  "document.save-all": { labelKey: "D1034", aliases: ["save all"] },
   "link.follow": { labelKey: "D632", aliases: ["follow link", "open link"] },
   "app.describe-bindings": {
     labelKey: "D633",
