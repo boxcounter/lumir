@@ -108,6 +108,8 @@ export interface FollowController {
   jumpToBottom(): void;
   /** 视口尺寸变化：following 时排一次写底；detached 时什么都不写。 */
   viewportChanged(): void;
+  /** 非内容布局变化：following 排一次贴底；detached 只按增量补偿未读基线。 */
+  layoutMutated(deltaPx: number): void;
   /** 视图复位（会话切换 / 清空）：回 following、清未读、写底。 */
   reset(): void;
 }
@@ -147,8 +149,8 @@ export function createFollowController(surface: FollowSurface): FollowController
 
   /** 最近一次**我们自己**写入的滚动位（`null` = 没有在途回声）。
    *
-   *  写底会异步产生一个 scroll 事件；若布局在这两者之间变了（实证：发送后进度条占掉 28px
-   *  视口高），该事件读到的距底不再是 0——几何判据单独无法区分「我们的回声」与「用户上滚」。
+   *  写底会异步产生一个 scroll 事件；若布局在这两者之间变了（本地布局变化改变滚动上限），
+   *  该事件读到的距底不再是 0——几何判据单独无法区分「我们的回声」与「用户上滚」。
    *  design §2 的原则是「内容增长永远不能被误读成用户滚动」，因此回声事件按写入值识别一次并
    *  忽略：态不动，若距底已超出回底容差则补排一次贴底（layout 变化自己收敛）。一次写入只产生
    *  一次回声，识别后即清——此后用户真滚到同一像素位置仍按几何判据正常换态。 */
@@ -225,6 +227,15 @@ export function createFollowController(surface: FollowSurface): FollowController
     viewportChanged(): void {
       // 尺寸变化不得改变阅读位置：detached 下什么都不写（design §3.4）。
       if (phase === "following") scheduleFlush();
+    },
+
+    layoutMutated(deltaPx: number): void {
+      if (phase === "following") {
+        scheduleFlush();
+        return;
+      }
+      // 只补偿尾行自身增量；直接读取当前总高度会把同一批真实内容增长一并吞掉。
+      unreadBaseline = Math.max(0, unreadBaseline + deltaPx);
     },
 
     reset(): void {

@@ -1120,3 +1120,55 @@
 :root[data-theme="eink"] .lumir-set-switch.is-on {
   filter: none;
 }
+
+/* 网页访问：独立网络授权区，沿用自动化行与正文滚动容器，不新增 overflow。 */
+.lumir-set-web {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 12px;
+}
+
+.lumir-set-web-title,
+.lumir-set-web-subtitle {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.lumir-set-web-provider,
+.lumir-set-origin-row,
+.lumir-set-origin-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lumir-set-web-provider {
+  justify-content: space-between;
+}
+
+.lumir-set-origin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lumir-set-origin-row {
+  justify-content: space-between;
+}
+
+.lumir-set-origin {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 11.5px;
+}
+
+.lumir-set-origin-add > .lumir-set-input {
+  flex: 1;
+  min-width: 0;
+}

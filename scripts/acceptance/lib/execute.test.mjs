@@ -20,10 +20,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, isStaleIndexError, KEY_CHANNELS, keyChannel, keysTarget, loadScenario, matcher, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, resolveKeysTarget, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, scopedAxOrder, screenshotSize, settleEditorless } from "./execute.mjs";
+import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, geomBaselineProblem, isStaleIndexError, KEY_CHANNELS, keyChannel, keysTarget, loadScenario, matcher, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, resolveKeysTarget, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, scopedAxOrder, screenshotSize, settleEditorless } from "./execute.mjs";
 import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
 import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, SETTLE_SAMPLE_MS, settle, StepError } from "./drive.mjs";
-import { InfraError, repoRoot } from "./util.mjs";
+import { InfraError, repoRoot, secondVaultDir } from "./util.mjs";
 
 /** 临时根（每个用例一份，跑完不清也无妨——全在 `os.tmpdir()` 下）。 */
 function tmpRoot(name) {
@@ -130,6 +130,146 @@ test("步骤表写在 front-matter 内：零问题（正文里的 YAML 示例不
   assert.deepEqual(checkScenario(scenario), [], "步骤表非空时不该报任何问题");
 });
 
+test("$vault2 步骤级解析：874 的 text/target/ax/record/file 不残留字面 token", async () => {
+  const file = path.join(repoRoot(), "scripts/acceptance/scenarios/874-quick-open-external-directory-and-stable-layout.md");
+  const scenario = await loadScenario(file);
+  const serialized = JSON.stringify(scenario.steps);
+  assert.ok(!serialized.includes("$vault2"), `步骤里仍有未解析的 $vault2：${serialized}`);
+  const external = `${secondVaultDir()}/`;
+  const exact = scenario.steps.find((step) => step.do === "typeInNode" && step.text === `${external}root.md`);
+  assert.ok(exact, "874 应先覆盖外部精确路径直接打开");
+  assert.ok(JSON.stringify(exact.expect).includes("按 Enter 只读打开"));
+  const type = scenario.steps.find((step) => step.do === "typeInNode" && step.text === external);
+  assert.ok(type, "874 应继续覆盖外部目录一层扫描");
+  assert.ok(type.target.name.includes(secondVaultDir()));
+  const rootReady = scenario.steps.find((step) => step.do === "waitFor" && step.waitFor?.has?.includes("直接子项 3 条"));
+  assert.ok(rootReady, "874 应等固有 beta.md + root.md + sub/ 三项扫描落定");
+  assert.ok(rootReady.waitFor.has.includes(`${external}sub/`));
+  const rootState = scenario.steps.find((step) => step.do === "settle" && JSON.stringify(step.expect).includes("直接子项 3 条"));
+  assert.ok(rootState, "874 应在扫描落定后断言三项真实候选");
+  assert.equal(scenario.steps.filter((step) => step.do === "typeInNode" && step.replace === true).length, 2, "两次目录查询切换都应使用真实替换通道");
+  const record = scenario.steps.find((step) => step.do === "record");
+  assert.equal(record.file, `${external}sub/child.md`);
+});
+
+test("$vault2 从 loadScenario 到执行器同源：typeInNode/ax/record/file 全链路通过，近名 token 不误吃", async () => {
+  const root = tmpRoot("vault2-step-tokens");
+  useTmpEnv(root);
+  const second = secondVaultDir();
+  let inputValue = "";
+  const axText = () => [
+    "# Lumir App State",
+    "",
+    "- app: Lumir",
+    "- pid: 123",
+    "- window_bounds: x=8 y=40 w=1200 h=800 (screen points)",
+    "- screenshot: none — no image attached",
+    "- coords: bbox `@x,y w×h` are WINDOW-LOCAL POINTS (origin = window top-left, 1:1 points — NOT screenshot pixels)",
+    "",
+    "```text",
+    '- [0] AXApplication "Lumir"',
+    '  - [1] AXWindow "Lumir" @0,0 1200×800',
+    "    - [2] AXWebArea (Lumir)",
+    `      - [9] AXTextArea (Quick Open ${second}) = "${inputValue}" (focused)`,
+    `      - [10] AXStaticText = "${second}/sub/"`,
+    "```",
+  ].join("\n");
+  const injected = [];
+  const cu = {
+    state: async () => ({ text: axText(), image: null }),
+    typeText: async (_pid, text) => {
+      injected.push(text);
+      inputValue += text;
+      return { json: { ok: true } };
+    },
+  };
+  const file = path.join(root, "vault2-step-tokens.md");
+  fs.writeFileSync(file, [
+    '---\nid: "vault2-step-tokens"\nitem: 0\ntitle: 第二 vault 步骤 token\nsteps:',
+    "  - name: 造第二 vault 文件",
+    "    do: vaultWrite",
+    "    vault: second",
+    "    file: sub/child.md",
+    '    content: "QO-VAULT2-E2E\\n"',
+    "  - name: 经同一 token 定位并输入",
+    "    do: typeInNode",
+    '    target: { role: AXTextArea, name: "^Quick Open $vault2$" }',
+    '    text: "$vault2/"',
+    "    expect:",
+    "      - label: AX 使用同一路径",
+    '        ax: { has: "$vault2/sub/" }',
+    "  - name: 记录同一路径",
+    "    do: record",
+    "    as: child-before",
+    '    file: "$vault2/sub/child.md"',
+    "  - name: 文件断言使用同一路径",
+    "    expect:",
+    "      - label: 字节未变",
+    '        file: { path: "$vault2/sub/child.md", unchangedSince: child-before }',
+    "      - label: 近名 token 仍按词边界保留",
+    '        ax: { not: "$vault2x" }',
+    "---",
+    "",
+  ].join("\n"));
+  const scenario = await loadScenario(file);
+  assert.equal(scenario.steps[1].text, `${second}/`);
+  assert.equal(scenario.steps[2].file, `${second}/sub/child.md`);
+  const { status, records } = await drive(root, scenario, { cu });
+  assert.deepEqual(injected, [`${second}/`]);
+  assert.equal(status, "PASS", JSON.stringify(records));
+});
+
+test("typeInNode replace：焦点后先全选再替换，追加默认不变且非法配置静态报 problem", async () => {
+  const root = tmpRoot("type-in-node-replace");
+  useTmpEnv(root);
+  let inputValue = "";
+  let replaceOnType = false;
+  const events = [];
+  const axText = () => [
+    "# Lumir App State",
+    "",
+    "- app: Lumir",
+    "- pid: 123",
+    "- window_bounds: x=8 y=40 w=1200 h=800 (screen points)",
+    "",
+    "```text",
+    '- [0] AXApplication "Lumir"',
+    '  - [1] AXWindow "Lumir" @0,0 1200×800',
+    "    - [2] AXWebArea (Lumir)",
+    `      - [9] AXTextArea (Quick Open) = "${inputValue}" (focused)`,
+    "```",
+  ].join("\n");
+  const cu = {
+    state: async () => ({ text: axText(), image: null }),
+    pressKey: async (_pid, key) => {
+      events.push(`key:${key}`);
+      if (key === "cmd+a") replaceOnType = true;
+      return { json: { ok: true } };
+    },
+    typeText: async (_pid, text) => {
+      events.push(`type:${text}`);
+      inputValue = replaceOnType ? text : inputValue + text;
+      replaceOnType = false;
+      return { json: { ok: true } };
+    },
+  };
+  const scenario = {
+    steps: [
+      { name: "默认追加", do: "typeInNode", target: { role: "AXTextArea", name: "^Quick Open$" }, text: "root/" },
+      { name: "全选替换", do: "typeInNode", target: { role: "AXTextArea", name: "^Quick Open$" }, text: "missing/", replace: true },
+      { name: "终值精确", expect: [{ label: "旧查询不残留", ax: { has: 'AXTextArea (Quick Open) = "missing/"' } }] },
+    ],
+  };
+  const { status, records } = await drive(root, scenario, { cu });
+  assert.equal(status, "PASS", JSON.stringify(records));
+  assert.equal(inputValue, "missing/");
+  assert.deepEqual(events, ["type:root/", "key:cmd+a", "type:missing/"]);
+  const problems = checkScenario({
+    steps: [{ name: "非法 replace", do: "typeInNode", target: { role: "AXTextArea", name: "x" }, text: "x", replace: "yes" }],
+  });
+  assert.ok(problems.some((problem) => problem.includes("replace 需要布尔值")), JSON.stringify(problems));
+});
+
 test("多键 file 断言逐键判：exists + has + not 各落一条记录", async () => {
   const root = tmpRoot("multi-keys-green");
   useTmpEnv(root);
@@ -206,6 +346,34 @@ test("file.exact：错内容（含只差一个尾换行）判 FAIL，理由带�
   assert.ok(rec, `应有一条 FAIL 记录，实际：${JSON.stringify(records)}`);
   assert.match(rec.label, /内容不一致：期望 2 字符，实际 3 字符/, "FAIL 理由要点明两端字符数");
   assert.match(rec.detail ?? "", /expected="甲项" actual="甲项\\n"/, "detail 带两端原文（JSON 转义）");
+});
+
+// change add-default-note-name-nov24（评审 r1 P2-1 的反向验证）：场景 728 用 exact: ""
+// 证明「新建文件为空」与「撞名后既有文件未被覆盖」。这里同时钉住正向与反向：真正的空文件
+// PASS；同一路径先空后写入非空内容时，exact: "" 必须 FAIL——若实现退回 has: ""（子串），
+// 非空内容也会被空串命中，这条会假绿。
+test("file.exact：空串只匹配真正的空文件；非空内容必须 FAIL（场景 728 的反向验证）", async () => {
+  const root = tmpRoot("exact-empty");
+  useTmpEnv(root);
+  const empty = await drive(root, {
+    steps: [
+      { name: "写空文件", do: "vaultWrite", file: "empty.md", content: "" },
+      { name: "空串匹配", expect: [{ label: "空文件", file: { path: "empty.md", exact: "" } }] },
+    ],
+  });
+  assert.equal(empty.status, "PASS", "真正的空文件应 PASS");
+
+  const overwritten = await drive(root, {
+    steps: [
+      { name: "先写空文件", do: "vaultWrite", file: "probe.md", content: "" },
+      { name: "再写非空内容（模拟撞名覆盖）", do: "vaultWrite", file: "probe.md", content: "非空正文\n" },
+      { name: "空串不匹配", expect: [{ label: "空文件", file: { path: "probe.md", exact: "" } }] },
+    ],
+  });
+  assert.equal(overwritten.status, "FAIL", "非空内容不得被空串命中");
+  const rec = overwritten.records.find((r) => !r.ok);
+  assert.ok(rec, `应有一条 FAIL 记录，实际：${JSON.stringify(overwritten.records)}`);
+  assert.match(rec.label, /内容不一致：期望 0 字符，实际 5 字符/);
 });
 
 test("file.exact：文件缺失 / 目标是目录一律 FAIL（不把读不到当成空）", async () => {
@@ -2814,6 +2982,17 @@ test("cgevent chord 事件形态：⌃A / ⌘A / ⌃B 的 keycode+flags 与别�
   assert.deepEqual(parseChordSpec("escape"), { keycode: 53, flags: 0 });
 });
 
+test("cgevent chord 字母键表覆盖 a–z，Alt+N 使用 maskAlternate", () => {
+  const keycodes = {
+    a: 0, b: 11, c: 8, d: 2, e: 14, f: 3, g: 5, h: 4, i: 34, j: 38, k: 40, l: 37, m: 46,
+    n: 45, o: 31, p: 35, q: 12, r: 15, s: 1, t: 17, u: 32, v: 9, w: 13, x: 7, y: 16, z: 6,
+  };
+  for (const [letter, keycode] of Object.entries(keycodes)) {
+    assert.deepEqual(parseChordSpec(`ctrl+${letter}`), { keycode, flags: 0x00040000 }, letter);
+  }
+  assert.deepEqual(parseChordSpec("alt+n"), { keycode: 45, flags: 0x00080000 });
+});
+
 test("cgevent chord 错误路径：未知主键 / 未知修饰键 / 空段都抛 StepError，且在 spawn 之前判掉", () => {
   const bad = [
     ["ctrl+f13", /主键「f13」不在真键盘通道的键表里/],
@@ -3421,4 +3600,31 @@ test("scoped AX：scope 缺失或不唯一、AXTextArea 不可读都 FAIL", () =
   assert.equal(scopedAxOrder(nodes, { role: "AXTextArea" }, ["CW-CARD-A"]).ok, false);
   const unread = nodes.map((node) => node.role === "AXTextArea" && node.depth > 0 ? { ...node, value: null } : node);
   assert.equal(scopedAxOrder(unread, { role: "AXGroup", name: "composer" }, ["CW-CARD-A"]).ok, false);
+});
+
+test("geom bbox 基线：缺基线/缺 bbox 必须 FAIL，逐值相同才通过，任一值变化都红", () => {
+  const baseline = { x: 10, y: 20, w: 300, h: 22 };
+  assert.match(geomBaselineProblem(undefined, baseline), /缺已记录/);
+  assert.match(geomBaselineProblem(baseline, undefined), /缺 bbox/);
+  assert.equal(geomBaselineProblem(baseline, { ...baseline }), null);
+  for (const [key, value] of [["x", 11], ["y", 19], ["w", 299], ["h", 23]]) {
+    assert.match(geomBaselineProblem(baseline, { ...baseline, [key]: value }), new RegExp(`${key}:`));
+  }
+});
+
+test("geom record/unchangedSince 静态校验：合法形态通过，空名/互斥/未知键报 problem", () => {
+  const scenario = (geom) => ({ id: "geom-bbox-check", item: 0, steps: [{ name: "g", expect: [{ geom }] }] });
+  const target = { role: "AXComboBox", name: "按路径快速打开文件" };
+  assert.deepEqual(checkScenario(scenario({ target, record: "qo-input" })), []);
+  assert.deepEqual(checkScenario(scenario({ target, unchangedSince: "qo-input" })), []);
+  assert.ok(checkScenario(scenario({ target, record: "" })).some((p) => p.includes("geom.record")));
+  assert.ok(checkScenario(scenario({ target, record: "a", unchangedSince: "a" })).some((p) => p.includes("互斥")));
+  assert.ok(checkScenario(scenario({ target, unchangedSince: "a", bogus: true })).some((p) => p.includes("未知键 bogus")));
+});
+
+test("vaultWrite 第二合成 vault 只接受 second，其它取值静态报 problem", () => {
+  const scenario = (vault) => ({ id: "second-vault-check", item: 0, steps: [{ name: "w", do: "vaultWrite", file: "a.md", content: "a", vault }] });
+  assert.deepEqual(checkScenario(scenario("second")), []);
+  assert.deepEqual(checkScenario(scenario(undefined)), []);
+  assert.ok(checkScenario(scenario("real")).some((p) => p.includes("vaultWrite") && p.includes("second")));
 });

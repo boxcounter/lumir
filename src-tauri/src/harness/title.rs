@@ -120,6 +120,9 @@ fn item_text(item: &serde_json::Value) -> Option<String> {
         serde_json::Value::Array(parts) => {
             let mut out = String::new();
             for part in parts {
+                if part.get("lumir_skill").is_some() {
+                    continue;
+                }
                 if let Some(text) = part["text"].as_str() {
                     out.push_str(text);
                 }
@@ -1918,6 +1921,14 @@ mod tests {
         .unwrap();
 
         runtime.resume_session(&scope, &config, source_id).unwrap();
+        runtime
+            .with_session(&scope, |session| {
+                session.jsonl().record(&serde_json::json!({
+                    "kind": "llm_request",
+                    "request": {"system": "S", "messages": [message("user", "续聊")]}
+                }));
+            })
+            .unwrap();
         let (title, path) = runtime
             .with_session(&scope, |s| {
                 (

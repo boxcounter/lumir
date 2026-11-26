@@ -967,6 +967,7 @@ pub struct HarnessConfig {
     pub attachment_naming: AttachmentNamingConfig,
     /// 子代理运行（change add-harness-subagents design §14）：开关 + 预算上限 + 次数 / 并发闸。
     pub subagents: SubagentsConfig,
+    pub web_access: crate::harness::web::config::WebAccessConfig,
 }
 
 impl Default for HarnessConfig {
@@ -984,6 +985,10 @@ impl Default for HarnessConfig {
             session_naming: SessionNamingConfig::default(),
             attachment_naming: AttachmentNamingConfig::default(),
             subagents: SubagentsConfig::default(),
+            web_access: crate::harness::web::config::WebAccessConfig {
+                enabled: true,
+                ..Default::default()
+            },
         }
     }
 }
@@ -1648,7 +1653,8 @@ pub enum DiagnosticSeverity {
 /// 只收「写进文件就等于把配置写坏」的判定：模型清单的元素约束、半配置、wire / base_url 的
 /// 显式非法输入、provider id 与删除引用完整性。路径相交判据（candidate × changed paths）由
 /// 设置写通道用本表 + `ConfigDiagnostic.path` 计算，这里只分级。
-const REJECT_ON_WRITE_CODES: [&str; 21] = [
+const REJECT_ON_WRITE_CODES: [&str; 22] = [
+    "web_access_config_invalid",
     "harness_model_id_empty",
     "harness_model_id_duplicate",
     "harness_model_window_invalid",
@@ -1866,9 +1872,9 @@ struct RawUiConfig {
     language: Option<String>,
 }
 
-/// `[harness]` 表的解析镜像（change add-harness-probe §11）：与 `[ui]` 同路的**结构化表**，
-/// 字段全部 `Option<...>`——缺失 → `None` → `validate()` 回落默认（不告警）；取值非法到不了
-/// 这里（在 `validate()` 里回落 + warning）；类型不符在 serde 解析期失败 → 整文件回落。
+/// `[harness]` 表的解析镜像（change add-harness-probe §11）：与 `[ui]` 同路的**结构化表**。
+/// 一般字段缺失回落默认，类型不符在 serde 解析期整文件回落；`subagents` 与 `web_access`
+/// 保留原 JSON，分别按整节与局部字段校验，显式 null 不会折叠成键缺席。
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct RawHarnessConfig {
@@ -1903,6 +1909,15 @@ struct RawHarnessConfig {
     /// 是「一个键写坏不拖垮 provider / 权限等其它节的配置」，直接结构化会退回整文件回落。
     /// 形状与字段在 [`validate_subagents`] 里解析。
     subagents: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "deserialize_web_access")]
+    web_access: Option<serde_json::Value>,
+}
+
+fn deserialize_web_access<'de, D>(deserializer: D) -> Result<Option<serde_json::Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    serde_json::Value::deserialize(deserializer).map(Some)
 }
 
 /// `harness.providers` 的字段反序列化（见 [`RawHarnessConfig::providers`]）：缺席由
@@ -3415,6 +3430,9 @@ fn validate_ignore_name(name: &str) -> Result<(), &'static str> {
 fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<ConfigDiagnostic>) {
     let defaults = HarnessConfig::default();
     let mut sink = DiagnosticSink::default();
+    let (web_access, web_diagnostic) =
+        crate::harness::web::config::validate_web_access(raw.web_access.as_ref());
+    sink.extend(web_diagnostic.into_iter().collect());
 
     // provider 映射：**逐条**解析——一个手写条目的笔误只丢它自己 + warning，MUST NOT 拖垮
     // 整份配置（design §2.1 的「条目级宽容」，与 `vault.ignore` 地图、`permissions.allow`
@@ -3506,6 +3524,7 @@ fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<ConfigDiagnost
             session_naming,
             attachment_naming,
             subagents,
+            web_access,
         },
         sink.into_diagnostics(),
     )
@@ -7549,5 +7568,120 @@ mod tests {
             value["harness"]["permissions"]["allow"],
             serde_json::json!(["cli(x *)"])
         );
+    }
+
+    #[test]
+    fn web_access_defaults_only_for_missing_table_and_keys() {
+        let dir = TempDir::new("web-access-defaults");
+        let path = dir.config_path();
+        for raw in [
+            serde_json::json!({"harness": {}}),
+            serde_json::json!({"harness": {"web_access": {}}}),
+        ] {
+            std::fs::write(&path, serde_json::to_string(&raw).unwrap()).unwrap();
+            let snapshot = load_from(&path);
+            assert!(snapshot.config.harness.web_access.enabled);
+            assert_eq!(
+                snapshot.config.harness.web_access.approval,
+                crate::harness::web::config::WebApproval::AllowAll
+            );
+            assert_eq!(
+                snapshot.config.harness.web_access.status,
+                crate::harness::web::config::WebAccessConfigStatus::Valid
+            );
+            assert!(snapshot.diagnostics.is_empty());
+        }
+    }
+
+    #[test]
+    fn web_access_invalid_matrix_is_local_and_fail_closed() {
+        let dir = TempDir::new("web-access-invalid");
+        let path = dir.config_path();
+        let invalid_values = [
+            serde_json::json!(null),
+            serde_json::json!("on"),
+            serde_json::json!(true),
+            serde_json::json!([]),
+            serde_json::json!({"enabled": "yes"}),
+            serde_json::json!({"enabled": null}),
+            serde_json::json!({"approval": true}),
+            serde_json::json!({"approval": null}),
+            serde_json::json!({"approval": "always"}),
+        ];
+        for raw_web in invalid_values {
+            let raw = serde_json::json!({
+                "last_vault": "/tmp/synthetic-vault",
+                "harness": {
+                    "provider": "deepseek-work",
+                    "providers": {"deepseek-work": {
+                        "preset": "deepseek", "api_key": "stage1-secret",
+                        "models": [{"id": "ds", "effort": false, "vision": false, "window": 1024}]
+                    }},
+                    "permissions": {
+                        "allow": ["cli(ls *)"],
+                        "deny": ["web_fetch(https://example.com)", "cli(rm *)"]
+                    },
+                    "auto_compact": false,
+                    "web_access": raw_web
+                }
+            });
+            let before = serde_json::to_vec(&raw).unwrap();
+            std::fs::write(&path, &before).unwrap();
+            let snapshot = load_from(&path);
+            assert!(!snapshot.fallback, "不得整文件回落：{raw_web}");
+            assert!(!snapshot.config.harness.web_access.enabled, "{raw_web}");
+            assert_eq!(
+                snapshot.config.harness.web_access.approval,
+                crate::harness::web::config::WebApproval::Ask
+            );
+            assert_eq!(
+                snapshot.config.harness.web_access.status,
+                crate::harness::web::config::WebAccessConfigStatus::Invalid
+            );
+            assert!(snapshot.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "web_access_config_invalid"
+                    && diagnostic.severity == DiagnosticSeverity::RejectOnWrite
+            }));
+            assert_eq!(snapshot.config.harness.provider, "deepseek-work");
+            assert_eq!(
+                snapshot.config.harness.providers["deepseek-work"].api_key,
+                "stage1-secret"
+            );
+            assert_eq!(
+                snapshot.config.harness.permissions.allow,
+                vec!["cli(ls *)".to_string()]
+            );
+            assert_eq!(
+                snapshot.config.harness.permissions.deny,
+                vec![
+                    "web_fetch(https://example.com)".to_string(),
+                    "cli(rm *)".to_string()
+                ]
+            );
+            assert!(!snapshot.config.harness.auto_compact);
+            assert_eq!(std::fs::read(&path).unwrap(), before, "装载不得改写原文件");
+        }
+    }
+
+    #[test]
+    fn web_access_explicit_disabled_and_ask_are_valid() {
+        let dir = TempDir::new("web-access-explicit");
+        let path = dir.config_path();
+        std::fs::write(
+            &path,
+            r#"{"harness":{"web_access":{"enabled":false,"approval":"ask"}}}"#,
+        )
+        .unwrap();
+        let snapshot = load_from(&path);
+        assert!(!snapshot.config.harness.web_access.enabled);
+        assert_eq!(
+            snapshot.config.harness.web_access.approval,
+            crate::harness::web::config::WebApproval::Ask
+        );
+        assert_eq!(
+            snapshot.config.harness.web_access.status,
+            crate::harness::web::config::WebAccessConfigStatus::Valid
+        );
+        assert!(snapshot.diagnostics.is_empty());
     }
 }

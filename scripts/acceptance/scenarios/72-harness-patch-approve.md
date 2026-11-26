@@ -13,6 +13,9 @@ config:
     # Alex 裁决）——本场景判的批准闸（vault_patch 逐个问）只在该档成立。默认档 vault_write 下
     # vault_patch 自动放行、无闸，本场景必红（M480 归因，M481 回扫）。
     permission_mode: read_only
+    # 本场景不验证 Web；显式关闭以固定工具面（阶段5回扫）。
+    web_access:
+      enabled: false
 steps:
   - name: 记下 patch 前的磁盘基线（sha256 + mtime）
     do: record
@@ -58,6 +61,8 @@ steps:
         ax: { has: "+HNL-BETA 第二行，patch 已落盘。" }
       - label: 闸悬停期间磁盘逐字节不变（未采纳不落盘）
         file: { path: harness-note.md, unchangedSince: before }
+      # 排版证据：批准卡 padding 10/12px、决策段下距 8px、按钮最小 32px 且水平
+      # padding 12px；副句 / 依据 / 后果为 --text-2，diff 与采纳行为不变。
       - shot: 01-批准闸
 
   - name: 点击采纳

@@ -20,8 +20,9 @@
 //     提交选区与按压窗口关闭」保证（装饰只重建一次），本模块不碰绘制。
 //
 // 封闭集合（D4）：ATX 标题、强调系（`**` / `*` / `_` / `~~`，含嵌套）、标准链接与角括号字面
-// 链接。行内代码（反引号本就可见）、列表标记 / wikilink（widget 整体替换、无显露判据）、引用
-// 前缀与 callout 标记、图片 / 公式 / mermaid / frontmatter / 分隔线 MUST NOT 被外扩覆盖。
+// 链接。行内代码（反引号本就可见）、列表标记 / wikilink（整体替换，但选区触及时显露源码；
+// 显露不等于外扩）、引用前缀与 callout 标记、图片 / 公式 / mermaid / frontmatter / 分隔线
+// MUST NOT 被外扩覆盖。
 
 import { EditorSelection } from "@codemirror/state";
 import type { EditorState, SelectionRange, Text } from "@codemirror/state";

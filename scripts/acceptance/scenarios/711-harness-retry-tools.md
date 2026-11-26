@@ -12,6 +12,9 @@ config:
   harness:
     provider: mock
     fixture: "$fixtures/harness-mock-retry-tools.json"
+    # 本场景不验证 Web；显式关闭以固定工具面（阶段5回扫）。
+    web_access:
+      enabled: false
 steps:
   - name: ⌘⇧A 打开 harness pane
     do: keys
@@ -42,6 +45,8 @@ steps:
         ax: { has: "/AXButton \\(重试\\)/", count: { pattern: "/AXButton \\(重试\\)/", exact: 1 } }
       - label: 工具行只出现一次（vault_create 的名字在 transcript / AX 里恰一处）
         ax: { has: "vault_create", count: { pattern: "vault_create", exact: 1 } }
+      # 排版证据：工具行 12px、min-height 28px 且 height auto；错误尾注为 --text-2，
+      # 参数省略、终态词保护、重试动作和工具不重放判据不变。
       - shot: 01-工具后失败
   - name: 记录文件基线
     do: record

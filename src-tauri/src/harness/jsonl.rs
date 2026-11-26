@@ -110,9 +110,8 @@ pub(crate) fn vault_dir_name(vault_id: &str) -> Option<&str> {
         .then_some(vault_id)
 }
 
-/// 本 vault 的会话留存目录 `<config_dir>/harness/sessions/<vault 稳定 id>/`（按需创建）。
-/// id 不合法时记一条 stderr 并按 `_orphaned/` 口径落盘——记录不静默丢、对话不中断。
-pub fn vault_sessions_dir(vault_id: &str) -> Result<PathBuf, CommandError> {
+/// 本 vault 会话目录的只读路径投影，不创建任何目录。
+pub fn vault_sessions_path(vault_id: &str) -> Result<PathBuf, CommandError> {
     let name = match vault_dir_name(vault_id) {
         Some(name) => name,
         None => {
@@ -123,7 +122,13 @@ pub fn vault_sessions_dir(vault_id: &str) -> Result<PathBuf, CommandError> {
             ORPHANED_DIR_NAME
         }
     };
-    let dir = sessions_dir()?.join(name);
+    Ok(sessions_root(&crate::config::config_dir()?).join(name))
+}
+
+/// 本 vault 的会话留存目录 `<config_dir>/harness/sessions/<vault 稳定 id>/`（按需创建）。
+/// id 不合法时记一条 stderr 并按 `_orphaned/` 口径落盘——记录不静默丢、对话不中断。
+pub fn vault_sessions_dir(vault_id: &str) -> Result<PathBuf, CommandError> {
+    let dir = vault_sessions_path(vault_id)?;
     std::fs::create_dir_all(&dir).map_err(|e| {
         CommandError::new(
             "harness_jsonl_failed",
@@ -498,6 +503,28 @@ fn is_history_kind(kind: &str) -> bool {
     matches!(kind, "llm_request" | "llm_response")
 }
 
+struct PendingRestore {
+    source_id: String,
+    session_open: serde_json::Value,
+    initial_records: Vec<serde_json::Value>,
+    activated: bool,
+    buffer: Vec<String>,
+}
+
+struct RestorePublishError {
+    code: &'static str,
+    error: std::io::Error,
+}
+
+impl RestorePublishError {
+    fn new(code: &'static str, error: impl Into<std::io::Error>) -> Self {
+        Self {
+            code,
+            error: error.into(),
+        }
+    }
+}
+
 /// 一个逻辑会话的留存句柄。append-only；首行恒为 `session_open`（构造时给定，
 /// **惰性**落到第一条记录时写入——从未记录的会话不落文件）。
 pub struct JsonlWriter {
@@ -516,6 +543,7 @@ pub struct JsonlWriter {
     health: Option<Arc<Mutex<PersistenceHealth>>>,
     /// 跃迁队列（`Runtime` 在锁域外 flush；子运行审计无 reporter，队列只进不出）。
     transitions: PersistenceTransitions,
+    restore: Option<PendingRestore>,
 }
 
 impl JsonlWriter {
@@ -554,6 +582,33 @@ impl JsonlWriter {
             fresh: true,
             health: Some(Arc::new(Mutex::new(PersistenceHealth::default()))),
             transitions: PersistenceTransitions::with(reporter),
+            restore: None,
+        })
+    }
+
+    pub fn create_restore(
+        session_id: &str,
+        source_id: &str,
+        vault_id: &str,
+        session_open: &serde_json::Value,
+        initial_records: Vec<serde_json::Value>,
+        reporter: Option<PersistenceReporter>,
+    ) -> Result<Self, CommandError> {
+        let path = vault_sessions_path(vault_id)?.join(format!("{session_id}.jsonl"));
+        Ok(Self {
+            path,
+            sink: None,
+            pending_open: None,
+            fresh: true,
+            health: Some(Arc::new(Mutex::new(PersistenceHealth::default()))),
+            transitions: PersistenceTransitions::with(reporter),
+            restore: Some(PendingRestore {
+                source_id: source_id.to_string(),
+                session_open: session_open.clone(),
+                initial_records,
+                activated: false,
+                buffer: Vec::new(),
+            }),
         })
     }
 
@@ -576,6 +631,7 @@ impl JsonlWriter {
             fresh: true,
             health: None,
             transitions: PersistenceTransitions::default(),
+            restore: None,
         })
     }
 
@@ -589,6 +645,7 @@ impl JsonlWriter {
             fresh: false,
             health: None,
             transitions: PersistenceTransitions::default(),
+            restore: None,
         }
     }
 
@@ -621,9 +678,41 @@ impl JsonlWriter {
         }
     }
 
+    pub fn pending_restore_source(&self) -> Option<&str> {
+        self.restore
+            .as_ref()
+            .map(|restore| restore.source_id.as_str())
+    }
+
+    pub fn has_unpublished_history(&self) -> bool {
+        self.restore
+            .as_ref()
+            .is_some_and(|restore| restore.activated)
+    }
+
+    pub fn try_publish_pending(&mut self) {
+        if !self.has_unpublished_history() {
+            return;
+        }
+        if let Err(error) = self.publish_restore() {
+            self.fail(
+                "restore_publish",
+                error.code,
+                PersistenceSeverity::History,
+                false,
+                false,
+                &error.error.to_string(),
+            );
+        }
+    }
+
     /// 追加一条记录。首条记录先把挂起的 `session_open` 写出（**写成功后才丢弃挂起行**）。
     /// 写失败只打 stderr + 诊断日志（留存不可反过来弄坏对话），并如实更新健康。
     pub fn record(&mut self, payload: &serde_json::Value) {
+        if self.restore.is_some() {
+            self.record_restore(payload);
+            return;
+        }
         let kind = payload
             .get("kind")
             .and_then(|value| value.as_str())
@@ -712,6 +801,118 @@ impl JsonlWriter {
             Some(sink) => sink.write_line(line),
             None => Ok(()),
         }
+    }
+
+    fn record_restore(&mut self, payload: &serde_json::Value) {
+        let kind = payload["kind"].as_str().unwrap_or("unknown");
+        let activated = self
+            .restore
+            .as_ref()
+            .is_some_and(|restore| restore.activated);
+        if !activated && kind != "llm_request" {
+            return;
+        }
+        let line = match serde_json::to_string(&serde_json::json!({
+            "ts": unix_secs_now(),
+            "payload": payload,
+        })) {
+            Ok(line) => line,
+            Err(error) => {
+                self.fail(
+                    kind,
+                    "serialize",
+                    PersistenceSeverity::History,
+                    false,
+                    false,
+                    &error.to_string(),
+                );
+                return;
+            }
+        };
+        if !activated {
+            let restore = self.restore.as_mut().expect("restore checked");
+            let initial = std::iter::once(&restore.session_open)
+                .chain(restore.initial_records.iter())
+                .map(|record| {
+                    serde_json::to_string(&serde_json::json!({
+                        "ts": unix_secs_now(),
+                        "payload": record,
+                    }))
+                    .map_err(|error| RestorePublishError::new("serialize", error))
+                })
+                .collect::<Result<Vec<_>, _>>();
+            match initial {
+                Ok(lines) => {
+                    restore.buffer.extend(lines);
+                    restore.activated = true;
+                }
+                Err(error) => {
+                    self.fail(
+                        "restore_publish",
+                        error.code,
+                        PersistenceSeverity::History,
+                        false,
+                        false,
+                        &error.error.to_string(),
+                    );
+                    return;
+                }
+            }
+        }
+        self.restore
+            .as_mut()
+            .expect("restore checked")
+            .buffer
+            .push(line);
+        self.try_publish_pending();
+    }
+
+    fn publish_restore(&mut self) -> Result<(), RestorePublishError> {
+        let lines = self
+            .restore
+            .as_ref()
+            .map(|restore| restore.buffer.clone())
+            .unwrap_or_default();
+        let file_name = self
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("restore.jsonl");
+        let temporary = self.path.with_file_name(format!(".{file_name}.tmp"));
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&temporary)
+            .map_err(|error| RestorePublishError::new("open", error))?;
+        for line in &lines {
+            file.write_all(line.as_bytes())
+                .and_then(|()| file.write_all(b"\n"))
+                .map_err(|error| RestorePublishError::new("write", error))?;
+        }
+        file.flush()
+            .map_err(|error| RestorePublishError::new("write", error))?;
+        drop(file);
+        std::fs::hard_link(&temporary, &self.path).map_err(|error| {
+            let code = if error.kind() == std::io::ErrorKind::AlreadyExists {
+                "collision"
+            } else {
+                "publish"
+            };
+            RestorePublishError::new(code, error)
+        })?;
+
+        self.restore = None;
+        self.pending_open = None;
+        self.fresh = false;
+        let _ = std::fs::remove_file(&temporary);
+        self.sink = OpenOptions::new()
+            .append(true)
+            .open(&self.path)
+            .ok()
+            .map(|file| Box::new(FileSink(file)) as Box<dyn LineSink>);
+        self.succeed(true);
+        Ok(())
     }
 
     /// 打开（创建）留存文件。`create_new` 防 session id 碰撞时静默踩别人的文件。
@@ -815,6 +1016,10 @@ impl JsonlWriter {
     /// 会话建立与首条记录之间用户可能切过档位，首行要反映实际发出请求时的档位）。
     /// 已落盘则为 no-op（历史不改写）。
     pub fn update_pending_open<F: FnOnce(&mut serde_json::Value)>(&mut self, update: F) {
+        if let Some(restore) = self.restore.as_mut().filter(|restore| !restore.activated) {
+            update(&mut restore.session_open);
+            return;
+        }
         if self.pending_open.is_none() {
             return;
         }
@@ -853,6 +1058,7 @@ impl JsonlWriter {
             fresh: true,
             health: Some(Arc::new(Mutex::new(PersistenceHealth::default()))),
             transitions: PersistenceTransitions::default(),
+            restore: None,
         }
     }
 

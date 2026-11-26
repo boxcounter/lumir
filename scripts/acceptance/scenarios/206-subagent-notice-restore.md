@@ -87,8 +87,10 @@ steps:
         ax: { count: { pattern: "后台任务完成", exact: 1 } }
       - label: 重建不触发自动回合（没有 assistants 汇报 —— fixture 里也没有 auto 条目可弹）
         ax: { not: "SGU-AUTO" }
-      - label: 新会话文件复制了投递标记
-        file: { path: "env:harness/sessions/*/*.jsonl", has: "notice_delivered" }
+      - label: 查看阶段仍只有源文件（通知只重建到内存）
+        glob: { dir: "env:harness/sessions", pattern: "\\.jsonl$", exact: 1 }
+      - label: 查看阶段无临时文件或通知侧录新文件
+        glob: { dir: "env:harness/sessions", pattern: "\\.tmp$", exact: 0 }
       - shot: 01-重建的通知
 
   # ── 反向验证：消费之后标记陈旧、不重复上屏 ────────────────────────────────
@@ -114,6 +116,10 @@ steps:
     expect:
       - label: 通知已进入请求（auto_notice 标记在 llm_request.messages 里）
         file: { path: "env:harness/sessions/*/*.jsonl", has: "auto_notice" }
+      - label: 首次真实发送后，恢复文件才复制投递标记
+        file: { path: "env:harness/sessions/*/*.jsonl", has: "notice_delivered" }
+      - label: 首次发布后目录恰有两份 JSONL（源 + 恢复）
+        glob: { dir: "env:harness/sessions", pattern: "\\.jsonl$", exact: 2 }
 
   - name: 再次重启
     do: restart

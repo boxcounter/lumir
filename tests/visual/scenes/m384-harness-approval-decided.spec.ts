@@ -339,8 +339,8 @@ test("待批状态：running 桩下正断言等待批准；两项逐个清算；
   const segStatus = page.locator(".lumir-hp-seg-status");
   const toggleStatus = page.locator(".lumir-hp-toggle-status");
 
-  // 进入快照在途、无待批：对照组（不得误报）。
-  await expect(stage).toHaveText("等待响应…");
+  // 进入快照在途、无待批：对照组（不得误报；中途接管读 D983）。
+  await expect(stage).toHaveText("正在继续本轮…");
   await expect(segStatus).toBeHidden();
   await expect(toggleStatus).toHaveText("处理中");
 
@@ -388,10 +388,10 @@ test("待批状态：running 桩下正断言等待批准；两项逐个清算；
   await expect(stage).toHaveText("等待批准…");
   await expect(segStatus).toHaveText("等待批准");
 
-  // 最后一项决策：同一同步批次退场，回落到生成档（首个分片已到）。
+  // 最后一项决策：同一同步批次退场，回到无待批的接管档（midTakeover 优先于生成档）。
   await page.locator('button[data-act="approve"]').first().click();
   await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
-  await expect(stage).toHaveText("正在生成回复…");
+  await expect(stage).toHaveText("正在继续本轮…");
   await expect(segStatus).toBeHidden();
   await expect(toggleStatus).toHaveText("处理中");
   const approvals = await page.evaluate(
@@ -423,7 +423,7 @@ async function openEmptyRunningPanel(page: Page): Promise<void> {
   await page.locator('.ft-row[title="harness-note.md"]').click();
   await page.locator(".lumir-hp-toggle").click();
   await expect(page.locator(".lumir-harness")).toBeVisible();
-  await expect(page.locator(".lumir-hp-stage")).toHaveText("等待响应…");
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("正在继续本轮…");
 }
 
 /** 先发 live started（带 call_id），再发批准请求（id 是独立的 ap-N）。 */
@@ -715,4 +715,135 @@ test("同 turn 内 call_id 复用（B 也需批准）：新一代配对覆盖旧
   await expect(aRow.locator(".lumir-hp-tool-out")).toHaveCount(0);
   await expect(page.locator(".lumir-hp-tool-row.is-running")).toHaveCount(0);
   await expect(page.locator(".lumir-hp-termwrap .lumir-hp-tool-row")).toHaveCount(2);
+});
+
+test("Web Ask：完整 query / URL、origin、provider、双路外发、费用与 untrusted 同源呈现", async ({ page }) => {
+  await stubPendingApproval(page, {
+    id: "ap-web-fetch",
+    tool: "web_fetch",
+    reason: { kind: "web_access_policy", approval: "ask" },
+    web: {
+      operation: "fetch",
+      url: "https://example.com/a?q=1",
+      origin: "https://example.com",
+      provider: "deepseek",
+      provider_id: "deepseek-work",
+      provider_status: "ready",
+      trust: "untrusted",
+      local_precheck: true,
+      provider_fetch: true,
+      cost_per_1000_success_cny: 5,
+    },
+  });
+  const { card, basis } = await openApprovalPanel(page);
+  await expect(basis).toHaveText("网页访问策略 = Ask");
+  const web = card.locator(".lumir-hp-approval-web");
+  await expect(web).toBeVisible();
+  await expect(web).toContainText("https://example.com/a?q=1");
+  await expect(web).toContainText("https://example.com");
+  await expect(web).toContainText("deepseek-work");
+  await expect(web).toContainText("HEAD / Range GET");
+  await expect(web).toContainText("DeepSeek");
+  await expect(web).toContainText("5 元 / 1000 次");
+  await expect(web).toContainText("untrusted");
+  await expect(card.locator(".lumir-hp-argv")).toContainText("https://example.com/a?q=1");
+  await expect(card.locator('[data-act="approve-remember"]')).toHaveCount(0);
+  await expect(card.locator('[data-act="approve-persist"]')).toHaveCount(0);
+
+  if (process.env.LUMIR_WEB_CANDIDATE_DIR !== undefined) {
+    const { mkdirSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    mkdirSync(process.env.LUMIR_WEB_CANDIDATE_DIR, { recursive: true });
+    await card.screenshot({ path: join(process.env.LUMIR_WEB_CANDIDATE_DIR, "web-ask-fetch.png") });
+  }
+
+  await page.locator('button[data-act="approve"]').click();
+  const row = page.locator(".lumir-hp-termwrap .lumir-hp-tool-row");
+  await expect(row.locator(".lumir-hp-tool-args")).toHaveText("https://example.com/a?q=1");
+  await row.click();
+  await expect(page.locator(".lumir-hp-term-body .lumir-hp-argv")).toContainText("https://example.com/a?q=1");
+});
+
+test("Web Search Ask：完整 query 与可空 provider 不伪造配置身份", async ({ page }) => {
+  await stubPendingApproval(page, {
+    id: "ap-web-search",
+    tool: "web_search",
+    reason: { kind: "web_access_policy", approval: "ask" },
+    web: {
+      operation: "search",
+      query: "  synthetic full query  ",
+      provider: null,
+      provider_id: null,
+      provider_status: "missing",
+      trust: "untrusted",
+      local_precheck: false,
+      provider_fetch: true,
+      cost_per_1000_success_cny: 5,
+    },
+  });
+  const { card } = await openApprovalPanel(page);
+  const web = card.locator(".lumir-hp-approval-web");
+  await expect(web).toContainText("synthetic full query");
+  await expect(web).not.toContainText("deepseek-work");
+  await expect(card.locator(".lumir-hp-argv")).toContainText("synthetic full query");
+  await expect(card.locator('[data-act="approve-remember"]')).toHaveCount(0);
+  await expect(card.locator('[data-act="approve-persist"]')).toHaveCount(0);
+});
+
+// ── 阶段5：默认无卡 Web 审计的结构（不建像素基线）────────────────────────────
+//
+// change add-harness-web-fetch-search-nov24 的 D1024 / D1025 审计块：工具行在前、审计在后；
+// 未配置 / 未外发时不得渲染 D1021 / D1022 的外发说明。判据是 DOM 顺序与文本，不是像素——
+// 审计块已由 m734 的 Web 设置与既有 Ask 场景覆盖视觉面，本用例只钉结构不变量。
+
+test("默认无卡 Web 审计：工具行→审计顺序，未外发时不渲染外发说明", async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as unknown as Record<string, unknown>).__pendingApprovalList = [];
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await fire(page, { type: "auto_turn_started", chain_index: 1 });
+  await fire(page, {
+    type: "tool_call",
+    name: "web_fetch",
+    status: "started",
+    summary: "https://example.com/a",
+    call_id: "call_audit",
+  });
+  await fire(page, {
+    type: "tool_call",
+    name: "web_fetch",
+    status: "done",
+    summary: "完成",
+    call_id: "call_audit",
+    web: {
+      operation: "fetch",
+      query: null,
+      url: "https://example.com/a",
+      provider: null,
+      provider_id: null,
+      attempts: 0,
+      cost_per_1000_success_cny: 5,
+      local_precheck: false,
+      provider_fetch: false,
+      trust: "untrusted",
+      truncated: false,
+      truncated_fields: [],
+      code: "web_provider_unconfigured",
+    },
+  });
+  const block = page.locator(".lumir-hp-tools");
+  const audit = block.locator(".lumir-hp-web-audit");
+  await expect(audit).toHaveCount(1);
+  await expect(audit).toContainText("未解析");
+  await expect(audit).toContainText("尝试次数");
+  await expect(audit).toContainText("untrusted data");
+  await expect(audit).not.toContainText("HEAD / Range GET");
+  const order = await block.evaluate((el) => [...el.children].map((child) => child.className));
+  const rowIndex = order.findIndex((name) => name.includes("lumir-hp-tool-row"));
+  const auditIndex = order.findIndex((name) => name.includes("lumir-hp-web-audit"));
+  expect(rowIndex).toBeGreaterThanOrEqual(0);
+  expect(auditIndex).toBeGreaterThan(rowIndex);
 });

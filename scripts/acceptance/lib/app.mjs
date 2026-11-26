@@ -353,6 +353,10 @@ export async function writeConfig({
     // `vault_patch` / `vault_create` / `vault_move` 自动放行、无批准闸，而「一切写逐个问」那批
     // 场景（72/73/74）在 2026-10-09 三档权限落地后从未回扫——显式钉 `read_only` 才能让闸复活。
     if (harness.permission_mode !== undefined) h.permission_mode = harness.permission_mode;
+    // 网页访问（change add-harness-web-fetch-search-nov24）：`web_access: { enabled, approval }`
+    // 整表直落 `[harness].web_access`；缺省不写 = 应用出厂 enabled / allow_all。阶段5的场景
+    // 869–873 用 enabled=false 与 approval=ask 构造启动口径。
+    if (harness.web_access !== undefined) h.web_access = harness.web_access;
     if (harness.loopMax !== undefined) h.loop_max = harness.loopMax;
     if (harness.warnCtxPct !== undefined) h.warn_ctx_pct = harness.warnCtxPct;
     if (harness.autoCompact !== undefined) h.auto_compact = harness.autoCompact;

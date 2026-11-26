@@ -608,7 +608,8 @@ fn resume_rebuilds_session_and_continues_in_new_file() {
         expected.push(item);
     }
 
-    // 恢复：新会话 id 立即给出；新文件惰性——首条记录时才创建。
+    // 恢复：先离开当前文件；新会话 id 立即给出，文件随首次真实请求发布。
+    runtime.new_session(&f.scope()).unwrap();
     let info = runtime
         .resume_session(&f.scope(), &config, &source_id)
         .expect("恢复成功");
@@ -766,6 +767,7 @@ fn resume_folds_trailing_response_with_dangling_tool_calls() {
     );
 
     let source_id = jsonl::JsonlWriter::session_id_from_path(&files[0]).unwrap();
+    runtime.new_session(&f.scope()).unwrap();
     let info = runtime
         .resume_session(&f.scope(), &config, &source_id)
         .expect("恢复成功");
@@ -1253,7 +1255,8 @@ fn resumed_session_is_listable_with_first_user_text() {
     assert_eq!(list[0].first_user_text.as_deref(), Some(QUOTE_MESSAGE_NAME));
     assert!(list[0].ts.is_some());
 
-    // 恢复 + 续聊一轮：新文件随首条记录创建，恢复出的会话随即出现在列举里。
+    // 离开当前文件后恢复 + 续聊一轮：首次真实请求发布，恢复出的会话随即出现在列举里。
+    runtime.new_session(&f.scope()).unwrap();
     let info = runtime
         .resume_session(&f.scope(), &config, &source_id)
         .unwrap();
@@ -1627,8 +1630,9 @@ fn restored_responses_session_translates_to_chat_messages() {
         "mock 档也记录缺省方言（字段不缺席）"
     );
 
-    // ② 以 chat 方言恢复：新文件首行记录**当前**方言（恢复充分性的推导依据）。
+    // ② 离开当前文件后以 chat 方言恢复：新文件首行记录**当前**方言（恢复充分性的推导依据）。
     let chat = kimi_chat_config();
+    runtime.new_session(&f.scope()).unwrap();
     let info = runtime
         .resume_session(&f.scope(), &chat, &source_id)
         .expect("恢复成功");
@@ -2277,6 +2281,7 @@ fn retry_session_recovers_to_one_user_and_one_answer() {
         &mut client,
     );
     runtime.release_turn(&f.scope());
+    runtime.new_session(&f.scope()).unwrap();
     let info = runtime
         .resume_session(
             &f.scope(),
@@ -2960,4 +2965,159 @@ fn list_sessions_is_read_only() {
         dir_len,
         "列举不得新增 / 删除目录条目"
     );
+}
+
+#[test]
+fn web_error_outputs_restore_query_url_order_and_source_file_without_sidecar() {
+    let f = Fixture::new("web-jsonl-restore");
+    let config = mock_config();
+    let runtime = Runtime::default();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+      {"tool_calls": [
+        {"id":"web-search","name":"web_search","arguments":"{\"query\":\"full synthetic query\"}"},
+        {"id":"web-fetch","name":"web_fetch","arguments":"{\"url\":\"https://other.example/b\"}"}
+      ]},
+      {"text":"done"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "web-jsonl").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "question".to_string(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    let files = f.session_files();
+    assert_eq!(files.len(), 1);
+    let path = &files[0];
+    let before = std::fs::read(path).unwrap();
+    let file = f.read(path);
+    let requests: Vec<_> = file
+        .records
+        .iter()
+        .filter(|record| record["kind"] == "llm_request")
+        .collect();
+    assert_eq!(requests.len(), 2, "DeepSeek tools 不得新增第二套 LLM 请求");
+    let messages = requests[1]["request"]["messages"].as_array().unwrap();
+    let types: Vec<&str> = messages
+        .iter()
+        .filter_map(|item| item["type"].as_str())
+        .collect();
+    assert_eq!(
+        types,
+        [
+            "function_call",
+            "function_call",
+            "function_call_output",
+            "function_call_output"
+        ]
+    );
+    let outputs: Vec<_> = messages
+        .iter()
+        .filter(|item| item["type"] == "function_call_output")
+        .collect();
+    let search: serde_json::Value = serde_json::from_str(
+        outputs[0]["output"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{messages:?}")),
+    )
+    .unwrap();
+    assert_eq!(search["query"], "full synthetic query");
+    assert_eq!(search["code"], "web_provider_unconfigured");
+    assert_eq!(search["attempts"], 0);
+    let fetch: serde_json::Value =
+        serde_json::from_str(outputs[1]["output"].as_str().unwrap()).unwrap();
+    assert_eq!(fetch["source"]["url"], "https://other.example/b");
+    assert_eq!(fetch["source"]["title"], "");
+    assert_eq!(fetch["code"], "web_provider_unconfigured");
+    assert_eq!(fetch["source"]["date"], serde_json::Value::Null);
+    assert_eq!(fetch["source"]["authority"], serde_json::Value::Null);
+    let session_id = jsonl::JsonlWriter::session_id_from_path(path).unwrap();
+    let restore_runtime = Runtime::default();
+    let resumed = restore_runtime
+        .resume_session(&f.scope(), &config, &session_id)
+        .unwrap();
+    assert_eq!(std::fs::read(path).unwrap(), before, "恢复不得改写源 JSONL");
+    let tools: Vec<_> = resumed
+        .messages
+        .iter()
+        .filter(|message| message.role == "tool")
+        .collect();
+    assert_eq!(tools.len(), 2);
+    let restored_search: serde_json::Value =
+        serde_json::from_str(tools[0].text.as_deref().unwrap()).unwrap();
+    assert_eq!(restored_search["query"], "full synthetic query");
+    let restored_fetch: serde_json::Value =
+        serde_json::from_str(tools[1].text.as_deref().unwrap()).unwrap();
+    assert_eq!(restored_fetch["source"]["url"], "https://other.example/b");
+    assert_eq!(f.session_files().len(), 1, "只读恢复不得发布新文件");
+}
+
+#[test]
+fn retry_after_web_output_reuses_identical_input_without_replaying_tools() {
+    let f = Fixture::new("web-retry-no-replay");
+    let config = mock_config();
+    let runtime = Runtime::default();
+    let sink = CollectSink::default();
+    let mut client = MockClient::from_str(
+        r#"{"responses": [
+          {"tool_calls": [
+            {"id":"web-search","name":"web_search","arguments":"{\"query\":\"full synthetic query\"}"},
+            {"id":"web-fetch","name":"web_fetch","arguments":"{\"url\":\"https://other.example/b\"}"}
+          ]},
+          {"error": {"code": "harness_network_failed", "message": "synthetic LLM failure"}},
+          {"text": "RETRY-OK"}
+        ]}"#,
+        "web-retry",
+    )
+    .unwrap();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "question".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    let turn_seq = error_event(&sink)["retry"]["turn"].as_u64().unwrap();
+    let failed = runtime.begin_retry(&f.scope(), &config, turn_seq).unwrap();
+    drive_retry(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        failed.user_text,
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    let snapshot = runtime.snapshot(&f.scope(), &config);
+    assert_eq!(
+        snapshot
+            .messages
+            .iter()
+            .filter(|message| message.role == "tool")
+            .count(),
+        2,
+        "重试不得重复 Web 工具行"
+    );
+    let file = f.read(&f.session_files()[0]);
+    let requests = requests_of(&file);
+    assert_eq!(requests.len(), 3);
+    assert_eq!(
+        requests[1]["request"]["messages"], requests[2]["request"]["messages"],
+        "重试必须逐字节复用 LLM 失败时的 input，包含原 Web 输出"
+    );
+    let outputs: Vec<_> = requests[2]["request"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["type"] == "function_call_output")
+        .collect();
+    assert_eq!(outputs.len(), 2, "Web 结果不得因重试重复");
 }

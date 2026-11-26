@@ -117,7 +117,20 @@ composer（输入区）与控制行 SHALL 收进同一个圆角卡片容器（�
 
 ### Requirement: Skill 支持
 
-系统 SHALL 自动发现 user-wide（`~/.agents/skills/`）与 vault-wide（`<vault>/.agents/skills/`）两处的 Skill（SKILL.md 约定），vault-wide 同名覆盖 user-wide。Skill 索引（name + description）SHALL 注入系统上下文；`skill_load(name)` 工具 SHALL 按名加载 SKILL.md 全文，路径解析 MUST 限定在两个 Skill 根内（只读、防逃逸）。外部能力（如 Tavily）SHALL 以「Skill + 对应 CLI」形态接入，系统 SHALL NOT 为特定外部服务内置专用工具。
+系统 SHALL 自动发现 user-wide（`~/.agents/skills/`）与 vault-wide（`<vault>/.agents/skills/`）两处的 Skill（SKILL.md 约定），vault-wide 同名覆盖 user-wide。Skill 索引（name + description）SHALL 注入系统上下文；`skill_load(name)` 工具 SHALL 按名加载 SKILL.md 全文，路径解析 MUST 限定在两个 Skill 根内（只读、防逃逸）。与网页无关的外部能力 SHALL 以「Skill + 对应 CLI」形态接入；统一 `web_search` / `web_fetch` 是本条明确列入工具集的外部网页阅读合同，首个 provider 为 DeepSeek。后续搜索 / 抓取 provider MUST 并入同一工具合同，MUST NOT 为特定服务另造专用工具名、别名或第二套结果形状。
+
+除模型自主判断外，用户 SHALL 可经输入区显式选择点名 Skill，由后端确定性加载；两条入口的缺省、分控、
+权限与留存见「Skill 的混合调用、入口策略与候选交互」。文本里的 `/名字` 字样 MUST NOT 被当作显式调用依据。
+该新增入口 MUST NOT 改变默认 Skill 的索引注入与模型自主 `skill_load` 能力；索引仍是会话建立 / 新会话 /
+压缩时装配一次的会话快照。
+
+前端清单 SHALL 只有一个发现来源：`harness_skills_list` 复用 `discover_skills`，不得另写双根遍历或覆盖
+逻辑。候选只显示符合 `/` grammar、元数据合法且允许用户调用的条目；该过滤 MUST NOT 移除索引中的禁手动
+条目，也 MUST NOT 阻止禁自动条目被用户显式选择。
+
+候选清单 / 回合工具策略（实时发现）与系统提示索引（会话快照）SHALL 允许不同源：会话中途新增或改策略的
+Skill 可在当回合按新发现结果执行，但索引不因它重装配；会话中途删除的 Skill 可仍在索引里，新的显式或自动
+加载按当回合发现结果返回不存在。系统 MUST NOT 为消除该差异而在会话中途重装配系统提示。
 
 #### Scenario: 索引注入与按需加载
 
@@ -129,9 +142,33 @@ composer（输入区）与控制行 SHALL 收进同一个圆角卡片容器（�
 - **WHEN** `skill_load` 收到指向 Skill 根外的路径或名称
 - **THEN** 拒绝并回送错误，不读取任何根外文件
 
+#### Scenario: 清单命令与索引同源
+
+- **WHEN** vault 内新增一个与 user-wide 同名的 Skill（或新增一个全新 Skill），随后打开候选
+- **THEN** 同名条目只出现一条且 `source` 为 `vault`，其 description 与调用策略也整体来自 vault；
+  全新技能在允许用户调用时出现在候选里，但系统提示索引在本次会话内不因它改变
+
+#### Scenario: 清单失败不阻断输入
+
+- **WHEN** 清单命令失败、返回坏 JSON 或当前没有打开 vault
+- **THEN** 候选按空清单处理，输入区键入、发送与既有错误提示不受影响；已有引用 chip 仍按引用渲染，
+  不误标缺失或禁用
+
+#### Scenario: 候选过滤不削弱自动发现
+
+- **WHEN** Skill 根下存在禁手动、禁自动与 grammar 之外的技能
+- **THEN** 禁手动不进候选但仍进索引并可自动加载；禁自动不进模型自动执行但仍可显式选择；grammar 之外
+  的名字不进候选，其现有索引与 `skill_load` 口径逐条不变
+
+#### Scenario: 统一 Web 工具是明确例外而非服务别名
+
+- **WHEN** `harness.web_access.enabled=true` 且交互主会话需要搜索或读取网页
+- **THEN** 模型使用统一的 `web_search` / `web_fetch` 合同，首 provider 为 DeepSeek；系统不得再要求该链路
+  必须经 Skill + CLI，也不得提供 DeepSeek 专用搜索别名
+
 ### Requirement: 工具循环
 
-对话运行时 SHALL 支持工具循环：模型返回工具调用时，系统执行对应工具并将结果回送，直至模型不再调用工具或达到循环上限（默认 50，`[harness].loop_max` 可调；出厂值 M367 由 8 上调至 50，上界仍为 64）。达到上限 SHALL 终止循环并在面板给出明确提示。运行时 SHALL 维护会话状态于 Rust core，webview 重载 MUST NOT 丢失会话。工具集 SHALL 为 9 件 vault 操作工具：`vault_read`、`vault_search`、`vault_list`、`vault_patch`、`vault_create`、`vault_move`、`vault_delete`、`skill_load`、`cli_run`；另加 2 类不操作 vault 的工具——1 件编排工具 `task`（change `add-harness-subagents`）与 3 件调度工具 `cron_task_create` / `cron_task_list` / `cron_task_remove`（change `add-cron-conversational-registration`）。`task` 属编排工具，是模型按名字委派子代理的入口，其入参与结果契约见 `harness-subagents` capability；子运行的运行上下文 MUST NOT 获得 `task`（派生深度恰好 1 层，实现口径为工具白名单）。3 件调度工具是交互会话注册定时任务的入口，其入参、校验与回执契约见 `cron` capability；它们 SHALL 只在**交互发送路径**注册——无人值守运行（cron 交接的工具白名单只含 9 件 vault 操作工具）与子运行（定义白名单的元素必须是 vault 操作工具）MUST NOT 获得它们。清单外能力扩张须经 Alex 裁决（ADR 0007；`vault_move` / `vault_delete` 的扩张、`vault_list` 的加入、`task` 与 3 件调度工具的分类均以该 ADR 的修订为口径）。
+对话运行时 SHALL 支持工具循环：模型返回工具调用时，系统执行对应工具并将结果回送，直至模型不再调用工具或达到循环上限（默认 50，`[harness].loop_max` 可调；出厂值 M367 由 8 上调至 50，上界仍为 64）。达到上限 SHALL 终止循环并在面板给出明确提示。运行时 SHALL 维护会话状态于 Rust core，webview 重载 MUST NOT 丢失会话。工具集 SHALL 为 9 件 vault 操作工具：`vault_read`、`vault_search`、`vault_list`、`vault_patch`、`vault_create`、`vault_move`、`vault_delete`、`skill_load`、`cli_run`；另有不操作 vault 的编排工具 `task`、调度工具 `cron_task_create` / `cron_task_list` / `cron_task_remove`，以及交互主会话的 2 件 Web 阅读工具 `web_search` / `web_fetch`。`task` 属编排工具，是模型按名字委派子代理的入口，其入参与结果契约见 `harness-subagents` capability；子运行的运行上下文 MUST NOT 获得 `task`（派生深度恰好 1 层，实现口径为工具白名单）。3 件调度工具是交互会话注册定时任务的入口，其入参、校验与回执契约见 `cron` capability；它们 SHALL 只在**交互发送路径**注册——无人值守运行（cron 交接的工具白名单只含 9 件 vault 操作工具）与子运行（定义白名单的元素必须是 vault 操作工具）MUST NOT 获得它们。2 件 Web 阅读工具 SHALL 只在 `harness.web_access.enabled=true` 时于交互主会话注册，该键缺省为 `true`，因此默认注册；显式 false 不注册且幻觉调用回送 `tool_unknown`。cron 与子运行 MUST NOT 获得它们，本 change 不扩大既有 9 件白名单或内建 `general`。清单外能力扩张须经 Alex 裁决（ADR 0007；`vault_move` / `vault_delete` 的扩张、`vault_list` 的加入、`task` 与 3 件调度工具的分类均以该 ADR 的修订为口径）。
 
 同一条助手消息里的多个 `task` 调用 SHALL 并行执行，非 `task` 调用 SHALL 维持既有逐个执行口径；
 工具结果 SHALL 按原调用顺序回填（并行只影响执行时刻，不改变结果的排列），父请求的 `tool_calls`
@@ -170,9 +207,24 @@ capability。
 - **THEN** 只有交互发送路径的请求含 `cron_task_create` / `cron_task_list` / `cron_task_remove`；
   另外两条路径 MUST NOT 含它们（定时运行不能给自己排任务，子代理不能排任务）
 
+#### Scenario: Web 工具只在交互主会话注册
+
+- **WHEN** `harness.web_access.enabled=true` 时分别取交互主会话、cron 交接与子运行的模型工具定义
+- **THEN** 只有交互主会话含 `web_search` / `web_fetch`；另外两条路径不含它们，既有 9 件 vault 工具
+  白名单与内建 `general` 不因此扩权
+- **AND** `harness.web_access.enabled` 缺省为 true 时交互主会话默认注册；显式 false 时三条路径都不含
+  这两件工具，幻觉调用回送 `tool_unknown`，不解析 provider 且不产生网络请求
+
 ### Requirement: 权限机制
 
 系统 SHALL 实现两层权限规则：allow / deny（不存在 `ask` 规则表——需要「必须问」的语义由危险黑名单与模式默认分层承担），判定顺序 deny > allow > 默认分层。规则语法 SHALL 支持 tool 级与 tool+模式级（如 `cli(tavily *)` 的命令前缀匹配）；匹配语义 SHALL 为：模式以 `*` 结尾时按**主体串前缀**匹配，星号前是空格时（生成规则的标准形态，如 `cli(git push *)`）另 SHALL 命中「去掉该尾随空格后逐字相等」的主体串——无参数的 `git push` 与带参数的 `git push origin main` 同样命中，词边界 MUST NOT 因此放宽（`git pushx` 不命中）。allow 规则 SHALL 既可手写于配置，也可由批准卡沉淀（生成、去重与作用域口径见「权限规则的持久化与治理」），并 SHALL 在权限浮层中逐条可见、可删。权限规则之外，系统 SHALL 提供**三档权限模式**作为默认分层的档位：`read_only` / `vault_write`（默认）/ `full_access`，逐档语义如下——读类工具（`vault_read` / `vault_search` / `vault_list` / `skill_load` / `cron_task_list`）三档均直接放行；`vault_patch` / `vault_create` / `vault_move` 在 `read_only` 档 SHALL 逐个问（Always Ask，2026-10-09 Alex 裁决：该档语义为「读自动放行、一切写逐个问」，模式层 MUST NOT 直接拒绝），在 `vault_write` 与 `full_access` 档 SHALL 自动放行；`vault_delete` 在 `read_only` 与 `vault_write` 档 SHALL 逐个问（Vault Write 档的分界以 Alex 裁决点 1 为口径），在 `full_access` 档 SHALL 自动放行；`cli_run` 只读白名单命令三档均直接放行；`cli_run` 写命令在 `read_only` 与 `vault_write` 档 SHALL 逐个问，在 `full_access` 档 SHALL 自动放行（写目标在 vault 内者除外，见「cli_run 命令分类与 vault 写重定向」）；`cron_task_create` / `cron_task_remove` 在 `read_only` 与 `vault_write` 档 SHALL 逐个问、在 `full_access` 档 SHALL 自动放行（定时任务是持续性开销，批准的一刻是用户唯一能看见「它以后会自己跑」的时机）；危险黑名单命令（rm / shutdown·reboot·halt·poweroff / mkfs 系 / dd / git reset --hard / git clean / shell 包装器类，首版清单；shell 包装器中「受限解包」成立的只读形态除外，口径见「cli_run 命令分类与 vault 写重定向」）**任何档都 SHALL 逐个问**，MUST NOT 自动放行。模式层 SHALL 只在「直接放行」与「逐个问」之间切换，SHALL NOT 产出「拒绝」——拒绝只来自用户 deny 规则。
+
+`web_search` / `web_fetch` SHALL 属于独立的 `web_read` 权限类，MUST NOT 加入上述读类工具白名单。
+`harness.web_access.approval` 缺省为 `allow_all`，两件工具在 `read_only` / `vault_write` /
+`full_access` 三档均 SHALL 默认直接执行；只有用户显式改为 `ask` 才进入批准闸。Web 判定顺序为
+deny > 既有硬层 > `web_access.approval`，deny 永远优先；Web 不使用 allow 规则或会话缓存派生授权。
+任何 approval 值都 MUST NOT 跳过执行期的 URL、DNS、重定向、内容类型、预算或密钥检查。
+`web_read` 是权限分类，MUST NOT 被实现成第三件工具或第四档权限模式。
 
 判定总序 SHALL 为：deny 规则 > vault 内写重定向 > 危险黑名单 > allow 规则 > 模式默认分层——前四层模式无关，allow 规则 SHALL 在任何档生效（含 `read_only` 档），模式只替换最底层默认分层。deny 命中 SHALL 直接拒绝并回送模型：拒绝对话 MUST NOT 进入批准闸（不产批准卡、不等待用户决定），且回送的错误 SHALL 带上**命中的规则原文**（如「命中 deny 规则 cli(npm run deploy*)」），使「是哪条规则拦的」不必回配置文件核对；规则原文拼入后若超出工具行摘要的展示长度上限，SHALL 退回不带规则原文的既有文案，MUST NOT 呈现被截断的规则名。ask 档 SHALL 以批准闸呈现：执行前挂起循环，面板显示待批准项（写文档显示 diff 预览，CLI 显示完整命令），Alex 采纳后才执行，拒绝（及可选原因）回送模型；未决批准项 MUST NOT 自动超时通过。`cron_task_create` / `cron_task_remove` 的批准卡 SHALL 呈现该次动作的任务要素——`create`：`at`、`days`、`delivery`、`session`、目标 vault、`prompt` 全文，以及「注册当日是否补触发」；`remove`：任务 `id` 与 `at`。会话内批准缓存（「采纳且本会话不再问」）对这两件工具的主体串 SHALL 由 `id` / `at` / `days` 组成，MUST NOT 包含 `prompt`（主体串会进缓存键与诊断，`prompt` 的私密内容只出现在批准卡与会话留存里）。
 
@@ -247,6 +299,13 @@ capability。
 - **AND** 用户对本条点「采纳且本会话不再问」后，同一 `id` + `at` + `days` 的再次创建不再进闸，
   改 `prompt` 但时间不变的创建同样不再进闸（主体串不含 `prompt`）
 
+#### Scenario: Web 默认 Allow 与 deny 硬边界
+
+- **WHEN** `harness.web_access.approval` 缺省为 `allow_all`，模型在三种权限模式中的任一种调用
+  `web_search` 或 `web_fetch`
+- **THEN** 调用不进入批准闸而直接执行，工具行 / 结果保留完整 query / URL、provider、费用与
+  untrusted 审计；若目标命中 `web_fetch(origin)` deny 或其它硬边界，仍按对应错误拒绝且不产生请求
+
 ### Requirement: 批准闸呈现与决策后收敛
 
 批准闸的 diff 预览中，以 `+` / `-` 起首的增删行底色 MUST 覆盖该行文本的完整宽度，与卡片可视宽度
@@ -266,16 +325,31 @@ capability。
 出现）。判定依据 SHALL 由后端判定管线产出并随批准请求事件与 `harness_state` 快照两条通道同源到达
 前端，前端 MUST NOT 自行推导层级；依据 SHALL 覆盖产批准卡的两层，并如实区分：**危险黑名单**命中
 （shell 包装器类点名包装器命令名并说明其内容不可知；其余危险命令类说明命中安全黑名单）与**模式
-默认分层**（带当时判定的档位名与该档释义）。判定依据 MISSING（旧后端 / 旧快照载荷）时该行 SHALL NOT
-渲染，MUST NOT 以猜测或默认文案填充。该行 SHALL 随界面语言重取文案，MUST NOT 残留旧语言串。
+默认分层**（带当时判定的档位名与该档释义），以及 **Web access 策略**（独立
+`DecisionReason::WebAccessPolicy { approval: "ask" }`，明确实际 `harness.web_access.approval=ask`）。
+Web access 依据 MUST NOT 使用 `ModeDefault`，也 MUST NOT 显示 `read_only` / `vault_write` /
+`full_access` 的档释义作为进闸原因；`allow_all` 自动放行不产依据，origin deny 沿用 `DenyRule`
+且不产批准卡。判定依据 MISSING（旧后端 / 旧快照载荷）时该行 SHALL NOT 渲染，MUST NOT 以猜测或
+默认文案填充。该行 SHALL 随界面语言重取文案，MUST NOT 残留旧语言串。
 
 批准卡的次级动作 SHALL 由后端随批准请求下发（事件与快照两条通道同源），前端 MUST NOT 按判定依据
-或其它字段自行推断可见性。模式默认分层进闸的卡 SHALL 显示「采纳且本会话不再问（记住 `<粒度>`）」；
+或其它字段自行推断可见性。非 Web 工具因模式默认分层进闸的卡 SHALL 显示
+「采纳且本会话不再问（记住 `<粒度>`）」；
 可持久化规则的工具（非危险层进闸的 `cli_run`、`vault_patch` / `vault_create` / `vault_move`）另
 SHALL 显示「以后都允许 `<规则原文>`」，规则原文由后端单一真源生成、按钮逐字显示。**危险黑名单
 命中的卡 MUST NOT 显示这两枚次级动作**：该层先于 allow 规则与会话缓存判定，这两枚按钮在那类卡上
 是死按钮（点了也不生效），显示即误导。次级动作字段缺省（旧后端 / 旧快照载荷）时两枚按钮 MUST NOT
 渲染。
+
+`harness.web_access.approval` 缺省为 `allow_all`，Web 工具 SHALL NOT 默认产生批准卡；只有显式
+`approval=ask` 时，Web 批准卡的预览载荷才 SHALL 与批准请求事件 / `harness_state` 快照同源：
+Search 显示完整 query、实际 provider id、query 发往 DeepSeek 的外发与计费说明；Fetch 显示完整 URL、
+规范化 origin、实际 provider id，以及「Lumir 先做本地 HEAD / Range GET 预检、再把 URL 发给
+DeepSeek 抓取」的双路外发与计费说明。provider 尚未解析成功时预览中的 provider / provider id 为 null，
+不伪造 `"deepseek"` 为配置 id。Web 卡不生成专用持久 allow / 免问动作；origin deny 只在设置与
+权限规则中管理。批准或拒绝后，待决字段、说明与动作 SHALL 按本条统一终态折叠，只保留工具名 +
+决策结果 + 相对时间；完整 query / URL 与决策摘要 SHALL 可在展开详情中回看，不以待决按钮或置灰
+动作残留。默认 Allow 的工具行 / 结果 SHALL 保留同样的输入、provider、费用与 untrusted 审计。
 
 #### Scenario: diff 行高亮覆盖整行文本
 
@@ -307,6 +381,12 @@ SHALL 显示「以后都允许 `<规则原文>`」，规则原文由后端单一
 - **WHEN** 默认 `vault_write` 档下模型调用库外写命令（如 `cli_run("npm", ["install"])`）进入批准闸
 - **THEN** 批准卡的判定依据行带出当时档位（`保险库写入` / `Vault Write`）与该档释义（库内写自动放行、库外命令先问），使「已是 Write 档为何还问」在卡上自洽可读
 
+#### Scenario: full_access 下 Web Ask 依据独立于权限模式
+
+- **WHEN** 权限模式为 `full_access` 且 `harness.web_access.approval=ask`，模型调用 Web 工具
+- **THEN** 判定依据为 `WebAccessPolicy{approval:"ask"}`，明确网页访问策略是 Ask，不出现
+  `ModeDefault` 或 full_access 档释义；approval=allow_all 时不产卡，origin deny 时不产卡
+
 #### Scenario: 判定依据随决策退场
 
 - **WHEN** Alex 对带判定依据行的批准项点击采纳或拒绝
@@ -321,6 +401,20 @@ SHALL 显示「以后都允许 `<规则原文>`」，规则原文由后端单一
 
 - **WHEN** 任意档下 shell 包装器命令（脚本不可解包）或危险黑名单命令进入批准闸
 - **THEN** 卡上 MUST NOT 出现「采纳且本会话不再问」与「以后都允许」两枚按钮（MUST NOT 以置灰形态出现）；只保留采纳 / 拒绝
+
+#### Scenario: 可选 Ask 的 Fetch 预览与终态折叠
+
+- **WHEN** `harness.web_access.approval=ask`，`web_fetch("https://example.com/a?q=1")` 进入批准闸且
+  provider 已解析成功，随后用户采纳或拒绝
+- **THEN** 卡片显示完整 URL、origin `https://example.com`、实际 provider id，以及 Lumir 预检 +
+  DeepSeek 抓取的双路外发与计费说明；不出现 Web 专用持久 allow / 免问动作。决策后预览与按钮退场，
+  卡片折叠为工具名 + 决策结果 + 相对时间，展开详情仍可回看完整 URL 与决策摘要
+
+#### Scenario: 默认 Allow 不产生批准卡且审计仍在
+
+- **WHEN** `harness.web_access.approval` 缺省为 `allow_all`，模型连续调用 Search / Fetch
+- **THEN** 不产生逐次批准卡或 Web 专用持久 allow 动作，调用直接执行；工具行 / 结果仍保留完整
+  query / URL、provider、费用与 `trust:"untrusted"`
 
 ### Requirement: 上下文用量显示与触顶处理
 
@@ -424,8 +518,21 @@ composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip �
 并给一条人话 warning；`model`——可选模型 id，缺省 `null` = 选定 provider 的生效模型，非空须在
 选定 provider 的 `models` 清单内声明，未声明 SHALL 回落 `null` 并给一条人话 warning；mock
 provider 无模型清单，`model` 只能为 `null`）、`attachment_naming` 表（与会话命名同形，另有
-`vision` 资格闸，见 change `add-semantic-image-naming`）、`subagents` 表。命名调用的
-provider / 模型 / wire 方言 / `api_key` / `base_url` SHALL 同出一个 provider 条目。
+`vision` 资格闸，见 change `add-semantic-image-naming`）、`subagents` 表、`web_access` 表
+（`enabled` 缺省 `true`，显式 `false` 才不注册 Web 工具；`approval` 缺省 `allow_all`，可选 `ask`；
+关闭不删除 provider、origin deny 或历史）。命名调用的 provider / 模型 / wire 方言 / `api_key` /
+`base_url` SHALL 同出一个 provider 条目。
+
+`web_access.enabled` 缺省为 `true`，因此两件 Web 工具默认注册；显式 false 时不注册且不解析 Web
+provider。`web_access.approval` 缺省为 `allow_all`，因此默认直接执行；`ask` 才进入批准闸。
+设置快照 / patch / revision SHALL 覆盖两键，恢复默认 = 删键；provider 增删 / 切换 MUST NOT 重置它们。
+origin deny 仍归 `permissions.deny`，MUST NOT 复制进 `web_access`。
+
+只有 `web_access` 表 / 键缺失才使用上述批准默认值。整表错形状、`enabled` 非布尔、`approval`
+非字符串或未知枚举 SHALL 进入局部 Invalid 状态：安全读数为 `enabled=false, approval=ask`，并产生
+稳定 `web_access_config_invalid`。Invalid SHALL NOT 注册工具，直接调用也返回该错误且不解析 provider、
+零网络请求。该校验 MUST NOT 触发整文件回落，provider、permissions.allow / deny 与其它配置原样保留；
+设置修复写不得顺手清空 origin deny。
 
 `providers` 表 SHALL 是动态映射：provider id 由用户定义（`mock` 为验收专用保留 id），任何满足
 `^[a-z0-9][a-z0-9_-]{0,31}$` 的 id 都可出现；条目数量 MUST NOT 被限制为固定值。每个条目的行为
@@ -543,24 +650,48 @@ MUST NOT 因编辑面而改变；开关关闭时这两个键 MUST NOT 被自动�
 #### Scenario: 悬空命名目标回落到当前使用项
 
 - **WHEN** `attachment_naming.provider = "deleted-one"`，而 `providers` 表里已没有该 id
-- **THEN** 启动不失败；图片命名的目标回落当前使用项并给一条人话 warning；自动化设置页显示
+- **THEN** 启动不失败，图片命名的目标回落当前使用项并给一条人话 warning；自动化设置页显示
   「已回落到当前 provider」；不会因此阻断开机或发送
+
+#### Scenario: 网页访问默认启用且配置键受 revision 保护
+
+- **WHEN** `harness.web_access.enabled` 与 `.approval` 缺省，随后用户关闭 Web、改为 Ask、切 provider
+  并恢复默认
+- **THEN** 缺省为 `enabled=true, approval=allow_all`，两件工具默认注册并直接执行；关闭后不注册，
+  Ask 时进批准闸；切 provider 不重置两键；恢复默认删除两键且不复制或清空 `permissions.deny`
+  中的 origin 例外
+
+#### Scenario: 显式非法 Web 配置 fail closed 且不清 deny
+
+- **WHEN** 文件已有合法 provider 与 `web_fetch(https://example.com)` deny，随后分别出现
+  `web_access: "on"`、`enabled: "yes"`、`approval: true`、`approval: "always"`
+- **THEN** 每种都产生 `web_access_config_invalid`，安全读数为 enabled=false / ask，不注册、零网络请求；
+  不得变成 enabled=true / allow_all，provider、origin deny 与其它配置保持不变；用显式合法值修复后
+  才按新配置恢复
 
 ### Requirement: 会话边界
 
-会话 SHALL 绑定 vault：内存态一个 vault 一个活跃会话（`RuntimeInner.sessions` 按 vault 键控、resume 铸新 id 替换槽位）；盘上按 vault 分目录并存多份历史会话 JSONL 留存，浮层可切换 / 新建 / 恢复（M433）。切 vault SHALL 切到该 vault 的会话，切回时恢复；关闭 vault 丢弃其会话；app 重启清空全部会话。每个逻辑会话 SHALL 有稳定 session id（`s<unix_millis>-<6 位随机>`，落 JSONL 文件名与 `session_open`）；会话建立、「新会话」重置、自动压缩、从历史会话恢复，四者 SHALL 各开一个 JSONL 文件，旧文件封闭不再追加（压缩前历史完整留存在旧文件，压缩摘要随新文件 `session_open` 留存；恢复新文件以 `opened_from=restore` + `restored_from` 标记源会话）。标题栏 harness 段 SHALL 提供「新会话」动作（面板在场时）：清空当前 vault 会话的消息历史并重新装配系统上下文（AGENTS.md / Skill 索引不变），旧会话 JSONL 文件不受影响。harness 段 SHALL 显示会话名——取**有效标题**（「会话本地留存」条的 last-wins 口径：最后一条带 `title` 的 `session_title` 记录），无标题记录时回落首条用户消息截断（约 20 字），两者皆无时显示「新会话」；生成标题的硬上限（20 码点）与显示截断长度相同，故标题显示不带省略号。会话标题变化 SHALL 即时反映到标题栏会话名与已打开的历史浮层行名，MUST NOT 要求 webview 重载；标题变化 MUST NOT 改变 transcript、session id、历史清单顺序或会话内容。自动压缩与从历史会话恢复开新逻辑会话时，源会话的有效标题 SHALL 随新文件继承（见「会话本地留存」条），使会话名在轮换后保持连续；「新会话」显式开始新对话，MUST NOT 继承。探针期 SHALL 提供**最小恢复入口**：标题栏 harness 段的会话浮层 SHALL 列出本 vault 的历史会话（极简选择器，按最后活动时间倒序、会话名取该会话的有效标题、无标题记录时回落该会话首条用户消息截断约 20 字；仅本 vault，只列不管理），选中一项 SHALL 从该会话 JSONL 重建会话并续写新会话文件——恢复 = 读文件最后一条 `llm_request` 的完整请求体，并折叠其后未入请求的末尾响应（算法见 design §6.2），system 与 input 原样灌回（**不重新装配**系统上下文）、不跨 provider 重写回放项。探针期 SHALL NOT 提供完整多会话管理 UI（会话重命名 / 搜索 / 分组等）与历史回看列表的完整形态；自动命名不属本禁令的「完整多会话管理 UI」——仍无手动重命名入口、无搜索、无分组。会话浮层每行已提供**单条删除**入口（行内两步确认、活跃会话拒删，M406 面板批次落地），它不属上述「完整管理 UI」。
+会话 SHALL 绑定 vault：内存态一个 vault 一个活跃会话（`RuntimeInner.sessions` 按 vault 键控；resume 在真正切换时铸新 id 替换槽位，同一份未发布的 pending 恢复复用已铸身份）；盘上按 vault 分目录并存多份历史会话 JSONL 留存，浮层可切换 / 新建 / 恢复（M433）。切 vault SHALL 切到该 vault 的会话，切回时恢复；关闭 vault 丢弃其会话；app 重启清空全部会话。每个逻辑会话 SHALL 有稳定 session id（`s<unix_millis>-<6 位随机>`，落 JSONL 文件名与 `session_open`）；会话建立、「新会话」重置、自动压缩、从历史会话恢复，四者 SHALL 各开一个 JSONL 文件（从历史恢复在首次真实请求时开），旧文件封闭不再追加（压缩前历史完整留存在旧文件，压缩摘要随新文件 `session_open` 留存；恢复新文件以 `opened_from=restore` + `restored_from` 标记源会话）。标题栏 harness 段 SHALL 提供「新会话」动作（面板在场时）：清空当前 vault 会话的消息历史并重新装配系统上下文（AGENTS.md / Skill 索引不变），旧会话 JSONL 文件不受影响。harness 段 SHALL 显示会话名——取**有效标题**（「会话本地留存」条的 last-wins 口径：最后一条带 `title` 的 `session_title` 记录），无标题记录时回落首条用户消息截断（约 20 字），两者皆无时显示「新会话」；生成标题的硬上限（20 码点）与显示截断长度相同，故标题显示不带省略号。会话标题变化 SHALL 即时反映到标题栏会话名与已打开的历史浮层行名，MUST NOT 要求 webview 重载；标题变化 MUST NOT 改变 transcript、session id、历史清单顺序或会话内容。自动压缩与从历史会话恢复开新逻辑会话时，源会话的有效标题 SHALL 随新文件继承（见「会话本地留存」条），使会话名在轮换后保持连续；「新会话」显式开始新对话，MUST NOT 继承。探针期 SHALL 提供**最小恢复入口**：标题栏 harness 段的会话浮层 SHALL 列出本 vault 的历史会话（极简选择器，按最后活动时间倒序、会话名取该会话的有效标题、无标题记录时回落该会话首条用户消息截断约 20 字；仅本 vault，只列不管理），选中一项 SHALL 只读该会话 JSONL、把恢复结果重建到内存（**查看零写盘**：MUST NOT 创建目录 / 临时文件 / JSONL / sidecar，MUST NOT 改动源文件字节与 mtime），首次真实 `llm_request` 才原子发布一份新的恢复文件——恢复 = 读文件最后一条 `llm_request` 的完整请求体，并折叠其后未入请求的末尾响应（算法见 change `reshape-harness-session-recording` 的 design §6.2「恢复算法（重建 Session）」），system 与 input 原样灌回（**不重新装配**系统上下文）、不跨 provider 重写回放项。探针期 SHALL NOT 提供完整多会话管理 UI（会话重命名 / 搜索 / 分组等）与历史回看列表的完整形态；自动命名不属本禁令的「完整多会话管理 UI」——仍无手动重命名入口、无搜索、无分组。会话浮层每行已提供**单条删除**入口（行内两步确认、活跃会话拒删，M406 面板批次落地），它不属上述「完整管理 UI」。
 
 会话清单 SHALL 以一份 JSONL 文件为一行（行身份 = `session_id`）；MUST NOT 折叠、合并、隐藏或去重源文件——恢复 / 压缩产生的多份文件各占一行。每行的最后活动时间 SHALL 是：该文件及其 `session_open.restored_from` 祖先链上 `llm_request` / `llm_response` 记录信封 `ts` 的最大值；链上没有任何轮次时，回落链上最早的首行 `session_open` 信封 ts；都没有时为无值——无值者排在有值者之后、按 session id 倒序，且行时间格不显示读数（MUST NOT 用 id 前缀或其它派生值伪造）。`session_title`（含 `inherit`）、`notice_delivered`、`approval`、`turn_aborted`、`error`、`loop_limit`、`subrun` 等 sidecar MUST NOT 计入活动时间。被拒的发送（没有 `llm_request`）与无人值守 cron（不写交互会话文件）MUST NOT 改变排序。
 
 会话清单的顺序 SHALL 只由后端列举产生：`last_activity_ts` 倒序 → 同值按 session id 倒序 → 无值者最后。前端 MUST NOT 重排、MUST NOT 维护第二份排序口径；行时间格 SHALL 显示最后活动时间（该时间本身取真实信封 ts；链上与文件自身都没有可信 ts 时不显示读数）。标题变化 MUST NOT 改变顺序（沿用既有条款）。
 
-从历史会话恢复 SHALL 开新文件并因此新增一行；源文件行 MUST 保留，MUST NOT 被折叠或隐藏。新行的活动时间 SHALL 沿 `restored_from` 链继承：没有自己的轮次时不得越过任何活动更晚的会话；与源行同值时按 session id 倒序相邻。源行与恢复行 SHALL 各自可恢复、可删除（活跃会话拒删不变）；用户 MAY 从源行再次恢复形成分支。
+从历史会话恢复 SHALL 只在首次真实 `llm_request` 时开新文件并因此新增一行（查看阶段零新增、清单行数不变）；源文件行 MUST 保留，MUST NOT 被折叠或隐藏。新行的活动时间 SHALL 沿 `restored_from` 链继承：没有自己的轮次时不得越过任何活动更晚的会话；与源行同值时按 session id 倒序相邻。源行与恢复行 SHALL 各自可恢复、可删除（活跃会话拒删不变）；用户 MAY 从源行再次恢复形成分支。
 
-当前活跃会话 SHALL 按同一条排序自然落位，MUST NOT 钉顶、MUST NOT 单独加「当前」标记；刚恢复尚未说话时它沿用链上的活动时间，行位置 MUST NOT 因恢复动作而越过活动更晚的会话。
+当前活跃会话 SHALL 按同一条排序自然落位，MUST NOT 钉顶、MUST NOT 单独加「当前」标记；待发布恢复（`activated=false`，或 `activated=true` 而尚未发布）SHALL NOT 出现在清单里——清单行身份是一份文件，没有文件就没有行，MUST NOT 为它伪造行或读数；首次真实请求发布文件后，它沿用链上的活动时间落位，行位置 MUST NOT 因恢复动作而越过活动更晚的会话。
 
 会话浮层 SHALL 在每次打开时现拉现建；打开期间 MUST NOT 实时重排、MUST NOT 轮询或订阅活动变化。改名仍 SHALL 原地更新已打开行的行名，MUST NOT 触发重排。
 
 列举 MUST NOT 写 JSONL、MUST NOT 创建文件、MUST NOT 迁移、MUST NOT 改变文件 mtime。同名但无谱系关系的会话 MUST NOT 合并，各占一行，行时间格承担区分。自动压缩文件只标 `opened_from=compact`、没有 `restored_from`，MUST NOT 被当作任何文件的续写链：它按自身活动时间 / 创建时刻独立落位，MUST NOT 继承源文件的活动时间。
+
+查看历史会话 SHALL 与列举同一纪律：MUST NOT 创建目录、临时文件、JSONL 或任何 sidecar，MUST NOT 改动源文件字节与 mtime；查看 MAY 在内存中分配恢复身份（session id / token），但该身份 MUST NOT 产生任何持久化副作用。所点文件就是当前活跃会话的已发布文件时，系统 SHALL 直接返回 `switched=false`（不 fork、不新增文件、不重放 transcript；busy 下也成功）。同一份未发布的 pending 恢复被重复点击时（无论 `activated=false` 还是 `activated=true`），系统 SHALL 复用查看阶段已分配的 session id 与持久化 token，MUST NOT 重新铸 id、MUST NOT 重新读源、MUST NOT 重复重建 transcript 或通知。
+
+查看另一份历史会话（A→B→A）SHALL 只替换内存投影，零新增文件；未发送即退出不留下任何新文件，重启后 MUST NOT 自动复活空恢复文件。待发布恢复（无论是否已激活）MUST NOT 出现在会话清单里：清单行身份是一份文件，没有发布就没有行。
+
+跨 vault、非法 id、不可读或缺 `system` 的损坏源，以及需要真正切换时的 busy，SHALL 在替换当前会话之前失败：当前的会话、pending、token 与目录内容都不变；目录不存在时 MUST NOT 被创建。空源 SHALL 允许查看为空 transcript，零新增；其首次真实请求同样只发布一份恢复文件。查看成功后源被外部删除时，发送 SHALL 使用查看阶段捕获的内存快照，MUST NOT 重读或改用别的历史。
+
+替换 pending 恢复时：若其尚未激活（`activated=false`，从未发生首次真实 `llm_request`），SHALL 直接丢弃、零写盘、不触碰临时文件；若已激活（`activated=true`）且仍未发布，任何丢弃或轮换它的操作（查看另一历史、显式「新会话」及走同一入口的 cron 会话新建 / 恢复回落新建）SHALL 先以完整缓冲批次尝试一次发布，仍失败则拒绝该操作并返回可见错误，保留当前会话、input、writer、缓冲、token 与健康，MUST NOT 静默丢弃已产生的对话。自动压缩走同一发布尝试，但其失败是内部「跳过压缩」结果，不返回用户可见的持久化错误（两个调用点的收尾见「会话本地留存」条）。判据 MUST NOT 用「批次空 / 非空」——`session_open` 恒在，唯一判据是「是否已激活」。
 
 #### Scenario: 切 vault 切会话
 
@@ -575,7 +706,7 @@ MUST NOT 因编辑面而改变；开关关闭时这两个键 MUST NOT 被自动�
 #### Scenario: 新会话动作的幂等性
 
 - **WHEN** 在任意会话状态（含尚无会话——首条提问未发出）下触发「新会话」，或连续触发多次
-- **THEN** 每次调用均成功，结果恒为新空会话；尚无会话时为平凡成功（不报错——「没有会话」正是目标状态）
+- **THEN** 除「pending 恢复已 `activated=true` 且仍有未发布 history、发布仍失败」这一态返回可见的持久化错误（当前会话与健康不变）外，每次调用均成功，结果恒为新空会话；尚无会话时为平凡成功（不报错——「没有会话」正是目标状态）
 
 #### Scenario: 处理中触发新会话
 
@@ -595,7 +726,7 @@ MUST NOT 因编辑面而改变；开关关闭时这两个键 MUST NOT 被自动�
 #### Scenario: 从历史会话恢复续聊
 
 - **WHEN** 在会话浮层选择一个历史会话
-- **THEN** 该会话的 system 与 input（最后一条 `llm_request` 的完整请求体，并折叠其后未入请求的末尾响应，算法见 design §6.2）原样灌回内存态、不重新装配系统上下文；开新 JSONL 文件（首行 `session_open` 标 `opened_from=restore`、`restored_from`=源会话 id），旧文件封闭；源会话有有效标题时新文件随之继承，会话名保持连续；其后提问按恢复的历史续写；读数随留存重算灌回新会话（控制行显示源会话最近一次真实读数），并以读数种子（`usage` + `cache_totals`）落进新文件首行，供链式恢复起算；清单新增一行（新文件），源会话行仍保留；新行按链上活动时间落位、不越过活动更晚的会话，并与源行同值时按 session id 倒序相邻
+- **THEN** 该会话的 system 与 input（最后一条 `llm_request` 的完整请求体，并折叠其后未入请求的末尾响应，算法见 change `reshape-harness-session-recording` 的 design §6.2「恢复算法（重建 Session）」）原样灌回内存态、不重新装配系统上下文；查看阶段零新增文件、源文件字节与 mtime 不变，清单行数与顺序不变；首次真实发送才发布一份新 JSONL 文件（首行 `session_open` 标 `opened_from=restore`、`restored_from`=源会话 id），旧文件封闭；源会话有有效标题时新文件的初始批次随之继承，会话名保持连续；其后提问按恢复的历史续写；读数随留存重算灌回新会话（控制行显示源会话最近一次真实读数），并以读数种子（`usage` + `cache_totals`）落进新文件首行，供链式恢复起算；清单新增一行（新文件），源会话行仍保留；新行按链上活动时间落位、不越过活动更晚的会话，并与源行同值时按 session id 倒序相邻
 
 #### Scenario: 标题优先于首条消息
 
@@ -619,13 +750,13 @@ MUST NOT 因编辑面而改变；开关关闭时这两个键 MUST NOT 被自动�
 
 #### Scenario: 恢复新增一行且不置顶
 
-- **WHEN** 恢复一份最后活动早于其它会话的历史会话，且尚未发送新消息
-- **THEN** 清单新增一行（恢复文件），源会话行仍保留；新行按链上活动时间落位，不越过活动更晚的会话，并与源行同值时按 session id 倒序相邻
+- **WHEN** 查看一份最后活动早于其它会话的历史会话，并在其恢复上下文里发出首次真实请求
+- **THEN** 发布时才新增一行（恢复文件），查看阶段与发送前清单行数不变；源会话行仍保留；新行按链上活动时间落位，不越过活动更晚的会话，并与源行同值时按 session id 倒序相邻
 
 #### Scenario: 源行与恢复行独立操作
 
 - **WHEN** 源会话与恢复文件同时存在于清单
-- **THEN** 两行各自可恢复、可删除；从源行再次恢复会新增一个分支行；删除其中一行只影响该文件，不联动隐藏或删除其它行
+- **THEN** 两行各自可恢复、可删除；从源行再次恢复并真实发送会新增一个分支行（仅查看不新增）；删除其中一行只影响该文件，不联动隐藏或删除其它行
 
 #### Scenario: 缺时间安静回落
 
@@ -655,7 +786,7 @@ MUST NOT 因编辑面而改变；开关关闭时这两个键 MUST NOT 被自动�
 #### Scenario: 被拒的发送不改变排序
 
 - **WHEN** 一次发送被 `harness_busy` / 缺 provider / 图片能力闸拒绝
-- **THEN** 没有 `llm_request` 落盘，该会话的最后活动时间与清单位置不变
+- **THEN** 没有 `llm_request` 落盘，该会话的最后活动时间与清单位置不变；若这是 pending 恢复的首次发送，MUST NOT 发布恢复文件（零新增）
 
 #### Scenario: compact 文件不沿链继承
 
@@ -667,15 +798,105 @@ MUST NOT 因编辑面而改变；开关关闭时这两个键 MUST NOT 被自动�
 - **WHEN** 两个文件的 `restored_from` 互相指向
 - **THEN** 列举正常返回，两份文件各一行（精确 session id 集），链遍历终止；不丢行、不重复
 
+#### Scenario: 查看历史零写盘
+
+- **WHEN** 查看一份带有效标题、且带未消费通知的历史会话
+- **THEN** 会话目录的 `.jsonl` 文件数不变、无临时文件；源文件 sha256 与 mtime 不变；transcript 与通知照常重建
+
+#### Scenario: 重复查看复用同一身份
+
+- **WHEN** 连续点击同一历史项三次，期间未发送
+- **THEN** 首次返回 `switched=true`，其后每次 `switched=false`；session id 与持久化 token 不变；transcript 与通知各只重建一份；目录零新增
+
+#### Scenario: A 与 B 来回查看零新增
+
+- **WHEN** 依次查看历史会话 A、B、A，期间未发送
+- **THEN** 三次都零新增文件；每次 transcript 内容属于所选源；退出并重启后目录仍零新增
+
+#### Scenario: 当前项直切
+
+- **WHEN** 当前活跃会话的已发布文件正是所点行
+- **THEN** 返回 `switched=false`；不 fork、不新增、不重放 transcript、不改持久化 token
+
+#### Scenario: busy 下只允许当前项直切
+
+- **WHEN** 一轮对话处理中（busy），分别点击当前会话行与另一历史会话行
+- **THEN** 前者返回 `switched=false` 且零副作用；后者返回 `harness_busy`，当前会话、文件与 pending 都不动
+
+#### Scenario: 未发布的 pending 恢复不占清单行
+
+- **WHEN** 查看一份历史会话但尚未发送
+- **THEN** 清单行数与顺序不变，不出现指向未发布文件的伪行；重复打开浮层仍只列既有文件
+
+#### Scenario: 空源查看零新增
+
+- **WHEN** 查看一份没有任何会话轮次的历史会话
+- **THEN** 面板为空、零新增文件；发出首次真实消息后才恰好多出一份恢复文件
+
+#### Scenario: 首次真实发送唯一文件
+
+- **WHEN** 查看一份有标题、有未消费通知的历史会话并发出首条真实消息
+- **THEN** 目录 `.jsonl` 文件数恰好 +1；新文件 `opened_from=restore`、`restored_from`=所选源 id；`inherit` 与 `notice_delivered` 各恰好一条且在首条 `llm_request` 之前；源文件字节与 mtime 不变；清单此时新增一行
+
+#### Scenario: 查看后退出不复活
+
+- **WHEN** 查看 A 再查看 B，未发送即退出并重启
+- **THEN** 重启后目录文件数与退出前相同，MUST NOT 出现空恢复文件或自动复活的清单行
+
+#### Scenario: 查看失败零副作用
+
+- **WHEN** 查看跨 vault / 非法 id / 缺 `system` 的损坏源，或 busy 下查看另一历史会话
+- **THEN** 返回明确错误；当前会话、pending、token、目录文件数都不变；不创建目录或临时文件
+
+#### Scenario: 未发布批次阻止静默丢弃
+
+- **WHEN** 一份恢复已激活（发生过首次真实 `llm_request`）且因发布失败仍未发布（该轮已结束），用户点击另一历史会话
+- **THEN** 系统先尝试一次发布；仍失败则拒绝切换，旧会话、input、writer、缓冲、token 与健康不变，返回可见的持久化错误；MUST NOT 丢弃缓冲记录
+
+#### Scenario: 纯查看 A 与 B 来回零发布
+
+- **WHEN** 查看一份带有效标题、且带未消费通知的历史会话 A，再查看另一份同样带标题 / 通知的 B，期间从未发送
+- **THEN** 两次查看都零新增、无临时文件；MUST NOT 因 A 的 view 元数据非空而尝试发布 A；每次 transcript 属于所选源
+
+#### Scenario: 未发布批次阻止显式新会话
+
+- **WHEN** 一份恢复已激活且发布失败，用户点击「新会话」
+- **THEN** 系统先尝试一次发布；仍失败则返回可见的持久化错误，当前会话、transcript、缓冲与健康不变；MUST NOT 重置会话、MUST NOT 清缺口 / `history_written`
+
+#### Scenario: 阈值触发的压缩被跳过
+
+- **WHEN** 一份恢复已激活且发布失败，一轮回答完成时达到自动压缩阈值，压缩请求 / 响应已产生
+- **THEN** 轮换前先以完整批次尝试发布；仍失败则跳过轮换：不创建 compact 文件、不替换 input / system / writer、不采用摘要；本轮回答照常完成、对话继续；既有 persistence 告警可见，MUST NOT 产生新的持久化错误
+
+#### Scenario: context overflow 的压缩被跳过
+
+- **WHEN** 一份恢复已激活且发布失败，provider 返回 context overflow，压缩请求 / 响应已产生
+- **THEN** 轮换前先尝试发布；仍失败则 MUST NOT 在未压缩上下文上重试，MUST NOT 新增持久化错误，按本轮既有 overflow 错误落回终态；原 pending、未压缩 input 与完整批次保留
+
 ### Requirement: 会话本地留存
 
 会话 SHALL 以 wire/input 形态落配置目录（MUST NOT 写入 vault），作为 ADR 0007 双向记录机制的一侧：每会话一个 append-only JSONL 文件（`<config_dir>/harness/sessions/<vault 稳定 id>/<session_id>.jsonl`），文件首行 SHALL 为 `session_open` 记录——含 session id、vault 根路径、provider / 模型 / 思考档位 / **wire 方言（`wire_api`，缺省值同样在场）**、**完整装配后 system prompt 全文**与装配清单（每个来源的路径、存在与否、字节数；不存在的来源 SHALL 同样在场）、**读数种子**（M526：恢复 / 压缩开文件时在场——`usage` 读数快照 + `cache_totals` 累计四元组；链式恢复从这里起算，全新会话不落这两键）。`<vault 稳定 id>` SHALL 是 vault 注册表 id（与 `vault-sessions/<id>.json`、`reading-positions/<id>.json` 同一份身份），MUST NOT 用 vault 路径派生的消毒名（消毒名有撞名面且无长度 / 字符集保证，M309 现场）。每次发给模型的**会话请求**（含工具循环的每次迭代与压缩调用）SHALL 落一条 `llm_request` 记录（完整请求体：system + messages + 参数，**另带本次实际发送体的字节数 `request_bytes`**——按 wire 展开后的尺寸算，省掉「按字节比外推请求多大」；不具备真实 HTTP body 的 mock 档省略该键），**另带本次暴露给模型的工具名清单 `tool_names`**（按请求中工具定义的顺序、只记名字，MUST NOT 记录工具 schema / 描述 / 参数——`task` 的描述里含用户写的定义描述，属用户内容；该键恒在场，无工具的请求记空数组 `[]`——`[]` 表示「这一请求不带任何工具」，与「没有记录」区分；本 change 之前的文件缺该键，读取方 MUST NOT 把它当作空数组），每次响应 SHALL 落一条 `llm_response` 记录（正文 / 思考归一回放项与展示文本 / 工具调用 / usage（SHALL 含 input / cached / output 与**缓存写入 `cache_write_tokens`**——provider 不提供时按 0 记录）/ 错误；思考 MUST 落盘——**回放项归一回放形状**（`{"type":"reasoning", summary, [content], [encrypted_content]}`：kimi 的明文载体是 `summary`、deepseek 的是 `content`，各按在场项保留；`encrypted_content` 有则在场），`id` 字段 MUST NOT 进入回放项（`store:false` 下重放 `rs_*` id 属非标用法），展示文本另存）；请求侧在 **Responses 方言**且模型声明支持思考档位时（判据 `HarnessConfig::effort_supported`，读配置 schema 的 per-model `effort` 声明）SHALL 带 `include:["reasoning.encrypted_content"]`（store:false 官方回放模式的前提——让服务端在 reasoning item 里回传密文，重放时无需 id 即可还原）；未声明 effort 的模型（含 deepseek 现役形态）MUST NOT 发该字段；**Chat Completions 方言 MUST NOT 发 `include` / `store`**，其 wire 形态与思考回放字段见「Chat Completions 方言」条；wire 不可推导的决策与事件（批准 / 拒绝、停止中断、LLM 错误、循环上限）SHALL 以 sidecar 记录留存——其中 **LLM 错误的 sidecar 记录 SHALL 另带 HTTP 面诊断**（非 2xx 时的 HTTP 状态码、原始响应 body——按固定上限截断防巨型 body 撑爆留存、服务端 request id 若响应头或 body 提供；不具备 HTTP 面的错误省略这些键），且**错误事件的既有形态（`type`/`code`/`message`）不变**（新诊断只进留存，不破坏既有消费方），被 wire 覆盖或失去意义的 11 类事件 kind（`user_message` / `assistant_text` / `tool_call` / `tool_result` / `usage` / `tool_denied` / `compact` / `session_reset` / `approval_overwritten` / `approval_withdrawn` / `turn_abort_requested`）SHALL NOT 再记（重复记录即第二事实源）。记录点 SHALL 与发送点同点，MUST NOT 经二次序列化产生第二事实源。验收口径 SHALL 为恢复充分性：仅凭 JSONL 能逐字节重建任意一轮发给模型的请求——wire 体由留存 + 代码版本 + `wire_api` 方言共同推导，`session_open` 的方言键是推导依据之一；重建 MUST 忽略全部 sidecar 记录（含 `session_title`），旧文件缺失标题记录不改变重建结果。
 
+从历史会话恢复的查看阶段 SHALL 零写盘：MUST NOT 创建会话目录（查看路径 MUST NOT 调用会 `create_dir_all` 的写路径）、MUST NOT 创建临时文件、MUST NOT 写 `session_open` / `inherit` / `notice_delivered` 或任何 sidecar；源文件 MUST NOT 被改写，其字节与 mtime MUST NOT 变化。
+
+恢复文件的**初始激活批次** SHALL 由首次真实 `llm_request` 触发发布。查看阶段 MUST NOT 构造批次——`session_open` / `inherit` / `notice_delivered` 在查看时只是内存中的 view 元数据，未序列化、不可发布。记录顺序固定为：`session_open` → `inherit?`（源会话有有效标题时）→ `notice_delivered*`（按查看时重建的通知次序）→ 首条 `llm_request`。批次内每条记录恰好一次。发布 SHALL 是原子的：先把整个初始批次写入**与最终文件同目录**的临时文件（文件名 MUST NOT 以 `.jsonl` 结尾，MUST NOT 被会话列举识别），完整写入并关闭后，以不覆盖既有文件的方式原子发布最终 `sessions/<vault 稳定 id>/<session_id>.jsonl`；最终路径已存在时 MUST NOT 覆盖、MUST NOT 静默换 id，SHALL 按写失败处理。发布成功是唯一的提交点：此后该文件恢复普通 append-only 行为，临时名清理失败只留不可列举残留，MUST NOT 回滚最终文件或再次发布。发布 MUST NOT 创建会话目录；目录不存在按发布失败处理。
+
+发布失败时（权限 / 磁盘 / 撞名 / 目录缺失），**本次发布 MUST NOT 创建最终文件**：目标此前不存在则失败后仍不存在；因撞名失败时既有目标 MUST 逐字节保留、不覆盖、不改 id；MUST NOT 留下空文件或半截的本次最终文件。已激活但未发布的初始批次 SHALL 完整保留在内存中，后续记录继续加入该批次，重试 SHALL 使用**同一个 session id、同一个持久化 token、同一份缓冲批次**，每次写动作至多尝试一次发布。发布成功后缓冲的每条记录在文件里恰好出现一次，触发发布的那条记录 MUST NOT 再经 append 写一次。发布成功前进程退出，则这段对话随内存消失，MUST NOT 在重启后留下或复活该恢复文件。
+
+自动压缩 SHALL 走同一未发布批次守卫，但结果是内部「跳过压缩」，不是用户可见的持久化错误：
+
+- **阈值触发**（一轮完成后的自动压缩）：发布失败 ⇒ MUST NOT 轮换、MUST NOT 采用摘要；保留未压缩 input / system / writer 与完整批次，本轮回答照常完成；既有 persistence 健康告警（degraded + 退出风险句）即用户可见反馈，MUST NOT 静默、MUST NOT 把本轮判失败。
+- **context overflow 恢复**：发布失败 ⇒ MUST NOT 在未压缩上下文上重试（该轮 overflow 重试机会已消费，重试必然再次 overflow），MUST NOT 新增持久化用户错误，SHALL 落回既有 overflow 终态（沿用本轮 provider 的 overflow 错误事件 / 终态），同时保留原 pending、未压缩 input 与完整批次。
+
+两种情形都 MUST NOT 创建 compact 文件、MUST NOT 替换 input / system / writer、MUST NOT 采用摘要；压缩请求 / 响应记录仍留在原批次。显式「新会话」在同一态下先尝试发布，失败则拒绝并保留会话与健康（见「会话边界」条）。
+
+恢复文件的 `opened_from` 恒为 `restore`、`restored_from` 恒为所选源 id；即使源文件本身是 `opened_from=compact`，新文件也 MUST NOT 继承 compact 身份。`restored_from` 指向的源文件在查看后被外部删除时，发送 SHALL 使用查看阶段捕获的内存快照，MUST NOT 重读源文件或改用别的历史；悬空父 id 沿用既有列举算法。
+
 会话文件的 vault 归属 SHALL 仍以首行 `session_open.vault_root` 为**唯一**判据：列举、恢复、删除三处的归属过滤口径不变，目录只作组织维度，MUST NOT 成为归属判据的第二真源（文件被手工挪动 / 拷贝不改变其归属结论）。目录名 SHALL NOT 与保留目录名 `_orphaned` 相同。`sessions/<vault 稳定 id>/<session_id>.jsonl` SHALL 是**唯一布局**：新建会话 SHALL 只落其 vault 的目录，列举 / 恢复 / 删除 SHALL 只读该目录；产品运行时 MUST NOT 含任何迁移逻辑（无启动迁移入口、无旧布局读取路径），也 MUST NOT 读平铺在 `sessions/` 根下的 `*.jsonl`——MUST NOT 保留平铺布局的双读 / 双写过渡层（本仓无外部消费者，兼容层保护对象的举证责任在建层一方；REVIEW.md「消费者是谁」）。存量平铺文件（升级前遗留）的归位 SHALL 由**仓内一次性脚本**（`scripts/` 下，手动执行一次即弃，不进产品运行时）完成：脚本按各文件首行 `session_open.vault_root`（先规范化再查注册表）移入对应 vault 目录，`vault_root` 不可解析 / 在注册表里找不到 / 目标位置已有同名文件的 SHALL 移入保留目录 `sessions/_orphaned/`，MUST NOT 删除或改写任何文件，且 MUST be 幂等（重复执行零搬运）；脚本遇单文件失败时留原地并自报，重跑脚本收敛。上一代「按 vault 聚合的业务事件流水」形态（`<config_dir>/harness/<消毒名>.jsonl`）照旧不再续写、不做迁移（运行时 / 产品侧零读者，验收套件的 JSONL 断言随实现迁移至 wire 口径；M309 孤儿先例）。写失败不阻断对话的既有纪律不变；写失败的结果 SHALL 反映在「留存健康状态」条定义的**当前写健康与历史缺口**两个维度上，MUST NOT 只留在 stderr 与诊断日志里。
 
-会话标题 SHALL 以 sidecar 记录 `session_title` 追加留存：`{"kind":"session_title","title":"…","decision":"initial|rename|keep|inherit|error","reason":"first-turn|cadence|drift|inherit","model":"…","ts":…}`。每次命名评估结束（含 keep 与失败）SHALL 追加一条——`initial` / `rename` 记录携带新标题，`keep` 记录携带当时生效的标题，`error` 记录不带 `title` 并带错误码 `code`（`harness_title_failed` / `harness_title_invalid`）；`inherit` 记录不是评估产物，在建新文件时写入（见下段）。`model` SHALL 记录本次调用实际使用的模型 id（`inherit` 记录不带该键——它没有发起调用，`reason=inherit`）。**有效标题** SHALL 是文件内最后一条带 `title` 的 `session_title` 记录的 `title`；没有该记录时回落首条用户消息（见「会话边界」条）。有效标题的解析 MUST 只有一处实现，列举 / 恢复 / 快照 / 事件四条出口 MUST NOT 各写一份 last-wins 逻辑。标题记录 SHALL 只在会话空闲（无在途轮次）时追加，MUST NOT 插在一条 `llm_request` 与它配对的 `llm_response` 之间——恢复的「折叠末尾未入请求的响应」判据依赖这对记录的相邻性。
+会话标题 SHALL 以 sidecar 记录 `session_title` 追加留存：`{"kind":"session_title","title":"…","decision":"initial|rename|keep|inherit|error","reason":"first-turn|cadence|drift|inherit","model":"…","ts":…}`。每次命名评估结束（含 keep 与失败）SHALL 追加一条——`initial` / `rename` 记录携带新标题，`keep` 记录携带当时生效的标题，`error` 记录不带 `title` 并带错误码 `code`（`harness_title_failed` / `harness_title_invalid`）；`inherit` 记录不是评估产物，在建新文件时写入（恢复文件的这一条属初始激活批次，见下段）。`model` SHALL 记录本次调用实际使用的模型 id（`inherit` 记录不带该键——它没有发起调用，`reason=inherit`）。**有效标题** SHALL 是文件内最后一条带 `title` 的 `session_title` 记录的 `title`；没有该记录时回落首条用户消息（见「会话边界」条）。有效标题的解析 MUST 只有一处实现，列举 / 恢复 / 快照 / 事件四条出口 MUST NOT 各写一份 last-wins 逻辑。标题记录 SHALL 只在会话空闲（无在途轮次）时追加，MUST NOT 插在一条 `llm_request` 与它配对的 `llm_response` 之间——恢复的「折叠末尾未入请求的响应」判据依赖这对记录的相邻性。
 
-自动压缩与从历史会话恢复开新文件时，源会话的有效标题 SHALL 以一条 `decision=inherit` 的 `session_title` 记录写入新文件（源会话无标题记录时不写，回落口径自然成立）；「新会话」显式开始新对话，MUST NOT 继承。本 change 之前的会话文件不含 `session_title` 记录：列举、恢复、展示 SHALL 安静回落到首条用户消息口径，MUST NOT 告警、MUST NOT 回填或改写既有文件。
+自动压缩与从历史会话恢复开新文件时，源会话的有效标题 SHALL 以一条 `decision=inherit` 的 `session_title` 记录写入新文件（源会话无标题记录时不写，回落口径自然成立）；恢复的这条记录属初始激活批次，查看阶段 MUST NOT 写入。「新会话」显式开始新对话，MUST NOT 继承。本 change 之前的会话文件不含 `session_title` 记录：列举、恢复、展示 SHALL 安静回落到首条用户消息口径，MUST NOT 告警、MUST NOT 回填或改写既有文件。
 
 自动命名调用是 **wire 外的辅助调用**：它 MUST NOT 落 `llm_request` / `llm_response`（它不属会话历史——落进去会使「最后一条会话 `llm_request`」判据指错请求、并打破请求 / 响应的配对口径），其 usage MUST NOT 进入会话读数（`UsageSnapshot` / `cache_totals` / ctx% / cache%）。`session_title` 记录是 wire 外的 sidecar，恢复充分性判据 MUST NOT 因它的在场或缺失而变化。
 
@@ -742,7 +963,7 @@ MUST NOT 因编辑面而改变；开关关闭时这两个键 MUST NOT 被自动�
 #### Scenario: 压缩与恢复继承标题
 
 - **WHEN** 已有有效标题的会话触发自动压缩，或从历史会话恢复续聊
-- **THEN** 新 JSONL 文件在 `session_open` 之后追加一条 `decision=inherit` 的 `session_title` 记录，标题栏与历史浮层继续显示该标题；源会话无标题记录时不写 inherit，展示回落首条用户消息口径
+- **THEN** 压缩的新 JSONL 文件在 `session_open` 之后追加一条 `decision=inherit` 的 `session_title` 记录；恢复文件则在首次发布的初始批次里、紧跟 `session_open` 写入同一条记录（查看阶段零写盘、不写 inherit）；标题栏与历史浮层继续显示该标题；源会话无标题记录时不写 inherit，展示回落首条用户消息口径
 
 #### Scenario: 旧文件安静回落
 
@@ -758,6 +979,66 @@ MUST NOT 因编辑面而改变；开关关闭时这两个键 MUST NOT 被自动�
 
 - **WHEN** 读取一份本 change 之前落盘的会话文件（`llm_request` 无 `tool_names` 键）
 - **THEN** 该缺失被当作「没有记录」，MUST NOT 被当作空数组；恢复、读数重算与请求重建都不受影响，文件也不因读取而被改写
+
+#### Scenario: 查看恢复不写任何记录
+
+- **WHEN** 查看一份带有效标题、带未消费通知的历史会话
+- **THEN** 目录内 `.jsonl` 文件集合不变、无 `.jsonl.tmp` 残留；每个既有文件的 sha256 与 mtime 不变；恢复结果只存在于内存
+
+#### Scenario: 初始批次顺序
+
+- **WHEN** 恢复一份有有效标题、有未消费通知的历史会话，并发出首条真实消息（mock provider）
+- **THEN** 新文件记录序为 `session_open` → `session_title`（`decision=inherit`）→ `notice_delivered`（按重建次序）→ `llm_request`；每条恰好一次；`llm_request` 的请求体含恢复历史与本条用户消息
+
+#### Scenario: 发布是原子的
+
+- **WHEN** 首次发布进行中与完成后分别列举会话目录
+- **THEN** 最终 `.jsonl` 从不以空文件或半截文件出现在清单里——它要么不可见，要么可完整解析且首行是 `session_open`；临时名从不被列举识别
+
+#### Scenario: 发布失败不留最终文件
+
+- **WHEN** 会话目录为可读不可写（真实 OS 权限），恢复会话后发出首条真实消息
+- **THEN** 对话照常完成、消息照常上屏；本次不创建最终 `.jsonl`、无空 / 半截 `.jsonl`，目录里既有文件的字节与 mtime 不变；`state=degraded`、`severity=history`、`history_written=false`、`history_gap=false`；警示块含「对话暂未保存」与「现在退出，这段对话将无法恢复」
+
+#### Scenario: 同身份重试不双写
+
+- **WHEN** 上一场景后恢复目录写权限，用户再发一条消息
+- **THEN** 同一 session id 发布恰好一份文件；缓冲的 `session_open` / `inherit` / `notice_delivered` / 首条 `llm_request` 与首条 `llm_response`、首条失败 sidecar（若有）与新消息各恰好一次；`history_written` 转 true、`history_gap` 仍 false；不出现第二份恢复文件
+
+#### Scenario: 显式重试后的批次精确计数
+
+- **WHEN** pending 恢复的首次发布因权限失败；首条真实请求已发出且 provider 返回错误；用户恢复权限并点显式重试，重试成功且发布成功
+- **THEN** 恰好一份恢复文件；kind 计数为 `session_open` 1、`inherit` ≤1、`notice_delivered` 按重建条数、`llm_request` 2、`llm_response` 2、失败 sidecar 1；面板与 input 里用户消息各 1 条（两条请求的历史中都含该消息）；两条请求与两条响应各自对应；同一 session id；MUST NOT 出现第三条请求、重复记录或第二份文件
+
+#### Scenario: 目标撞名不覆盖
+
+- **WHEN** 首次发布前，目标 `<session_id>.jsonl` 已被外部创建
+- **THEN** 不覆盖该文件、不改用别的 id；按发布失败处理（健康与告警同上）；原文件字节不变
+
+#### Scenario: 未发布即退出
+
+- **WHEN** 发布始终失败，用户在未发布状态下退出并重启
+- **THEN** 重启后不出现该恢复文件，这段对话随内存消失；源文件不变，MUST NOT 自动复活空恢复文件
+
+#### Scenario: 双击发送只受理一轮
+
+- **WHEN** pending 恢复的首次发送被快速双击 / 重复触发
+- **THEN** 只受理一轮；恰好一份恢复文件、一条用户消息、一条首个 `llm_request`；第二击得到 busy 或等价拒绝，零新增
+
+#### Scenario: provider 前置拒绝不激活
+
+- **WHEN** pending 恢复的首次发送被缺 provider / 图片能力闸拒绝
+- **THEN** 零新文件、零临时文件；错误可见；未发布状态保留，修好后首次成功的真实请求才发布
+
+#### Scenario: provider 请求后失败（首次发布已成功）
+
+- **WHEN** 恢复文件已发布成功，首条真实请求发出后 provider 返回错误
+- **THEN** 该 `llm_request`、失败的 `llm_response` 与失败 sidecar 追加到同一文件；显式重试追加同一文件，不新增文件
+
+#### Scenario: provider 请求后失败（首次发布未成功）
+
+- **WHEN** 首次发布因权限失败，首条真实请求仍发出且 provider 返回错误
+- **THEN** 该 `llm_request`、失败的 `llm_response` 与失败 sidecar 进入同一内存批次；最终文件仍不存在（本次未创建，无空 / 半截）；后续写动作或显式重试按 D1 同身份发布；MUST NOT 声称该失败轮次无记录或已丢失
 
 ### Requirement: mock provider
 
@@ -878,13 +1159,19 @@ transcript 中的消息（用户 / agent）SHALL 在 hover 时浮现复制钮，
 
 工具循环进行中，面板 SHALL 呈现**不定态**进度指示与阶段指示（当前动作一行，如正在读取哪些文件 / 调用哪个工具）；SHALL NOT 呈现百分比进度（总时长运行前不可知，百分比在技术上是伪造）。工具调用完成 SHALL 即折叠为一行摘要（既有口径不变）。eink 主题下进度指示 SHALL 以明度 / 线宽表达，不引入彩色。
 
-本条的状态矩阵 SHALL 覆盖一轮对话的**全部处理中相位**：等待响应、生成（含工具循环）、**等待批准**、停止中。阶段指示 SHALL 有独立的「等待批准…」档：当且仅当相位为 `running` 且**当前会话**的待决批准集合非空时显示。待决集合 SHALL 是面板的待决批准项集合本身（`pendingApprovals`）；判据 MUST NOT 由事件种类、相位、计时、文案或与集合并行的本地标志推断。待决集合为空时 MUST NOT 出现该档——等待响应 / 生成中 / 停止中照旧。
+进度指示 SHALL 是 transcript 滚动区内的**输出尾行**：在文档流中占位、作为滚动内容的最后一个可见子项；MUST NOT 挂在 transcript 之外（composer 上方的固定块），MUST NOT 以浮层覆盖正文。尾行 SHALL 是单一元素：跨相位复用同一节点，文案原地切换；相位跃迁 MUST NOT 重建、替换或重新插入该节点。相位从空闲进入处理中时 SHALL 把它挂到 transcript 尾位；transcript 因快照 / 恢复重建后若仍在途 SHALL 重新挂到尾位。运行中任何 transcript 顶层子节点新增之后，尾行 SHALL 仍是最后可见项（视觉序与 DOM 序一致）。transcript 的顶层追加 SHALL 经唯一入口维持尾行末位，并 SHALL 有运行时兜底覆盖任何绕过入口的追加路径（含自动压缩标记、孤儿工具记录、快照重建等），MUST NOT 依赖逐个调用点人工置尾。
 
-阶段文案的优先级 SHALL 为：**停止中 > 等待批准 > 等待响应 / 生成中**。停止中 SHALL 最高：用户已请求中断，此刻读「正在停止…」，MUST NOT 因待决项尚未收回而误读成「等待批准」。等待批准 SHALL 高于等待响应 / 生成中：轮次虽仍在途，实际阻塞在用户决策，不是模型产出。
+本条的状态矩阵 SHALL 覆盖一轮对话的**全部处理中相位**：等待响应、生成（含工具循环）、**等待批准**、停止中；空闲 / 历史恢复（不在途）SHALL 不显示尾行、零像素占位。阶段指示 SHALL 有独立的「等待批准…」档：当且仅当相位为 `running` 且**当前会话**的待决批准集合非空时显示。待决集合 SHALL 是面板的待决批准项集合本身（`pendingApprovals`）；判据 MUST NOT 由事件种类、相位、计时、文案或与集合并行的本地标志推断。待决集合为空时 MUST NOT 出现该档——等待响应 / 生成中 / 停止中照旧。
 
-标题栏 SHALL 提供**滚动区之外**的审批信号，且不随 transcript 滚动：面板打开时，标题栏的 harness 段 SHALL 在待批期间显示「等待批准」；面板收起时，harness toggle 的活动状态文本与悬停提示 SHALL 读「等待批准」。两个承载 SHALL 同源、同文案、**互斥可见**——面板打开时 toggle 按既有退让条款隐藏，面板收起时段隐藏——同一时刻只有一个可见承载、只有一个 `aria-live` 区域在场，MUST NOT 双显或双播报。待批期间切换界面语言 SHALL 重取两处文案；eink 下 MUST NOT 引入彩色。toggle 的状态点 SHALL 维持既有「在途」档的形状与配色，MUST NOT 为待批新增第四种形状或颜色。标题栏段的状态词 SHALL 在段内完整可见：窄段 + 长会话名时，会话名 SHALL 先收缩 / 省略，状态词与新建会话钮 MUST NOT 被段的溢出裁切；会话名链路（wrapper / 按钮 / 名称文本）SHALL 允许收缩并设最小宽度 0，状态词与新建钮 SHALL 不参与收缩。
+尾行的逐档呈现 SHALL 为：已发送、首个**有效助手产出**前显示「等待响应…」（D381）；生成中（含工具循环）显示「正在生成回复…」（D382）并原地换字；运行中待批（当前会话 `pendingApprovals` 非空）显示「等待批准…」；停止中显示「正在停止…」（D400）；中途接管（进入快照报在途、**无待批**）在重建后显示「正在继续本轮…」，MUST NOT 先显示「等待响应…」；**中途接管 + 待批显示「等待批准…」，MUST NOT 读「正在继续本轮…」**；正常完成 / 出错 / 用户停止在追加终态内容之前隐藏。自动回合与点击发起的 cron 运行 SHALL 与「已发送」同口径。首个有效助手产出 SHALL 是 `reasoning_chunk` / `tool_call` / `text_chunk` 任一到达；三者的推进 MUST 共用同一处逻辑，MUST NOT 只由正文分片推进。
 
-阶段行与标题栏状态 SHALL 由面板既有的相位施加函数与活动状态施加函数一处落 DOM；待决集合的每次变化（批准项到达、采纳 / 拒绝、停止撤回、清面、快照重建）SHALL 经同一份派生判据重施一次，MUST NOT 在批准事件处理器里另写一份文案或可见性逻辑，MUST NOT 引入与待决集合并行的布尔标志。同一待批集合期间状态词 MUST NOT 闪烁或重复播报（文本值不变即不重播）。
+阶段文案的优先级 SHALL 为：**停止中 > 等待批准 > 中途接管 > 等待响应 / 生成中**。停止中 SHALL 最高：用户已请求中断，此刻读「正在停止…」，MUST NOT 因待决项尚未收回而误读成「等待批准」。等待批准 SHALL 高于中途接管与等待响应 / 生成中：轮次虽仍在途，实际阻塞在用户决策，不是模型产出；接管期有 pending 时 MUST NOT 读「正在继续本轮…」。中途接管 SHALL 高于等待响应 / 生成中：接管期已经有过输出，不能读「等待响应」。
+
+标题栏 SHALL 提供**滚动区之外**的审批信号，且不随 transcript 滚动：面板打开时，标题栏的 harness 段 SHALL 在待批期间显示「等待批准」；面板收起时，harness toggle 的活动状态文本与悬停提示 SHALL 读「等待批准」。两个承载 SHALL 同源、同文案、**互斥可见**——面板打开时 toggle 按既有退让条款隐藏，面板收起时段隐藏——同一时刻只有一个可见承载、只有一个 `aria-live` 区域在场，MUST NOT 双显或双播报。待批期间切换界面语言 SHALL 重取两处文案；eink 下 MUST NOT 引入彩色。toggle 的状态点 SHALL 维持既有「在途」档的形状与配色，MUST NOT 为待批新增第四种形状或颜色。标题栏段的状态词 SHALL 在段内完整可见：窄段 + 长会话名时，会话名 SHALL 先收缩 / 省略，状态词与新建会话钮 MUST NOT 被段的溢出裁切；会话名链路（wrapper / 按钮 / 名称文本）SHALL 允许收缩并设最小宽度 0，状态词与新建钮 SHALL 不参与收缩。尾行移入 transcript 后，本信号 MUST NOT 被削弱、隐藏或另写一份；脱离态下待批到达时该信号 MUST 仍在、`scrollTop` 变化 MUST ≤ 1px。
+
+阶段行文案与标题栏状态 SHALL 分别由 `applyStage` 与活动状态施加函数一处落 DOM；尾行的按钮态、显隐、挂载 / 置尾、`data-phase` 与对应布局测量 SHALL 由相位施加函数 `applySendPhase` 一处落 DOM。待决集合的每次变化（批准项到达、采纳 / 拒绝、停止撤回、清面、快照重建）SHALL 经同一份派生判据重施一次（`applyStage` 写阶段文案、活动状态施加函数写标题栏），MUST NOT 在批准事件处理器里另写一份文案或可见性逻辑，MUST NOT 引入与待决集合并行的布尔标志。同一待批集合期间状态词 MUST NOT 闪烁或重复播报（文本值不变即不重播）。
+
+阶段文案的重施路径（首个有效产出、待决集合变化、语言切换）MUST NOT 另写显隐、位置或条形形态，也 MUST NOT 为更新文案触发额外置尾、贴底或布局测量；`applyStage` 只写阶段行文本。
 
 待决集合的清算 SHALL 覆盖全部出口：批准项被采纳或拒绝后 SHALL 在同一同步批次内退出待批状态（回落到生成中 / 等待响应，或随终态落到空闲）；停止 / 轮次中断收回待决项后 SHALL 退场；**done / error / aborted 任一终态收尾时，仍挂在待决集合里的批准项 SHALL 在同一同步批次内撤回**——撤下批准卡、恢复工具行并标注未执行（done / error）/ 已停止（aborted）、清空待决集合、使该卡的决策闭包失效，随后才施加终态；MUST NOT 只隐藏状态词而留下可点 / 可决策的卡。切会话 / 切 vault / 新会话清空渲染面后 SHALL 退场；进入快照 / 中途接管 SHALL 在在途时以快照的待决批准列表为唯一重建依据，MUST NOT 把上一视图的待决项计入当前视图。上述任一出口之后 MUST NOT 残留「等待批准」幻影——阶段行、段状态词、toggle 状态文本、悬停提示 / `aria-live` 同源文本四处都不得残留。
 
@@ -896,7 +1183,15 @@ transcript 中的消息（用户 / agent）SHALL 在 hover 时浮现复制钮，
 
 待批状态的出现、退场与文案切换 SHALL NOT 改变跟随 / 脱离语义：MUST NOT 写滚动位（`scrollTop` 变化 ≤ 1px）、MUST NOT 强制回底、MUST NOT 点亮未读（批准卡本身到达仍按既有「新内容」口径处理）。跟滚阈值（回底容差 / 脱离阈值）、两态判据与输入通道判据 MUST NOT 因本条改动；MUST NOT 在内容增长或尺寸变化时自动复跟；MUST NOT 用强制回底掩盖脱离态合同。
 
-发送仍是既有「强制回底白名单」动作。输入区清空（卡片移除）与进度指示显隐都会改变 transcript 的几何；发送路径的强制回底 SHALL 以这些布局全部落定后的**最终几何**为准：发送处理 SHALL 在输入区清空与进度指示显隐落定之后再执行一次回底（幂等），使写底值、回声基准与最终滚动上限一致，MUST NOT 在卡片移除与进度块出现之间留下未贴底窗口。该第二次回底 MUST NOT 扩散到非白名单事件（批准卡、流式增量、工具行、通知、错误行、终态）。
+发送仍是既有「强制回底白名单」动作。输入区清空（卡片移除）与尾行显隐都会改变 transcript 的几何；发送路径的强制回底 SHALL 以这些布局全部落定后的**最终几何**为准：发送处理 SHALL 在输入区清空与尾行显隐落定之后再执行一次回底（幂等），使写底值、回声基准与最终滚动上限一致，MUST NOT 在卡片移除与尾行出现之间留下未贴底窗口。该第二次回底 MUST NOT 扩散到非白名单事件（批准卡、流式增量、工具行、通知、错误行、终态）。
+
+尾行 SHALL 在文档流内占位，MUST NOT 与正文重叠。尾行 SHALL 为单行（不换行、超长以省略号截断），其高度 SHALL 与文案、界面语言无关恒定；条形高度 SHALL 恒定。相位切换 MUST NOT 改变尾行高度、MUST NOT 改变尾行与上方内容的间距、MUST NOT 移动它上方的任何内容。尾行与上方末条内容的净间距 SHALL 为 4px（16px gap 与 `calc(var(--sp-2) - var(--sp-8))` 的 -12px 叠加）；阶段行颜色 SHALL 取 `--text-2`（排版 change 已升档，MUST NOT 恢复排版前阶段色）。尾行出现或消失 MUST NOT 把脱离态下的阅读位置拽走——`scrollTop` 变化 MUST ≤ 1px。
+
+空态提示的在场判定 MUST 排除尾行（尾行不是内容）：没有消息时提示仍在，有消息时提示不在。空态提示的几何位置 MUST NOT 随尾行显隐变化：MUST NOT 依赖 flex 剩余空间（auto margin）居中；提示中心 MUST 取 transcript 内容盒的中心（排版后上 padding `--sp-8` 与下 padding `--sp-6` 之间），MUST NOT 取 padding box 的几何中心；与本 change 施工前（即排版归档后）的 idle 中心差 MUST ≤ 1px，MUST NOT 以排版前旧基线为对账起点。空态的 13px/1.58、`--text-2`、24px padding SHALL 继承排版 change，本 change MUST NOT 改动。尾行出现 / 消失前后提示位置位移 MUST ≤ 1px，且尾行自身 MUST 真实在场（矩形高度 > 0、落在 transcript 视口内；空态下 `scrollHeight` 有 `clientHeight` 下限，不能单独作为正控制）。空态改为绝对定位时，四边 SHALL 取 `top/right/left: var(--sp-8); bottom: var(--sp-6)`。
+
+尾行的显隐 SHALL 被当作**布局变化**而不是新内容：脱离态下 MUST NOT 因此点亮未读提示；未读判据的基线 SHALL 只补偿尾行自身的布局增量，MUST NOT 把同一批中真实内容增长的高度一起吞掉——同一批中真实内容增长 MUST 照常点亮未读，且 `scrollTop` 变化 MUST ≤ 1px。跟随态下照常贴底。
+
+停止相位的条形 SHALL 冻结（无位移动画、无脉冲）：停止没有推进，运动暗示与语义相反；eink 主题下同样冻结。其余相位的条形保持不定态，动画只作用于 `transform` / `opacity`，MUST NOT 触发布局。
 
 #### Scenario: 进行中呈现不定态与阶段
 
@@ -981,7 +1276,7 @@ transcript 中的消息（用户 / agent）SHALL 在 hover 时浮现复制钮，
 #### Scenario: 快照不带待批
 
 - **WHEN** 进入快照报在途，但待决批准列表为空
-- **THEN** 阶段行按既有档位（等待响应 / 生成中）呈现；标题栏读「处理中」；MUST NOT 出现待批状态
+- **THEN** 阶段行读「正在继续本轮…」，MUST NOT 先闪「等待响应…」；标题栏读「处理中」；MUST NOT 出现待批状态
 
 #### Scenario: 视图复位不串会话
 
@@ -1001,12 +1296,12 @@ transcript 中的消息（用户 / agent）SHALL 在 hover 时浮现复制钮，
 #### Scenario: 发送后按最终几何贴底
 
 - **WHEN** 输入区带一张引用卡（quote card）时发送一条消息（跟随态或刚脱离）
-- **THEN** 发送处理完成时 `scrollTop` 等于最终滚动上限（±1px）；「回到底部」钮不在场；卡片移除与进度指示出现 MUST NOT 留下未贴底窗口
+- **THEN** 发送处理完成时 `scrollTop` 等于最终滚动上限（±1px）；「回到底部」钮不在场；卡片移除与尾行出现 MUST NOT 留下未贴底窗口
 
 #### Scenario: 语言与主题切换
 
-- **WHEN** 待批期间切换界面语言（zh ↔ en）或主题（light / dark / eink）
-- **THEN** 阶段行与标题栏状态随语言重绘；eink 不引入彩色；状态点形状不变
+- **WHEN** 处理中（含待批期间）切换界面语言（zh ↔ en）或主题（light / dark / eink）
+- **THEN** 阶段行与标题栏状态随语言重绘；尾行文案随语言重绘、高度不变；配色与条形形态按主题 token 成立；eink 不引入彩色；状态点形状不变
 
 #### Scenario: 窄段下状态词不被裁切
 
@@ -1018,14 +1313,118 @@ transcript 中的消息（用户 / agent）SHALL 在 hover 时浮现复制钮，
 - **WHEN** 待批期间收到同一批准请求的重复投递、工具行更新或流式分片
 - **THEN** 状态词保持不变、`aria-live` 不重复播报；待批集合只按集合变化重施一次
 
+#### Scenario: 尾行在滚动区内且恒为最后一项
+
+- **WHEN** 一轮对话处于处理中，流式正文、工具行或通知继续到达
+- **THEN** 进度尾行始终是 transcript 滚动区内最后一个可见内容；它不覆盖任何正文，新内容出现在它上方
+
+#### Scenario: 首个有效产出即离开等待
+
+- **WHEN** 已发送，首个到达的助手产出是正文分片、思考分片或工具调用中的任一种
+- **THEN** 同一进度节点从「等待响应…」换成「正在生成回复…」；节点不重建，尾行高度与它和上方内容的间距不变
+
+#### Scenario: 首个产出是工具调用
+
+- **WHEN** 模型先调用工具、全程没有正文分片
+- **THEN** 首个工具调用到达后阶段行即为「正在生成回复…」，不继续显示「等待响应…」；工具细节由工具行承担
+
+#### Scenario: 首个产出是思考
+
+- **WHEN** 模型先输出思考、正文尚未到达
+- **THEN** 首个思考分片到达后阶段行即为「正在生成回复…」，不继续显示「等待响应…」
+
+#### Scenario: 停止态冻结
+
+- **WHEN** 用户点击停止、相位进入 stopping
+- **THEN** 尾行读「正在停止…」，条形不滑动、不脉冲（计算样式无动画）；eink 主题同样静止
+
+#### Scenario: 中途接管不闪等待（无待批）
+
+- **WHEN** 面板从进入快照得知本轮在途（中途接管），快照不带待批项，并按快照重建 transcript
+- **THEN** 重建完成后尾行挂在末尾并读「正在继续本轮…」，不先显示「等待响应…」；随后到达的分片仍进同一轮
+
+#### Scenario: 待批优先于接管
+
+- **WHEN** 进入快照报在途（中途接管）且快照带非空待决批准列表
+- **THEN** 重建后阶段行读「等待批准…」，MUST NOT 读「正在继续本轮…」；批准卡在 transcript 内可见，标题栏审批信号在场
+
+#### Scenario: 尾行移入滚动区后标题栏信号仍在
+
+- **WHEN** 待批期间用户把 transcript 上滚进入脱离态，尾行在视口之外
+- **THEN** 标题栏 harness 段（面板开）或 toggle 活动状态（面板收）仍读「等待批准」；`scrollTop` 变化 ≤ 1px；视口不回到末尾；「回到底部」钮的未读提示按既有口径呈现
+
+#### Scenario: 终态先离场
+
+- **WHEN** 一轮以正常完成、用户停止或错误收尾
+- **THEN** 尾行在「已停止」标记或错误行落地之前隐藏；transcript 末尾是终态内容，不出现「进度还在跑、下面已有结果」
+
+#### Scenario: 历史恢复不在途
+
+- **WHEN** 从会话浮层恢复一个不在途的历史会话
+- **THEN** transcript 重建后尾行不出现（零像素）；直到用户发送新一轮才显示
+
+#### Scenario: 空态不被尾行误撤
+
+- **WHEN** 会话尚无任何消息，处理中尾行在场或刚离场
+- **THEN** 空态提示的在场判定忽略尾行：没有消息时提示仍在，有消息时提示不在
+
+#### Scenario: 空态几何不随尾行移动
+
+- **WHEN** 会话尚无任何消息，尾行从隐藏变为显示、再变回隐藏
+- **THEN** 空态提示的 `top` 位移 ≤ 1px；尾行自身矩形高度 > 0 且落在 transcript 视口内（证明尾行确实渲染；空态下 `scrollHeight` 有 `clientHeight` 下限，不单独作为正控制）
+
+#### Scenario: 承接排版后的阶段色与间距
+
+- **WHEN** 排版 change 归档后，处理中的尾行显示在 transcript 末尾
+- **THEN** 阶段行颜色为 `--text-2`（不恢复排版前阶段色）；尾行与上方末条内容的净间距为 4px（16px
+  gap 与 `calc(var(--sp-2) - var(--sp-8))` 的 -12px 叠加；容差 ±1px）；空态绝对定位四边为
+  `sp-8/sp-8/sp-6/sp-8`，并继承 13px/1.58、`--text-2`、24px padding
+
+#### Scenario: 空态中心不因改造移动
+
+- **WHEN** 对比本 change 施工前（排版归档后）的 idle 空态与改造后的 idle 空态
+- **THEN** 提示中心差 ≤ 1px；改造后的中心取内容盒中心，不得以 padding box 的 50% 直接居中（排版后
+  flex 内容盒居中的中心含 `(var(--sp-8) - var(--sp-6))/2` 的偏移）；不得以排版前旧基线为对账起点
+
+#### Scenario: 脱离态不假未读
+
+- **WHEN** 用户把 transcript 上滚进入脱离态，随后一轮开始（尾行出现）并结束（尾行隐藏）
+- **THEN** 阅读位置不动（scrollTop 变化 ≤ 1px）；尾行显隐本身不点亮未读提示；期间若有真实新内容到达，未读提示照常点亮
+
+#### Scenario: 真实内容增长不被尾行显隐吞掉
+
+- **WHEN** 脱离态下同一批里先有真实内容增长，随后尾行隐藏、布局补偿、再执行内容增长判定
+- **THEN** 未读提示点亮（真实增长未被布局补偿吞掉）；阅读位置不动（scrollTop 变化 ≤ 1px）
+
+#### Scenario: 顶层追加路径不越过尾行
+
+- **WHEN** 处理中触发自动压缩标记、出现无 assistant 宿主的工具记录，或快照重建追加 assistant 消息
+- **THEN** 这些追加完成后尾行仍是 transcript 的最后一个子项；任何绕过唯一入口的追加也被运行时兜底移回末位
+
+#### Scenario: 工具循环期维持生成档
+
+- **WHEN** 首个有效产出已到达（可能是工具调用）且工具循环仍在进行
+- **THEN** 尾行维持「正在生成回复…」，不新增第三档；工具细节由 transcript 中的工具行承担
+
+#### Scenario: 文案重施不触发布局副作用
+
+- **WHEN** 首个有效产出、待决集合变化或语言切换触发阶段文案重施
+- **THEN** 只更新阶段行文本；尾行显隐、位置、`data-phase`、条形形态与 `scrollTop` 不变；不触发置尾、贴底或布局测量
+
 ### Requirement: 消息呈现
 
-transcript 中的用户与 agent 消息 SHALL 带角色 + 时间读数 meta 行（如「你 · 12 秒前 / Agent · 刚刚」）：角色名与时间读数同行，视觉上降档于消息正文（micro 字号、三级文字色）。用户消息 SHALL 以气泡呈现，与 agent 消息的平铺正文一眼可分：light / dark 档取内容底色一族、柔和边框、圆角的气泡面，eink 档取正文纸面 + 结构档 1px 描边（MUST NOT 铺大片灰实底——e-ink 的中间调靠抖动呈现，压在灰底上的正文发糊）；气泡正文 SHALL 取正文档（与 agent 正文同档），MUST NOT 为「降一档」而压暗正文——正文可读性由气泡面与描边承担区分，气泡正文与其承载面的对比度 SHALL ≥ 7:1（WCAG AAA 正文档），三主题各自成立；agent 消息 SHALL 平铺排版（无气泡）。读数形态 SHALL 按数据来源分两档：**live**（本轮上屏打戳的消息）按「刚刚 / N 秒前 / N 分钟前 / N 小时前 / 昨天」分档；**restored**（快照恢复与会话恢复重放的消息，时间读数来自留存）按「同日窄相对 / 跨天短日期」呈现——留存在盘上，读数可以跨天甚至跨周，「昨天」对更老的消息是错读数。两档 SHALL 随时间低频刷新与随语言切换重绘（形态随消息携带、重绘不重算）。快照 / 恢复重建的消息 SHALL 以后端时间戳（`PanelMessage.ts`）显示真实读数；**会话恢复的 ts SHALL 来自留存记录的信封**（wire 项自身不带时间戳，按项在记录序里的产出时刻归属，见 design §3）；无时间戳可归的消息 SHALL 只显示角色、SHALL NOT 伪造读数。快照消息面 SHALL 保真：正文为空的 assistant 轮（模型只发工具调用、无正文）MUST NOT 落成面板记录——快照恢复 MUST NOT 出现只有角色 meta 行、正文为空的「空气泡」；工具记录（`role: tool`）SHALL 持久化摘要（`PanelMessage.summary`），成功为调用参数摘要、失败含细分状态与错误码，使 webview 重载后工具行仍有信息；成功侧的参数摘要是**单行**人话文本，`cli_run` 为「命令 + 参数」拼接且**命令本体恒在最前**（参数 JSON 原样截断时，排在命令之前的 `args` 会把它挤出可见头部，工具行只剩一串参数），含空白或引号的参数 SHALL 加引号使参数边界可辨。同一份摘要 SHALL 是 live 事件、面板持久化与恢复重建三条路径的同一份（MUST NOT 各算各的）；恢复路径读到旧快照的参数 JSON 时 SHALL 按同一形态人话化呈现。
+transcript 中的用户与 agent 消息 SHALL 带角色 + 时间读数 meta 行（如「你 · 12 秒前 / Agent · 刚刚」）：角色名与时间读数同行，视觉上降档于消息正文（micro 字号；角色取二级文字色 `--text-2`，时间读数取三级文字色 `--text-3`）。用户消息 SHALL 以气泡呈现，与 agent 消息的平铺正文一眼可分：light / dark 档取内容底色一族、柔和边框、圆角的气泡面，eink 档取正文纸面 + 结构档 1px 描边（MUST NOT 铺大片灰实底——e-ink 的中间调靠抖动呈现，压在灰底上的正文发糊）；气泡正文 SHALL 取正文档（与 agent 正文同档），MUST NOT 为「降一档」而压暗正文——正文可读性由气泡面与描边承担区分，气泡正文与其承载面的对比度 SHALL ≥ 7:1（WCAG AAA 正文档），三主题各自成立；agent 消息 SHALL 平铺排版（无气泡）。读数形态 SHALL 按数据来源分两档：**live**（本轮上屏打戳的消息）按「刚刚 / N 秒前 / N 分钟前 / N 小时前 / 昨天」分档；**restored**（快照恢复与会话恢复重放的消息，时间读数来自留存）按「同日窄相对 / 跨天短日期」呈现——留存在盘上，读数可以跨天甚至跨周，「昨天」对更老的消息是错读数。两档 SHALL 随时间低频刷新与随语言切换重绘（形态随消息携带、重绘不重算）。快照 / 恢复重建的消息 SHALL 以后端时间戳（`PanelMessage.ts`）显示真实读数；**会话恢复的 ts SHALL 来自留存记录的信封**（wire 项自身不带时间戳，按项在记录序里的产出时刻归属，见 design §3）；无时间戳可归的消息 SHALL 只显示角色、SHALL NOT 伪造读数。快照消息面 SHALL 保真：正文为空的 assistant 轮（模型只发工具调用、无正文）MUST NOT 落成面板记录——快照恢复 MUST NOT 出现只有角色 meta 行、正文为空的「空气泡」；工具记录（`role: tool`）SHALL 持久化摘要（`PanelMessage.summary`），成功为调用参数摘要、失败含细分状态与错误码，使 webview 重载后工具行仍有信息；成功侧的参数摘要是**单行**人话文本，`cli_run` 为「命令 + 参数」拼接且**命令本体恒在最前**（参数 JSON 原样截断时，排在命令之前的 `args` 会把它挤出可见头部，工具行只剩一串参数），含空白或引号的参数 SHALL 加引号使参数边界可辨。同一份摘要 SHALL 是 live 事件、面板持久化与恢复重建三条路径的同一份（MUST NOT 各算各的）；恢复路径读到旧快照的参数 JSON 时 SHALL 按同一形态人话化呈现。
 
 #### Scenario: 新消息带 meta 行
 
 - **WHEN** 发送一条提问并收到 agent 回答
 - **THEN** 两条消息都带角色 + 时间读数 meta 行（用户消息在气泡内、正文与 agent 正文同档，agent 消息平铺）；读数初始落在「刚刚 / N 秒前」档
+
+#### Scenario: 角色与时间的颜色分层
+
+- **WHEN** 在 light / dark / eink 下读取任一用户或 agent 消息的 who 行
+- **THEN** 角色节点消费 `--text-2`，相邻时间节点消费 `--text-3`，二者均保持 10.5px；角色在实际面板背景上的
+  对比度 ≥4.5:1，时间继续作为刻意退后的 meta，不改变其文本、数据时间戳或刷新行为
 
 #### Scenario: 恢复消息按后端时间戳显示
 
@@ -3192,28 +3591,28 @@ composer 内容 SHALL 作为当前 vault 的一份草稿自动保存与恢复；
 
 草稿的归属 SHALL 在出发时绑定：前端在装载 vault 时记下该 vault 的稳定 id，读、写、清除命令 MUST 携带它；后端 SHALL 只按携带的 id 解析落点，MUST NOT 读取当前打开的 vault。切 vault 之前发出的在途写无论何时执行 MUST 只落它出发时的 vault 的文件，MUST NOT 写进之后打开的 vault；在途读的结果 MUST 按装载世代作废，不得覆盖新 vault 的输入区或「已落盘」基准。写失败重试 SHALL 仍打出发时的归属 id。切换 vault 时旧 vault 的待写按既有纪律丢弃（由切换前的 flush 写走），其迟到失败 MUST NOT 回填新 vault 的待写、MUST NOT 改变新 vault 的「已落盘」基准。
 
-新草稿 SHALL 是 `{version:3,text,caret,cards}`：text 是完整问题，caret 是 `[0,text.length]` 内 UTF-16 offset 或 null，cards 按**视觉顺序**逐项保存 `{card, at}`——`card` 是既有附件记录，`at` 是该卡的**精确 UTF-16 偏移**（不要求行首，`0 <= at <= text.length`）。图片只存内容寻址名、源 mime 与可选宽高，MUST NOT 内联 base64；v3 合法往返必须逐字段还原（anchor 逐卡还原）。`id` 不写盘，恢复时按数组顺序重新编号。
+新草稿 SHALL 是 `{version:3,text,caret,cards,skills}`：text 是完整问题，caret 是 `[0,text.length]` 内 UTF-16 offset 或 null，cards 按**视觉顺序**逐项保存 `{card, at}`——`card` 是既有附件记录，`at` 是该卡的**精确 UTF-16 偏移**（不要求行首，`0 <= at <= text.length`）；skills 是显式选择引用数组，每项 `{name,from,to}`，from/to 是 `text` 内的 UTF-16 偏移，与 caret、卡片 `at` 同属 `text` 坐标，切片必须逐字节等于 `/名字`；CRLF 归一时 SHALL 按共同出口的同一映射重定位。读取时越界、切片不匹配或名字不合 `/` 调用 grammar 的引用 MUST 被丢弃，MUST NOT 影响草稿其余内容的恢复。skills MUST NOT 保存用户 / 模型调用策略快照；发送时 SHALL 按当前 Skill 策略重新判定。图片只存内容寻址名、源 mime 与可选宽高，MUST NOT 内联 base64；v3 合法往返必须逐字段还原（含 refs）。`id` 不写盘，恢复时按数组顺序重新编号。
 
-**CRLF 归一放在所有版本解析 / 迁移完成后的共同出口**：CM 在 `EditorState.create` 时按 `/\r\n?|\n/` 分行并统一为 LF，原始 CRLF 坐标（caret / `at`）不能直接灌进 state。v1 / v2 / v3 SHALL 先各自解析 / 迁移成同形状草稿（`{text,caret,cards:[{card,at}]}`，仍是原始坐标），再统一把 `\r\n` / `\r` 归一为 `\n`，并用同一份原始 offset → 归一 offset 映射重定位 caret 与每张卡的 `at`。归一后的草稿 SHALL 同时用于**写回 v3**与**创建 `EditorState`**；MUST NOT 只归一文本而保留原始坐标，MUST NOT 让写回与 state 使用两份不同坐标。混合行界（`\r\n` / `\r` / `\n` 混用）按同一扫描处理。
+**CRLF 归一放在所有版本解析 / 迁移完成后的共同出口**：CM 在 `EditorState.create` 时按 `/\r\n?|\n/` 分行并统一为 LF，原始 CRLF 坐标（caret / 卡片 `at` / refs 的 `from` / `to`）不能直接灌进 state。v1 / v2 / v3 SHALL 先各自解析 / 迁移成同形状草稿（`{text,caret,cards:[{card,at}],skills:[{name,from,to}]}`，仍是原始坐标），再统一把 `\r\n` / `\r` 归一为 `\n`，并用同一份原始 offset → 归一 offset 映射重定位 caret、每张卡的 `at` 与每个 ref 的 `from` / `to`；MUST NOT 只映射其中一部分。归一后的草稿 SHALL 同时用于**写回 v3**与**创建 `EditorState`**；refs 的范围 / 切片 / grammar 校验 SHALL 在归一并重映射之后进行，MUST NOT 用原始坐标校验后把旧偏移留在归一草稿里。MUST NOT 只归一文本而保留原始坐标，MUST NOT 让写回与 state 使用两份不同坐标。混合行界（`\r\n` / `\r` / `\n` 混用）按同一扫描处理。
 
-现存 v2 与 v1 都是迁移的具体消费者。读到合法 v2 时 SHALL 一次性转换：可见内容保留，**行尾及坐标按共同出口的统一映射归一**（不是字节级原样保留）；全部卡片落 `at: 0`（等价于 v2 的「卡片全在前」语义），caret 由原始偏移映射到归一文本坐标。读到合法 v1 时 SHALL 沿用现行转换（段落按原顺序以 `\n` 连接，未知块以可见 JSON 文本加入，卡片按相对顺序全部抽入 cards；段落 caret 精确映射，卡片 / 末尾边界映射到最近后续文本块起点，无后续则全文末尾），再全部落 `at: 0`。v1 / v2 转换成功后 SHALL 立即经既有串行 store 写回 v3，此后只读 / 只写 v3；MUST NOT 双写、保留旧编辑路径或建立通用迁移平台。load 起始 SHALL 捕获编辑世代；读盘期间发生新编辑时 MUST 跳过旧迁移写回及 written 基准覆盖，保留当前 pending / written。迁移写一旦入串行链，后续编辑写 SHALL 排在其后，最终落盘必须是最新输入。损坏 v1 / v2 / v3 安静回空；迁移写失败不谎报已保存。
+现存 v2 与 v1 都是迁移的具体消费者。读到合法 v2 时 SHALL 一次性转换：可见内容保留，**行尾及坐标按共同出口的统一映射归一**（不是字节级原样保留）；全部卡片落 `at: 0`（等价于 v2 的「卡片全在前」语义），caret 由原始偏移映射到归一文本坐标；skills 为空。读到合法 v1 时 SHALL 沿用现行转换（段落按原顺序以 `\n` 连接，未知块以可见 JSON 文本加入，卡片按相对顺序全部抽入 cards；段落 caret 精确映射，卡片 / 末尾边界映射到最近后续文本块起点，无后续则全文末尾），再全部落 `at: 0`，skills 为空。v1 / v2 转换成功后 SHALL 立即经既有串行 store 写回 v3，此后只读 / 只写 v3；MUST NOT 双写、保留旧编辑路径或建立通用迁移平台。load 起始 SHALL 捕获编辑世代；读盘期间发生新编辑时 MUST 跳过旧迁移写回及 written 基准覆盖，保留当前 pending / written。迁移写一旦入串行链，后续编辑写 SHALL 排在其后，最终落盘必须是最新输入。损坏 v1 / v2 / v3 安静回空；迁移写失败不谎报已保存。
 
-发送被同步拒绝、而拒绝回包晚于用户的下一条输入时，输入区的合并 SHALL 保持「原文在前、当前在后」：文本为 `restored.text + current.text`，当前卡片的 anchor 平移 `restored.text.length`，再按精确偏移稳定排序；MUST NOT 为对齐行首补换行、MUST NOT 钳到行首。精确偏移模型下，当前卡片平移到原文末尾后由块级 widget 在该偏移拆文本，自然落在原文之后、当前文字之前。当前侧为空态时 SHALL 原样返回 restored。
+发送被同步拒绝、而拒绝回包晚于用户的下一条输入时，输入区的合并 SHALL 保持「原文在前、当前在后」：文本为 `restored.text + current.text`，当前卡片的 anchor 平移 `restored.text.length`，再按精确偏移稳定排序；恢复侧的 skills 引用保持原偏移，当前侧 skills 引用同样平移 `restored.text.length`，合并后逐条按 v3 规则重新校验。MUST NOT 为对齐行首补换行、MUST NOT 钳到行首。精确偏移模型下，当前卡片平移到原文末尾后由块级 widget 在该偏移拆文本，自然落在原文之后、当前文字之前。当前侧为空态时 SHALL 原样返回 restored。
 
 #### Scenario: v2 往返与合法 caret
 
 - **WHEN** 盘上是合法 v2 草稿，包含多行文本、三类附件和文本中部 caret，装载同一 vault 后重开
-- **THEN** text / caret / cards 逐字段保留（全部卡片落 `at: 0`，即 v2 的「卡片全在前」语义），图片引用不变且无 base64；读回后立即写回 v3，重新装载 v3 仍逐字段还原
+- **THEN** text / caret / cards 逐字段保留（全部卡片落 `at: 0`，即 v2 的「卡片全在前」语义），skills 为空，图片引用不变且无 base64；读回后立即写回 v3，重新装载 v3 仍逐字段还原
 
 #### Scenario: v1 一次性转换不丢内容
 
 - **WHEN** 现存 v1 含交错段落、未知块、三类卡片与段落 / 卡片 / 末尾 caret
-- **THEN** 所有段落和未知块可见文本各出现一次，卡片相对顺序不变且全部落 `at: 0`，caret 按合同映射且合法；成功后盘上只写一份 v3，无双写
+- **THEN** 所有段落和未知块可见文本各出现一次，卡片相对顺序不变且全部落 `at: 0`，skills 为空，caret 按合同映射且合法；成功后盘上只写一份 v3，无双写
 
 #### Scenario: 发送与写失败保留语义
 
 - **WHEN** 发送成功、发送被能力闸拒绝，或草稿写盘失败
-- **THEN** 成功清空草稿；拒绝恢复发送前 text / caret / cards 且草稿不变；写失败给 warning、不阻断输入、不谎报已保存
+- **THEN** 成功清空草稿；拒绝恢复发送前 text / caret / cards / skills 且草稿不变；写失败给 warning、不阻断输入、不谎报已保存
 
 #### Scenario: 旧写失败不夺回新编辑的待写所有权
 
@@ -3232,13 +3631,18 @@ composer 内容 SHALL 作为当前 vault 的一份草稿自动保存与恢复；
 
 #### Scenario: v3 往返与合法 caret
 
-- **WHEN** 草稿包含多行文本、三类卡片、行首与**行中**锚点、文本中部 caret，保存后重开同一 vault
-- **THEN** text / caret / cards 逐字段恢复，每张卡（含行中 anchor）与视觉顺序不变，图片引用不变且无 base64；撤销史不跨进程恢复
+- **WHEN** 草稿包含多行文本、三类卡片、行首与**行中**锚点、显式选择引用和文本中部 caret，保存后重开同一 vault
+- **THEN** text / caret / cards / skills 逐字段恢复，每张卡（含行中 anchor）与视觉顺序不变，图片引用不变且无 base64；失效引用被丢弃且不影响其余内容；草稿不含调用策略快照，发送时按当前策略判定；撤销史不跨进程恢复
 
 #### Scenario: CRLF v3 装载与坐标重映射
 
 - **WHEN** 盘上 v3 草稿的 text 是 `A\r\nB\r\nC`，caret 在 B 之后（原始 offset 4），一张卡片的 `at` 指向 C 行首（原始 offset 6）
 - **THEN** 创建 state 前文本归一为 `A\nB\nC`，caret 与 `at` 用同一映射重定位（分别变为 3 与 4）；恢复后的文本、caret、anchor 与 `composerBlocks()` 顺序全部正确，MUST NOT 把原始 CRLF 坐标直接灌进 state
+
+#### Scenario: CRLF 归一不丢 Skill 引用
+
+- **WHEN** 盘上 v3 草稿的 text 是 `A\r\n/acc-skill-abc `，含一个引用 `{name:"acc-skill-abc",from:3,to:17}`（原始切片逐字节等于 `/acc-skill-abc`），caret 与一张卡片的 `at` 都在文末（原始 offset 18）
+- **THEN** 共同出口把文本归一为 `A\n/acc-skill-abc `，同一映射重定位引用为 `[2,16)`（切片仍逐字节等于 `/acc-skill-abc`）、caret 与卡片 `at` 为 17；恢复后引用保留并照常出 chip，MUST NOT 用旧偏移 `[3,17)` 切成 `acc-skill-abc ` 后丢弃该引用
 
 #### Scenario: CRLF v2 caret 归一
 
@@ -3378,7 +3782,9 @@ SHALL 是一个停靠行；行选择 MAY 交给引擎的竖直移动原语，列
 - 本次 payload 是 annotation：首行失败 SHALL 只影响当前写健康（`severity=history`），不置 `history_gap`；annotation 丢失不 latch。首行重试成功后当前写健康回 `ok`。
 - 本次只写首行、没有 payload 被丢弃（若存在这种独立写首行的路径）：不置 `history_gap`。
 
-写点 MUST 保留挂起的 `session_open` 行，使下一条记录仍先重试写首行。首行或任意记录的部分写 SHALL 置 `history_gap`。系统 MUST NOT 承诺部分写后的文件仍可被完整读取或恢复；已损坏的文件本 change 不修复、不截断、不做原子发布。
+写点 MUST 保留挂起的 `session_open` 行，使下一条记录仍先重试写首行。首行或任意记录的部分写 SHALL 置 `history_gap`。系统 MUST NOT 承诺部分写后的文件仍可被完整读取或恢复；已损坏的文件不修复、不截断。唯一的例外是恢复会话文件的首次发布：它 MUST 采用原子发布（临时文件完整写入后不覆盖地发布最终 JSONL）；**本次发布 MUST NOT 创建空 / 半截最终文件；撞名时既有目标 MUST 逐字节保留**（见「会话本地留存」条）；该例外不适用于发布成功之后的 append-only 写入，也不修复既有损坏文件。
+
+**已激活但未发布的恢复批次** SHALL 单独评价，不与已发布文件的 append-only 失败混同。从历史会话恢复、首次真实请求已使恢复激活（`activated=true`）而文件尚未发布时，激活时形成的批次（`session_open` / `inherit` / `notice_delivered` / 已产生的 history 记录）SHALL 完整保留在内存中；此期间发布失败 SHALL 置当前写健康为 `degraded`、`severity=history`、`detail` 记录发布失败分类、`since_ts` 记首次失败时间，但 MUST NOT 置 `history_gap.present=true`——缓冲记录尚未永久丢失，MUST NOT 提前制造缺口，也 MUST NOT 发 `false→true` 的缺口事件。`history_written` 保持 `false`；呈现 SHALL 用「对话暂未保存」与「现在退出，这段对话将无法恢复」两段文案，MUST NOT 使用缺口文案「此前部分对话记录未能保存」。全部缓冲记录随后一次发布成功时，当前写健康 SHALL 转 `ok`、`history_written` SHALL 转 `true`、`history_gap.present` 保持 `false`，MUST NOT 出现假缺口。若退出前始终未发布成功，该批记录随内存消失且 MUST NOT 在重启后补报——它不属于 latch 口径（文件从未存在）。已发布之后的普通 append-only 写入（含部分写）仍按本条的既有口径判缺口。因未发布批次被拒绝的查看切换 / 显式新会话，或被跳过的压缩轮换 / 落回的 overflow 终态，MUST NOT 重置、清除或改写当前健康（`degraded`、`since_ts`、`history_written`、`history_gap` 全部保持）。
 
 `history_written` SHALL 在本逻辑会话第一条 `llm_request` / `llm_response` 成功写盘时转 `true`，同一逻辑会话内不再回落；自动压缩换文件沿用；新逻辑会话重置为 `false`。它 MUST NOT 参与 `history_gap` 判定，只决定「现在退出，这段对话将无法恢复」这条退出风险句是否还在。
 
@@ -3396,7 +3802,7 @@ SHALL 是一个停靠行；行选择 MAY 交给引擎的竖直移动原语，列
 
 每次写失败 SHALL 另落一条结构化诊断日志（记录种类 + 错误分类 + 是否可能部分写）；日志 MUST NOT 含消息正文、文档内容或 system prompt。
 
-会话目录创建失败 SHALL 仍走既有 `harness_jsonl_failed` 硬错误（发送被拒），不进入健康状态。子运行审计流水、composer 草稿、附件 MUST NOT 进入本状态。健康只覆盖「本次 write 系统调用是否成功」，MUST NOT 被理解为对 `fsync`、断电、外部删除或写到旧 inode 的保证。隔离运行（无人值守）SHALL NOT 向面板呈现健康，只进日志。
+会话目录创建失败 SHALL 仍走既有 `harness_jsonl_failed` 硬错误（发送被拒），不进入健康状态；恢复文件的首次发布 MUST NOT 创建目录，其目录缺失按「已激活但未发布的恢复批次」处理，不适用本句。子运行审计流水、composer 草稿、附件 MUST NOT 进入本状态。健康只覆盖「本次 write 系统调用是否成功」，MUST NOT 被理解为对 `fsync`、断电、外部删除或写到旧 inode 的保证。隔离运行（无人值守）SHALL NOT 向面板呈现健康，只进日志。
 
 #### Scenario: 当前写失败与恢复
 
@@ -3420,7 +3826,7 @@ SHALL 是一个停靠行；行选择 MAY 交给引擎的竖直移动原语，列
 
 #### Scenario: 新会话与恢复重置两维
 
-- **WHEN** 用户显式「新会话」，或从历史恢复产生新会话，或 app 重启后重新建立会话
+- **WHEN** 用户显式「新会话」（未被未发布批次守卫拒绝），或从历史恢复产生新会话，或 app 重启后重新建立会话
 - **THEN** 两维与 `history_written` 都从空健康起算（`state=ok`、`history_gap.present=false`、`history_written=false`）；面板 MUST NOT 继续显示旧会话的警示块；旧缺口只留在盘上与日志，app 重启后 MUST NOT 补报旧告警
 
 #### Scenario: 严重度与缺口触发
@@ -3487,6 +3893,31 @@ SHALL 是一个停靠行；行选择 MAY 交给引擎的竖直移动原语，列
 
 - **WHEN** 留存写入失败期间用户继续一轮对话
 - **THEN** 轮次照常完成、消息照常上屏；新增的只有健康状态与诊断日志，MUST NOT 出现用户侧「发送失败」
+
+#### Scenario: pending 恢复激活后发布失败不置缺口
+
+- **WHEN** 恢复会话后首次发送，发布因目录不可写在最终 `.jsonl` 出现前失败
+- **THEN** `state=degraded`、`severity=history`、`history_written=false`、`history_gap.present=false`；事件只发 `ok→degraded`，不发缺口 `false→true`；警示块说明「对话暂未保存」与退出风险，MUST NOT 出现「此前部分对话记录未能保存」
+
+#### Scenario: 发布重试成功且无假缺口
+
+- **WHEN** 上一场景后目录恢复可写，下一条记录触发发布成功
+- **THEN** `state=ok`、`severity=null`、`history_written=true`、`history_gap.present=false`；缓冲记录各落盘一次；事件发 `degraded→ok` 与 `history_written` `false→true`，不发缺口事件
+
+#### Scenario: 初始批次的豁免止于发布
+
+- **WHEN** 恢复文件已发布成功，随后一条 `llm_request` 部分写失败
+- **THEN** 按既有口径 `severity=history`、`history_gap.present=true`；MUST NOT 以「初始批次豁免」放行
+
+#### Scenario: 未发布即退出不补报
+
+- **WHEN** 发布始终失败，用户退出并重启 app
+- **THEN** 不补报该会话的健康告警、不出现恢复文件或清单行；源文件未被改写
+
+#### Scenario: 拒绝替换不清健康
+
+- **WHEN** pending 恢复已 `activated=true` 且发布失败（`state=degraded`、`history_gap=false`），用户点另一历史 / 触发新会话被拒，或自动压缩被跳过 / 落回既有 overflow 终态
+- **THEN** `state`、`severity`、`since_ts`、`history_written`、`history_gap` 全部保持原值；不发 `degraded→ok` 或缺口事件；警示块文案不变；被拒操作本身 MUST NOT 产生新的持久化写；overflow 终态只发既有 provider 错误事件，MUST NOT 发新的 persistence 错误
 
 ### Requirement: 失败轮次显式重试
 
@@ -3745,3 +4176,983 @@ MUST NOT 改变错误行同文案去重、MUST NOT 改变 `in_flight` 相位模�
 - **WHEN** 恢复一份包含失败响应的既有会话文件
 - **THEN** 该文件不被迁移、回写或删除任何记录；文件的字节与 mtime 不变；恢复只影响新会话
   内存态与新 JSONL 文件
+
+### Requirement: Harness 阅读密度、消息节奏与阅读宽
+
+harness transcript SHALL 以 `calc(var(--fs-body) * var(--lumir-hp-scale, 1))` 与 `var(--lh-chat)` 呈现正文，
+默认缩放档计算值为 15px/1.58（行高 23.7px）；外侧 padding SHALL 为 `16px 16px 12px`，消息间距 SHALL 为
+16px。composer 外侧 padding SHALL 为 `12px 16px 16px`。字号 SHALL 继续受编辑器与 Harness 共享缩放比控制，
+MUST NOT 另立 Harness 字号状态。
+
+assistant 正文里的段落、普通列表、代码、引用、表格与块级 slot SHALL 以 8px 纵向间距分隔，首末块相应外边距
+归零；`slot > codeblock/table-scroll/table` 的嵌套 margin 链路 SHALL 同步归零，MUST NOT 叠出双倍间距。
+列表缩进 SHALL 为 24px，相邻列表项上距 2px，项内段落间距 4px。正文 SHALL 使用
+`overflow-wrap:anywhere; word-break:normal`，长 URL MUST NOT 撑宽 transcript；表格内 URL 仍由固有宽与
+局部横滚合同承担。
+
+用户气泡 padding SHALL 为 8/12px；底色、边框、圆角与正文档配色不变。角色 meta 行 SHALL 保持 10.5px，
+下距 SHALL 为 4px。角色与时间的颜色分层按「消息呈现」执行。
+
+transcript 的直接消息子项 SHALL 以 `max-inline-size:var(--layout-review-measure)` 限制阅读宽，默认 token
+值为 720px。该值是**上限而非固定宽**：可用宽不足 720px 时消息仍占满可用宽；达到上限后消息 SHALL 左对齐，
+左缘与 transcript 内容左缘一致（±1px），MUST NOT 居中或把用户消息右对齐。该上限 MUST NOT 作用于 pane、
+Harness 容器、composer 外侧或 composer 输入区，MUST NOT 引入第二份 720px 配置或字面值真源。
+
+#### Scenario: 默认缩放档的阅读节奏
+
+- **WHEN** 以默认 `--lumir-hp-scale=1` 打开含多段回答、三级列表与用户消息的 Harness
+- **THEN** transcript 的计算样式为 15px/23.7px、padding `16px 16px 12px`、gap 16px；普通块间距为 8px
+  且首末归零，列表缩进 / 项距 / 项内段落分别为 24px / 2px / 4px；用户气泡 padding 为 8px 12px，
+  who 下距为 4px
+
+#### Scenario: 三宽度下的消息上限与左缘
+
+- **WHEN** 同一合成消息分别在 1200×800、1800×900、2400×1000 视口的默认 1:1 Harness pane 中呈现
+- **THEN** 三组消息宽分别约为 448.5px、720px、720px（容差 1px）；三组左缘均与 transcript 内容左缘
+  一致（±1px）；窄组与无 720 上限候选的宽度差 ≤1px，宽 / 超宽组只收窄消息，不改变 pane 或 composer 宽度
+
+#### Scenario: 共享缩放比仍然生效
+
+- **WHEN** 通过既有字号命令把编辑器与 Harness 同步调到非默认缩放档，再按 ⌘0
+- **THEN** transcript 与 composer 字号随 `--lumir-hp-scale` 同步变化且行高比仍为 1.58；间距、控件最小尺寸
+  和 720px 上限不二次缩放；⌘0 后两个内容面回各自基线，全程不新增 Harness 独立字号状态
+
+#### Scenario: 长正文不撑宽 transcript
+
+- **WHEN** 三主题 × 三宽度九组中均放入长 URL、长段落与三级嵌套列表
+- **THEN** 每组 `.lumir-hp-transcript` 均满足 `scrollWidth === clientWidth`，正文链接文本完整可见，
+  列表续行不越出消息；设置 transcript 纵滚到底后 `scrollTop > 0`
+
+### Requirement: Harness 代码块与横线表排版
+
+Harness 代码块 SHALL 保持 12.5px/1.55，padding SHALL 为 10/12px，圆角 SHALL 为 `var(--r8)`。既有局部
+横滚、细条档、复制与全屏入口 MUST NOT 改变；MUST NOT 为本次排版新增滚动容器、改变 overflow 轴或重写
+滚动行为。
+
+Harness **面板内的**表格 SHALL 以 13px/1.5 呈现，th / td padding SHALL 为 6/10px。表格 SHALL 采用**横线表**：
+cell 的上 / 左 / 右边框为 0，只保留 1px 底边；表头底边取 `var(--border)`，数据 cell 底边取
+`var(--border-soft)`，MUST NOT 恢复全网格。表格固有宽、cell 单行、窄表贴合内容、宽表局部横滚、嵌套收缩、
+全屏快照源与关闭路径均沿用「对话表格的固有宽与局部横滚」及既有全屏合同，MUST NOT 改 stacked cards。
+
+全屏快照克隆 `<table>` 后不再位于面板 body 祖先链下，SHALL 继续消费 `.lumir-table-fs-snapshot` 的
+`--editor-font-size`（默认 15px）与既有编辑器缩放语义，MUST NOT 套用面板表格的 13px 字号。全屏专属布局、
+快照内容与开关行为不变；共享 `.lumir-hp-table th/td` 的横线与 6/10px padding 随克隆保留。面板与全屏的
+计算样式断言 MUST 分开，面板证据 MUST NOT 冒充全屏证据。
+
+#### Scenario: 代码块计算样式与局部横滚
+
+- **WHEN** 三主题 × 三宽度九组中均放入超出容器宽的长代码行
+- **THEN** 代码块计算字号 / 行高为 12.5px / 19.375px、padding 为 10px 12px、radius 为 8px；
+  每组先满足 `code.scrollWidth > code.clientWidth`，写入 `scrollLeft=120` 后读数 >0；
+  transcript 仍无横向溢出
+
+#### Scenario: 面板横线表而不是全网格
+
+- **WHEN** 在任一主题下查看 Harness 面板内的表格
+- **THEN** 表格计算字号 / 行高为 13px / 19.5px，th / td padding 为 6px 10px；每个 cell 只有 1px 底边，
+  表头与数据行分别消费结构 / 层次 hairline token，不出现上 / 左 / 右网格线
+
+#### Scenario: 全屏快照保留编辑器字号与现有布局
+
+- **WHEN** 从 Harness 面板打开表格全屏快照，分别在默认与非默认编辑器字号下读取快照，再关闭全屏
+- **THEN** 快照继续消费 `--editor-font-size`（默认计算值 15px，非默认档随既有缩放变化），MUST NOT 为 13px；
+  快照内容仍直接来自 table 本身并保持固有宽，共享 cell 只保留横线且 padding 为 6px 10px；全屏专属布局、
+  打开与关闭行为不变，不把面板的 body 作用域字号断言套到快照上
+
+#### Scenario: 窄 pane 宽表只在自身容器横滚
+
+- **WHEN** 1200×800 视口的 Harness 中含自然宽超过消息可用宽的表格
+- **THEN** 先满足 `.lumir-hp-table-scroll.scrollWidth > clientWidth`，写入 `scrollLeft=120` 后读数 >0；
+  表格保持固有宽和 cell 单行，transcript `scrollWidth === clientWidth`
+
+#### Scenario: 宽 pane 不强制制造表格溢出
+
+- **WHEN** 同一合成宽表在 1800×900 与 2400×1000 视口呈现，其固有宽小于消息可用宽
+- **THEN** 表格仍按固有宽呈现，横滚容器 `scrollWidth === clientWidth`；不得为通过滚动断言而拉宽表格，
+  窄表也不被拉伸到 720px
+
+### Requirement: Harness 工具与批准决策区排版
+
+工具行 SHALL 保持 12px，以 `min-height:28px; height:auto` 取代固定 24px 高。工具名 / 参数 / 终态词的
+既有排布、参数省略与终态词保护 MUST NOT 改变。工具尾注 `.lumir-hp-tool-out` SHALL 取 `--text-2`。
+
+批准卡 padding SHALL 为 10/12px；purpose、basis、note、diff、argv、reason 的决策段下距 SHALL 为 8px。
+批准动作按钮 SHALL `min-height:32px` 且水平 padding 为 12px。待决副句 `.lumir-hp-approval-sub`、判定依据
+`.lumir-hp-approval-basis` 与后果 `.lumir-hp-approval-note` SHALL 取 `--text-2`。长次级动作允许既有换行，
+命令原文仍在自己的局部滚动区完整可达；采纳、拒绝、会话内记住与持久规则行为不变。
+
+本 requirement 指定的任务型次级文字及「消息呈现」的角色、composer placeholder、运行提示和空态提示，
+在三主题实际承载面上的对比度 SHALL ≥4.5:1。时间读数等刻意退后的装饰性 meta MUST NOT 被一概提色。
+
+#### Scenario: 工具行与批准控件计算值
+
+- **WHEN** Harness 同屏呈现完成工具行与待决批准卡
+- **THEN** 工具行字号为 12px、min-height 为 28px、height 为 auto 且实际高度 ≥28px；批准卡 padding 为
+  10px 12px，指定决策段下距为 8px；批准按钮 min-height 为 32px、padding-inline 为 12px
+
+#### Scenario: 三主题任务文字对比度
+
+- **WHEN** 在 light / dark / eink 下分别读取角色、批准副句 / 依据 / 后果、工具尾注、运行提示、placeholder
+  与空态提示的前景 token 和实际合成背景
+- **THEN** 这些元素均消费 `--text-2`，逐元素对比度 ≥4.5:1；用户气泡正文仍 ≥7:1，时间仍消费 `--text-3`；
+  缺元素、缺背景或颜色不可解析时判 FAIL，不得按空值跳过
+
+#### Scenario: 窄 pane 决策动作完整可达
+
+- **WHEN** 1200×800 视口下批准卡含长次级动作、长命令与采纳 / 拒绝按钮
+- **THEN** 所有动作均在批准卡与 Harness 可视范围内，不被固定高度裁切；长次级动作按既有口径换行，
+  长命令可在局部滚动区完整到达；点击采纳或拒绝仍走既有行为路径
+
+### Requirement: Harness composer、空态与运行提示排版
+
+composer 输入 SHALL 以 `calc(var(--fs-body) * var(--lumir-hp-scale, 1))` 与 `var(--lh-chat)` 呈现，默认
+计算值为 15px/1.58；min-height SHALL 为 48px，padding SHALL 为 10/12/4px。placeholder SHALL 取
+`--text-2`，top / left 分别为 10/12px，与首行输入位置一致。既有 max-height、纵滚、控制行、焦点、CodeMirror
+文本 / 选区 / IME 与发送行为 MUST NOT 改变。composer 与其外侧 MUST NOT 获得 720px 固定宽或阅读宽上限。
+
+空态提示 SHALL 为 13px/1.58、`--text-2`、24px padding；现有 margin auto 与 text-align 等布局不变，
+MUST NOT 重做空态信息架构。运行阶段提示 `.lumir-hp-stage` SHALL 取 `--text-2`；其位置、既有不定态进度、
+动画与交互不变，进度区移动明确不属于本 requirement。
+
+有序承接 SHALL 固定为 `fix-harness-approval-visibility-nov23` → 本 change →
+`move-harness-progress-to-output-tail-nov23`。前置审批可见性 change 未归档且 `--archived` 审计未 PASS 时，
+本 change MUST NOT 施工；前置阶段色 `--text-3` 由本 change 改为 `--text-2`。本 change 未归档、审计未 PASS
+且新 idle 基线未经 Alex 批准落盘时，后续尾行 change MUST NOT 施工。后续 change SHALL 继承本 change 的
+阶段 `--text-2`、16px gap、`16px 16px 12px` transcript padding 与空态排版，不得恢复旧值。
+
+后续尾行 change 若仍取 2px 净间距，SHALL 把旧 `calc(var(--sp-2) - var(--sp-4))` 重算为
+`calc(var(--sp-2) - var(--sp-8))`；仅在后续 change 把空态改为绝对定位时，四边 SHALL 按新 transcript
+padding 取 `top/right/left:var(--sp-8); bottom:var(--sp-6)`，并继承 13px/1.58、`--text-2`、24px padding。
+其“idle 零漂移”SHALL 只相对本 change 后的新 idle 基线判定。
+
+#### Scenario: composer 默认计算值与 placeholder 对齐
+
+- **WHEN** composer 为空并随后输入首行文字
+- **THEN** 输入计算字号 / 行高为 15px / 23.7px、min-height 为 48px、padding 为 10px 12px 4px；
+  placeholder top/left 为 10px/12px、颜色为 `--text-2`，与首行行位一致；输入后 placeholder 退场，
+  空态与首行输入态不出现异常高度跳变
+
+#### Scenario: composer 不被 720px 封顶
+
+- **WHEN** 分别在 1200×800、1800×900、2400×1000 视口打开 Harness
+- **THEN** composer 外侧 padding 为 12px 16px 16px，composer 随 pane 可用宽伸缩；超宽组 composer 实际宽
+  >720px，且输入、模型 chip、ctx 读数与发送钮均在 Harness 内，无横向控制行溢出或遮挡
+
+#### Scenario: 空态与运行提示只改指定排版
+
+- **WHEN** 分别查看空会话与工具循环进行中的 Harness
+- **THEN** 空态为 13px/20.54px、`--text-2`、24px padding，现有居中方式不变；阶段提示为 `--text-2`，
+  不定态进度与阶段位置、动画和运行行为保持原样
+
+#### Scenario: 后续尾行 change 按本 change 的新几何承接
+
+- **WHEN** 前置审批可见性 change 和本 change 已依次归档且审计 PASS，本 change 的新 idle 基线已获 Alex
+  批准并落盘，随后 `move-harness-progress-to-output-tail-nov23` 开始施工
+- **THEN** 尾行阶段提示继承 `--text-2`，不恢复 `--text-3`；2px 净间距按 16px gap 使用
+  `calc(var(--sp-2) - var(--sp-8))`；空态绝对定位四边使用 `sp-8/sp-8/sp-6/sp-8`，并继承本 change 的
+  13px/1.58、`--text-2`、24px padding；其 idle 对拍使用本 change 后的新基线，不使用旧 8px gap、
+  `8/8/4px` transcript padding 或旧空态配方
+
+### Requirement: Skill 候选浮层的表面不变量
+
+harness composer 的 Skill 候选浮层 SHALL 是不透底的浮层面：其计算后的 `background-color` SHALL
+等于当前主题的 `--preview-bg`，alpha SHALL 为 1。该表面 SHALL 按 `ui-design-system`「设计 token
+层」的浮层壳配方（`--preview-bg` + 1px `--border` + `--shadow-raise`）取值，MUST NOT 引用未登记
+的 token、MUST NOT 以**失效声明回落成 transparent** 或半透明底落空——「浮层在内容之上」必须在
+绘制结果上成立，MUST NOT 只体现为 `z-index`。
+
+判据 SHALL 落在**绘制结果**上：在浮层可见面（圆角与 1px 边框之内）内，浮层背后画了什么 MUST NOT
+影响该区域的像素；三主题（light / dark / eink）SHALL 各判一次。
+
+#### Scenario: 三主题下浮层底色等于 --preview-bg
+
+- **WHEN** 打开 Skill 候选浮层，当前主题分别为 light、dark、eink
+- **THEN** 浮层计算后的 `background-color` 等于该主题 `--preview-bg` 的值（light `#ffffff` /
+  dark `#26272b` / eink `#ffffff`），且 alpha = 1
+
+#### Scenario: 底层文字不穿透
+
+- **WHEN** 在候选浮层背后铺一层高对比文字与底色，再换成另一套高对比配色
+- **THEN** 浮层可见面的像素两次逐字节相同（背后内容不进入浮层）；把浮层背景强制改为
+  `transparent` 时，同一对比 SHALL 出现差异——判据本身必须有区分度
+
+### Requirement: 消息摘录真机验收通道
+
+使用真实 CGEvent 在 transcript 建立消息选区的验收场景 SHALL 按本轮窗口、fixture 与消息排版标定拖选线段，起点与终点 SHALL 落在目标消息正文文本几何内；窗口尺寸、fixture 或排版变化后 MUST 按本轮截图重新标定，MUST NOT 把落入消息间空白的拖选重试归因成产品选择器失效。选区是否建立 SHALL 继续由浮动「摘录到对话」钮的正观测独立判定，坐标调整 MUST NOT 删除或放宽该断言。
+
+当 composer 采用 inline cards 时，输入定位 SHALL 使用当前 AXTextArea 的占位名与本轮注入文本组合，MUST NOT 依赖旧 tray 才会暴露的卡片角色名；动作内部 SHALL 通过注入前后文本计数变化证明输入落点。
+
+#### Scenario: 消息排版变化后的真实拖选
+
+- **WHEN** 121 在 mock 回答已渲染后执行真实拖选，且消息排版已改变正文行的位置
+- **THEN** 按本轮截图把起终点重标定到同一 assistant 正文行内，再执行 CGEvent 拖选；只有浮动「摘录到对话」钮实际出现才算选区建立，几何、入卡、移除与再次摘录断言继续执行
+
+#### Scenario: inline cards 后继续输入第二问
+
+- **WHEN** 消息摘录卡已作为 composer 内 widget 插入，准备在卡片后的文本段落输入问题
+- **THEN** typeInNode 通过占位名或本轮注入文本定位同一个 composer，且 N→N+1 回读成立；随后发送、transcript 同构与 `<msg-quote role at>` wire 断言继续执行
+
+### Requirement: Skill 的混合调用、入口策略与候选交互
+
+系统 SHALL 同时提供两条 Skill 调用入口：**用户显式选择**与**模型自主 `skill_load`**。显式选择 SHALL
+由后端确定性加载 SKILL.md 全文；模型自主入口 SHALL 保留既有「索引（name + description）→ 模型按相关性
+判断 → `skill_load` → 工具结果」链路。任一入口 MUST NOT 以削弱另一入口的默认能力为实现前提。
+
+**两阶段读取边界**：系统 SHALL 区分发现期元数据读取与调用执行期正文加载。发现期为装配索引与解析策略，
+当前实现可能通过 `fs::read_to_string` 把整份 SKILL.md 读入内存，但只把文本用于元数据解析（description
+保持现有 frontmatter / 无 frontmatter 首行兜底，另加 invocation 字段），不把正文作为调用结果投递；该读取
+发生在权限与入口策略判定之前，属于既有索引行为，MUST NOT 被虚称为零 IO。200KB 上限 SHALL 只约束执行期正文
+加载，MUST NOT 被用来暗示发现期只读 frontmatter 或只读前 200KB。调用执行期正文加载 SHALL 在权限与策略
+放行后调用共享正文加载器，把正文投递到用户消息 part 或工具结果。某一入口因权限 deny、入口策略或非法
+元数据被拒绝时，拒绝保证 SHALL 只约束该入口：其执行期正文加载器未被调用、对应输出面无正文，MUST NOT
+被表述为发现期也未读取任何 Skill 文件，也 MUST NOT 扩大到另一放行入口。deny 与非法元数据 SHALL 拒绝
+两个入口；禁自动 SHALL 只拒绝自动入口并保留显式正文 marker 正向对照；禁手动 SHALL 只拒绝显式入口并保留
+自动工具结果正文 marker 正向对照。发现期只读 frontmatter 的优化不在本 change 内，后续优化 MUST NOT 改变
+索引行为。
+
+**默认与分控**：每个 Skill 缺省 SHALL 同时允许用户显式选择与模型自主调用。SKILL.md frontmatter SHALL
+支持且只支持以下两个 Lumir 调用策略字段：`disable-model-invocation`（缺省 `false`，为 `true` 时禁止模型
+自主调用但保留用户显式调用）与 `user-invocable`（缺省 `true`，为 `false` 时禁止用户显式调用但保留模型
+自主调用）。这两个字段借用 Claude Code 的拼写，其语义以本规格为准，MUST NOT 被描述为 Agent Skills
+标准字段；系统 MUST NOT 另支持 `allow_implicit_invocation`、字段别名、嵌套调用配置或第二套拼写。目录名
+SHALL 仍是 Skill 名字的唯一来源。
+
+字段 SHALL 只接受不带引号的布尔字面量 `true` / `false`；只有字段缺失才使用缺省值。重复字段、带引号、
+`yes` / `no`、大小写变体或其他非布尔值 SHALL 被视为非法调用元数据，两个入口均 MUST fail closed，以
+`skill_invocation_invalid` 明确报告，MUST NOT 调用执行期正文加载器，且各输出面 MUST 无正文；未知
+frontmatter 字段 SHALL 按现状忽略。
+vault-wide 同名覆盖 user-wide 时，名字、正文来源与策略 SHALL 作为同一发现项整体覆盖。
+
+**发现面投影**：系统提示索引 SHALL 继续列出所有已发现 Skill；默认项的索引文本 SHALL 保持不变，非默认
+策略与非法元数据 SHALL 在对应索引项上明确标注。`harness_skills_list` SHALL 复用 `discover_skills` 的
+发现与覆盖结果，返回符合 `/` grammar 的 `{name,description,source,user_invocable,model_invocable,
+invocation_valid}` 条目且 MUST NOT 暴露绝对路径；候选 SHALL 只显示元数据合法且 `user_invocable = true`
+的条目。禁手动条目 SHALL 保留在索引与模型自动入口；禁自动条目 SHALL 保留在 catalog 与显式入口。
+发现、索引与候选 MUST NOT 共用错误的可见性过滤。
+
+**显式语义分界**：只有用户从候选中显式选择的 Skill 才构成一次显式调用。消息文本里的 `/名字` 字样本身
+MUST NOT 被当作显式调用依据；`/tmp`、`/usr/local` 等斜杠开头路径与普通文本保持原义。调用关系 SHALL
+由发送时随当前新消息提交的显式选择元数据表达，按文本位置排序、同名只取首次。后端 MUST NOT 从消息文本
+解析技能名。历史消息里的 token / 选择 MUST NOT 在后续轮次重新触发显式注入；重试 SHALL 原样回放该轮输入。
+
+**全名自动接受**：候选打开且 token 前缀逐字等于某项 Skill 全名时，候选 SHALL 直接进入武装态，
+`Enter` / `Tab` 接受该项（Alex 2026-11-25 批准的行为变化）。这是**用户按键确认**的显式选择，MUST NOT
+被描述为后端从文本推断调用；名字之后继续输入（token 结束）时 `Enter` 回到发送语义。路径前缀不构成全名：
+`/tmp` 之于 `tmp-acc` MUST NOT 武装。
+
+**候选、游标与武装**：键入 `/` 且满足边界与名字前缀匹配时 SHALL 显示候选。候选 SHALL 维护**唯一游标**与
+**武装**两个状态（定义见 `docs/specs/selector-contract.md` C1 / C4）：游标打开即有，取全名项、按名字保留的
+上一项或首项；武装只由显式动作成立——方向键 / `⌃N` / `⌃P`、指针真实移动，或 token 前缀逐字等于全名。
+查询变化 MUST NOT 继承武装（全名情形除外）；异步 catalog 回包只允许按名字保留游标，MUST NOT 把未武装的候选
+改成武装。未武装时 `Enter` / `Tab` MUST NOT 被候选消费；武装时无修饰的 `Enter` / `Tab` 接受当前项，
+`Esc` 关闭，鼠标点击接受且按下时 MUST NOT 夺走输入区焦点。
+
+武装态下无修饰的 `↑` / `↓` 与候选打开时无 Shift 的 `⌃N` / `⌃P` SHALL 经同一路径移动游标（下一项 / 上一项，
+到端停住、不环绕），事件 SHALL 被候选消费且 MUST NOT 同时移动 composer caret、改变文档或产生撤销步。
+游标由指针移动接管时，揭示滚动把另一行搬到静止指针下面 MUST NOT 改动游标。
+候选关闭时的 `⌃N` / `⌃P` SHALL 保留 composer 既有 Emacs 行移动；`⌃⇧N` / `⌃⇧P` SHALL 保留既有扩选，
+候选按原有关闭路径结束但 MUST NOT 消费该组合键。带修饰键的同名方向键 MUST NOT 被候选消费；
+`⇧↑` / `⇧↓` SHALL 保留原生扩选，扩选使 caret 离开 Skill token 后候选按既有选区同步路径关闭，MUST NOT
+为保留候选而阻断或重写原生选区。`Esc` SHALL 走共享浮层层栈，一次只关最上层，MUST NOT 收起面板或移动焦点。
+
+**候选几何与揭示**：真实可见带 SHALL 取 `menuRect ∩ panelRect ∩ viewport`（再扣掉候选自身的边框与
+padding），MUST NOT 取候选的 `clientHeight`——菜单盒被祖先裁掉时，盒内坐标会把屏外的行判成可见。候选盒
+SHALL 完整落在面板与视口内：面板高度不足时收缩 `max-height`，允许向上覆盖 transcript，垂直夹取宿主
+MUST NOT 是 composer 区；行高与高度 MUST 取实测值，MUST NOT 另留一份硬编码行高。下方放置 SHALL 以
+控制行顶缘为界，MUST NOT 压住控制行；上翻空间不足时 SHALL 先按上方可用空间收缩 `max-height`，
+MUST NOT 让盒底越过 caret；`max-height` 上限的唯一真源 SHALL 是 CSS，上限 MUST 取「清空 inline 后实测的
+受约束高度」，MUST NOT 把 `getComputedStyle` 的字符串按 px 解析（百分比等非 px 计算值会被静默误读）。
+候选在窗口 / 面板尺寸变化与同状态回包（token / 游标 / items 不变）后 SHALL 按新 clip 重新夹取；
+揭示只在游标改变、或重排前完整可见的游标被新几何挤出带时发生，重排 MUST NOT 重建 items、MUST NOT
+改动游标，也 MUST NOT 把用户手动滚开的候选位置拉回游标项；重排内部为读数清空 `max-height` 时 MUST 保留
+候选自身滚动位置（先记后恢复），已完整可见目标的 `scrollTop` MUST NOT 因此改变。判定「重排前完整可见」
+SHALL 依据上一次放置确立的几何（上一次放置后游标完整在带内，且此后用户没有滚动过候选），MUST NOT 依据
+几何变化后的 clip。
+
+游标经键盘或指针改变后，当前 option SHALL 完整落在真实可见带内；已完整可见时候选滚动位置 MUST NOT 改变，
+越界时 SHALL 只滚动候选到带边缘并保留一行上下文，首尾自然 clamp。首尾、长列表与指针 / 键盘混合输入均
+SHALL 满足同一不变量，MUST NOT 通过滚动整页、transcript、编辑器或 composer 完成揭示。候选 SHALL 继续
+归滚动条细条档，右缘 12px 内 MUST NOT 新增常驻可交互件。
+
+**候选响应式尺寸**：候选 SHALL 按 composer 宿主可用宽度加宽。令 `avail = max(0, hostWidth − 16px)`、
+`cap = min(48em, avail)`、`target = min(max(200px, 0.85 × avail), cap)`，最终宽度 SHALL 为
+`min(max(naturalWidth, target), cap)`。窄 pane MUST NOT 越界，正常 pane 的短内容 SHALL 取得可用空间驱动的
+目标宽，超宽 pane MUST 受 48em 上限，长描述 SHALL 可超过旧 26em；em 上限 SHALL 随共享 Harness 字号缩放。
+该 Skill 专用目标宽与上限 MUST NOT 改写其它 list 浮层的 26em 档。
+
+输入法组合期 MUST NOT 触发候选、响应候选导航键或吞掉确认候选的 `Enter`；组合开始时已打开的候选 SHALL
+立即关闭。组合结束后 SHALL 按**最终文档**重算一次候选状态（在 CodeMirror 的 pending MutationRecord 清空
+之后），MUST NOT 在 `compositionend` 的同步路径里抢确认 `Enter`。
+
+**选择引用与 chip**：选中后 SHALL 把当前 `/前缀` 替换为 `/完整名 `（尾随一个半角空格），一次选中 MUST
+是一条可撤销历史步，并创建名字 + 文档范围的引用。引用 SHALL 随文档编辑映射；范围越界、切片不再逐字节
+等于 `/名字` 或左边界失效时，该引用 MUST 失效。撤销 / 重做 SHALL 与文本同事务同步。chip MUST 只由引用
+派生，MUST NOT 从文本扫描推断，也 MUST NOT 改文档、选区、复制或投递内容。
+
+前端 SHALL 按 vault 缓存最新成功 catalog：新 `/` 强制刷新；关闭候选后保留；草稿装载异步取一次但不打开
+候选；切 vault / 会话复位清空并作废在途；失败不阻断输入且 MUST NOT 误标 chip。最新成功 catalog 中名字
+不存在时 chip SHALL 呈缺失态；名字存在但禁手动或元数据非法时 SHALL 呈禁用态并给出不同提示。草稿恢复
+SHALL 先按引用重现 chip，不依赖 catalog 成功。
+
+**命名 grammar**：`/` 显式入口 SHALL 只支持 `^[A-Za-z0-9][A-Za-z0-9_-]*$`。前端引用、后端元数据与
+清单过滤 SHALL 共用同一 grammar。不符合该 grammar 的名字 SHALL 继续由 `discover_skills` 注入索引；
+含点（非点开头）/ 空格 / CJK 的名字 SHALL 继续可供模型自主 `skill_load`，点开头的名字 SHALL 仍按现行
+`skill_name_invalid` 被拒绝。本功能 MUST NOT 收紧或改写既有自主发现面。
+
+**显式发送与确定性加载**：发送时前端 SHALL 只提交当前新消息引用，作为 `harness_send` 必填参数
+`skills_json`。后端 SHALL 在回合开始时按当回合发现结果解析名字，先以 `skill_load` + 技能名 +
+`{"name": <name>}` 调现行权限判定，再检查用户入口策略；只有权限 `Allow`、元数据合法且允许用户调用时
+才调用执行期正文加载器。对可加载的名字，系统 SHALL 沿用既有根内路径校验与 200KB 上限加载 SKILL.md
+全文，作为独立 `input_text` part 追加到该用户消息末尾；part SHALL 带本地标记 `lumir_skill`，正文以
+`[已加载 Skill：<名字>]` 开头。显式与自动入口 SHALL 共用同一执行期正文加载器，MUST NOT 复制第二套路径、
+大小或读取逻辑。
+
+权限 `Deny`（或任何非 `Allow`）MUST NOT 调用执行期正文加载器或注入正文；禁手动 SHALL 以
+`skill_user_invocation_disabled` 非阻断报告，非法元数据 SHALL 以 `skill_invocation_invalid` 非阻断报告，
+两者同样 MUST NOT 调用执行期正文加载器或注入。三种拒绝路径的 `input` / `llm_request.messages` /
+provider wire MUST 无正文，且 MUST NOT 伪装成未知名字；用户消息 SHALL 照常发送。未知 / 超限 / 读取失败 /
+不合 grammar 的名字 SHALL 跳过且不阻断；`skills_json` 结构非法（非数组 / 非字符串元素 / 坏 JSON）SHALL
+以明确错误拒绝发送，不建会话、不入队。
+
+**自动入口策略执行**：默认 Skill 的索引、工具定义、`skill_load` 参数、工具结果与循环顺序 SHALL 不变。
+模型对 `disable-model-invocation: true` 的条目调用 `skill_load` 时，系统 SHALL 在现行权限判定后返回
+`skill_model_invocation_disabled`，MUST NOT 调用执行期正文加载器，且 SKILL.md 与该 Skill 目录内其他文件
+均无正文进入工具结果；发现期元数据读取仍按既有索引路径发生。该策略 MUST NOT 阻止用户显式加载。
+`user-invocable: false` MUST NOT 改变模型自主加载。索引策略提示 SHALL 由执行层策略闸兜底，MUST NOT 只
+依赖模型自觉遵守提示。
+
+**留存与投影**：显式技能 part SHALL 进入会话 `input` 与 `llm_request.messages`，供重试与恢复原样回放；
+本地标记 MUST 在 provider wire 前剥离且保留正文，剥离 MUST 发生在无图片早退之前。面板投影与自动命名
+素材（`title::item_text` 与 `title::material` 的首轮 / 最近轮）MUST 跳过显式技能 part。重试 / 恢复 MUST NOT
+重新执行显式正文注入；自动压缩 SHALL 把该 part 当作普通消息内容参与摘要，不承诺逐字节保留。模型自主
+加载 SHALL 沿用既有工具调用 / 工具结果留存，不新增 `lumir_skill` 用户消息 part，其重试、恢复与压缩行为
+MUST NOT 被本 change 改写。
+
+调用策略 SHALL 只约束新调用：草稿引用 MUST NOT 保存策略快照，发送时按当前策略判定；历史恢复 SHALL 原样
+灌回最后请求，MUST NOT 按当前策略回写、删除或清洗旧显式正文 / 自动工具结果。显式正文与自动工具结果作为
+历史上下文随后续请求发送时 MUST NOT 产生新的显式注入。上下文超限 SHALL 沿用既有压缩机制尽力恢复，系统
+MUST NOT 承诺任意数量 / 任意大小的 Skill 都能进入模型上下文。
+
+**权限**：两个入口 SHALL 以同一工具名、技能名和参数经过现行权限判定；同一 tool 级或名字模式 deny 对
+显式与自动调用同效，任何非 `Allow` 均不调用执行期正文加载器，显式 `input` / `llm_request.messages` /
+provider wire 与自动工具结果均无正文。发现期已完成的元数据读取不属于该执行期断言。显式选择 MUST NOT
+改变权限档、跳过批准闸或预批准
+Skill 内容引发的 `cli_run`；invocation policy MUST NOT 替代或放宽权限规则。`skill_load` 的读类默认放行
+不变，后续 `cli_run` SHALL 沿用现行档位、规则、命令分类与缓存。
+
+**系统提示与验收口径**：系统提示 SHALL 说明显式加载段头的含义、斜杠路径不是显式调用、默认 Skill 仍可
+自主 `skill_load`，以及禁自动条目应请用户显式选择。提示装配单测 SHALL 断言约定与索引策略标记确实进入
+系统提示。mock 场景 SHALL 只用于证明注入、留存、投影、策略执行与发送链路，MUST NOT 被表述为证明真实
+模型遵守提示；真实遵守率只作 dogfood 观察，不进入机器门禁。
+
+#### Scenario: 默认 Skill 双入口均可用
+
+- **WHEN** 一个 Skill 未声明两个调用策略字段
+- **THEN** 它按现有口径进入系统提示索引并可由模型自主 `skill_load`；同时出现在用户候选中，显式选择后
+  由后端确定性加载全文；默认索引条目不增加策略标记
+
+#### Scenario: 显式选择确定性注入
+
+- **WHEN** 用户键入 `/acc-skill-a` 后按 `↓` 进入选择态、按 `Enter` 选中 `acc-skill-abc`，然后发送
+- **THEN** 首个 `llm_request.messages` 的该用户消息含一个带 `lumir_skill` 标记的 part，正文含
+  `[已加载 Skill：acc-skill-abc]` 与 SKILL.md 正文；无需模型再次调用 `skill_load`；面板 AX 不含正文标记
+
+#### Scenario: 手打名字但不选择不做显式注入
+
+- **WHEN** 用户完整键入 `/acc-skill-abc 问题`（名字后跟空格与正文，token 已结束）并发送
+- **THEN** 候选此时不显示；消息照常发出，该用户消息不含 `lumir_skill` 或显式注入正文；模型自主入口是否
+  按既有逻辑调用不受该文本 token 强制。名字后未继续输入、caret 仍在 token 内时按「全名自动接受」场景处理。
+
+#### Scenario: 绝对路径不被误判
+
+- **WHEN** vault 内存在名为 `tmp-acc` 的技能，用户在行首、空格后或列表项里键入 `/tmp` 后直接按 `Enter`
+- **THEN** 消息照常发送对应文本；`llm_request.messages` 不含 `lumir_skill`；候选即使出现也不消费该 Enter
+
+#### Scenario: 被动候选不抢 Enter 与 Tab
+
+- **WHEN** 候选已显示（可能带自动视觉游标）但尚未武装，用户按 `Enter` 或 `Tab`
+- **THEN** Enter 按原语义发送、Tab 按原语义处理；消息不因候选打开而被拦截或改写，也不创建 Skill 引用
+
+#### Scenario: 全名键入即武装 Enter 接受
+
+- **WHEN** 用户逐字键入 `/tmp-acc`（该名字恰好是候选的全名），caret 仍在 token 内
+- **THEN** 候选游标指向 `tmp-acc` 且进入武装态；`Enter` 或 `Tab` 把它替换为 `/tmp-acc ` 并创建引用，
+  与方向键选中走同一接受路径
+
+#### Scenario: 视觉高亮不等于接受承诺
+
+- **WHEN** 用户键入 `/acc`（两项候选）后直接按 `Enter`，未按方向键、未移动指针
+- **THEN** 首选行有可见游标但候选未武装，`Enter` 发送普通文本；随后按 `↓` 再按 `Enter` 才接受第二项
+
+#### Scenario: 异步 catalog 只补高亮不武装
+
+- **WHEN** 候选因 catalog 在途而不显示，用户键入 `/acc`；catalog 回包后才出现两项候选
+- **THEN** 首项获得视觉游标，但候选仍未武装，`Enter` 仍发送普通文本；只有方向键、指针移动或全名命中
+  才改变武装态
+
+#### Scenario: 选择态键位与 IME
+
+- **WHEN** 候选已武装，用户使用方向键 / Ctrl+N / Ctrl+P / Enter / Tab / Esc；另一次在中文输入法组合期键入或确认
+- **THEN** 候选只消费相应导航与选中键，Ctrl+N / Ctrl+P 与方向键分别同义且不改 composer caret 或文档；
+  Esc 只关候选；组合期不触发、不导航、不吞确认 Enter，组合开始关闭已有候选；组合结束后按最终文档重算
+  一次候选状态（最终文档是全名时武装，但仍不抢组合确认的那拍 Enter）
+
+#### Scenario: Shift+Arrow 保留原生扩选并关闭候选
+
+- **WHEN** 候选已显示，caret 位于多行 composer 的 Skill token 末尾，用户按 `⇧↑` 或 `⇧↓`
+- **THEN** 事件不被候选消费，原生扩选非空且文档不变；caret 离开 Skill token 后候选按既有选区同步路径关闭
+
+#### Scenario: 长列表高亮始终可见且不带动整页
+
+- **WHEN** 候选长度覆盖不足一屏、恰好一屏与超出一屏，用户用两类键盘从首项到末项再返回，并在中部交替使用指针与键盘
+- **THEN** 每次游标改变后当前 option 均完整落在 `menuRect ∩ panelRect ∩ viewport` 内；已可见时滚动位置不变，
+  越出时只滚动候选到带边缘并保留一行上下文；游标不环绕，整页、transcript、编辑器与 composer 的滚动位置不变
+
+#### Scenario: 可见最底项再移一项
+
+- **WHEN** 长列表打开时游标停在最后一个完整可见行，用户再按一次 `↓`
+- **THEN** 下一项完整进入真实可见带，且它与带底之间保留一行上下文；候选 `scrollTop` 增大，祖先与页面的
+  滚动位置不变
+
+#### Scenario: 短视口收缩态连续导航
+
+- **WHEN** 视口高度不足、候选已按可用空间收缩且列表真实溢出，用户连续按 `↓` 到末项再连续按 `↑` 回到首项
+- **THEN** 每一拍高亮项仍完整落在真实可见带内；按键前已完整可见的目标，其 `scrollTop` 不变——重排为读数
+  清空 `max-height` 造成的钳制 MUST NOT 泄漏到揭示判据
+
+#### Scenario: 窗口缩放与同状态回包后的重排
+
+- **WHEN** 候选打开时把窗口缩放到面板高度大幅缩短，或候选打开期间发生一次不改变 token / 游标 / items 的
+  文档回包（同状态同步）
+- **THEN** 候选盒按新的 `menuRect ∩ panelRect ∩ viewport` 重新夹取、必要时收缩 `max-height`；重排前完整
+  可见的高亮项仍完整可见，候选 items 不重建（option 节点不变），游标与 `aria-selected` / `data-armed` /
+  `aria-activedescendant` 均不变
+
+#### Scenario: 手动滚开后的重排不拉回高亮项
+
+- **WHEN** 用户先把候选向上滚开（高亮项已不在可见带内），随后发生同状态回包，或窗口 / 面板尺寸变化
+- **THEN** 候选 `scrollTop` 保持用户滚到的位置，揭示不发生，高亮项不被搬回视野；只有新的几何把原本
+  完整可见的游标挤出带时才按最小揭示把它带回带内，且 MUST NOT 借机回弹到高亮首项
+
+#### Scenario: 同拍放置让游标揭示不受跨拍让位例外影响
+
+- **WHEN** 用户先把候选滚开（高亮项已不在可见带内），或刚发生一次同状态回包 / 窗口缩放的重排，随后按
+  `↓` / `↑` / `⌃N` / `⌃P` 改变游标
+- **THEN** 新游标仍 SHALL 完整落在 `menuRect ∩ panelRect ∩ viewport` 内并按最小揭示保留一行上下文；
+  Skill 候选的放置与揭示在同一拍内完成，不存在「游标改变后、写拍前」可被用户滚动插入的窗口，C3 的
+  跨拍让位例外在本表面不成立；让位只作用于没有游标变化的重排，MUST NOT 被扩展成「游标改变可以不揭示」
+
+#### Scenario: 三类宿主宽度与三主题下的响应式尺寸
+
+- **WHEN** 在 light / dark / eink 下分别把 Harness pane 置于窄、正常、超宽可用宽度，并显示短描述与长描述候选
+- **THEN** 短内容宽度随可用空间增长，长内容可超过 26em 但不超过 48em 或 pane 可用宽；菜单始终不越出宿主，
+  其它 list 浮层宽度不变
+
+#### Scenario: 候选关闭后 `⌃N` / `⌃P` 保留行移动
+
+- **WHEN** 候选未打开，composer 光标位于多行文本中，用户按 `⌃N` 或 `⌃P`
+- **THEN** 光标按输入区既有行移动语义处理，事件不被候选消费，消息不发送、文本不变
+
+#### Scenario: 选中后改文本使引用失效
+
+- **WHEN** 用户选中 `acc-skill-abc` 后删掉名字中的一个字符并发送
+- **THEN** 该引用失效，不注入、无 chip；消息按修改后的文本正常发送
+
+#### Scenario: 禁自动但允许显式
+
+- **WHEN** 含唯一 body marker 的 `acc-deploy` 声明 `disable-model-invocation: true`，模型调用
+  `skill_load("acc-deploy")`；随后用户从候选显式选择该 Skill 并发送
+- **THEN** 发现期已取得索引与策略元数据；模型调用返回 `skill_model_invocation_disabled`，仅自动入口的
+  执行期正文加载器未被调用，SKILL.md 与目录内其他文件均无正文 marker 进入工具结果；用户显式入口仍调用
+  加载器，`input` / `llm_request.messages` / provider wire 均有 body marker
+
+#### Scenario: 禁手动但允许自动
+
+- **WHEN** 含唯一 body marker 的 `acc-background` 声明 `user-invocable: false`，用户打开候选并尝试经旧
+  引用显式发送；模型随后自主调用 `skill_load("acc-background")`
+- **THEN** 该 Skill 不出现在候选，索引仍列出并标注禁手动；仅显式入口的执行期正文加载器未被调用，
+  `input` / `llm_request.messages` / provider wire 无 marker；自动入口仍调用加载器且工具结果有 body marker
+
+#### Scenario: 旧引用不能绕过禁手动
+
+- **WHEN** 一个引用创建后，对应 Skill 改为 `user-invocable: false`，用户恢复草稿并发送
+- **THEN** chip 呈禁用态；后端不调用执行期正文加载器、不注入，`input` / `llm_request.messages` /
+  provider wire 无正文，并给出 `skill_user_invocation_disabled` 非阻断提示；模型自主入口仍可用
+
+#### Scenario: 非法调用元数据 fail closed
+
+- **WHEN** 一个 Skill 的调用策略字段重复、带引号、写为 `yes` 或其他非 `true` / `false` 值
+- **THEN** 发现期已解析出非法状态；两个入口均返回 / 报告 `skill_invocation_invalid`，执行期正文加载器
+  未被调用，显式 `input` / `llm_request.messages` / provider wire 与自动工具结果均无正文；系统不得按字段
+  缺失的默认开放值处理；未知 frontmatter 字段不产生该错误
+
+#### Scenario: 自动入口默认行为不削弱
+
+- **WHEN** `harness.web_access.enabled=true` 且 Alex 提问需要联网搜索；随后另一个问题明确要求使用某外部
+  Skill、访问特殊站点或读取非 HTML 内容
+- **THEN** 一般网页搜索默认使用统一 `web_search` / `web_fetch`，不再要求经 `skill_load` 后调用 `cli_run`；
+  只有用户显式选择 Skill、特殊站点或非 HTML 场景才经对应 CLI，工具结果与既有留存形态不变；
+  `harness.web_access.enabled=false` 时 Web 工具不注册，不得以幻觉调用代替显式 CLI 选择
+
+#### Scenario: 权限判定对两个入口一致
+
+- **WHEN** 含唯一正文 marker 的 SKILL.md 已在发现期被成功读取并解析出 description / 策略后，配置
+  `deny = ["skill_load"]` 或 `deny = ["skill_load(<name>)"]`，在任一权限档分别经显式选择与模型自主调用
+  加载同一 Skill
+- **THEN** 两个入口的执行期正文加载器均未被调用；显式路径不注入且 `input` / `llm_request.messages` /
+  provider wire 无 marker，自动工具结果无 marker；同一命中规则原文按各入口既有错误面报告；
+  不得用文件系统零读取作为该拒绝路径的判据
+
+#### Scenario: 显式选择不改变后续命令权限
+
+- **WHEN** 用户在任一权限档显式选择一个 Skill，且技能内容引导模型执行一条写操作命令
+- **THEN** `cli_run` 沿用现行档位 / 规则 / 命令分类 / 缓存；该请求批准就请求批准，该自动放行就自动放行；
+  显式选择不改变判定输入或结果
+
+#### Scenario: 恢复与策略变更不重写历史
+
+- **WHEN** 会话已含显式技能 part 与自动 `skill_load` 工具结果，随后 Skill 被改为禁自动 / 禁手动并恢复会话
+- **THEN** 最后一条 `llm_request.messages` 原样灌回，旧显式正文与自动工具结果仍在历史且不被回写；
+  面板仍不显示显式正文；只有恢复后的新调用按当前策略拦截
+
+#### Scenario: 重试与压缩不重新显式注入
+
+- **WHEN** 带显式技能 part 的轮次被重试或自动压缩
+- **THEN** 重试原样回放 `input`，显式预加载器不再次执行；压缩把正文作为普通内容参与摘要，新会话只接收
+  摘要且不重新显式注入，不承诺正文逐字节保留
+
+#### Scenario: 未知名字与非法发送元数据
+
+- **WHEN** 引用名字在发送时已不存在；或 `skills_json` 不是字符串数组
+- **THEN** 前者跳过注入、发送照常且无阻断性错误；后者以明确错误拒绝发送，不建会话、不入队
+
+#### Scenario: grammar 之外的名字仍可自主使用
+
+- **WHEN** Skill 根下存在名字含点 / 空格 / CJK / 点开头的技能
+- **THEN** 清单与候选不含它们；系统提示索引仍列出；含点（非点开头）/ 空格 / CJK 的名字仍可被模型自主
+  `skill_load`，点开头的名字仍按现行 `skill_name_invalid` 被拒绝
+
+#### Scenario: 无图片消息也剥离本地标记
+
+- **WHEN** 一条只有用户文本 + 显式技能 part、没有任何图片引用的消息被发送
+- **THEN** provider wire 的 text part 不含 `lumir_skill` 字段、正文仍在；附件目录不被解析或创建
+
+#### Scenario: 自动命名素材不含显式技能正文
+
+- **WHEN** 首轮或最近轮的用户消息带 `lumir_skill` part，标题生成读取 `title::material`
+- **THEN** 命名素材只含用户提问文本与既有问答，不含显式技能正文
+
+#### Scenario: 提示约定与策略标记进入系统提示
+
+- **WHEN** 发起新会话并读取装配后的系统提示，Skill 清单含默认、禁自动、禁手动与非法元数据条目
+- **THEN** 身份段含显式段头、斜杠路径与混合调用约定；默认条目不增加策略标记，其他条目分别标注；
+  固定段字节指纹与装配清单同步
+
+### Requirement: Harness Markdown strong 的流式渲染一致性
+
+凡项目既有 `@lezer/markdown` GFM 配置认定为 `StrongEmphasis` 的 strong，Harness SHALL 在普通段落、
+有序/无序列表、嵌套列表、跨行项、CJK/英文、标点与同行后续文本中一致渲染为 `<strong>`，MUST NOT
+把对应 delimiter 当作字面星号上屏。0 个 strong 的文本 MUST NOT 新增 strong；多个 strong SHALL
+分别保留其范围。代码 span、围栏/缩进代码块与转义星号 SHALL 保持字面文本，MUST NOT 因本合同
+被转为 strong。本 requirement MUST NOT 扩展既有 GFM 解析器未认定为 strong 的语法。
+
+流式增量渲染与终态渲染 SHALL 对同一段完整源收敛到相同的 strong 语义。流式定稿 MUST NOT
+在仍可能被后续缩进段落延续的列表内部切断块级上下文；尤其有序/无序列表空行后的合法缩进续段
+MUST NOT 被切成顶层缩进代码块。确认列表已被后续顶层块关闭后，该列表 SHALL 可以定稿；普通段落
+与已闭合代码围栏的既有定稿能力 MUST NOT 被移除。本合同只约束解析与 DOM 语义，MUST NOT 改变
+既有排版、进度尾行、引用卡、工具卡或审批卡。
+
+#### Scenario: strong 宿主与文本矩阵
+
+- **WHEN** 同一真实渲染件处理普通段落、有序/无序/嵌套列表和跨行项中的 0/1/多个 strong，
+  输入覆盖 CJK、英文、标点与闭合 delimiter 后的同行后续文本
+- **THEN** 每个被既有 GFM 解析器认定的 strong 都生成对应 `<strong>`，可见文本不含其 delimiter，
+  后续文本仍按原文呈现；无 strong 的宿主不产生 `<strong>`
+
+#### Scenario: 代码链接与转义反例
+
+- **WHEN** strong 内含链接或代码 span，链接内含 strong，或列表/段落含 `` `**代码**` ``、
+  围栏代码与 `\*\*转义\*\*`
+- **THEN** strong 与链接的嵌套范围保持解析语义；代码和转义中的星号逐字保留且不生成 `<strong>`，
+  不得通过全局替换星号获得表面正确
+
+#### Scenario: 空行后的列表缩进续段流式到达
+
+- **WHEN** 有序列表项在空行后以四空格缩进继续一个含 `**粗体**后续` 的合法段落，流式 chunk
+  先到达列表与该续段，稍后才到达后续顶层块
+- **THEN** 中间态与终态都把续段保留在列表项内并渲染 `<strong>`，不得产生含该续段的顶层
+  `<pre>` 或字面 `**`；后续顶层块到达后列表可定稿
+
+#### Scenario: 已结束块仍可定稿
+
+- **WHEN** 普通段落后出现空行，或列表/闭合代码围栏之后已经出现后续顶层块
+- **THEN** 已结束块按既有增量路径定稿，进行中的尾块继续重渲；不得为了修复列表上下文而
+  退化为每个 chunk 都冻结全部正文或取消全部增量定稿
+
+### Requirement: 统一 Web 搜索与抓取工具
+
+`harness.web_access.enabled` 缺省为 `true`，交互主会话 SHALL 默认提供 `web_search` 与 `web_fetch`，
+两者 SHALL 使用同一结果信封与 `WebSource` 来源结构；显式 false 不注册这两件工具。`web_search` 输入 SHALL 仅含 `query` / `count` / `need_content`：query trim 后为 1–128 个
+Unicode 字符且不全为空白；count 缺省 5、本地允许 1–10，越界 SHALL 返回 `web_args_invalid` 而非静默
+clamp；`need_content` 缺省 `false`。`web_fetch` 输入 SHALL 仅含 1–8192 字符的 `url`。工具 schema
+MUST NOT 暴露 API Key、provider、base URL、超时、重试、响应上限或任意 HTTP header。
+
+统一信封 SHALL 含 `ok` / `provider` / `provider_id` / `operation` / `attempts` / `local_precheck` /
+`trust` / `truncated` / `truncated_fields`。`local_precheck` SHALL 记录 Fetch 是否**实际执行过**
+本地预检：未配置、配置非法、参数非法、权限拒绝等未进入 executor 的路径为 `false`；进入 executor
+后无论预检成功、失败还是取消均为 `true`。审计 MUST NOT 仅按 `operation=fetch` 推断该值。`provider` / `provider_id` SHALL 为 `string | null`：只有 provider
+解析成功才填 `"deepseek"` 与实际配置映射键；未配置、配置歧义、自定义 base URL 及解析前的参数 /
+权限 / URL 拒绝均填 null 且 `attempts=0`，MUST NOT 伪造 `"deepseek"` 为配置 id 或在多候选时暗选。
+基础参数形状与 URL 静态安全校验（scheme / userinfo / 控制字符 / 反斜杠 / 缺失 host，以及
+`localhost`、`.local`、非全局单播 IP 字面量）SHALL 在 provider 解析与可选批准预览之前完成：
+任一 provider 配置状态（未配置、配置歧义、自定义 base URL）都 MUST NOT 掩盖 URL 安全拒绝，
+被拒调用 MUST NOT 变成 `web_provider_unconfigured`，也 MUST NOT 产生批准卡；这些路径的
+`local_precheck` 为 `false`（预检未执行），`attempts` 为 `0`，可解析出 origin 的拒绝仍带
+`source.url`，带凭据的输入 MUST NOT 被抄进 `source`。
+成功 Search SHALL 另带完整 query 与 `results: WebSource[]`，成功 Fetch SHALL 另带
+`source: WebSource`。`WebSource` SHALL 固定包含 `url` / `title` / `snippet` / `summary` /
+`content` / `content_format` / `site` / `date` / `authority`。title SHALL 始终为 string，
+Fetch 空标题固定 `""`；其它可空字段的无信息值才用 null，MUST NOT 混用空串与 null。
+Search SHALL 原样保留 date 与 -1–4 的 authority（含 -1 = 未知）；Fetch 无这两项信息时填 null。
+`site_icon` MUST NOT 进入结果，避免派生未审计的图片请求。
+
+Search 的 `need_content=false` SHALL 作为默认工作流：先返回来源与摘要，再由模型按需调用 Fetch 获取
+Markdown。Search 空数组 SHALL 是成功的空结果；Fetch 空 Markdown SHALL 返回 `web_empty_content`，
+不得冒充有正文的成功。Fetch 的 `source.url` SHALL 是本地预检后实际提交给 DeepSeek 的 URL，
+MUST NOT 伪造 provider 未返回的 final URL。
+
+系统 SHALL 同时限制 API 响应字节与进入模型上下文的字符：Search title / snippet / summary 每项上限
+300 / 500 / 1,200 Unicode 字符，Search content 每项 4,000 字符且全部 results 文本合计 24,000 字符，
+Fetch Markdown 24,000 字符，Lumir message / provider_message / request_id / provider_code 各 1,000
+字符；Search / Fetch API 响应
+分别不得超过 2 / 4 MiB。聚合裁剪 SHALL 按 content → summary → snippet 顺序，结果只能整条移除；
+URL / date / authority / provider MUST NOT 被裁剪。任何字段或数组被裁剪时 SHALL 同时置
+`truncated:true` 并在 `truncated_fields` 列出稳定路径；未截断时该数组为 `[]`。只在文本末尾加省略号
+而缺少这些字段 SHALL 视为违约。API 字节超限 SHALL 返回 `web_response_too_large`，不解析半截 JSON。
+
+#### Scenario: 默认搜索后再抓取
+
+- **WHEN** 模型以默认参数调用 `web_search`，随后选择一个来源调用 `web_fetch`
+- **THEN** Search 请求携带 `count=5, need_content=false`，返回结构化来源但无需返回正文；Fetch 第二跳
+  返回同一 `WebSource` 形状的 Markdown 内容，最终回答可引用 URL / title / date / authority / provider
+
+#### Scenario: 空结果与空正文不同
+
+- **WHEN** DeepSeek Search 返回空 results，或 Fetch 返回空 Markdown
+- **THEN** 前者为 `ok:true, results:[]` 且不自动重试；后者为 `web_empty_content`，不得返回伪造正文
+
+#### Scenario: 可空 provider 与空标题形状一致
+
+- **WHEN** 分别发生无配置、配置歧义、解析前参数错误，以及 Fetch 无标题
+- **THEN** 前三者的 `provider` / `provider_id` 均为 null 且 `attempts=0`，不暗选或伪造 id；
+  最后一者的 `source.title` 为 `""` 而非 null
+
+#### Scenario: URL 安全拒绝先于 provider 解析
+
+- **WHEN** `web_fetch` 收到 `localhost`、`.local`、非全局单播 IP 字面量、非 HTTP(S) scheme 或带凭据的
+  URL，且 provider 处于未配置 / 配置歧义 / 自定义 base URL 任一状态（`approval` 为任意值）
+- **THEN** 结果恒为 `web_url_blocked`（参数形状非法则为 `web_args_invalid`），MUST NOT 被配置状态
+  改写成 `web_provider_unconfigured`；`provider` / `provider_id` 为 null、`attempts=0`、
+  `local_precheck=false`，不产生批准卡，可解析出 origin 的路径仍带 `source.url`
+
+#### Scenario: 截断显式且 JSON 完整
+
+- **WHEN** 搜索摘要、正文、结果数组或 provider 错误文案超过预算
+- **THEN** 输出仍为完整 JSON，顶层 `truncated:true`，`truncated_fields` 精确指出被裁路径；未裁的
+  URL / date / authority / provider 保持完整，不出现只加省略号的无标记截断
+
+#### Scenario: 响应字节与上下文预算独立
+
+- **WHEN** DeepSeek 响应超过对应 2 / 4 MiB 上限，或合法响应的正文超过模型字符预算
+- **THEN** 前者返回 `web_response_too_large` 且不解析半截 JSON；后者可返回有界结果但必须显式标记截断
+
+#### Scenario: 错误元数据同样有界
+
+- **WHEN** provider 的错误响应带超长 `message` / `provider_message` / `request_id` / `provider_code`，
+  或本地预检失败的错误串包含完整 8,192 字符 URL
+- **THEN** 四个字段各自不超过 1,000 字符，且被裁字段逐一进入 `truncated_fields`；URL 本身的
+  `source.url` 不被裁剪
+
+#### Scenario: 审计按实际发生记录预检与外发
+
+- **WHEN** 分别发生 allow_all 正常执行、ask 批准后执行、deny、未配置
+- **THEN** 只有进入 executor 的 Fetch 审计 `local_precheck=true`；`provider_fetch` 只在
+  `attempts>0` 时为 true；deny / 未配置的审计两个布尔均为 false，MUST NOT 按 operation 恒猜
+
+### Requirement: Web 访问策略与 origin 例外
+
+`harness.web_access.approval` 缺省为 `allow_all`，`web_search` / `web_fetch` SHALL 在所有权限模式中
+默认直接执行；只有显式 `approval=ask` 才进入批准闸。Web 判定顺序 SHALL 为 deny > 既有硬层 >
+`web_access.approval`，deny 永远优先。Web MUST NOT 使用 allow 规则或会话缓存派生授权，也 MUST NOT
+生成 Web 专用持久 allow / 免问动作；其它工具的 allow / 缓存语义不变。
+
+Search 的 permission subject SHALL 为完整 query；Fetch 的 subject SHALL 为规范化 origin
+（scheme + host + 有效 port），origin 规范化 SHALL 小写 scheme / host、省略默认 port、保留非默认 port，
+且不含 userinfo / path / query / fragment。默认无批准卡时，工具行与结果 SHALL 仍完整展示 query / URL、
+provider id、费用、双路外发与 `trust:"untrusted"`，MUST NOT 只靠 80 字摘要满足可见性。
+`harness.permissions.deny` 中的 `web_fetch(origin)` SHALL 在初始调用与每跳重定向重新判定。
+
+跨 origin 重定向不是新工具调用，MUST NOT 另开批准。预检 SHALL 先校验 Location 的 scheme / 凭据 /
+host，再检查目标 origin deny；未封禁才继续 DNS / 连接 / 内容类型校验，全部通过后可执行。
+被封禁目标在任何 approval 值下都 SHALL 返回 `permission_denied`，且不连接该 origin、不调用 DeepSeek。
+基础参数形状与 URL scheme / userinfo 校验 SHALL 在可选批准预览之前完成，非法调用不得产生携带凭据
+或无效目标的批准卡。任何 approval 值都不得跳过 DNS、重定向、内容类型、预算或密钥检查。
+
+#### Scenario: 默认 Allow 不逐次弹卡且审计完整
+
+- **WHEN** approval 缺省为 `allow_all`，模型以不同 query 连续搜索并抓取多个页面
+- **THEN** 所有调用默认直接执行，没有会话范围限制或逐次批准卡；每次工具行 / 结果仍保留完整
+  query / URL、provider、attempts、费用与 untrusted 说明
+
+#### Scenario: origin deny 恢复默认策略
+
+- **WHEN** 权限 deny 含 `web_fetch(https://example.com)`，用户单独移除或清空该 deny
+- **THEN** 写入复用既有权限规则与 revision；默认 `allow_all` 下该 origin 恢复直接执行，`ask` 下恢复
+  批准闸，approval 不被暗改，其它规则不变
+
+#### Scenario: 跨 origin 重定向只做硬校验与 deny
+
+- **WHEN** Fetch 收到指向另一 origin 的 Location，目标未封禁；另一序列的目标命中 origin deny
+- **THEN** 未封禁目标经 scheme / 凭据 / DNS / no_proxy / 内容类型校验后可继续，不另开批准；
+  封禁目标返回 `permission_denied`，未连接新 origin、未请求 DeepSeek
+- **AND** A → B 全部通过后，提交给 DeepSeek 的 url 与 `source.url` 都是最后一个通过校验的 B URL，
+  不得拒绝跨源或继续提交 A URL
+
+### Requirement: DeepSeek Web provider 与隐私
+
+Web provider SHALL 只从既有 `HarnessConfig` 快照中的 DeepSeek 条目解析。active 条目为 DeepSeek 时，
+系统 SHALL 只考察该条目；active 不是 DeepSeek 时，仅在全部条目中**恰好一条**满足「DeepSeek +
+非空 Key + 官方 base URL」时复用该完整条目，零条或多条均返回 `web_provider_unconfigured`。
+Key 与 base URL MUST 同出一条目，MUST NOT 混用。Web tools 不需要模型清单，因此 MUST NOT 复用要求
+`models` 非空的 LLM configured 判据。
+
+官方地址 SHALL 只认 `base_url=None` 或规范化后等于 `https://api.deepseek.com`（允许末尾 `/`）。
+自定义 DeepSeek-compatible base URL MUST NOT 被探测或假定支持 tools；不可用时 MUST NOT 拿同一 Key
+改投官方地址。active DeepSeek 不可用时 MUST NOT 暗选其它条目。无配置、配置歧义或自定义 base URL
+SHALL 返回 `web_provider_unconfigured`，DeepSeek 请求数与 curl 子进程数均为 0。
+
+Search SHALL 只向 `POST https://api.deepseek.com/v1/tools/search` 发送 `query` / `count` /
+`need_content`，Fetch SHALL 只向 `POST https://api.deepseek.com/v1/tools/fetch` 发送 `url`；
+MUST NOT 发送 `ori_question` / `localization`。API Key SHALL 只进入 `Authorization: Bearer …`，
+MUST NOT 进入 URL、请求 JSON、批准卡、日志、panel、会话 JSONL、wire、错误或测试输出。来自 provider /
+目标站的错误文本 SHALL 先脱敏再限长；恶意回显 Key 时只能留下 `[REDACTED]`。
+
+Search query 会发给 DeepSeek；Fetch URL 会发给 DeepSeek，并会由 Lumir 预检与 DeepSeek 抓取发往
+目标站。默认无批准卡时该事实与费用 SHALL 仍在设置区、工具行与结果可见；`approval=ask` 时还须在
+批准卡可见。目标预检与 DeepSeek client SHALL 都显式 `no_proxy`，不得继承系统或手动代理。
+tools API 的 3xx MUST NOT 跟随并统一归 `web_provider_protocol_error`；目标预检 MUST NOT 携带
+DeepSeek Key、Cookie、vault 内容或浏览器登录态。
+
+#### Scenario: active 非 DeepSeek 时唯一候选可用
+
+- **WHEN** active 为其它 provider，且现有条目中恰好一条 DeepSeek 具有非空 Key 与官方 base URL
+- **THEN** Web 请求复用该完整条目；若候选为零或多条则返回 `web_provider_unconfigured`，不按字典序暗选
+
+#### Scenario: 自定义 base URL fail closed
+
+- **WHEN** active DeepSeek 条目使用自定义 DeepSeek-compatible base URL
+- **THEN** 返回 `web_provider_unconfigured`，不探测 tools、不把 Key 改投官方地址、不选择其它条目，
+  且不产生 HTTP 或 curl 请求
+
+#### Scenario: 恶意错误回显不泄露 Key
+
+- **WHEN** mock provider 或目标站在错误 body / URL 中回显 canary API Key
+- **THEN** 日志、批准卡、panel、JSONL、wire、错误事件与测试输出均无 canary；query / URL 与 provider
+  等审计字段仍按合同可见
+
+### Requirement: Web 目标网络安全
+
+每次 Fetch 与每次重定向 SHALL 重新执行完整 URL / DNS 校验。URL SHALL 为 1–8192 字符的
+HTTP / HTTPS、含 host、无 userinfo；其它 scheme、控制字符、反斜杠混淆与解析失败 SHALL 拒绝，
+MUST NOT 修复成另一个 URL。IP 字面量与 DNS 的全部 A / AAAA 结果 SHALL 都是全局可路由单播；
+任一结果为 loopback、private、link-local、unspecified、multicast、reserved、documentation、CGNAT、
+IPv4-mapped / 兼容映射的非全局地址时整条拒绝，MUST NOT 只挑一个公网地址放行。`localhost`、
+`.local` 与 DNS 解析失败 SHALL fail closed。初始 URL 的 scheme / 凭据与主机类判定（`localhost`、
+`.local`、IP 字面量是否全局可路由）只依赖 URL 字面量，SHALL 在 provider 解析之前完成；重定向的
+每一跳仍 SHALL 重新执行同一套主机类判定，两处共用同一判定实现（同一语义 MUST NOT 两处真源）。
+
+连接 SHALL 只使用已验证地址集，并保留原 host 的 Host 与 TLS SNI；连接前 MUST NOT 再次由系统 resolver
+自由选择地址。目标预检与 DeepSeek client SHALL 都显式 `no_proxy`，每个 hop MUST NOT 重新继承
+HTTP(S)_PROXY / ALL_PROXY / NO_PROXY 或手动 Proxy。`no_proxy + 已验证地址集 + 原 Host / SNI +
+手动逐跳 redirect` SHALL 是同一客户端构造不变量，不能只靠 resolver override 防代理绕路。
+校验与连接 SHALL 共用同一地址集，下一跳 SHALL 重新执行全集校验，以防 check-then-connect 与
+DNS rebinding 绕过。错误 MUST NOT 回显完整 DNS 答案或内部网络拓扑。
+
+本地预检 SHALL 每个 hop 先发 HEAD，无法判定时用 `Range: bytes=0-4095` GET 复核；即使目标忽略 Range，
+读取 SHALL 以响应头和最多 4 KiB 为界并随即关闭，预检正文 MUST NOT 进入模型。单 hop 不得超过 10 秒、
+整链不得超过 30 秒、最多 5 次重定向；预检 MUST NOT 自动重试。相对 Location SHALL 按当前 URL 解析并
+逐跳重验 scheme / 凭据 / host 与 origin deny；跨 origin 不是新工具调用，未封禁才继续 DNS 与连接，
+不另开批准。
+
+预检 SHALL 只接受 `text/html` 与 `application/xhtml+xml`（可带参数）。明确非 HTML 返回
+`web_unsupported_content`，Content-Type 缺失或冲突且 Range GET 仍无法判定返回
+`web_content_type_unknown`；两者只可提示另行选择 curl，MUST NOT 自动调用。预检通过后才可调用
+DeepSeek Fetch，且只发送最后一个通过全部校验的 URL（允许跨 origin）。Search MUST NOT 主动访问结果 URL。
+
+Lumir SHALL 如实区分本地保证与 provider 信任边界：本地预检可验证自己的 DNS / redirect / 内容类型，
+但 DeepSeek 不返回远端 final URL、连接 IP 或 redirect chain，系统 MUST NOT 声称验证 provider 内部
+DNS / redirect，也不得把预检 URL 当作远端 final URL。若不能维持「校验地址与连接地址同一」，
+实现 MUST NOT 退化为普通 HTTP client 的自动 DNS 解析。
+
+#### Scenario: 公私混合 DNS 与 rebinding 均拒绝
+
+- **WHEN** 目标 DNS 同时返回公网与私网地址，或第一次校验为公网、后续解析出现私网
+- **THEN** 整条 Fetch 被拒绝；连接只可使用已验证地址集且 Host / SNI 不变，不得因存在一个公网答案而放行
+
+#### Scenario: 系统代理不得绕过固定 IP
+
+- **WHEN** HTTP(S)_PROXY / ALL_PROXY 指向本地代理，预检目标与 DeepSeek 各自有独立 HTTP 服务
+- **THEN** 预检只连接已验证目标地址，代理零请求；DeepSeek 同样不经过代理，且 3xx 不跟随、
+  Bearer 不泄漏。恢复系统代理的错误实现必须能被该反例判红
+
+#### Scenario: 有界预检与逐跳重验
+
+- **WHEN** 目标页面先对 HEAD 返回不明确 Content-Type，再对忽略 Range 的 GET 返回超大 HTML，随后跨 origin 跳转
+- **THEN** GET 最多读取 4 KiB 即关闭，正文不进入模型；下一跳重新做 URL / DNS 校验，整链超过时限或
+  5 跳即失败且不调用 DeepSeek
+
+#### Scenario: 整次 deadline 覆盖预检
+
+- **WHEN** Fetch 的本地预检耗时超过整次工具调用预算（150 秒；测试注入更短值）
+- **THEN** 在共享 deadline 用尽时返回 `web_timeout`、`attempts=0`，且不再向 DeepSeek 发送任何请求
+
+#### Scenario: 非 HTML 不自动回落 curl
+
+- **WHEN** 预检确认目标为 PDF / 二进制，或无法确认其为 HTML
+- **THEN** 分别返回 `web_unsupported_content` / `web_content_type_unknown`，DeepSeek attempts=0；
+  模型可另行选择 curl，但该调用仍走既有 CLI 权限与批准
+
+#### Scenario: 不伪称 provider 侧 SSRF 证据
+
+- **WHEN** DeepSeek 对预检后的 URL 返回 Markdown，但未返回远端 final URL / IP / redirect chain
+- **THEN** `source.url` 只表示本地预检并提交的 URL；审计不得写成「已验证 DeepSeek 最终连接地址」
+
+### Requirement: Web 请求可靠性与计费边界
+
+DeepSeek 每次 attempt SHALL 连接超时 5 秒；Search / Fetch attempt 总超时分别 30 / 45 秒，含退避与
+本地预检的整次工具调用分别不超过 100 / 150 秒。Fetch 的本地预检与 DeepSeek 阶段 SHALL 共享同一
+deadline：预检只使用剩余时间，整次 deadline 用尽后 MUST NOT 再发 provider 请求，返回 `web_timeout`
+且 `attempts=0`。响应头与 body 读取 SHALL 计入 deadline。取消 SHALL 复用
+`ctx.aborted()` 的同一事实源，在发起前、退避、响应等待与 body 分块读取时检查，且 MUST NOT 持会话锁。
+取消后 SHALL 关闭响应、不再发新 attempt、返回 `web_cancelled`，部分 JSON 不得当成功解析；
+已在 OS / provider 处理的请求无法撤销，系统 MUST NOT 承诺取消可撤销潜在费用。
+
+自动重试 SHALL 只针对 DeepSeek tools API 的 HTTP 408 / 429 / 5xx，最多初次 + 2 次重试；退避优先使用
+上限 2 秒的 `Retry-After`（delta-seconds 或 RFC 2822 / IMF-fixdate 的 HTTP-date；obsolete RFC 850 /
+asctime 形态按缺失处理），缺失时使用 250ms、1s。重试耗尽后的 `message` SHALL 如实写明「已尝试
+初次 + 重试」；单次不可重试的失败才使用「未自动重试」。其它 4xx（含 425）、本地 DNS / connect / TLS /
+timeout、取消、200 后响应过大 / 非 JSON / 坏 JSON / 形状不符 / 空正文 MUST NOT 自动重试。
+本地预检 MUST NOT 自动重试。Search 空 results 不视为错误，Fetch 空 Markdown 即使官方不计费也不重试。
+200 已到达后的本地解析失败 MUST NOT 为追求成功而重复请求。
+
+错误 SHALL 使用稳定内部分类：`web_args_invalid` / `web_access_config_invalid` /
+`web_provider_unconfigured` / `web_url_blocked` / `web_dns_failed` / `web_dns_blocked` /
+`web_redirect_limit` / `web_unsupported_content` / `web_content_type_unknown` / `web_network_failed` /
+`web_timeout` / `web_cancelled` / `web_response_too_large` / `web_provider_protocol_error` /
+`web_http_error` / `web_empty_content`。4xx / 5xx SHALL 归 `web_http_error` 并保留真实 status、
+attempts 与可得的 provider code / request id；3xx SHALL 不跟随并统一归
+`web_provider_protocol_error`，不得双重映射。DeepSeek 404 MUST NOT 被伪造为更精确的目标原因。
+`web_access_config_invalid` 的结果 SHALL 为 `provider:null, provider_id:null, attempts:0`，不注册、
+零请求，MUST NOT 映射为 `tool_unknown` 或 `web_provider_unconfigured`。
+
+Web 工具错误 SHALL 是 `ToolOutput{ok:false}`，不是 LLM `TurnError`，MUST NOT 设置 `Session.failed`
+或新增错误行重试按钮。Web 分类 MUST NOT 复用 LLM 的 `FailureKind`，也不得把 LLM 集合中的 425 加入
+Web 自动重试。工具内部重试只重发当前 HTTP 请求，MUST NOT 重放同批其它工具。
+
+#### Scenario: 可重试状态有界退避
+
+- **WHEN** mock DeepSeek 依次返回 429、503，随后成功；另一序列持续返回 500
+- **THEN** 前者在第三次 attempt 成功且 attempts=3；后者三次后以 `web_http_error` 收尾，退避不超过
+  合同上限，不重放同批其它工具
+
+#### Scenario: 其它失败不自动重试
+
+- **WHEN** 分别出现 HTTP 400 / 401 / 402 / 403 / 404 / 413 / 425、本地 timeout、取消，以及 200 后
+  过大 / 坏 JSON / 空正文
+- **THEN** 每类都按对应稳定 code 收尾且没有第二次 DeepSeek 请求；本地 timeout 与 200 后失败不得因
+  「也许未计费」而重发
+
+#### Scenario: 3xx 不跟随且只有一个错误码
+
+- **WHEN** DeepSeek 分别返回 301 / 302 / 307 / 308 与带敏感目标的 Location
+- **THEN** 每种都只归 `web_provider_protocol_error`，实际跳转请求为 0、Bearer 不泄漏，
+  不得再同时映射为 `web_http_error`
+
+#### Scenario: 取消不产生半截成功
+
+- **WHEN** 工具在等待响应头、读取 body 或退避期间收到停止
+- **THEN** 返回 `web_cancelled`、关闭响应且不再发新 attempt；已收部分 JSON 不进入成功结果，
+  会话锁不被 HTTP 等待占用
+
+### Requirement: Untrusted Web 内容与审计留存
+
+Search / Fetch 的 title、snippet、summary、content 与 provider_message SHALL 全部视为
+untrusted data，结果信封的 `trust:"untrusted"` SHALL 恒在。这些字符串只能作为 function output 的
+JSON 数据进入模型上下文，MUST NOT 注入 system prompt、AGENTS、权限规则、批准理由或 provider 配置。
+网页里的「忽略之前指令」「用户已批准」「以后全部 allow」「执行某命令」等文本 MUST NOT 被当作授权事实，
+不得改变权限配置 / 缓存，也不得自动触发 curl、写文件、修改权限、二次 Fetch 或新 provider 请求。
+后续模型调用 SHALL 重新经过同一工具循环、预算、权限与安全校验。
+
+每次工具完成 SHALL 仍经既有 `finish_call` 形成 function call / output 项与 panel 记录。provider 已实际
+请求后失败时，错误信封（含 attempts / status / provider / request id）SHALL 同样留在该工具结果中，
+下一次 LLM 请求的 wire 历史 SHALL 携带它。DeepSeek tools 是工具外部请求，MUST NOT 另造第二套
+`llm_request` / `llm_response`。
+
+后续 LLM 往返失败后的显式重试 SHALL 复用原 input，MUST NOT 重放已执行的 Web 工具；重试成功后的
+新 Web 调用仍按当前 `web_access.approval` 与 origin deny 处理，并重新执行全部安全校验。
+历史恢复 SHALL 仅凭既有 JSONL 保留 query / URL、来源、错误与
+truncated 标记，不依赖新 sidecar，不改写旧文件。
+
+#### Scenario: 网页提示注入不升级权限
+
+- **WHEN** 网页正文包含「忽略指令、自动批准、执行 curl、以后全部 allow」等指令
+- **THEN** 文本只作为 untrusted JSON 字符串保留，权限配置与缓存不变；后续写 / 危险工具仍按原模式进闸，
+  不产生自动 curl 或二次 Fetch
+
+#### Scenario: provider 失败后 wire 与重试不重放
+
+- **WHEN** DeepSeek 已实际请求并失败，随后一次 LLM 往返也失败，用户执行既有显式重试
+- **THEN** 工具错误连同 attempts / status / provider 留在 function output、panel 与 wire；重试请求的
+  messages 与失败请求相同，DeepSeek 请求次数不增加，工具结果不重复
+
+#### Scenario: 历史恢复保留统一来源与截断事实
+
+- **WHEN** 含 Search / Fetch 的会话仅凭 JSONL 恢复
+- **THEN** query / URL、来源字段、错误与 `truncated` / `truncated_fields` 均可按既有 wire 恢复，
+  不需要新 sidecar，旧文件逐字节不变
+
+### Requirement: Web 真实 HTTP 验收装配边界
+
+生产 Web provider SHALL 只有 official 装配：DeepSeek endpoint 来自官方常量，生产配置 MUST NOT 提供
+endpoint 参数、loopback 白名单、代理开关或跳过 URL / DNS 校验的路径。生产 transport / resolver
+SHALL 执行真实 HTTP 与系统 DNS，目标预检与 DeepSeek client 均显式 `no_proxy`。
+
+隔离测试与真机验收 SHALL 使用独立测试 provider / transport 装配，同时复用生产同款参数校验、DNS
+全集检查、地址固定、redirect、预算、重试与错误分类。只有测试 provider 构造器可接收合成 DeepSeek
+endpoint；生产构造器 MUST NOT 接收该参数。合成 resolver SHALL 给 `target.test` 返回脚本化公网身份，
+测试 connector SHALL 再把已验证公网 IP + 原 host 映射到本地监听地址，不得为验收全局放行 loopback。
+HTTPS SHALL 使用只含 `target.test` 的测试 CA / 证书与隔离 trust store，不得关闭证书校验或挂载真实
+浏览器凭据。
+
+注入 SHALL 只能由隔离验收专用 build / 装配显式激活；普通 `config.json`、环境变量、真实 vault、
+生产 `pnpm tauri dev` 与发布构建 MUST NOT 有激活入口。验收 SHALL 记录真实 HTTP method / path / body /
+状态序列 / 请求次数 / 读取字节数；LLM mock 只驱动确定的工具调用，MUST NOT 用 fixture 声明的错误
+替代这些 Web HTTP 证据。
+
+#### Scenario: 合成公网身份映射本地服务
+
+- **WHEN** 隔离验收以 `target.test` 跑 search → fetch、redirect / DNS 与超时取消
+- **THEN** 生产同款全集校验与地址固定先执行，测试 connector 才把已验证公网身份映射到本地监听；
+  记录包含真实 HTTP 请求形状与次数，不是仅断言 mock fixture 被调用
+
+#### Scenario: HTTPS 保留 Host / SNI 与证书校验
+
+- **WHEN** 隔离验收以 HTTPS 访问 `target.test`
+- **THEN** 仅信任测试 CA / 证书与隔离 trust store，原 Host / SNI 与证书链均被验证；不得关闭证书
+  校验或以 HTTP 用例冒充 SNI 证据
+
+#### Scenario: 生产不能激活测试旁路
+
+- **WHEN** 普通配置 / 环境变量 / 真实 vault / 生产构建尝试提供合成 endpoint 或 loopback 映射
+- **THEN** 没有激活入口，生产仍只使用官方 DeepSeek endpoint，URL / DNS 拒绝规则不变；
+  测试装配不出现在发布构建里

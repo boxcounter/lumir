@@ -1,6 +1,7 @@
 ---
 # change quick-open-file-oct23（M655）真机判据的第 2 组（M747 拆分）：**索引外惰性文件 + vault 外只读**。
-# 背景与拆分口径见 230a 的头注释（每组自带启动状态与 fixture、断言逐条保留、判据一条不放宽）。
+# 背景与拆分口径见 230a 的头注释（每组自带启动状态与 fixture；原始能力覆盖不减少，
+# direct action 删除后按新 UI 合同改准前置观测，Enter 后结果断言不放宽）。
 # 其余两组：230a（路径形态）/ 230c（重启与焦点作用域）。`run.mjs 230` 按 id 前缀选中三组。
 #
 # 为什么这条判据只能在真机层：
@@ -39,13 +40,17 @@ steps:
     expect:
       - label: 路径落进输入框（逐键注入的正观测；AX 的 Value 是回读面）
         ax: { has: "/AXComboBox \\(按路径快速打开文件\\) Value: dist/quickopen-lazy.md/" }
-  - name: 等存在探测补帧（索引不含它，直接行由探测命中给出）
-    do: waitFor
-    waitFor:
-      # 段边界容错，理由见 230a 的同名注释：直接行是前缀 / 目录 / 文件名三段 flex，
-      # WKWebView 在段之间插一个空格（`按 Enter 打开 dist/ quickopen-lazy.md`）。
-      has: ['/按 Enter 打开\s*dist\/\s*quickopen-lazy\.md/']
-    timeoutMs: 5000
+  - name: Enter 前的结果区（无真实候选时保留通用帮助，探测前后都不生成伪候选）
+    do: settle
+    expect:
+      - label: 通用帮助仍在
+        ax: { has: "输入路径或文件名；可加 :12 这样的行号后缀" }
+      - label: direct action 伪候选已删除
+        ax: { not: "按 Enter 打开" }
+      - label: 外部 direct action 伪候选同样不存在
+        ax: { not: "按 Enter 只读打开" }
+      - label: 可打开的精确路径不得先落普通空态
+        ax: { not: "没有匹配的条目" }
   - name: Enter
     do: key
     key: enter
@@ -76,11 +81,13 @@ steps:
     expect:
       - label: 路径落进输入框（逐键注入的正观测；AX 的 Value 是回读面）
         ax: { has: "/AXComboBox \\(按路径快速打开文件\\) Value: /etc/hosts/" }
-      - label: 直接打开行把「只读」写进动作里，且目标就是 /etc/hosts（vault 外、读取前判不了存在性；锚定整行，段边界 `\s*` 容错，见 230a 同名注释）
-        node: { name: "^按 Enter 只读打开\\s*/etc/\\s*hosts$", present: true }
-      - label: 该行的全路径通道（`title` → AX `help`）逐字是 /etc/hosts（零容差：属性不受分段空格影响）
-        ax: { has: '/help="\/etc\/hosts"/' }
-      - label: 有直接打开行时 MUST NOT 出现候选空态
+      - label: 外部精确路径没有真实候选时保留通用帮助
+        ax: { has: "输入路径或文件名；可加 :12 这样的行号后缀" }
+      - label: 不生成 vault 内 direct action 伪候选
+        ax: { not: "按 Enter 打开" }
+      - label: 不生成外部 direct action 伪候选
+        ax: { not: "按 Enter 只读打开" }
+      - label: 可打开的精确路径不得先落普通空态（存在性由 Enter 后的真实读取裁决）
         ax: { not: "没有匹配的条目" }
   - name: Enter
     do: key
@@ -136,11 +143,22 @@ steps:
     expect:
       - label: 路径落进输入框（逐键注入的正观测；AX 的 Value 是回读面）
         ax: { has: "/AXComboBox \\(按路径快速打开文件\\) Value: /tmp/lumir-655-missing/notes.md/" }
-      - label: Enter 之前给的是**尝试行**（不断言它不存在——读取前判不了存在性；锚定整行，段边界 `\s*` 容错，见 230a 同名注释）
-        node: { name: "^按 Enter 只读打开\\s*/tmp/lumir-655-missing/\\s*notes\\.md$", present: true }
-      - label: 该行的全路径通道（`title` → AX `help`）逐字点名输入串（零容差：属性不受分段空格影响）
-        ax: { has: '/help="\/tmp\/lumir-655-missing\/notes\.md"/' }
-      - label: 尝试行在场时 MUST NOT 出现候选空态
+      - label: 外部路径输入期间保留通用帮助，不用伪候选承诺可打开
+        ax: { has: "输入路径或文件名；可加 :12 这样的行号后缀" }
+      - label: 不生成 vault 内 direct action 伪候选
+        ax: { not: "按 Enter 打开" }
+      - label: 不生成外部 direct action 伪候选
+        ax: { not: "按 Enter 只读打开" }
+  - name: 外部路径的 Enter 前终态（存在性只能由 Enter 后的真实读取裁决）
+    do: settle
+    expect:
+      - label: 通用帮助仍保留
+        ax: { has: "输入路径或文件名；可加 :12 这样的行号后缀" }
+      - label: 不生成 direct action 伪候选
+        ax: { not: "按 Enter 打开" }
+      - label: 不生成外部 direct action 伪候选
+        ax: { not: "按 Enter 只读打开" }
+      - label: 尚未读取外部文件时不得抢先落普通空态
         ax: { not: "没有匹配的条目" }
   - name: Enter
     do: key
@@ -163,15 +181,16 @@ steps:
 ## 本组在验什么
 
 1. **索引外的惰性文件**：`dist/quickopen-lazy.md`（`dist` 是默认 `lazy` 档：盘上有、索引里没有）
-   按**精确路径**可打开——候选里找不到它，Enter 前的直接行由存在探测补帧给出；打开的是 vault
-   内文件（可编辑，不是 vault 外只读）。
-2. **vault 外只读**：`/etc/hosts` 以只读打开、标签页读屏名带「vault 外只读」、modeline 右段有
-   「vault 外 · 只读」；键入一个字符**不生效**且有一次性提示；`⌘S` 不写盘（字节与 mtime 逐项
-   未变）也不出保存失败提示。
-3. **外部路径不存在**：Enter 前给的是**尝试行**（读取前判不了存在性），Enter 后按「找不到」处置
-   并点名输入串，浮层保持打开、不留空标签。
+   按**精确路径**可打开——普通候选里找不到它时只保留通用帮助，不生成 direct action 或普通空态；
+   Enter 的真实异步解析与最终打开结果证明能力仍在，打开的是 vault 内文件（可编辑，不是只读）。
+2. **vault 外只读**：`/etc/hosts` 输入后同样只保留通用帮助，Enter 后以只读打开、标签页读屏名带
+   「vault 外只读」、modeline 右段有「vault 外 · 只读」；键入一个字符**不生效**且有一次性提示；
+   `⌘S` 不写盘（字节与 mtime 逐项未变）也不出保存失败提示。
+3. **外部路径不存在**：读取前判不了存在性，因此 Enter 前仍只保留通用帮助、无 direct action、无普通
+   空态；Enter 后按「找不到」处置并点名输入串，浮层保持打开、不留空标签。
 
-拆分口径（M747）：断言逐条保留、判据一条不放宽；本组自带启动状态与 fixture，独立诊断。
+拆分口径（M747）：原始能力覆盖不减少；direct action 删除后，Enter 前改判真实候选 / 通用帮助，
+Enter 后结果断言不放宽；本组自带启动状态与 fixture，独立诊断。
 同族其余两组：`230a-path-forms`（路径形态）/ `230c-restart-and-focus-scopes`（重启与焦点
 作用域）。三组同属 item 655，`run.mjs 230` 按 id 前缀选中全部。
 
@@ -188,13 +207,13 @@ steps:
 - **只读标签的读屏名判「vault 外只读」这个后缀**（`hosts（vault 外只读）`）：可见侧是文件名
   前的锁形图标，图标进不了 AX（见「覆盖边界」）。
 - **负例配正向断言**：`not: "vault 外 · 只读"`（惰性文件那条）旁边配「标签读屏名是
-  quickopen-lazy.md」；`not: "没有匹配的条目"` 旁边配「直接打开行在场」——单独写负向断言有恒真
-  风险。
-- **三处「直接打开行」的断言形态与 230a 同一条**（M755）：段边界 `\s*` 容错的正则（`waitFor`）
-  + 锚定整行的 `node` 断言 + 全路径 `help` 属性零容差判据。理由、现场与「为什么逐字子串恒红」
-  见 230a 正文的同名条目；`/etc/hosts` 与 `/tmp/lumir-655-missing/notes.md` 两处都是
-  「只读尝试行」（D590），因此锚定模式里带 `只读`——**动作措辞本身也是判据**（vault 内路径
-  MUST NOT 出现这两个字）。
+  quickopen-lazy.md」；`not: "没有匹配的条目"` 旁边配「通用帮助在场」——单独写负向断言有恒真
+  风险。两个 direct action 文案也只作负向判据，Enter 后的标签、正文、只读与磁盘结果是能力未删除的
+  正向证据。
+- **lazy 不再等待已删除的补帧标志**：精确 lazy 路径没有真实候选，存在探测前后 UI 都可以只是通用
+  帮助；直接断言通用帮助、无 direct、无普通空态后按 Enter，由 `confirm()` 的真实异步解析与最终
+  文件装载判定。外部普通文件路径的存在性只在 Enter 后的读取中裁决，因此不存在路径在 Enter 前也
+  不抢先显示普通空态。
 
 ## 覆盖边界（如实登记；三组共用的边界见 230a，本组只列本组相关的）
 
@@ -212,9 +231,14 @@ steps:
   只读）`）与可见文字不再带「只读」；图标在场 / `aria-hidden` / SVG 形态 / vault 内标签无图标
   由 `tests/visual/scenes/quick-open.spec.ts` 与 `tests/unit/tabs.test.ts` 钉住。
 - **索引外的惰性文件**：真机用 `vaultWrite dist/quickopen-lazy.md` 造（`dist` 是默认 `lazy` 档：
-  盘上有、索引里没有），Enter 前的直接行由存在探测补帧给出；相对 / vault 内绝对两形的探测矩阵
-  在 `tests/unit/quick-open.test.ts`，chromium 层另有 `fs_paths_exist` 桩的同款断言。
+  盘上有、索引里没有），Enter 前只保留通用帮助，最终打开结果由真实存在探测与读取链给出；相对 /
+  vault 内绝对两形的探测矩阵在 `tests/unit/quick-open.test.ts`，chromium 层另有 `fs_paths_exist`
+  桩的同款断言。
   文件名不用 `node_modules/` 是因为 KimiCU 的键名 DSL 没有 `_`（逐键注入的通道限制）。
+- **候选高亮行不在真机断言**：AX dump 没有稳定读数形态能区分高亮行（理由与落点见 230a 的
+  「覆盖边界」同条）。lazy 与 vault 外精确路径在结果区**没有对应候选行**，此时「不高亮任何行、
+  `aria-activedescendant` 缺省」由 `tests/visual/scenes/quick-open-active-target.spec.ts` 钉住；
+  本组判的是 Enter 仍直接打开（lazy 走 vault 内可编辑、外部走只读），能力不随高亮策略缩水。
 - **`/etc/hosts` 的 mtime 判据只读不写**：基线在打开之前记，判的是「这次运行没有写盘调用落到
   它身上」；系统自身对 `/etc/hosts` 的写（用户改配置）会让这条如实判红——跑批期间不要动它。
 

@@ -54,11 +54,14 @@ const REGISTRY: RegistryEntry[] = [
   {
     tier: "list",
     shape: "relative",
-    selectors: [".lumir-qo", ".lumir-toc"],
-    note:
-      "快速打开 / 大纲：`min(26em, 100vw − 28px)`（容器 font-size = 行文本 12.5px ⇒ 325px）。" +
-      "26em 的上限按「典型 48 字符 vault 路径 302px」定；列表宽度不随输入抖动，深路径靠行的" +
-      "两段结构（目录可省略 + 文件名完整 + title）承担。",
+    selectors: [".lumir-qo"],
+    note: "Quick Open：`clamp(26em,50vw,56em)` + viewport 夹取；只随视口/字号变，O7 输入框置底。",
+  },
+  {
+    tier: "list",
+    shape: "relative",
+    selectors: [".lumir-toc"],
+    note: "TOC 保持 `min(26em, 100vw − 28px)`；Quick Open 的独立宽度不得改到这里。",
   },
   {
     tier: "list",
@@ -102,6 +105,21 @@ const REGISTRY: RegistryEntry[] = [
     note:
       "合并选择器 / 会话历史：内容驱动 + 26em 上限 + 既有下限（selpop 188px、sesspop 200px）。" +
       "两处此前的形态是「无夹取」与「定值 200px」——2.13 档 + 320px pane 实测越界 85px / 名字裁 81%。",
+  },
+  {
+    tier: "list",
+    shape: "em-capped",
+    scaledText: true,
+    selectors: [".lumir-hp-skill-menu"],
+    note:
+      "Skill 候选：48em 上限 + 宿主可用宽驱动的响应式目标下限（change fix-skill-menu-ux-nov25）。" +
+      "通用 list 档仍保持 26em；placeOverlay 的 maxEm 组件覆盖与 pane 夹取共同生效。",
+  },
+  {
+    tier: "list",
+    shape: "em-capped",
+    selectors: [".lumir-link-suggest"],
+    note: "行内 wikilink 候选：内容驱动 + 26em 上限，placeOverlay 的 list 档负责视口夹取。",
   },
   {
     tier: "exempt",
@@ -300,7 +318,7 @@ test("浮层宽度注册表与源码双向对齐，且各档声明实际成立",
   );
 });
 
-test("注册表覆盖盘点出的全部浮层壳（15 个选择器）", () => {
+test("注册表覆盖盘点出的全部浮层壳（17 个选择器）", () => {
   const detected = [...floatingSelectors(rulesOf(realWorld()))].sort();
   assert.deepEqual(
     detected,
@@ -313,6 +331,8 @@ test("注册表覆盖盘点出的全部浮层壳（15 个选择器）", () => {
       ".lumir-hp-permpop",
       ".lumir-hp-selpop",
       ".lumir-hp-sesspop",
+      ".lumir-hp-skill-menu",
+      ".lumir-link-suggest",
       ".lumir-qo",
       ".lumir-toast",
       ".lumir-toc",

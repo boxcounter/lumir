@@ -6,6 +6,7 @@ import type { ProviderSettings } from "./ProviderSettings";
 import type { SettingsCapabilities } from "./SettingsCapabilities";
 import type { SettingsDefaults } from "./SettingsDefaults";
 import type { SettingsFileState } from "./SettingsFileState";
+import type { WebAccessSettings } from "./WebAccessSettings";
 
 /**
  * 设置面快照（design §5）：只含设置面的键，不把整份 [`AppConfig`] 交给页面。
@@ -27,8 +28,4 @@ active: string | null,
 /**
  * `harness.provider` 键是否显式存在且指向有效条目。
  */
-active_explicit: boolean, automation: AutomationSettings, naming: NamingSettings, capabilities: SettingsCapabilities, defaults: SettingsDefaults, 
-/**
- * 设置面范围内的诊断 + 文件级诊断（范围外的主题 / 编辑器 warning 不进这里）。
- */
-diagnostics: Array<ConfigDiagnostic>, };
+active_explicit: boolean, automation: AutomationSettings, naming: NamingSettings, capabilities: SettingsCapabilities, defaults: SettingsDefaults, diagnostics: Array<ConfigDiagnostic>, web_access: WebAccessSettings, };

@@ -27,6 +27,25 @@ export interface LogEventRecord {
   fields: Record<string, string>;
 }
 
+/**
+ * 手写 invoke 快照（`settings_get` 等）的 JSON 形状：契约里的 `bigint` 过 IPC 是 JSON 数字，
+ * 其余结构逐键保留。
+ *
+ * 场景覆写 `invoke` 时给的快照 MUST 用 `SnapshotJson<SettingsSnapshot>` 标注：后端契约加字段
+ * 而 fixture 没跟上时，`tsc-visual` 直接报缺键；不标注则要等运行期——面板读到 `undefined`
+ * 抛 TypeError、被 `open()` 吞成「读取失败」横幅，症状与真实 IPC 失败同形，只能靠 5s 超时
+ * 去猜（M865 的 diagnosed fixture 漏掉 Web 设置区新字段时就是这样红的）。
+ */
+export type SnapshotJson<T> = T extends bigint
+  ? number
+  : T extends string | number | boolean | null
+    ? T
+    : T extends readonly (infer U)[]
+      ? SnapshotJson<U>[]
+      : T extends object
+        ? { [K in keyof T]: SnapshotJson<T[K]> }
+        : T;
+
 /** `vault_list` 的一行（契约见 src/bindings/VaultListEntry.ts）。列在桩里只被**渲染**，
  *  排序由后端给定（前端不重排），因此这里的书写顺序就是浮层里的行序。 */
 export interface VaultListRow {
@@ -104,6 +123,12 @@ export interface VaultFixture {
    * 侧（桩不复制形状校验），那几类用通用 `failures` 通道注入。
    */
   externalFiles?: Record<string, string>;
+  /** Quick Open 显式目录语境的一层桩；未收录时从 entries 过滤直接子项。 */
+  directoryEntries?: Record<string, unknown[]>;
+  /** `fs_list_external_dir` 桩：绝对目录 → 直接子项（path + kind）。 */
+  externalDirectories?: Record<string, Array<{ path: string; kind: "file" | "dir" }>>;
+  /** 目录读取延迟，键为 vault 相对目录或外部绝对目录。 */
+  directoryDelayMs?: Record<string, number>;
   /** **内部字段，场景 MUST NOT 写**：`stubTauri` 把 {@link SYNTHETIC_PNG_BASE64} 挂在这里
    *  过桥进 init script（函数体序列化，模块常量在页面里不可见）。 */
   syntheticPng?: string;
@@ -151,6 +176,8 @@ export interface VaultFixture {
   positions?: Record<string, Record<string, { pos: number; y: number; x: number; at: number }>>;
   /** link_graph_resolve 桩：链接原文 → LinkResolveResult。未命中按 unresolved 应答。 */
   links?: Record<string, unknown>;
+  /** link_graph_resolve 的应答延迟；用于在真实 pending 窗口内移动光标或编辑。 */
+  linkGraphDelayMs?: number;
   /**
    * link_resolve_note 桩（M145）：`${from}\n${target}` → 解析到的 vault 相对路径，
    * `null` = 解析不到。未收录的键按 null 应答（同 link_graph_resolve 的「未收录即
@@ -663,6 +690,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
                 max_subruns_per_turn: 8,
                 max_concurrent: 4,
               },
+              web_access: { enabled: true, approval: "allow_all", status: "valid" },
             },
             cron: { tasks: [] },
           },
@@ -733,6 +761,39 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
           (e) => (e as { path?: string }).path === (args.path ?? ""),
         ) as { mtime_ms?: number } | undefined;
         return { mtime_ms: entry?.mtime_ms ?? null };
+      },
+      // Quick Open 显式目录语境：只返回一层，不写回 entries，因此 lazy 不会进入普通索引。
+      fs_scan_dir: async (args) => {
+        const dir = String((args as Record<string, unknown>).dir ?? "");
+        const delay = current?.directoryDelayMs?.[dir] ?? 0;
+        if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+        const custom = current?.directoryEntries?.[dir];
+        if (custom !== undefined) return custom;
+        const all = (current?.entries ?? []) as Array<Record<string, unknown>>;
+        const exact = all.find((entry) => entry.path === dir);
+        if (dir !== "" && exact === undefined) {
+          throw { code: "fs_not_found", message: `目录不存在：${dir}`, params: { rel: dir } };
+        }
+        if (exact !== undefined && exact.kind !== "dir") {
+          throw { code: "fs_path_invalid", message: `${dir} 不是目录`, params: { rel: dir } };
+        }
+        const prefix = dir === "" ? "" : `${dir}/`;
+        return all.filter((entry) => {
+          const path = String(entry.path ?? "");
+          if (!path.startsWith(prefix) || path === dir) return false;
+          const rest = path.slice(prefix.length);
+          return rest !== "" && !rest.includes("/");
+        });
+      },
+      fs_list_external_dir: async (args) => {
+        const path = String(args.path ?? "");
+        const delay = current?.directoryDelayMs?.[path] ?? 0;
+        if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+        const entries = current?.externalDirectories?.[path];
+        if (entries === undefined) {
+          throw { code: "fs_not_found", message: `目录不存在：${path}`, params: { rel: path } };
+        }
+        return entries;
       },
       // vault 外只读读取（M655，change quick-open-file-oct23 的 5.1）：真后端的形状校验 /
       // 常规文件 / 50MB / UTF-8 全在 Rust 侧（归 cargo test），桩只回答「这份绝对路径的内容是
@@ -851,7 +912,9 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
       },
       // link graph 桩：语义由场景 fixture 注入（前端不复制解析语义，
       // 桩也只查表不计算）；未收录的链接按 unresolved 应答。
-      link_graph_resolve: (args) => {
+      link_graph_resolve: async (args) => {
+        const delay = current?.linkGraphDelayMs ?? 0;
+        if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
         const hit = current?.links?.[args.link ?? ""];
         return (
           hit ?? {

@@ -9,6 +9,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { CommandError } from "./bindings/CommandError";
 import type { ReadSnapshot } from "./bindings/ReadSnapshot";
 import type { ExternalTextSnapshot } from "./bindings/ExternalTextSnapshot";
+import type { ExternalDirEntry } from "./bindings/ExternalDirEntry";
 import type { FsFileMeta } from "./bindings/FsFileMeta";
 import type { ConfigSnapshot } from "./bindings/ConfigSnapshot";
 import type { SettingsSnapshot } from "./bindings/SettingsSnapshot";
@@ -26,6 +27,7 @@ import type { LinkResolveResult } from "./bindings/LinkResolveResult";
 import type { CreateNoteResult } from "./bindings/CreateNoteResult";
 import type { ThinkingEffort } from "./bindings/ThinkingEffort";
 import type { DecisionReason } from "./bindings/DecisionReason";
+import type { WebApprovalPayload } from "./bindings/WebApprovalPayload";
 import type { VaultWorkspace } from "./bindings/VaultWorkspace";
 import type { RemovedVault } from "./bindings/RemovedVault";
 import type { SessionResumeInfo } from "./bindings/SessionResumeInfo";
@@ -134,6 +136,11 @@ export function fsReadSnapshot(path: string): Promise<ReadSnapshot> {
  */
 export function fsReadExternal(path: string): Promise<ExternalTextSnapshot> {
   return invoke<ExternalTextSnapshot>("fs_read_external", { path });
+}
+
+/** Quick Open 显式尾斜杠目录的一层只读枚举；安全校验全在 Rust，payload 只有 path + kind。 */
+export function fsListExternalDir(path: string): Promise<ExternalDirEntry[]> {
+  return invoke<ExternalDirEntry[]>("fs_list_external_dir", { path });
 }
 
 /** 读 vault 内单文件元数据（M218 doc-meta「修改于」的 mtime 数据源）。 */
@@ -497,7 +504,7 @@ export type HarnessEvent = HarnessEventEnvelope &
   (
     | { type: "text_chunk"; text: string }
     | { type: "reasoning_chunk"; text: string; index: number }
-    | { type: "tool_call"; name: string; status: "started" | "done"; summary: string ; call_id: string }
+    | { type: "tool_call"; name: string; status: "started" | "done"; summary: string ; call_id: string; web?: unknown }
     // approval_request 的 argv 是**数组**（后端 events.rs 发完整 argv 的 JSON 数组；
     // M406 修类型错配——此前这里声明 string，live 渲染成逗号拼接、快照恢复整段丢弃）。
     // purpose 是 M407 契约的可选字段（模型自述的用途句，阅读辅助——卡片展示用，
@@ -509,11 +516,11 @@ export type HarnessEvent = HarnessEventEnvelope &
     // reason 是 M459 契约的可选字段（判定依据：哪一层让这次调用进闸，面板「判定依据」行据它渲染）；
     // 类型取 Rust 侧的 ts-rs 导出（`src/bindings/DecisionReason.ts`，单一来源）。注意该联合里的
     // `deny_rule` 变体**不会到达前端**（deny 不产批准卡，规则原文走工具行的错误文案）——
-    // 前端只处理三个可上卡的 kind（见 harness-panel.ts 的 parseDecisionReason）。
+    // 前端处理三个既有 kind 与 Web 策略 kind（见 harness-panel.ts 的 parseDecisionReason）。
     // cron_task 是 change add-cron-conversational-registration 的可选字段（定时任务要素预览；
     // 形状由 Rust `ApprovalPreview.cron_task` 给出，前端按宽容解析消费——此处只声明键在场，
     // 不复制第二份形状定义，见 harness-panel.ts 的 `parseCronTaskPreview`）。
-    | { type: "approval_request"; id: string; tool: string; diff?: string; argv?: string[]; purpose?: string; reason?: DecisionReason; cron_task?: Record<string, unknown>; remember?: string; persist_rule?: string; source?: ApprovalSource }
+    | { type: "approval_request"; id: string; tool: string; diff?: string; argv?: string[]; purpose?: string; reason?: DecisionReason; cron_task?: Record<string, unknown>; web?: WebApprovalPayload; remember?: string; persist_rule?: string; source?: ApprovalSource }
     // usage（M443，change harness-cache-metrics §4.1）：cache 侧口径拆成会话累计与单回合两个
     // 投影——`cache_pct_session` = 控制行主读数（本逻辑会话 Σcached÷Σinput）、`cache_pct_turn`
     // = hover 气泡里的单回合值、`cache_write_tokens[_session]` = 本回合 / 本会话累计的缓存写入、
@@ -575,8 +582,12 @@ export type HarnessEvent = HarnessEventEnvelope &
  *  历史形态 `{"path", "selection":{…,text}}`；无上下文时传**空串**（面板在无路径文档上就
  *  这么发——后端 `turn::parse_context` 对空串返回默认块，参数类型恒为 string；传 null 会
  *  触发 `invalid type: null, expected a string`，M398）。 */
-export function harnessSend(parts_json: string, context_json: string): Promise<void> {
-  return invoke<void>("harness_send", { parts_json, context_json });
+export function harnessSend(parts_json: string, context_json: string, skills_json: string): Promise<void> {
+  return invoke<void>("harness_send", { parts_json, context_json, skills_json });
+}
+
+export function harnessSkillsList(): Promise<import("./bindings/SkillSummary").SkillSummary[]> {
+  return invoke("harness_skills_list");
 }
 
 /** 失败轮次的显式重试（change add-harness-turn-retry-nov23 design §4.2）：`turn` 是 error 事件 /
@@ -708,7 +719,7 @@ export function harnessSetThinkingEffort(effort: ThinkingEffort): Promise<void> 
  * 缓存写入两值 + 成因标注；旧 `cache_pct` 单回合键退役。M526 的五个绝对值键与事件侧同属一份
  * 载荷——同键同值不变量见 HarnessEvent 的 usage 成员注：两侧键集合由同一份 `UsageSnapshot`
  * 序列化产出，改一侧即须同改另一侧）、
- * `pending_approvals[]{id,tool,diff?,argv?,purpose?,reason?,cron_task?,remember?,persist_rule?,source}`（列表，change
+ * `pending_approvals[]{id,tool,diff?,argv?,purpose?,reason?,cron_task?,web?,remember?,persist_rule?,source}`（列表，change
  * add-harness-subagents §8.3 起替代单槽 `pending_approval`：并行时多个子运行可以同时等批准；
  * `source` 是发起者，`kind: "subrun"` 的卡渲染在任务面板该 run 的行内。argv 是**字符串数组**，
  * M406 起与事件侧同型——此前前端按 string 读，快照恢复把数组整段丢弃；purpose 是 M413 契约
@@ -753,9 +764,9 @@ export function harnessListSessions(): Promise<SessionSummary[]> {
  * 从留存文件恢复历史会话并续聊（M392，change reshape-harness-session-recording design §6.2）：
  * `session_id` 是 `sessions/<vault 稳定 id>/<id>.jsonl` 的文件名。后端读源文件最后一条会话轮次
  * `llm_request` 的完整请求体（折叠其后未入请求的末尾响应），system + input 原样灌进
- * **新**会话并续写新留存文件（`opened_from=restore`）。返回的 `SessionResumeInfo.messages`
- * 是后端把灌回的 input 映射成的**面板重建消息**（M398）——调用方（src/harness-panel.ts 的
- * resumeSession）据此一次重放历史 transcript，不必再拉 `harness_state`。busy 态 reject
+ * **新**内存会话；首次真实请求才发布新留存文件（`opened_from=restore`）。返回的
+ * `SessionResumeInfo.messages` 是后端把灌回的 input 映射成的**面板重建消息**（M398）——
+ * `switched=false` 时为空，调用方不得重放。busy 下仅当前文件直切成功；真正切换时 busy reject
  * `harness_busy`；源文件不属于当前 vault reject
  * `harness_session_vault_mismatch`；留存不可读 / 格式非法 reject `harness_session_unreadable` /
  * `harness_session_invalid`（D409–D411 经 src/copy.ts 的 errorText 按 code 渲染）。

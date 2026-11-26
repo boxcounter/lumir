@@ -12,13 +12,14 @@ import { test } from "node:test";
 import {
   CANDIDATE_LIMIT,
   classifyVaultPath,
-  directChildIndices,
   lookupVaultPath,
   normalizeQuickOpenInput,
   quickOpenAttempts,
-  quickOpenDirectExternalText,
-  quickOpenDirectText,
+  quickOpenCandidates,
+  quickOpenCursorIndex,
   quickOpenDirectoryHint,
+  quickOpenRowKey,
+  quickOpenStartIndex,
   resolveQuickOpen,
   resolveQuickOpenSync,
   splitLineSuffix,
@@ -213,9 +214,11 @@ interface FakeEnv {
   present?: string[];
   /** 探测失败（后端不可用 / 未注册命令）：`lookupVaultPath` 与 resolver 都按「不存在」处置。 */
   probeFails?: boolean;
+  scanEntries?: Record<string, Array<{ path: string; kind: "file" | "dir" }>>;
+  scanErrors?: Record<string, { code: string }>;
 }
 
-function env(over: FakeEnv, probes: string[] = []): VaultLookupEnv {
+function env(over: FakeEnv, probes: string[] = [], scans: string[] = []): VaultLookupEnv {
   const files = over.files ?? [];
   const dirs = new Set(over.dirs ?? []);
   const present = new Set(over.present ?? []);
@@ -227,7 +230,13 @@ function env(over: FakeEnv, probes: string[] = []): VaultLookupEnv {
       if (over.probeFails === true) throw new Error("probe unavailable");
       return paths.filter((path) => present.has(path));
     },
-  };
+    scanDirectory: async (path: string, external: boolean) => {
+      scans.push(`${external ? "external" : "vault"}:${path}`);
+      const error = over.scanErrors?.[path];
+      if (error !== undefined) throw error;
+      return over.scanEntries?.[path] ?? [];
+    },
+  } as VaultLookupEnv;
 }
 
 test("存在性：逐字精确命中优先（哪怕折叠后还有别的等值项）", async () => {
@@ -357,18 +366,17 @@ test("目录语境：目录判决带出 directory；尾斜杠目录带出 direct
   const e = env({ files: ["notes/plan.md", "notes/sub/deep.md"], dirs: ["notes"] });
   const bare = resolveQuickOpenSync("notes", ROOT, e);
   assert.deepEqual(bare.verdict, { kind: "dir", path: "notes" });
-  assert.equal(bare.directory, "notes");
-  // 尾斜杠只作目录断言：判决仍是 invalid（Enter 沿用既有候选打开行为），directory 单独带出
+  assert.deepEqual(bare.directory, { path: "notes", external: false, status: "pending" });
   for (const raw of ["notes/", "/v/notes/", "/V/notes/", "./notes/"]) {
     const slash = resolveQuickOpenSync(raw, ROOT, e);
     assert.deepEqual(slash.verdict, { kind: "invalid" }, raw);
-    assert.equal(slash.directory, "notes", raw);
+    assert.deepEqual(slash.directory, { path: "notes", external: false, status: "pending" }, raw);
   }
 });
 
-test("目录语境：尾斜杠不是目录断言时退回既有口径（文件 / 不存在 / 外部 / vault 根）", () => {
+test("目录语境：非法路径与重复尾斜杠不产生目录扫描语境", () => {
   const e = env({ files: ["notes.md"], dirs: ["notes"] });
-  for (const raw of ["notes.md/", "ghost/", "/tmp/x/", "/v/", "/", "NOTES/", "notes//"]) {
+  for (const raw of ["../outside/", "notes\\a/", "notes//"]) {
     const res = resolveQuickOpenSync(raw, ROOT, e);
     assert.equal(res.verdict.kind, "invalid", raw);
     assert.equal(res.directory, undefined, raw);
@@ -380,47 +388,17 @@ test("目录语境：尾斜杠目录一次探测都不发（目录判定先于�
   const e = env({ files: ["notes/plan.md"], dirs: ["notes"], present: ["notes/"] }, probes);
   const res = await resolveQuickOpen("notes/", ROOT, e);
   assert.deepEqual(res.verdict, { kind: "invalid" });
-  assert.equal(res.directory, "notes");
+  assert.deepEqual(res.directory, { path: "notes", external: false, status: "empty", entries: [] });
   assert.deepEqual(probes, []);
 });
 
-test("目录语境：直接子级只取一层，深层后代与同前缀兄弟目录都不混入", () => {
-  const files = [
-    "notes/plan.md",
-    "notes/sub/deep.md",
-    "notes/sub/nested/even-deeper.md",
-    "notes-extra/note.md",
-    "notes2.md",
-    "notes.md",
-  ];
-  // 边界是 `/` 不是字符串前缀：`notes-extra` / `notes2.md` 都不是 `notes` 的子级
-  assert.deepEqual(directChildIndices(files, "notes"), [0]);
-  // 结果保持索引序（不重排、不打分）
-  assert.deepEqual(directChildIndices(["notes/b.md", "notes/a.md"], "notes"), [0, 1]);
-});
-
-test("目录语境提示：有子级 / 超上限 / 无子级三档", () => {
-  assert.equal(quickOpenDirectoryHint("notes", 0), "notes 是目录 · 没有直接子级文件");
-  assert.equal(quickOpenDirectoryHint("notes", 2), "notes 是目录 · 直接子级文件 2 条");
+test("目录语境提示：有子项 / 超上限 / 空目录三档", () => {
+  assert.equal(quickOpenDirectoryHint("notes", 0), "目录为空：notes");
+  assert.equal(quickOpenDirectoryHint("notes", 2), "notes 是目录 · 直接子项 2 条");
   assert.equal(
     quickOpenDirectoryHint("notes", CANDIDATE_LIMIT + 1),
-    `notes 是目录 · 直接子级文件 ${CANDIDATE_LIMIT + 1} 条，只显示前 ${CANDIDATE_LIMIT} 条`,
+    `notes 是目录 · 直接子项 ${CANDIDATE_LIMIT + 1} 条，只显示前 ${CANDIDATE_LIMIT} 条`,
   );
-});
-
-test("目录语境：中文与长路径按同一口径切直接子级", () => {
-  const dir = "项目资料/2026 年度/会议记录";
-  const files = [
-    `${dir}/第一次会议.md`,
-    `${dir}/归档/旧会议.md`,
-    `${dir}/归档/更早/旧会议.md`,
-    `${dir}-副本/草稿.md`,
-  ];
-  assert.deepEqual(directChildIndices(files, dir), [0]);
-  // 目录存在但只有更深文件 / 子目录 ⇒ 直接子级为空（不把深层文件顶上来）
-  assert.deepEqual(directChildIndices([`${dir}/归档/旧会议.md`], dir), []);
-  // 目录名本身为空时不产生候选（vault 根不当目录语境，见 living spec 的根自身口径）
-  assert.deepEqual(directChildIndices(files, ""), []);
 });
 
 test("判决：索引外的惰性文件经探测命中 ⇒ 直接打开（相对 / vault 内绝对两形）", async () => {
@@ -525,20 +503,6 @@ test("行展示：根目录文件没有目录前缀；vault 外绝对路径的�
   });
 });
 
-test("行展示：直接打开行动作前缀与路径分离（两种语言模板都按实际位置切）", () => {
-  const path = "notes/2026/projects/lumir/weekly-notes.md";
-  const zh = splitPathRowText(quickOpenDirectText(path), path);
-  assert.equal(zh.prefix, "按 Enter 打开 ");
-  assert.equal(zh.dirs, "notes/2026/projects/lumir/");
-  assert.equal(zh.name, "weekly-notes.md");
-  assert.equal(zh.suffix, "");
-  // 拼接回原文：拆分的唯一语义是收缩次序，文本不变。
-  assert.equal(zh.prefix + zh.dirs + zh.name + zh.suffix, quickOpenDirectText(path));
-  const en = splitPathRowText(quickOpenDirectExternalText(path), path);
-  assert.equal(en.prefix + en.dirs + en.name + en.suffix, quickOpenDirectExternalText(path));
-  assert.equal(en.name, "weekly-notes.md");
-});
-
 test("行展示：文本里没有路径 ⇒ 整段作前缀，不抛错、不猜位置", () => {
   assert.deepEqual(splitPathRowText("没有匹配的条目", "notes/a.md"), {
     prefix: "没有匹配的条目",
@@ -547,4 +511,278 @@ test("行展示：文本里没有路径 ⇒ 整段作前缀，不抛错、不猜
     suffix: "",
   });
   assert.deepEqual(splitPathRowText("", "notes/a.md"), { prefix: "", dirs: "", name: "", suffix: "" });
+});
+
+// ---------------------------------------------------------------------------
+// 一层显式目录语境（add-quick-open-directory-stable-nov25，先红后绿）
+// ---------------------------------------------------------------------------
+
+test("显式目录：相对/绝对 vault 目录与根都经一层扫描，文件和子目录同时候选", async () => {
+  const scans: string[] = [];
+  const e = env({
+    dirs: ["notes"],
+    scanEntries: {
+      notes: [
+        { path: "notes/a.md", kind: "file" },
+        { path: "notes/sub", kind: "dir" },
+      ],
+      "": [
+        { path: "README.md", kind: "file" },
+        { path: "notes", kind: "dir" },
+      ],
+    },
+  }, [], scans);
+  for (const [raw, path] of [["notes/", "notes"], ["/v/notes/", "notes"], ["/v/", ""]] as const) {
+    const res = await resolveQuickOpen(raw, ROOT, e);
+    assert.equal(res.directory?.path, path, raw);
+    assert.equal(res.directory?.external, false, raw);
+    assert.equal(res.directory?.status, "ready", raw);
+    assert.deepEqual(res.directory?.entries, path === "" ? [
+      { path: "README.md", kind: "file" },
+      { path: "notes", kind: "dir" },
+    ] : [
+      { path: "notes/a.md", kind: "file" },
+      { path: "notes/sub", kind: "dir" },
+    ], raw);
+  }
+  assert.deepEqual(scans, ["vault:notes", "vault:notes", "vault:"]);
+});
+
+test("显式目录：外部绝对路径只在尾斜杠语境扫描，普通外部文件链不变", async () => {
+  const scans: string[] = [];
+  const e = env({
+    scanEntries: {
+      "/tmp/x": [
+        { path: "/tmp/x/a.md", kind: "file" },
+        { path: "/tmp/x/sub", kind: "dir" },
+      ],
+    },
+  }, [], scans);
+  const directory = await resolveQuickOpen("/tmp/x/", ROOT, e);
+  assert.equal(directory.verdict.kind, "invalid");
+  assert.deepEqual(directory.directory, {
+    path: "/tmp/x",
+    external: true,
+    status: "ready",
+    entries: [
+      { path: "/tmp/x/a.md", kind: "file" },
+      { path: "/tmp/x/sub", kind: "dir" },
+    ],
+  });
+  const file = await resolveQuickOpen("/tmp/x/a.md:12", ROOT, e);
+  assert.deepEqual(file.verdict, { kind: "open", path: "/tmp/x/a.md", line: 12, external: true });
+  assert.equal(file.directory, undefined);
+  assert.deepEqual(scans, ["external:/tmp/x"]);
+});
+
+test("显式目录：文件加斜杠不去斜杠打开；缺失、不可读与空目录分态", async () => {
+  const e = env({
+    files: ["notes.md"],
+    scanEntries: { empty: [] },
+    scanErrors: {
+      "notes.md": { code: "fs_path_invalid" },
+      ghost: { code: "fs_not_found" },
+      denied: { code: "fs_scan_failed" },
+    },
+  });
+  for (const [raw, status] of [["notes.md/", "missing"], ["ghost/", "missing"], ["denied/", "unreadable"], ["empty/", "empty"]] as const) {
+    const res = await resolveQuickOpen(raw, ROOT, e);
+    assert.notEqual(res.verdict.kind, "open", raw);
+    assert.equal(res.directory?.status, status, raw);
+  }
+});
+
+test("显式目录：中文长路径与 lazy 直接子项保持扫描顺序，普通索引不扩充", async () => {
+  const dir = "项目资料/2026 年度/这是一个用于验证长目录路径的会议记录";
+  const e = env({
+    files: ["ordinary.md"],
+    scanEntries: {
+      [dir]: [
+        { path: `${dir}/第一次会议.md`, kind: "file" },
+        { path: `${dir}/归档`, kind: "dir" },
+        { path: `${dir}/lazy.md`, kind: "file" },
+      ],
+    },
+  });
+  const res = await resolveQuickOpen(`${dir}/`, ROOT, e);
+  assert.deepEqual(res.directory?.entries?.map((entry) => entry.path), [
+    `${dir}/第一次会议.md`,
+    `${dir}/归档`,
+    `${dir}/lazy.md`,
+  ]);
+  assert.deepEqual(e.files(), ["ordinary.md"]);
+});
+
+test("目录行展示：尾斜杠是 suffix，目录名不得成为空 name", () => {
+  for (const path of ["notes/sub/", "/tmp/中文长目录/子目录/"]) {
+    const parts = splitPathRowText(path, path);
+    assert.equal(parts.name, path.endsWith("子目录/") ? "子目录" : "sub");
+    assert.equal(parts.suffix, "/");
+    assert.equal(parts.prefix + parts.dirs + parts.name + parts.suffix, path);
+  }
+});
+
+test("普通搜索与 path:line 在目录能力加入后逐值不变", async () => {
+  const probes: string[] = [];
+  const scans: string[] = [];
+  const e = env({ files: ["notes/plan.md", "notes/spec.md"] }, probes, scans);
+  const resolution = await resolveQuickOpen("notes/plan.md:12", ROOT, e);
+  assert.deepEqual(resolution.verdict, { kind: "open", path: "notes/plan.md", line: 12, external: false });
+  assert.equal(resolution.directory, undefined);
+  assert.deepEqual(scans, []);
+  assert.deepEqual(probes, ["notes/plan.md:12"]);
+});
+
+// ---------------------------------------------------------------------------
+// 结果区游标的起点：高亮项必须等于 Enter 目标（change quick-open-active-target）
+//
+// 缺陷形态：`apply()` 恒把游标放到首条候选，而 `confirm()` 在用户未主动移动时绕过游标直接打
+// 开精确路径。输入 `a.md` 命中 `A.md` / `a.md` 两条时，屏幕高亮 `A.md`、Enter 打开 `a.md`
+// ——视觉承诺与动作分叉。判据是「起点下标」这一条纯函数：
+//   - `open` 判决 ⇒ 判决行（判决路径不是渲染出的候选则 -1，不高亮任何行）；
+//   - 目录 / 折叠多命中 / 找不到 ⇒ 首行（这些判决的 Enter 目标是当前游标行）；
+//   - `undecided` ⇒ -1：判决未定时 Enter 的目标有两种可能（探测命中 ⇒ 候选之外的精确路径，
+//     探测不成立 ⇒ 首行），分不出来之前不亮任何行。探测由 `render()` 对每个未定判决发起，
+//     落地后补帧带着 `open` / `missing` 重画，本文件的 `open` / `missing` 用例即落地后的形态。
+// ---------------------------------------------------------------------------
+
+test("游标起点：精确路径的唯一候选 ⇒ 高亮该行", () => {
+  const files = ["notes/plan.md"];
+  const res = resolveQuickOpenSync("notes/plan.md", ROOT, env({ files }));
+  assert.deepEqual(res.verdict, { kind: "open", path: "notes/plan.md", external: false });
+  const rows = quickOpenCandidates(res, files);
+  assert.deepEqual(rows.map((row) => row.path), ["notes/plan.md"]);
+  assert.equal(quickOpenStartIndex(res, rows), 0);
+});
+
+test("游标起点：精确路径有多条候选且判决行不在首位 ⇒ 高亮判决行，不是首行", () => {
+  const files = ["notes/plan.md", "apps/plan.md", "plan.md"];
+  const res = resolveQuickOpenSync("plan.md", ROOT, env({ files }));
+  assert.deepEqual(res.verdict, { kind: "open", path: "plan.md", external: false });
+  const rows = quickOpenCandidates(res, files);
+  assert.deepEqual(rows.map((row) => row.path), ["notes/plan.md", "apps/plan.md", "plan.md"]);
+  assert.equal(quickOpenStartIndex(res, rows), 2);
+
+  // 同形第二现场：折叠不敏感筛选下，精确命中同样可能落在第二位
+  const folded = ["A.md", "a.md"];
+  const lower = resolveQuickOpenSync("a.md", ROOT, env({ files: folded }));
+  assert.deepEqual(lower.verdict, { kind: "open", path: "a.md", external: false });
+  assert.equal(
+    quickOpenStartIndex(lower, quickOpenCandidates(lower, folded)),
+    1,
+  );
+});
+
+test("游标起点：direct-only（判决路径不在候选里）⇒ 不高亮任何行", async () => {
+  // 索引外文件经探测命中：判决可打开，但渲染出的候选只有同子串的其它文件
+  const e = env({ files: ["a/notes.md"], present: ["notes.md"] });
+  const res = await resolveQuickOpen("notes.md", ROOT, e);
+  assert.deepEqual(res.verdict, { kind: "open", path: "notes.md", external: false });
+  const rows = quickOpenCandidates(res, e.files());
+  assert.deepEqual(rows.map((row) => row.path), ["a/notes.md"]);
+  assert.equal(quickOpenStartIndex(res, rows), -1);
+
+  // 零候选同理（lazy 精确路径）
+  const lazy = env({ files: [], present: [".local/notes.md"] });
+  const lazyRes = await resolveQuickOpen(".local/notes.md", ROOT, lazy);
+  assert.deepEqual(lazyRes.verdict, { kind: "open", path: ".local/notes.md", external: false });
+  assert.equal(
+    quickOpenStartIndex(lazyRes, quickOpenCandidates(lazyRes, lazy.files())),
+    -1,
+  );
+});
+
+test("游标起点：判决未定 ⇒ 一律 -1（普通过滤也不先用首行冒充）；落地为找不到 ⇒ 首行", async () => {
+  const e = env({ files: ["notes/plan.md", "apps/plan.json"] });
+  const sync = resolveQuickOpenSync("plan", ROOT, e);
+  assert.equal(sync.verdict.kind, "undecided");
+  const rows = quickOpenCandidates(sync, e.files());
+  assert.deepEqual(rows.map((row) => row.path), ["notes/plan.md", "apps/plan.json"]);
+  // 普通子串查询的同步判决也是 undecided：查询串本身可能是一条索引外的精确路径，
+  // 探测命中时 Enter 打开它、不命中时才落到首行——落地之前两种都可能。
+  assert.equal(quickOpenStartIndex(sync, rows), -1);
+
+  // path:line 的同一次渲染：目标可能是阶梯任意一级 ⇒ 不亮；落地后由 open 判决接管
+  const files = ["notes/plan.md", "apps/plan.md", "plan.md"];
+  const line = resolveQuickOpenSync("plan.md:12", ROOT, env({ files }));
+  assert.equal(line.verdict.kind, "undecided");
+  assert.equal(quickOpenStartIndex(line, quickOpenCandidates(line, files)), -1);
+
+  // 探测落地为不存在：普通过滤回到首行（Enter 的兜底就是当前游标行）
+  const miss = await resolveQuickOpen("plan", ROOT, e);
+  assert.equal(miss.verdict.kind, "missing");
+  assert.equal(quickOpenStartIndex(miss, quickOpenCandidates(miss, e.files())), 0);
+});
+
+test("游标起点：普通查询恰好是索引外精确路径、同时是其它候选的子串 ⇒ 判前判后都不亮", async () => {
+  // 盘上有根层 `scratch.md`（被忽略规则挡在索引外），索引里只有同子串的 `notes/scratch.md`
+  const files = ["notes/scratch.md", "apps/scratch.md"];
+  const e = env({ files, present: ["scratch.md"] });
+  const sync = resolveQuickOpenSync("scratch.md", ROOT, e);
+  assert.deepEqual(sync.verdict, {
+    kind: "undecided",
+    attempt: { path: "scratch.md", external: false },
+  });
+  const rows = quickOpenCandidates(sync, files);
+  assert.deepEqual(rows.map((row) => row.path), ["notes/scratch.md", "apps/scratch.md"]);
+  // 旧策略在这里返回 0（高亮 notes/scratch.md），Enter 却打开候选之外的 scratch.md——
+  // 本用例的判红点。未定期间不承诺任何一行。
+  assert.equal(quickOpenStartIndex(sync, rows), -1);
+
+  // 探测命中 ⇒ 判决路径仍不在候选里：落地后同样不亮，Enter 打开的是那条精确路径
+  const res = await resolveQuickOpen("scratch.md", ROOT, e);
+  assert.deepEqual(res.verdict, { kind: "open", path: "scratch.md", external: false });
+  assert.equal(quickOpenStartIndex(res, quickOpenCandidates(res, files)), -1);
+});
+
+test("异步补帧的保位：用户移到非判决行 ⇒ 按行身份保位；保位行消失 ⇒ 回策略起点", () => {
+  const files = ["notes/plan.md", "apps/plan.md", "plan.md"];
+  const res = resolveQuickOpenSync("plan.md", ROOT, env({ files }));
+  assert.equal(res.verdict.kind, "open");
+  const rows = quickOpenCandidates(res, files);
+  assert.deepEqual(rows.map((row) => row.path), ["notes/plan.md", "apps/plan.md", "plan.md"]);
+  const appsKey = quickOpenRowKey(rows[1]);
+
+  // 用户主动移到 apps/plan.md：落地补帧不得把它挪回判决行（plan.md）
+  assert.equal(quickOpenCursorIndex(res, rows, { moved: true, key: appsKey }), 1);
+  // 保位行已不在新候选里（补帧期间索引变化）⇒ 回落到判决行，不是无条件首行
+  assert.equal(quickOpenCursorIndex(res, rows, { moved: true, key: "candidate:false:file:gone.md" }), 2);
+  // 没主动移动过 ⇒ 策略起点（判决行）
+  assert.equal(quickOpenCursorIndex(res, rows, { moved: false, key: appsKey }), 2);
+
+  // 找不到判决 + 保位行消失 ⇒ 首行（该判决的策略起点）；零行 ⇒ -1
+  const miss = { plan: res.plan, verdict: { kind: "missing" as const } };
+  assert.equal(quickOpenCursorIndex(miss, rows, { moved: true, key: "candidate:false:file:gone.md" }), 0);
+  assert.equal(quickOpenCursorIndex(res, [], { moved: true, key: appsKey }), -1);
+});
+
+test("游标起点：目录语境 / 折叠多命中 / 找不到 ⇒ 首行；无候选 ⇒ -1", async () => {
+  const dirEnv = env({
+    files: [],
+    scanEntries: {
+      notes: [
+        { path: "notes/plan.md", kind: "file" },
+        { path: "notes/sub", kind: "dir" },
+      ],
+    },
+  });
+  const dirRes = await resolveQuickOpen("notes/", ROOT, dirEnv);
+  const dirRows = quickOpenCandidates(dirRes, dirEnv.files());
+  assert.deepEqual(dirRows.map((row) => row.path), ["notes/plan.md", "notes/sub"]);
+  assert.equal(quickOpenStartIndex(dirRes, dirRows), 0);
+
+  const amb = resolveQuickOpenSync("A.MD", ROOT, env({ files: ["A.md", "a.md"] }));
+  assert.equal(amb.verdict.kind, "ambiguous");
+  assert.equal(
+    quickOpenStartIndex(amb, quickOpenCandidates(amb, ["A.md", "a.md"])),
+    0,
+  );
+
+  const miss = await resolveQuickOpen("plan", ROOT, env({ files: ["notes/plan.md"] }));
+  assert.equal(miss.verdict.kind, "missing");
+  assert.equal(
+    quickOpenStartIndex(miss, quickOpenCandidates(miss, ["notes/plan.md"])),
+    0,
+  );
+  assert.equal(quickOpenStartIndex(miss, []), -1);
 });

@@ -1,0 +1,174 @@
+# Proposal: Quick Open 高亮项必须等于 Enter 目标
+
+- Change ID: `fix-quick-open-active-target-nov25`
+- 日期: 2026-11-25
+- 角色: Alex Lee（评审/裁决），AI agent（起草）
+
+> 评审记录
+> 节点 1（提案评审）：**已通过**。Alex 2026-11-25 原话「选择器按推荐」，批准按诊断推荐的 Quick
+> Open 游标起点行为变化：判决行在真实候选里则高亮它，否则不高亮任何行；Enter 仍直接打开精确路径。
+> 视觉基线、样式、另外三个选择器（TOC / Vault / Skill）与目录两段式语义不在批准内。这条记录只
+> 覆盖行为变化本身，不含实现代价（代价见下条）。
+> 追加批准（同日，**不是**另一次节点 1 评审；节点 1 的原话与范围仍以上条为准）：机械核验把实现
+> 代价逐条摆出后，Alex 原话「采纳建议」，批准以下四项——**①** 判决未定的高亮延迟约 120ms + 一次
+> 本地往返（停稳去抖 120ms 后发一次单路径存在探测）；**②** 未定窗口内第一次 ↓ 落首行；**③**
+> 存在探测对每个未定判决发起一次（普通查询一级、`path:行` 沿既有阶梯至多两级），不是逐键 IPC；
+> **④** 停驻后的 Enter 复用这次已完成（或在途）的探测，不重复发起。
+> ④ 的复用按**输入原文**键控：同一浮层内离开再回到同一串复用旧判决，外部文件 / 索引在此期间的变化
+> 不在复用点重新验证——这条边界写在 design §6 与 spec 的「离开再回到同一输入复用已落地判决」场景，
+> 行为用例钉住，不另作取舍。
+> 追加批准的范围到此为止：另外三个选择器、视觉基线 / 样式、「高亮行 = Enter 目标」的不变量与真机
+> 手感均不在内；真机验收与归档放行归主会话。
+> 节点 2（归档放行，2026-11-25）：**tower 指示按五要件执行**（原话「Quick Open 最终门禁已全绿，
+> 可以完成节点2与归档，但不要 merge/push」）；归档在本分支由 worker 执行，不 push / merge。
+> 1. **方案已批准**：节点 1「选择器按推荐」+ 同日追加批准「采纳建议」（四项代价与 `settled` 复用
+>    边界）；实现期唯一新增面是 230d 真机首跑暴露的候选行可访问名缺陷（同批真机发现，已在「真机验收
+>    补充」段登记并随本 change 修掉，非静默扩 scope）。
+> 2. **独立评审层**：机械核验报告（tip `27f0486a`，
+>    `.local/reviews/quick-open-active-target-nov25/mechanical.md`）结论「未发现产品 FAIL」、F1–F7
+>    全部 CLOSED；归档后 K3.1 Pro 独立终审补齐 `27f0486a..6127c5c8` 判断层，最终 verdict
+>    **clean/merge**（绑定产品 tip `6127c5c8`、归档 tip `5e6431b6`，P1/P2/P3 均无；
+>    `.local/reviews/quick-open-active-target-nov25/final-judgment.md`）。首轮唯一 finding 来自派发
+>    提示写反复用合同，复核批准原文后撤回，产品无需修改。
+> 3. **tasks 完成**：全部勾选（5.2 本次勾选，证据见该条）。
+> 4. **门禁与真机证据**：完整 `gate visual` 原文 `GATE RESULT: 15/15 PASS（SKIP 0）`、exit 0，
+>    `visual-regression` 971s（`.local/missions/quick-open-active-target/gate-visual-final.log`）；
+>    真机 230a / 230b / 230c / 231 / 874 PASS（49 / 34 / 20 / 5 / 33 断言，
+>    `.local/acceptance/2026-11-25-quick-open-active-target-final/`），230d 修复后复跑 PASS
+>    （`.local/acceptance/2026-11-25-quick-open-active-target-final-r2/230d-quick-open-select-all-dir-children/`）。
+>    像素基线零改动（本批新增 / 更新基线 0 张）。
+> 5. **规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS（扫过 12 份
+>    delta，17 条 MODIFIED，对比 380 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目）；
+>    `openspec validate --all --strict` 39 passed / 0 failed；归档跟踪队列本 change 唯一条目在场，
+>    归档后按「核销即删除」移除（backlog 保持体量红线内）。
+> 归档执行与事后审计读数见下方「归档记录」段。
+
+## Why
+
+Quick Open 的结果区与 Enter 消费同一份解析判决（change `quick-open-file-oct23` / `add-quick-open-directory-stable-nov25`），
+但**游标起点**与**Enter 目标**在精确路径场景下分叉：`apply()` 恒把游标放到首条真实候选，而
+`confirm()` 在用户未主动移动游标时绕过游标直接打开精确路径（`src/quick-open.ts` 的 `apply` /
+`confirm`；旧 spec 明文允许该行为）。输入 `plan.md` 同时命中 `notes/plan.md`、`apps/plan.md`、
+`plan.md` 时，屏幕高亮 `notes/plan.md`、Enter 却打开 `plan.md`；读屏先听到的 `aria-selected`
+也是一条假承诺（`aria-activedescendant` 与动作不一致）。
+
+这是 affordance 冲突而非风格差异：键盘用户依赖「看得见的那一行就是 Enter 会做的事」。诊断的推荐
+（选择器合同 `start(空查询)`：判决行在候选里则选它，否则无游标）已被 Alex 批准，本 change 只落这一条。
+
+## What Changes
+
+1. **游标起点由判决形态决定**（新纯函数 `quickOpenStartIndex`）：
+   - 判决可打开（`open`）且判决路径是渲染出的真实候选 ⇒ 高亮该行（`path:line` 同样落在它上面）；
+   - 判决可打开但判决路径没有对应候选（索引外 / 惰性、vault 外、超出渲染上限）⇒ 不高亮任何行，
+     `aria-activedescendant` 缺省，Enter 仍直接打开精确路径；
+   - 找不到 / 折叠多命中 / 目录语境 ⇒ 首条真实候选（既有语义）；
+   - **判决未定 ⇒ 一律不高亮**（含普通子串查询）：查询串本身可能就是一条索引外的精确路径，探测
+     命中即 Enter 打开它、不命中才落到首行；两者未分之前不先用首行冒充。为此存在性探测对**每个**
+     未定判决在去抖窗口后发起一次（普通查询一级、`path:行` 沿既有阶梯至多两级；不是逐键 IPC），
+     这份判决由结果区与 Enter 共用（停驻后的 Enter 不再探测），落地后按上面的规则定位——普通搜索
+     的「首行 = Enter 目标」在判决明确之后照旧成立。
+2. **Enter 动作前同步游标**：判决由本次按键的探测定下时（在途时按合同不亮），动作之前把游标同步到
+   判决行或清空，保证「屏幕上的高亮 = 即将打开的目标」。
+3. **机器判据**：纯函数单测（「游标起点」6 条 + 「异步补帧的保位」1 条）+ `tests/visual/scenes/quick-open-active-target.spec.ts`
+   浏览器矩阵 14 条（唯一候选 / 多候选且判决行不在首位 / direct-only / 普通首项 / 移动覆盖默认 / 异步在途
+   与落地 / 角落 / 保位 / 目录两段式与进入子目录 / **立即 Enter 与停驻计时器共用同一次** /
+   **离开再回到同一输入** / **复位（关闭重开、进入目录）后重新探测**）。
+   探测次数同样是判据：普通查询停驻后恰好 1 次、停驻后的 Enter 不再新增；`path:行` 沿既有阶梯（本
+   fixture 为 1 次），Enter 同样不新增；输入后立即 Enter 与停驻计时器**共用**同一次（发起 1 次，不冻结
+   时钟、不冒充测量 120ms）；离开再回到同一输入**复用**已落地判决（不新增，也不重新验证外部变化）；
+   复位路径（关闭重开 / 进入目录）则**重新探测**并识别外部变化。
+4. **规格增量**：`quick-open` 的「结果区与 Enter 的判决同源」requirement 改写游标条款。
+   living 9 个场景 → delta 14 个：改写 1 个（「直接行与候选行并存时 Enter 打开游标行」）+ 新增 5 个
+   （「判决可打开但没有对应候选行」/「探测在途不冒充目标」/「普通查询恰好是索引外精确路径」/
+   「离开再回到同一输入复用已落地判决」/「复位后重新探测并识别新文件」）。
+5. **验收场景同步**（静态检查，真机由主会话串行）：230a / 230b / 230c / 230d / 231 / 874。
+
+## Non-goals
+
+- 不改另外三个选择器（TOC / Vault Switch / Skill 菜单）的游标、ARIA 或 Enter 语义。
+- 不改目录进入、lazy 文件、vault 外只读、`path:line` 落点、折叠多命中两段式、异步保位（用户移动后
+  按行身份保位）与「不得显示 direct action 伪候选」的既有合同。
+- 不改样式、不更新视觉基线、不新增浮层或伪候选视觉行。
+- 不 push / merge / archive；不动真机环境。
+
+## 机械核验后的补充（2026-11-25）
+
+机械核验（`.local/reviews/quick-open-active-target-nov25/mechanical.md` §4）指出一个角落：普通查询
+恰好是**索引外**文件的精确路径、同时又是其它候选的子串时，渲染先亮首行、Enter 却打开那条索引外
+文件——违反「高亮行 = Enter 目标」。该形态不按「现实可忽略」放行，已在本 change 内修掉：
+
+- `undecided` 的游标起点由「探测在途才不亮」改为**一律不亮**；探测改为对每个未定判决发起（去抖
+  不变，一次停驻一次探测），落地后再按判决定位。
+- `confirm()` 的游标同步从 `open` 分支提到动作之前、对所有判决生效，避免被抑制的游标把「有候选」
+  误报成「找不到」。
+- `confirm()` 与结果区补帧共用同一输入的判决（已落地复用、在途加入、输入改变才重新探测）：停驻后的
+  Enter 不再重复发 `fs_paths_exist`。visual 用精确次数断言钉住（普通查询停驻 1 次、Enter 后仍 1 次；
+  `path:行` 沿既有阶梯 1 次、Enter 后仍 1 次）。
+- 新增角落的浏览器反例（旧实现红、修后绿）、异步保位与「保位行消失 ⇒ 策略起点」的判别用例。
+- spec 增量同步改写「探测只在候选为空 / 带行号后缀时发起」与「普通过滤默认首条」两条措辞。
+- 机械核验列出的覆盖缺口一并补齐（探测次数的边界，均落在同一探针上）：**输入后立即 Enter**（不冻结
+  时钟；Enter 与停驻计时器共用同一次探测——谁先到都由先到者发起、后到者加入，发起与应答都恰好 1 次）、
+  **离开再回到同一输入**（清空后重输同一串，直接复用已落地判决：回到即高亮、不新增探测；离开
+  期间 re-stub 探测桩模拟盘上新增同名文件，证明复用点不重新验证外部变化）与**复位**（关闭浮层重开 /
+  进入目录后回到同一串重新探测：同一条 re-stub 在复位点被识别，判决翻成可打开、Enter 打开新文件）。
+- 由此在 design §6 / spec 写明 `settled` 的复用边界：**只按输入原文键控**，同一浮层内离开再回到
+  同一串复用旧判决，外部文件 / 索引变化不在复用点重新验证；关闭浮层或进入目录后复位。
+
+## 最终机械复核 P3 收口（2026-11-25）
+
+最终机械复核（`.local/reviews/quick-open-active-target-nov25/mechanical.md`）无产品 FAIL，剩四项 P3 收口：
+
+- **`enterDirectory()` 复位语义与 design 对齐**：保留「只清 `settled`」的实现，不改产品代码——复用
+  按输入原文键控，进目录换上的 raw 必是当前目录语境里一层子项的路径（`dir/child`），旧 `inflight`
+  永远命不中；清掉它反而会在「进目录后删掉尾斜杠退回原串」时多发一条扫描。design §3 改写为按 raw
+  解释无竞态，§6 的识别路径补上「进入目录」这一复位入口。
+- **复位翻转用例**：visual 第 13 条（关闭浮层重开）与第 14 条（进入目录后回到同一串）——同一条
+  re-stub（盘上新增 `plan`）在第 12 条的复用点被忽略、在两条复位路径上被识别：判决翻成可打开、
+  游标清空、Enter 打开新文件。只证明「复用不重置」的反向缺口由此闭合。
+- **第 11 条口径**：名称 / 注释改为「Enter 与停驻计时器共用同一次探测」，明写不冻结时钟、两种先后
+  都只计 1 次发起 / 1 次应答，不冒充严格测量 120ms 边界。
+- **tsc 证据形式**：三份日志改写为带命令回显 + `EXIT=$?` 的形式（`tsc-root-r3.log` /
+  `tsc-visual-r3.log` / `tsc-unit-r3.log`），不再用 0 字节文件声称 exit 0。
+
+## 真机验收补充：候选行的可访问名（2026-11-25）
+
+230d 真机首跑暴露一个与游标无关、但同属候选行语义的缺陷（不是本次游标改动的回归，来自 11-25 目录
+候选的路径分段）：
+
+- 现场：目录行在截图里正常显示 `qo-dir/深层/`，但 AX 可访问名是 `qo-dir/ 深层 /`——行内
+  `.lumir-qo-dirs` / `.lumir-qo-name` / `.lumir-qo-suffix` 三段 flex 布局让 WKWebView 在段边界
+  插空格。连续串 `qo-dir/深层/` 因此不存在，230d 的「子目录带尾斜杠」断言红。
+- 同一分段还让 230d 的负向断言失真：深后代若真被列出，其 AX 名会是 `qo-dir/深层/ 后代.md`，
+  `not: "qo-dir/深层/后代.md"` 仍会通过——「深层后代不混入」这条目前是假绿。
+- 处置（合同先行）：候选行的可访问名 SHALL 是整条显示路径的连续字符串（目录含尾 `/`），视觉
+  分段只是宽度合同的手段；实现改 `fillRows()` 显式落 `aria-label` = 显示路径，`title` 合同不变。
+  判据：`quick-open-directory-stable.spec.ts` 的目录 / 中文长目录 / 外部目录各一条
+  `toHaveAccessibleName` + 230d 真机复跑。不改布局、宽度合同、视觉基线，也不放松 230d 断言。
+
+## Impact
+
+- 影响的 specs：`quick-open`（一条 MODIFIED requirement）。
+- 影响的代码：`src/quick-open.ts`（游标起点纯函数、`apply` 起点、`confirm` 动作前同步、候选行
+  `aria-label` = 显示路径）。
+- 影响的测试：`tests/unit/quick-open.test.ts`（策略矩阵）、新增
+  `tests/visual/scenes/quick-open-active-target.spec.ts`（浏览器矩阵）、
+  `tests/visual/scenes/quick-open-directory-stable.spec.ts`（候选行可访问名）、
+  `scripts/acceptance/scenarios/230a|230b|230c|230d|231-quick-open-long-path-width|874`。
+- 关联约束：渲染/交互缺陷合同先行（先有不变量条款与属性矩阵）、REVIEW.md「同一语义两处真源」条
+  （起点只在 `quickOpenStartIndex` 一处判）、「断言等价于子串」条（矩阵同时读高亮行、ARIA 与打开的
+  文档正文）。
+
+## 归档记录（2026-11-25）
+
+- 归档提交：`d07878cd`（`chore(openspec): archive quick open active-target fix`）。
+- 包装器 `node scripts/openspec-archive.mjs fix-quick-open-active-target-nov25` 输出：`+ 0, ~ 1, - 0`；
+  `Change 'fix-quick-open-active-target-nov25' archived as '2026-11-25-fix-quick-open-active-target-nov25'.`
+  归档目录 `openspec/changes/archive/2026-11-25-fix-quick-open-active-target-nov25/`。
+- 归档后修链：**0 处**（扫过 4 篇 Markdown / 0 条相对链接）；`openspec-links: PASS`（校验 700 条相对
+  链接，全部可达）。
+- 归档跟踪队列：本 change 的唯一条目按「核销即删除」在归档提交内移除，`docs/backlog.md` 保持 80 行。
+- 事后审计：`node scripts/openspec-archive-check.mjs --archived fix-quick-open-active-target-nov25`
+  → `PASS（openspec/changes/archive/2026-11-25-fix-quick-open-active-target-nov25：1 条 MODIFIED，
+  对比 21 段；人工恢复 0 段，声明认领 0 段）`（2026-11-25T22:01:20+0800）。
+- 遗留：最终 tip 的独立 judgment-layer verdict 缺口（见节点 2 第 2 条）在归档后仍需补一次独立评审
+  复核 `27f0486a..6127c5c8` 的 4 个提交；本 change 不 merge / push。

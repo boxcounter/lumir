@@ -102,7 +102,7 @@ test("同 vault 正常读写：读带归属 id，写带归属 id，无变更不�
   const { store, rig } = createRig();
   rig.files.set("vault-a", A);
 
-  assert.deepEqual(await store.load("vault-a"), { text: "vault-a 的字", caret: 3, cards: [] });
+  assert.deepEqual(await store.load("vault-a"), { text: "vault-a 的字", caret: 3, cards: [], skills: [] });
   assert.deepEqual(rig.reads, ["vault-a"], "读盘携带装载时绑定的 id");
 
   store.schedule("vault-a 的字", 3, []);
@@ -126,7 +126,7 @@ test("旧 vault 的写晚于切 vault：只落旧 vault，新 vault 的草稿逐
 
   // 切到 vault-b：装载 b 的草稿（b 盘上已有一份）。
   rig.files.set("vault-b", B);
-  assert.deepEqual(await store.load("vault-b"), { text: "vault-b 的字", caret: null, cards: [] });
+  assert.deepEqual(await store.load("vault-b"), { text: "vault-b 的字", caret: null, cards: [], skills: [] });
 
   inFlight.release(); // 旧写在切换之后才执行
   await flushing;
@@ -152,7 +152,7 @@ test("旧 vault 的读晚到：结果作废，新 vault 的 written 基准与盘
 
   // 切到 vault-b，b 的读先完成。
   rig.files.set("vault-b", B);
-  assert.deepEqual(await store.load("vault-b"), { text: "vault-b 的字", caret: null, cards: [] });
+  assert.deepEqual(await store.load("vault-b"), { text: "vault-b 的字", caret: null, cards: [], skills: [] });
 
   inFlight.release();
   assert.equal(await stale, null, "晚到的旧读整体作废（不返回内容、不覆盖新基准）");
@@ -242,7 +242,7 @@ test("v1 迁移写回携带归属 id（迁移也是一条写路径）", async ()
     "vault-a",
     JSON.stringify({ version: 1, blocks: [{ kind: "paragraph", text: "legacy" }], caret: { block: 0, offset: 2 } }),
   );
-  assert.deepEqual(await store.load("vault-a"), { text: "legacy", caret: 2, cards: [] });
+  assert.deepEqual(await store.load("vault-a"), { text: "legacy", caret: 2, cards: [], skills: [] });
   assert.deepEqual(rig.writes, [{ vaultId: "vault-a", draftJson: serializeComposerDraft("legacy", 2, []) }]);
 });
 

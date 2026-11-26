@@ -139,6 +139,14 @@ function snapshot(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {
     providers: withRefs,
     active,
     active_explicit: false,
+    web_access: {
+      enabled: { kind: "absent" },
+      approval: { kind: "absent" },
+      effective: { enabled: true, approval: "allow_all", status: "valid" },
+      invalid: null,
+      provider: { provider: null, provider_id: null, status: "missing" },
+      origins: [],
+    },
     automation: {
       auto_compact: { value: true, explicit: false },
       session_naming: { value: true, explicit: false },
@@ -182,6 +190,7 @@ function snapshot(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {
       provider_order: ["kimi", "deepseek", "generic", "mock"],
       model_window_min: 1n,
       model_window_max: 10_000_000n,
+      web_approval_options: ["allow_all", "ask"],
     },
     defaults: {
       auto_compact: true,
@@ -189,6 +198,8 @@ function snapshot(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {
       attachment_naming_enabled: true,
       subagents_enabled: true,
       model_window: 131072n,
+      web_access_enabled: true,
+      web_access_approval: "allow_all",
     },
     diagnostics: [],
     ...overrides,
@@ -436,7 +447,7 @@ test("buildPatch：删掉当前项后再「还原此页默认」→ delete 仍�
   applyDraftDelete(draft);
   // 页级还原把 active 清成 null（Reset）——删除本身仍需要一个合法替代目标才能过删保护，
   // 随后同一笔的 Reset 再把键删掉。
-  pageResetDraft(draft, { auto_compact: true, session_naming: true, attachment_naming: true, subagents: true });
+  pageResetDraft(draft, base);
   assert.equal(draft.active, null);
   const patch = buildPatch(draft, base, base.revision!);
   assert.deepEqual(patch.providers[0], { action: "delete", id: "kimi-work", active_after: "deepseek" });
@@ -691,8 +702,7 @@ test("自动化不随 provider 增删改：开关值与显式状态在草稿操�
 test("pageResetDraft：条目字段全标删键、active 与命名覆盖删键、开关回默认；provider 条目本身保留", () => {
   const base = snapshot();
   const draft = createDraft(base);
-  const defaults = { auto_compact: true, session_naming: true, attachment_naming: true, subagents: true };
-  pageResetDraft(draft, defaults);
+  pageResetDraft(draft, base);
   const entry = draft.providers[0]!;
   assert.equal(entry.removed, false, "provider id / preset 是身份，不是设置值");
   assert.deepEqual(entry.keyEdit, { kind: "clear", value: "" });
@@ -722,7 +732,7 @@ test("pageResetDraft：条目字段全标删键、active 与命名覆盖删键�
   withOverride.naming.session.override_model = "k3-256k";
   withOverride.naming.attachment.override_model = "k3-256k";
   const draftWithOverride = createDraft(withOverride);
-  pageResetDraft(draftWithOverride, defaults);
+  pageResetDraft(draftWithOverride, withOverride);
   assert.deepEqual(buildPatch(draftWithOverride, withOverride, withOverride.revision!).naming, {
     session: { provider: { kind: "reset" }, model: { kind: "reset" } },
     attachment: { provider: { kind: "reset" }, model: { kind: "reset" } },

@@ -186,6 +186,69 @@ test("transcript 态：图片卡片可访问名含编号（D447 改形）+ 徽�
   await expect(card).toHaveAttribute("role", "img");
   await expect(card).toHaveAttribute("aria-label", `图片 1：${WRITTEN.name}`);
   await expect(card.locator(".lumir-hp-qc-ord")).toHaveText("1");
+  const badge = card.locator(".lumir-hp-qc-ord");
+  const metrics = await card.evaluate((el) => {
+    const badgeEl = el.querySelector(".lumir-hp-qc-ord")!;
+    const body = el.closest(".lumir-hp-body")!;
+    const cardStyle = getComputedStyle(el);
+    const badgeStyle = getComputedStyle(badgeEl);
+    const pseudo = getComputedStyle(badgeEl, "::before");
+    const token = (name: string, prop: string) => {
+      const probe = document.createElement("div");
+      probe.style.setProperty(prop, `var(${name})`);
+      document.body.append(probe);
+      const value = getComputedStyle(probe).getPropertyValue(prop);
+      probe.remove();
+      return value;
+    };
+    return {
+      cardWidth: el.getBoundingClientRect().width,
+      bodyWidth: body.getBoundingClientRect().width,
+      bodyPadding: getComputedStyle(body).padding,
+      cardFontSize: cardStyle.fontSize,
+      cardLineHeight: cardStyle.lineHeight,
+      cardPadding: cardStyle.padding,
+      badgeWidth: badgeEl.getBoundingClientRect().width,
+      badgeHeight: badgeEl.getBoundingClientRect().height,
+      badgeFontSize: badgeStyle.fontSize,
+      badgeLineHeight: badgeStyle.lineHeight,
+      badgeBackground: badgeStyle.backgroundColor,
+      content: pseudo.content,
+      color: pseudo.color,
+      textToken: token("--text", "background-color"),
+      contentBgToken: token("--content-bg", "color"),
+    };
+  });
+  expect(metrics).toEqual({
+    cardWidth: 422.5,
+    bodyWidth: 448.5,
+    bodyPadding: "8px 12px",
+    cardFontSize: "13px",
+    cardLineHeight: "19.5px",
+    cardPadding: "4px 8px 4px 6px",
+    badgeWidth: 16,
+    badgeHeight: 16,
+    badgeFontSize: "10.5px",
+    badgeLineHeight: "10.5px",
+    badgeBackground: metrics.textToken,
+    content: '"1"',
+    color: metrics.contentBgToken,
+    textToken: metrics.textToken,
+    contentBgToken: metrics.contentBgToken,
+  });
+  // 卡片只随已批准的气泡内容盒自然收窄（左右 padding 24px + 两侧 border 2px），不设置固定宽。
+  expect(metrics.bodyWidth - metrics.cardWidth).toBeCloseTo(26, 1);
+
+  // 像素区分：可见 glyph 必须真实贡献像素；撤掉伪元素前后若相同，就是“DOM 有 1、画面没 1”。
+  const withGlyph = await badge.screenshot({ animations: "disabled" });
+  const withoutGlyphRule = await page.addStyleTag({
+    content: ".lumir-hp-msg-user .lumir-hp-qc-ord::before { content: none !important; }",
+  });
+  const withoutGlyph = await badge.screenshot({ animations: "disabled" });
+  const identical = withGlyph.length === withoutGlyph.length && withGlyph.every((value, index) => value === withoutGlyph[index]);
+  expect(identical, "编号 glyph 必须在 badge 像素中可见").toBe(false);
+  await withoutGlyphRule.evaluate((el) => el.parentNode?.removeChild(el));
+  await expect(badge).toHaveJSProperty("textContent", "1");
   // transcript 态无动作钮。
   await expect(card.locator(".lumir-hp-qc-at")).toHaveCount(0);
   await expect(card.locator(".lumir-hp-qc-x")).toHaveCount(0);

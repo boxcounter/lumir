@@ -17,7 +17,7 @@ const attachments: ComposerAttachment[] = [
 const cards = attachments.map((card, index) => ({ id: index + 1, card, anchor: 0 }));
 
 test("全选与反向选区只改变文本 selection，不产生附件选区模型", () => {
-  let state = createComposerState({ text: "ab\ncd", caret: 0, cards });
+  let state = createComposerState({ text: "ab\ncd", caret: 0, cards, skills: [] });
   for (const selection of [EditorSelection.range(0, 5), EditorSelection.range(5, 0)]) {
     const selected = applyComposerTransaction(state, { selection, userEvent: "select" });
     assert.deepEqual(selected.field(composerAttachmentsField), cards);
@@ -35,7 +35,7 @@ test("全选与反向选区只改变文本 selection，不产生附件选区模�
 });
 
 test("任意文本选区替换的属性：附件字段逐字段守恒", () => {
-  const initial = createComposerState({ text: "abcdef", caret: 0, cards });
+  const initial = createComposerState({ text: "abcdef", caret: 0, cards, skills: [] });
   for (let from = 0; from <= 6; from += 1) {
     for (let to = from; to <= 6; to += 1) {
       const next = applyComposerTransaction(initial, {

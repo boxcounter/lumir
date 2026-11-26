@@ -32,6 +32,10 @@ use crate::config::{
     HarnessModelSpec, HarnessProviderConfig, ProviderPreset, WireApi, FALLBACK_CONTEXT_WINDOW,
     MODEL_WINDOW_MAX, MODEL_WINDOW_MIN, RESERVED_PROVIDER_ID,
 };
+use crate::harness::web::config::{
+    resolve_web_provider, WebAccessConfig, WebApproval, WebProviderStatus,
+};
+use crate::harness::web::url::{canonical_web_fetch_origins, Origin};
 
 // ---------------------------------------------------------------------------
 // 快照
@@ -278,6 +282,7 @@ pub struct SettingsCapabilities {
     pub provider_order: Vec<ProviderPreset>,
     pub model_window_min: u64,
     pub model_window_max: u64,
+    pub web_approval_options: Vec<WebApproval>,
 }
 
 /// 设置面的默认值（键缺席时的生效值；前端显示「默认」与「生效模型（默认：…）」用它）。
@@ -290,6 +295,27 @@ pub struct SettingsDefaults {
     pub subagents_enabled: bool,
     /// 未声明 `window` 时的保守回落值（tokens）。
     pub model_window: u64,
+    pub web_access_enabled: bool,
+    pub web_access_approval: WebApproval,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct WebProviderSettings {
+    pub provider: Option<String>,
+    pub provider_id: Option<String>,
+    pub status: WebProviderStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct WebAccessSettings {
+    pub enabled: FieldState<RawJsonValue>,
+    pub approval: FieldState<RawJsonValue>,
+    pub effective: WebAccessConfig,
+    pub invalid: Option<ConfigDiagnostic>,
+    pub provider: WebProviderSettings,
+    pub origins: Vec<String>,
 }
 
 /// 设置面快照（design §5）：只含设置面的键，不把整份 [`AppConfig`] 交给页面。
@@ -311,8 +337,8 @@ pub struct SettingsSnapshot {
     pub naming: NamingSettings,
     pub capabilities: SettingsCapabilities,
     pub defaults: SettingsDefaults,
-    /// 设置面范围内的诊断 + 文件级诊断（范围外的主题 / 编辑器 warning 不进这里）。
     pub diagnostics: Vec<ConfigDiagnostic>,
+    pub web_access: WebAccessSettings,
 }
 
 // ---------------------------------------------------------------------------
@@ -431,12 +457,29 @@ pub struct NamingPatch {
     pub attachment: Option<NamingEdit>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct WebAccessPatch {
+    #[ts(optional)]
+    pub enabled: Option<FieldEdit<bool>>,
+    #[ts(optional)]
+    pub approval: Option<FieldEdit<WebApproval>>,
+    #[ts(optional)]
+    pub add_origin: Option<String>,
+    #[ts(optional)]
+    pub remove_origin: Option<String>,
+    #[ts(optional)]
+    pub clear_origins: Option<bool>,
+}
+
 /// 一次保存的完整 patch（design §6）：只携带本次改动的字段，MUST NOT 携带整份配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct SettingsPatch {
-    /// 设置面 revision（覆盖 provider 条目、active、四个开关、两个命名目标的 provider/model；
+    /// 设置面 revision（覆盖 provider 条目、active、四个开关、两个命名目标的 provider/model、
+    /// `web_access.enabled` / `.approval` 与 `permissions.allow` / `.deny`；
     /// **不含** `providers.<id>.model`）。
     pub base_revision: String,
     #[ts(optional)]
@@ -447,6 +490,8 @@ pub struct SettingsPatch {
     pub automation: AutomationPatch,
     #[ts(optional)]
     pub naming: Option<NamingPatch>,
+    #[ts(optional)]
+    pub web_access: Option<WebAccessPatch>,
 }
 
 // ---------------------------------------------------------------------------
@@ -688,7 +733,7 @@ pub fn snapshot_at(path: &Path) -> SettingsSnapshot {
     let providers = build_providers(raw, harness, active.as_deref(), &diagnostics);
     let active_explicit = raw_trimmed(raw, "provider")
         .is_some_and(|id| harness.is_some_and(|h| h.providers.contains_key(&id)));
-    let diagnostics = diagnostics
+    let diagnostics: Vec<ConfigDiagnostic> = diagnostics
         .into_iter()
         .filter(|diagnostic| diagnostic.path.as_deref().is_none_or(in_settings_scope))
         .collect();
@@ -704,6 +749,7 @@ pub fn snapshot_at(path: &Path) -> SettingsSnapshot {
         providers,
         active,
         active_explicit,
+        web_access: build_web_access(raw, harness, &diagnostics),
         automation: build_automation(raw, harness),
         naming,
         capabilities: capabilities(),
@@ -746,6 +792,8 @@ fn in_settings_scope(path: &str) -> bool {
         || under(path, "harness.session_naming")
         || under(path, "harness.attachment_naming")
         || path == "harness.subagents.enabled"
+        || under(path, "harness.web_access")
+        || under(path, "harness.permissions")
 }
 
 fn build_providers(
@@ -1019,6 +1067,64 @@ fn raw_json_value(value: &Value) -> RawJsonValue {
     }
 }
 
+fn build_web_access(
+    raw: Option<&Map<String, Value>>,
+    harness: Option<&HarnessConfig>,
+    diagnostics: &[ConfigDiagnostic],
+) -> WebAccessSettings {
+    let raw_web = raw.and_then(|object| object.get("web_access"));
+    let raw_table = raw_web.and_then(Value::as_object);
+    let effective = harness
+        .map(|config| config.web_access)
+        .unwrap_or_else(|| crate::harness::web::config::validate_web_access(raw_web).0);
+    let provider = match harness
+        .filter(|_| effective.status == crate::harness::web::config::WebAccessConfigStatus::Valid)
+    {
+        Some(config) => match resolve_web_provider(config) {
+            Ok(resolved) => WebProviderSettings {
+                provider: Some("deepseek".to_string()),
+                provider_id: Some(resolved.provider_id),
+                status: WebProviderStatus::Ready,
+            },
+            Err(error) => WebProviderSettings {
+                provider: None,
+                provider_id: None,
+                status: error.status(),
+            },
+        },
+        None => WebProviderSettings {
+            provider: None,
+            provider_id: None,
+            status: WebProviderStatus::NotEvaluated,
+        },
+    };
+    let origins = raw
+        .and_then(|object| object.get("permissions"))
+        .and_then(Value::as_object)
+        .and_then(|permissions| permissions.get("deny"))
+        .and_then(Value::as_array)
+        .map(|rules| canonical_web_fetch_origins(rules))
+        .unwrap_or_default();
+    WebAccessSettings {
+        enabled: raw_web_field(raw_table, "enabled"),
+        approval: raw_web_field(raw_table, "approval"),
+        effective,
+        invalid: diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "web_access_config_invalid")
+            .cloned(),
+        provider,
+        origins,
+    }
+}
+
+fn raw_web_field(table: Option<&Map<String, Value>>, key: &str) -> FieldState<RawJsonValue> {
+    match table.and_then(|object| object.get(key)) {
+        None => FieldState::Absent,
+        Some(value) => FieldState::Present(raw_json_value(value)),
+    }
+}
+
 fn build_automation(
     raw: Option<&Map<String, Value>>,
     harness: Option<&HarnessConfig>,
@@ -1225,6 +1331,7 @@ fn capabilities() -> SettingsCapabilities {
         ],
         model_window_min: MODEL_WINDOW_MIN,
         model_window_max: MODEL_WINDOW_MAX,
+        web_approval_options: vec![WebApproval::AllowAll, WebApproval::Ask],
     }
 }
 
@@ -1236,6 +1343,8 @@ fn settings_defaults() -> SettingsDefaults {
         attachment_naming_enabled: harness.attachment_naming.enabled,
         subagents_enabled: harness.subagents.enabled,
         model_window: FALLBACK_CONTEXT_WINDOW,
+        web_access_enabled: true,
+        web_access_approval: WebApproval::AllowAll,
     }
 }
 
@@ -1250,8 +1359,8 @@ const PROVIDER_REVISION_KEYS: [&str; 6] = [
 ];
 
 /// 设置面 revision（design §6.2）：sha256 over 规范化后的设置面键集合。覆盖 provider 条目、
-/// active、四个开关、两个命名目标的 provider **与** model（面板可编辑、删除也会清它们）；
-/// `Missing` 按空对象算、`Invalid` 不给 revision（调用方不计算）。
+/// active、四个开关、两个命名目标的 provider **与** model（面板可编辑、删除也会清它们）、
+/// Web 两键与 permissions.allow / deny；`Missing` 按空对象算、`Invalid` 不给 revision（调用方不计算）。
 fn revision_of(value: &Value) -> String {
     let harness = raw_harness(value);
     let mut canonical = Map::new();
@@ -1298,6 +1407,23 @@ fn revision_of(value: &Value) -> String {
         canonical.insert(table.to_string(), revision_naming_section(harness, table));
     }
     canonical.insert("subagents".to_string(), revision_subagents_section(harness));
+    canonical.insert(
+        "web_access".to_string(),
+        revision_web_access_section(harness),
+    );
+    let mut permissions = Map::new();
+    for key in ["allow", "deny"] {
+        permissions.insert(
+            key.to_string(),
+            harness
+                .and_then(|object| object.get("permissions"))
+                .and_then(Value::as_object)
+                .and_then(|object| object.get(key))
+                .cloned()
+                .unwrap_or(Value::Null),
+        );
+    }
+    canonical.insert("permissions".to_string(), Value::Object(permissions));
     let serialized =
         serde_json::to_string(&Value::Object(canonical)).expect("规范化 patch 一定可序列化");
     format!("{:x}", Sha256::digest(serialized.as_bytes()))
@@ -1309,6 +1435,22 @@ fn revision_naming_section(harness: Option<&Map<String, Value>>, table: &str) ->
         .and_then(Value::as_object);
     let mut section = Map::new();
     for key in ["enabled", "provider", "model"] {
+        section.insert(
+            key.to_string(),
+            raw.and_then(|object| object.get(key))
+                .cloned()
+                .unwrap_or(Value::Null),
+        );
+    }
+    Value::Object(section)
+}
+
+fn revision_web_access_section(harness: Option<&Map<String, Value>>) -> Value {
+    let raw = harness
+        .and_then(|object| object.get("web_access"))
+        .and_then(Value::as_object);
+    let mut section = Map::new();
+    for key in ["enabled", "approval"] {
         section.insert(
             key.to_string(),
             raw.and_then(|object| object.get(key))
@@ -1398,6 +1540,7 @@ fn parse_patch(value: Value) -> Result<SettingsPatch, Vec<SettingsFieldError>> {
             "providers",
             "automation",
             "naming",
+            "web_access",
         ],
         "",
         &mut errors,
@@ -1423,6 +1566,9 @@ fn parse_patch(value: Value) -> Result<SettingsPatch, Vec<SettingsFieldError>> {
     }
     if let Some(naming) = object.get("naming") {
         check_naming(naming, &mut errors);
+    }
+    if let Some(web_access) = object.get("web_access") {
+        check_web_access(web_access, &mut errors);
     }
     if !errors.is_empty() {
         return Err(errors);
@@ -1726,6 +1872,54 @@ fn check_automation(value: &Value, errors: &mut Vec<SettingsFieldError>) {
     }
 }
 
+fn check_web_access(value: &Value, errors: &mut Vec<SettingsFieldError>) {
+    let Some(object) = value.as_object() else {
+        errors.push(field_error(
+            "web_access",
+            "settings_patch_invalid",
+            "web_access 必须是对象",
+        ));
+        return;
+    };
+    unknown_keys(
+        object,
+        &[
+            "enabled",
+            "approval",
+            "add_origin",
+            "remove_origin",
+            "clear_origins",
+        ],
+        "web_access",
+        errors,
+    );
+    if let Some(edit) = object.get("enabled") {
+        check_field_edit(edit, "web_access.enabled", EditShape::Bool, errors);
+    }
+    if let Some(edit) = object.get("approval") {
+        check_field_edit(edit, "web_access.approval", EditShape::Text, errors);
+    }
+    for key in ["add_origin", "remove_origin"] {
+        if object.get(key).is_some_and(|value| !value.is_string()) {
+            errors.push(field_error(
+                format!("web_access.{key}"),
+                "settings_patch_invalid",
+                format!("web_access.{key} 必须是字符串"),
+            ));
+        }
+    }
+    if object
+        .get("clear_origins")
+        .is_some_and(|value| value.as_bool() != Some(true))
+    {
+        errors.push(field_error(
+            "web_access.clear_origins",
+            "settings_patch_invalid",
+            "web_access.clear_origins 只能为 true",
+        ));
+    }
+}
+
 fn check_naming(value: &Value, errors: &mut Vec<SettingsFieldError>) {
     let Some(object) = value.as_object() else {
         errors.push(field_error(
@@ -1853,6 +2047,8 @@ fn plan_and_apply(value: &mut Value, patch: &SettingsPatch) -> Result<(), ApplyS
     apply_provider_edits(&mut candidate, patch, &mut changes)?;
     apply_active_provider(&mut candidate, patch, &mut changes)?;
     apply_automation(&mut candidate, patch, &mut changes)?;
+    apply_web_access(&mut candidate, patch, &mut changes)?;
+    apply_web_origins(&mut candidate, patch, &mut changes)?;
     apply_naming(&mut candidate, patch, &mut changes)?;
 
     // 7–9. 严格复解析 + 非回归判据（candidate × changed paths；不看 baseline 是否已有同一条）。
@@ -2463,6 +2659,196 @@ fn apply_harness_flag(
             }
         }
     }
+    Ok(())
+}
+
+fn apply_web_access(
+    value: &mut Value,
+    patch: &SettingsPatch,
+    changes: &mut AppliedChanges,
+) -> Result<(), ApplyStop> {
+    let Some(patch) = &patch.web_access else {
+        return Ok(());
+    };
+    if let Some(edit) = &patch.enabled {
+        match edit {
+            FieldEdit::Set(enabled) => {
+                web_table_for_set(value).insert("enabled".to_string(), Value::Bool(*enabled));
+            }
+            FieldEdit::Reset => {
+                if let Some(table) = existing_table_mut(value, Some("web_access")) {
+                    table.remove("enabled");
+                }
+            }
+        }
+        changes.field("harness.web_access.enabled");
+    }
+    if let Some(edit) = &patch.approval {
+        match edit {
+            FieldEdit::Set(approval) => {
+                let raw = match approval {
+                    WebApproval::AllowAll => "allow_all",
+                    WebApproval::Ask => "ask",
+                };
+                web_table_for_set(value)
+                    .insert("approval".to_string(), Value::String(raw.to_string()));
+            }
+            FieldEdit::Reset => {
+                if let Some(table) = existing_table_mut(value, Some("web_access")) {
+                    table.remove("approval");
+                }
+            }
+        }
+        changes.field("harness.web_access.approval");
+    }
+    Ok(())
+}
+
+fn web_table_for_set(value: &mut Value) -> &mut Map<String, Value> {
+    let harness = harness_object_mut(value);
+    if !harness.get("web_access").is_some_and(Value::is_object) {
+        harness.insert("web_access".to_string(), Value::Object(Map::new()));
+    }
+    harness
+        .get_mut("web_access")
+        .and_then(Value::as_object_mut)
+        .expect("上面刚填过 web_access 对象")
+}
+
+fn apply_web_origins(
+    value: &mut Value,
+    patch: &SettingsPatch,
+    changes: &mut AppliedChanges,
+) -> Result<(), ApplyStop> {
+    let Some(patch) = &patch.web_access else {
+        return Ok(());
+    };
+    let clear = patch.clear_origins == Some(true);
+    if clear && (patch.add_origin.is_some() || patch.remove_origin.is_some()) {
+        return Err(ApplyStop::Blocked(vec![field_error(
+            "web_access.clear_origins",
+            "settings_patch_invalid",
+            "clear_origins 不得与 add_origin / remove_origin 同 patch；请拆成两次保存",
+        )]));
+    }
+    let add = patch
+        .add_origin
+        .as_deref()
+        .map(|raw| {
+            Origin::from_url(raw).map_err(|reason| {
+                ApplyStop::Blocked(vec![field_error(
+                    "web_access.add_origin",
+                    "settings_web_origin_invalid",
+                    format!("origin 非法：{reason}"),
+                )])
+            })
+        })
+        .transpose()?;
+    let remove = patch
+        .remove_origin
+        .as_deref()
+        .map(|raw| {
+            Origin::from_url(raw).map_err(|reason| {
+                ApplyStop::Blocked(vec![field_error(
+                    "web_access.remove_origin",
+                    "settings_web_origin_invalid",
+                    format!("origin 非法：{reason}"),
+                )])
+            })
+        })
+        .transpose()?;
+    if add
+        .as_ref()
+        .zip(remove.as_ref())
+        .is_some_and(|(add, remove)| add == remove)
+    {
+        return Err(ApplyStop::Blocked(vec![field_error(
+            "web_access.remove_origin",
+            "settings_patch_invalid",
+            "同一规范 origin 不得同时 add_origin / remove_origin；请拆成两次保存",
+        )]));
+    }
+    if add.is_none() && remove.is_none() && !clear {
+        return Ok(());
+    }
+
+    let malformed = || {
+        ApplyStop::Blocked(vec![field_error(
+            "harness.permissions",
+            "settings_patch_invalid",
+            "harness.permissions / deny 形状非法；不会重置或覆盖原值",
+        )])
+    };
+    if value
+        .get("harness")
+        .is_some_and(|harness| !harness.is_object())
+    {
+        return Err(malformed());
+    }
+    if value
+        .get("harness")
+        .and_then(|harness| harness.get("permissions"))
+        .is_some_and(|permissions| !permissions.is_object())
+    {
+        return Err(malformed());
+    }
+    if value
+        .get("harness")
+        .and_then(|harness| harness.get("permissions"))
+        .and_then(|permissions| permissions.get("deny"))
+        .is_some_and(|deny| !deny.is_array())
+    {
+        return Err(malformed());
+    }
+
+    if let Some(origin) = add {
+        let rule = origin.deny_rule();
+        let harness = harness_object_mut(value);
+        if !harness.get("permissions").is_some_and(Value::is_object) {
+            harness.insert("permissions".to_string(), Value::Object(Map::new()));
+        }
+        let permissions = harness
+            .get_mut("permissions")
+            .and_then(Value::as_object_mut)
+            .expect("上面刚填过 permissions 对象");
+        if !permissions.get("deny").is_some_and(Value::is_array) {
+            permissions.insert("deny".to_string(), Value::Array(Vec::new()));
+        }
+        let deny = permissions
+            .get_mut("deny")
+            .and_then(Value::as_array_mut)
+            .expect("上面刚填过 deny 数组");
+        if !deny.iter().any(|entry| entry.as_str() == Some(&rule)) {
+            deny.push(Value::String(rule));
+        }
+    }
+    if let Some(origin) = remove {
+        if let Some(deny) = value
+            .get_mut("harness")
+            .and_then(|harness| harness.get_mut("permissions"))
+            .and_then(|permissions| permissions.get_mut("deny"))
+            .and_then(Value::as_array_mut)
+        {
+            let rule = origin.deny_rule();
+            deny.retain(|entry| entry.as_str() != Some(&rule));
+        }
+    }
+    if clear {
+        if let Some(deny) = value
+            .get_mut("harness")
+            .and_then(|harness| harness.get_mut("permissions"))
+            .and_then(|permissions| permissions.get_mut("deny"))
+            .and_then(Value::as_array_mut)
+        {
+            deny.retain(|entry| {
+                entry
+                    .as_str()
+                    .and_then(Origin::from_canonical_deny_rule)
+                    .is_none()
+            });
+        }
+    }
+    changes.field("harness.permissions.deny");
     Ok(())
 }
 
@@ -4246,5 +4632,509 @@ mod tests {
         assert!(outcome.snapshot.automation.auto_compact.value);
         assert!(!outcome.snapshot.automation.auto_compact.explicit);
         assert_eq!(outcome.warnings, outcome.snapshot.diagnostics);
+    }
+
+    const WEB_BASE: &str = r#"{
+        "harness": {
+            "provider": "deepseek-work",
+            "providers": {"deepseek-work": {
+                "preset": "deepseek", "api_key": "stage1-secret", "models": []
+            }},
+            "permissions": {
+                "allow": ["cli(ls *)"],
+                "deny": [
+                    "web_fetch(https://example.com)",
+                    "web_fetch(https://example.org:8443)",
+                    "cli(rm *)",
+                    "web_fetch(HTTPS://EXAMPLE.COM)",
+                    "web_fetch(https://example.com:443)",
+                    "web_fetch(https://example.com/path)",
+                    17,
+                    "unknown_rule"
+                ],
+                "future_permission_key": {"keep": true}
+            },
+            "web_access": {"enabled": true, "approval": "ask", "future_web_key": "keep"}
+        },
+        "future_top_key": {"keep": true}
+    }"#;
+
+    #[test]
+    fn web_snapshot_has_raw_effective_provider_and_canonical_origins_without_key() {
+        let dir = TempDir::new("web-snapshot");
+        dir.write(WEB_BASE);
+        let snapshot = snapshot(&dir);
+        assert!(snapshot.web_access.effective.enabled);
+        assert_eq!(
+            snapshot.web_access.effective.approval,
+            crate::harness::web::config::WebApproval::Ask
+        );
+        assert_eq!(
+            snapshot.web_access.enabled,
+            FieldState::Present(RawJsonValue {
+                kind: RawJsonKind::Bool,
+                text: "true".to_string()
+            })
+        );
+        assert_eq!(
+            snapshot.web_access.approval,
+            FieldState::Present(RawJsonValue {
+                kind: RawJsonKind::String,
+                text: "ask".to_string()
+            })
+        );
+        assert!(snapshot.web_access.invalid.is_none());
+        assert_eq!(
+            snapshot.web_access.provider.status,
+            crate::harness::web::config::WebProviderStatus::Ready
+        );
+        assert_eq!(
+            snapshot.web_access.provider.provider_id.as_deref(),
+            Some("deepseek-work")
+        );
+        assert_eq!(
+            snapshot.web_access.origins,
+            vec![
+                "https://example.com".to_string(),
+                "https://example.org:8443".to_string()
+            ]
+        );
+        let serialized = serde_json::to_string(&snapshot).unwrap();
+        assert!(!serialized.contains("stage1-secret"));
+        assert_eq!(
+            snapshot.capabilities.web_approval_options,
+            vec![
+                crate::harness::web::config::WebApproval::AllowAll,
+                crate::harness::web::config::WebApproval::Ask
+            ]
+        );
+    }
+
+    #[test]
+    fn web_invalid_snapshot_does_not_resolve_provider_and_keeps_deny() {
+        let dir = TempDir::new("web-invalid-snapshot");
+        dir.write(&WEB_BASE.replace(
+            r#"{"enabled": true, "approval": "ask", "future_web_key": "keep"}"#,
+            r#"{"enabled": "yes", "approval": "ask", "future_web_key": "keep"}"#,
+        ));
+        let snapshot = snapshot(&dir);
+        assert!(!snapshot.web_access.effective.enabled);
+        assert_eq!(
+            snapshot.web_access.effective.approval,
+            crate::harness::web::config::WebApproval::Ask
+        );
+        assert_eq!(
+            snapshot
+                .web_access
+                .invalid
+                .as_ref()
+                .map(|item| item.code.as_str()),
+            Some("web_access_config_invalid")
+        );
+        assert_eq!(
+            snapshot.web_access.provider.status,
+            crate::harness::web::config::WebProviderStatus::NotEvaluated
+        );
+        assert_eq!(snapshot.web_access.provider.provider_id, None);
+        assert_eq!(snapshot.web_access.origins.len(), 2);
+        assert_eq!(
+            file_json(&dir)["harness"]["permissions"]["deny"],
+            serde_json::from_str::<Value>(
+                &serde_json::from_str::<Value>(WEB_BASE).unwrap()["harness"]["permissions"]["deny"]
+                    .to_string()
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn web_patch_add_remove_clear_preserve_noncanonical_rules_and_unknown_keys() {
+        let dir = TempDir::new("web-origin-patch");
+        dir.write(WEB_BASE);
+        let outcome = apply(
+            &dir,
+            patch_with(
+                &dir,
+                serde_json::json!({"web_access": {
+                    "add_origin": "HTTPS://EXAMPLE.NET:443/a?q=1"
+                }}),
+            ),
+        );
+        assert_eq!(
+            outcome.status,
+            SettingsApplyStatus::Applied,
+            "{:?}",
+            outcome.errors
+        );
+        let deny = file_json(&dir)["harness"]["permissions"]["deny"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(
+            deny.last(),
+            Some(&Value::String("web_fetch(https://example.net)".to_string()))
+        );
+
+        let outcome = apply(
+            &dir,
+            patch_with(
+                &dir,
+                serde_json::json!({"web_access": {"remove_origin": "https://example.com/a"}}),
+            ),
+        );
+        assert_eq!(outcome.status, SettingsApplyStatus::Applied);
+        let outcome = apply(
+            &dir,
+            patch_with(
+                &dir,
+                serde_json::json!({"web_access": {"clear_origins": true}}),
+            ),
+        );
+        assert_eq!(outcome.status, SettingsApplyStatus::Applied);
+        let value = file_json(&dir);
+        assert_eq!(
+            value["harness"]["permissions"]["deny"],
+            serde_json::json!([
+                "cli(rm *)",
+                "web_fetch(HTTPS://EXAMPLE.COM)",
+                "web_fetch(https://example.com:443)",
+                "web_fetch(https://example.com/path)",
+                17,
+                "unknown_rule"
+            ])
+        );
+        assert_eq!(
+            value["harness"]["permissions"]["allow"],
+            serde_json::json!(["cli(ls *)"])
+        );
+        assert_eq!(
+            value["harness"]["permissions"]["future_permission_key"],
+            serde_json::json!({"keep": true})
+        );
+        assert_eq!(
+            value["harness"]["web_access"]["future_web_key"],
+            serde_json::json!("keep")
+        );
+        assert_eq!(
+            value["harness"]["web_access"]["approval"],
+            serde_json::json!("ask"),
+            "origin 操作不得暗改 approval"
+        );
+        assert_eq!(value["future_top_key"], serde_json::json!({"keep": true}));
+        assert!(outcome.snapshot.web_access.origins.is_empty());
+    }
+
+    #[test]
+    fn web_patch_rejects_origin_operation_conflicts_without_mutation() {
+        let cases = [
+            (
+                "add_and_clear",
+                serde_json::json!({
+                    "add_origin": "HTTPS://EXAMPLE.NET:443/a?q=1",
+                    "clear_origins": true
+                }),
+            ),
+            (
+                "remove_and_clear",
+                serde_json::json!({
+                    "remove_origin": "https://example.com/a",
+                    "clear_origins": true
+                }),
+            ),
+            (
+                "same_origin",
+                serde_json::json!({
+                    "add_origin": "https://example.net",
+                    "remove_origin": "https://example.net"
+                }),
+            ),
+            (
+                "same_origin_after_canonicalization",
+                serde_json::json!({
+                    "add_origin": "HTTPS://EXAMPLE.NET:443/a?q=1",
+                    "remove_origin": "https://example.net/another"
+                }),
+            ),
+        ];
+        for (name, web_access) in cases {
+            let dir = TempDir::new("web-origin-conflict");
+            dir.write(WEB_BASE);
+            let before = dir.read();
+            let before_revision = revision(&dir);
+            let outcome = apply(
+                &dir,
+                patch_with(&dir, serde_json::json!({ "web_access": web_access })),
+            );
+            assert_eq!(outcome.status, SettingsApplyStatus::Blocked, "{name}");
+            assert_eq!(
+                outcome
+                    .errors
+                    .iter()
+                    .map(|error| error.code.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["settings_patch_invalid"],
+                "{name}"
+            );
+            assert_eq!(dir.read(), before, "{name}");
+            assert_eq!(revision(&dir), before_revision, "{name}");
+        }
+    }
+
+    #[test]
+    fn web_patch_allows_noncanonical_add_and_remove_for_different_origins() {
+        let dir = TempDir::new("web-origin-distinct");
+        dir.write(WEB_BASE);
+        let before_revision = revision(&dir);
+        let outcome = apply(
+            &dir,
+            patch_with(
+                &dir,
+                serde_json::json!({"web_access": {
+                    "add_origin": "HTTPS://EXAMPLE.NET:443/a?q=1",
+                    "remove_origin": "https://example.com/a"
+                }}),
+            ),
+        );
+        assert_eq!(
+            outcome.status,
+            SettingsApplyStatus::Applied,
+            "{:?}",
+            outcome.errors
+        );
+        assert_ne!(revision(&dir), before_revision);
+        let value = file_json(&dir);
+        assert_eq!(
+            value["harness"]["permissions"]["deny"],
+            serde_json::json!([
+                "web_fetch(https://example.org:8443)",
+                "cli(rm *)",
+                "web_fetch(HTTPS://EXAMPLE.COM)",
+                "web_fetch(https://example.com:443)",
+                "web_fetch(https://example.com/path)",
+                17,
+                "unknown_rule",
+                "web_fetch(https://example.net)"
+            ])
+        );
+        assert_eq!(
+            outcome.snapshot.web_access.origins,
+            vec![
+                "https://example.org:8443".to_string(),
+                "https://example.net".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn web_patch_set_reset_and_invalid_values_follow_byte_preservation() {
+        let dir = TempDir::new("web-two-key-patch");
+        dir.write(WEB_BASE);
+        let outcome = apply(
+            &dir,
+            patch_with(
+                &dir,
+                serde_json::json!({"web_access": {
+                    "enabled": {"kind": "set", "value": false},
+                    "approval": {"kind": "set", "value": "allow_all"}
+                }}),
+            ),
+        );
+        assert_eq!(outcome.status, SettingsApplyStatus::Applied);
+        assert!(!outcome.snapshot.web_access.effective.enabled);
+        assert_eq!(
+            outcome.snapshot.web_access.provider.status,
+            crate::harness::web::config::WebProviderStatus::Ready
+        );
+        assert_eq!(
+            outcome.snapshot.web_access.provider.provider_id.as_deref(),
+            Some("deepseek-work"),
+            "disabled 只关闭执行；设置读面仍显示实际 provider"
+        );
+        let outcome = apply(
+            &dir,
+            patch_with(
+                &dir,
+                serde_json::json!({"web_access": {
+                    "enabled": {"kind": "reset"},
+                    "approval": {"kind": "reset"}
+                }}),
+            ),
+        );
+        assert_eq!(outcome.status, SettingsApplyStatus::Applied);
+        let web = &file_json(&dir)["harness"]["web_access"];
+        assert!(web.get("enabled").is_none());
+        assert!(web.get("approval").is_none());
+        assert_eq!(web["future_web_key"], serde_json::json!("keep"));
+
+        let before = dir.read();
+        let outcome = apply(
+            &dir,
+            patch_with(
+                &dir,
+                serde_json::json!({"web_access": {
+                    "approval": {"kind": "set", "value": "always"}
+                }}),
+            ),
+        );
+        assert_eq!(outcome.status, SettingsApplyStatus::Blocked);
+        assert_eq!(dir.read(), before);
+    }
+
+    #[test]
+    fn web_invalid_config_can_be_repaired_without_touching_provider_or_deny() {
+        let dir = TempDir::new("web-repair");
+        dir.write(&WEB_BASE.replace(
+            r#"{"enabled": true, "approval": "ask", "future_web_key": "keep"}"#,
+            r#""on""#,
+        ));
+        let before = file_json(&dir);
+        let outcome = apply(
+            &dir,
+            patch_with(
+                &dir,
+                serde_json::json!({"web_access": {
+                    "enabled": {"kind": "set", "value": true},
+                    "approval": {"kind": "set", "value": "ask"}
+                }}),
+            ),
+        );
+        assert_eq!(
+            outcome.status,
+            SettingsApplyStatus::Applied,
+            "{:?}",
+            outcome.errors
+        );
+        let after = file_json(&dir);
+        assert_eq!(
+            after["harness"]["providers"],
+            before["harness"]["providers"]
+        );
+        assert_eq!(
+            after["harness"]["permissions"],
+            before["harness"]["permissions"]
+        );
+        assert_eq!(
+            after["harness"]["web_access"],
+            serde_json::json!({"enabled": true, "approval": "ask"})
+        );
+    }
+
+    #[test]
+    fn web_malformed_permission_table_is_not_reset() {
+        let dir = TempDir::new("web-malformed-permissions");
+        dir.write(r#"{"harness":{"permissions":{"allow":["cli(ls *)"],"deny":"bad"}}}"#);
+        let before = dir.read();
+        let outcome = apply(
+            &dir,
+            serde_json::json!({"base_revision": "irrelevant", "web_access": {"clear_origins": true}}),
+        );
+        assert_eq!(outcome.status, SettingsApplyStatus::FileInvalid);
+        assert_eq!(dir.read(), before);
+    }
+
+    #[test]
+    fn web_revision_covers_raw_allow_and_deny_changes() {
+        for key in ["allow", "deny"] {
+            let dir = TempDir::new("web-revision-permissions");
+            dir.write(WEB_BASE);
+            let base_revision = revision(&dir);
+            let mut changed = file_json(&dir);
+            changed["harness"]["permissions"][key]
+                .as_array_mut()
+                .unwrap()
+                .push(Value::String("cli(external-change *)".to_string()));
+            dir.write(&serde_json::to_string(&changed).unwrap());
+            let before = dir.read();
+            let outcome = apply(
+                &dir,
+                serde_json::json!({
+                    "base_revision": base_revision,
+                    "web_access": {"approval": {"kind": "set", "value": "allow_all"}}
+                }),
+            );
+            assert_eq!(outcome.status, SettingsApplyStatus::Conflict, "{key}");
+            assert_eq!(dir.read(), before, "{key}");
+        }
+    }
+
+    #[test]
+    fn web_revision_covers_direct_enabled_and_approval_changes() {
+        for (key, value) in [
+            ("enabled", Value::Bool(false)),
+            ("approval", Value::String("allow_all".to_string())),
+        ] {
+            let dir = TempDir::new("web-revision-two-keys");
+            dir.write(WEB_BASE);
+            let base_revision = revision(&dir);
+            let mut changed = file_json(&dir);
+            changed["harness"]["web_access"][key] = value;
+            dir.write(&serde_json::to_string(&changed).unwrap());
+            assert_ne!(revision(&dir), base_revision, "{key}");
+            let before = dir.read();
+            let outcome = apply(
+                &dir,
+                serde_json::json!({
+                    "base_revision": base_revision,
+                    "web_access": {"add_origin": "https://example.net"}
+                }),
+            );
+            assert_eq!(outcome.status, SettingsApplyStatus::Conflict, "{key}");
+            assert_eq!(dir.read(), before, "{key}");
+        }
+    }
+
+    #[test]
+    fn web_revision_concurrent_approval_and_origin_have_exactly_one_winner() {
+        let dir = TempDir::new("web-revision-race");
+        dir.write(WEB_BASE);
+        let base_revision = revision(&dir);
+        let approval = serde_json::json!({
+            "base_revision": base_revision,
+            "web_access": {"approval": {"kind": "set", "value": "allow_all"}}
+        });
+        let origin = serde_json::json!({
+            "base_revision": revision(&dir),
+            "web_access": {"add_origin": "https://example.net"}
+        });
+        let path_a = dir.path();
+        let path_b = dir.path();
+        let (left, right) = std::thread::scope(|scope| {
+            let left = scope.spawn(|| apply_at(&path_a, approval).unwrap());
+            let right = scope.spawn(|| apply_at(&path_b, origin).unwrap());
+            (left.join().unwrap(), right.join().unwrap())
+        });
+        let statuses = [left.status, right.status];
+        assert_eq!(
+            statuses
+                .iter()
+                .filter(|status| **status == SettingsApplyStatus::Applied)
+                .count(),
+            1
+        );
+        assert_eq!(
+            statuses
+                .iter()
+                .filter(|status| **status == SettingsApplyStatus::Conflict)
+                .count(),
+            1
+        );
+        assert_ne!(revision(&dir), base_revision);
+        let value = file_json(&dir);
+        let approval_won = left.status == SettingsApplyStatus::Applied;
+        assert_eq!(
+            value["harness"]["web_access"]["approval"],
+            serde_json::json!(if approval_won { "allow_all" } else { "ask" })
+        );
+        assert_eq!(
+            value["harness"]["permissions"]["deny"]
+                .as_array()
+                .unwrap()
+                .contains(&Value::String("web_fetch(https://example.net)".to_string())),
+            !approval_won
+        );
+        assert_eq!(
+            value["harness"]["permissions"]["allow"],
+            serde_json::json!(["cli(ls *)"])
+        );
     }
 }

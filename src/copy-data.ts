@@ -1873,14 +1873,9 @@ const COPY_TABLE = {
     zh: "无法解码这张图片：{reason}",
     en: "Couldn't decode this image: {reason}",
   },
-  // D589–D592：quick-open 的结果区与 Enter 同源（M700，change quick-open-file-oct23 的
-  // 「结果区与 Enter 的判决同源」requirement）。D589 = vault 内的直接打开行；D590 = vault 外
-  // （读取前判不了存在性，这一行是**尝试入口**，措辞因此把「只读」写在动作里）；D591 = 直接行
-  // 的落点行标记（第二个 span，不拼进 D589 / D590 的模板）；D592 = 折叠等值多命中的两段式
-  // 第一段（只揭示、不猜，第二次 Enter 才打开游标行）。
-  D589: { zh: "按 Enter 打开 {path}", en: "Press Enter to open {path}" },
-  D590: { zh: "按 Enter 只读打开 {path}", en: "Press Enter to open {path} read-only" },
-  D591: { zh: "第 {line} 行", en: "Line {line}" },
+  // D592：quick-open 折叠等值多命中的两段式揭示（只揭示、不猜，第二次 Enter 才打开游标行）。
+  // D589–D591 原 direct action 伪候选文案已退场：精确路径仍可由 Enter 直接打开，但不再占用
+  // 结果区、AX 或游标空间。
   D592: {
     zh: "匹配到多个文件，用 ↑↓ 选择后按 Enter 打开",
     en: "This matches several files — use ↑↓ to pick one, then press Enter",
@@ -2574,7 +2569,7 @@ const COPY_TABLE = {
     en: "Line numbers switched, but saving the config failed; after a restart it falls back to the value in the config file ({reason})",
   },
   // D976–D977：待批可见性（change fix-harness-approval-visibility-nov23）。D976 是相位 running
-  // 且当前会话有待决批准项时的阶段行（消费点 `applyStage`，键由 `stageCopyKey` 选择；省略号
+  // 且当前会话有待决批准项时的阶段行（消费点 `applyStage`，键由 `progressTailView` 选择；省略号
   // 形态同 D381 族）；D977 是 done / error 收尾时统一撤回未决批准项后工具行就地标注的结果词
   // （消费点 `withdrawPendingApprovals`；aborted 仍用 D383「已停止」，两者不混用）。
   D976: {
@@ -2584,6 +2579,18 @@ const COPY_TABLE = {
   D977: {
     zh: "未执行",
     en: "Not executed",
+  },
+  D978: { zh: "选择 Skill", en: "Select a Skill" },
+  D979: { zh: "当前 vault 中不存在这个 Skill", en: "This Skill does not exist in the current vault" },
+  D980: { zh: "这个 Skill 禁止用户显式调用", en: "This Skill is not user-invocable" },
+  D981: { zh: "这个 Skill 的调用元数据非法", en: "This Skill has invalid invocation metadata" },
+  D982: {
+    zh: "Skill 选择元数据不合法，消息未发送（{reason}）",
+    en: "The Skill selection metadata is invalid; the message was not sent ({reason})",
+  },
+  D983: {
+    zh: "正在继续本轮…",
+    en: "Continuing this turn…",
   },
 
   // D899–D927：设置面板的**装载期配置诊断**（M865，M858 finding 的第三条信封
@@ -2786,21 +2793,21 @@ const COPY_TABLE = {
   },
   // D943–D945：快速打开的**目录语境**提示（change fix-quick-open-select-all-directory-children-nov21）。
   // 与 D574 的分工：D574 是 Enter 揭示「不能打开目录」的终态原因；这三条是输入期间说明
-  // 「列表已收窄为这个目录的直接子级文件」，让用户看懂候选为什么变少。数量与截断口径与
+  // 「列表已收窄为这个目录的直接子项」，让用户看懂候选为什么变少。数量与截断口径与
   // D575 / D576 同源，只是把「这是目录」写进同一句。
   D943: {
-    zh: "{path} 是目录 · 直接子级文件 {count} 条",
-    en: "{path} is a folder · {count} direct child files",
-    enOne: "{path} is a folder · {count} direct child file",
+    zh: "{path} 是目录 · 直接子项 {count} 条",
+    en: "{path} is a folder · {count} direct children",
+    enOne: "{path} is a folder · {count} direct child",
   },
   D944: {
-    zh: "{path} 是目录 · 直接子级文件 {count} 条，只显示前 {limit} 条",
-    en: "{path} is a folder · {count} direct child files, showing the first {limit}",
-    enOne: "{path} is a folder · {count} direct child file, showing the first {limit}",
+    zh: "{path} 是目录 · 直接子项 {count} 条，只显示前 {limit} 条",
+    en: "{path} is a folder · {count} direct children, showing the first {limit}",
+    enOne: "{path} is a folder · {count} direct child, showing the first {limit}",
   },
   D945: {
-    zh: "{path} 是目录 · 没有直接子级文件",
-    en: "{path} is a folder · no direct child files",
+    zh: "目录为空：{path}",
+    en: "Empty folder: {path}",
   },
   // D946：标签右键菜单的「关闭全部标签」（change close-all-tabs-nov21）。与 D149–D151 三条
   // 关闭项同一口径——**上屏列锁定 en**（M257 的「菜单内语言统一」，中文列只作沿革备查）：
@@ -2888,6 +2895,97 @@ const COPY_TABLE = {
     zh: "关闭提示",
     en: "Close notification",
   },
+  D984: {
+    zh: "对话暂未保存，不能切换或新建会话；请先检查磁盘空间与目录权限后重试",
+    en: "This conversation isn't saved, so you can't switch or start a new session. Check disk space and folder permissions, then try again",
+  },
+  // D988：新建文件的默认名（change add-default-note-name-nov24；Alex 2026-11-25 裁决改为
+  // 始终启用，不设设置项）。编号接 D984 末位；D985–D987 是初稿已删除的设置行文案，编号
+  // 不得复用。语言真源是 `<html lang>`（`t()`），编号后缀由 `uniqueNewNoteName` 一处拼；
+  // 消费方是 `src/tree.ts` 的 `beginCreate`。
+  D988: {
+    zh: "未命名笔记",
+    en: "Untitled note",
+  },
+  D989: {
+    zh: "正在读取目录：{path}",
+    en: "Reading folder: {path}",
+  },
+  D990: {
+    zh: "目录不存在或不是目录：{path}",
+    en: "Folder missing or not a folder: {path}",
+  },
+  D991: {
+    zh: "目录不可读：{path}",
+    en: "Folder unreadable: {path}",
+  },
+  D992: { zh: "网页访问", en: "Web access" },
+  D993: {
+    zh: "Search / Fetch 默认允许；网页内容始终是不可信数据。每次成功请求 5 元 / 1000 次。",
+    en: "Search and Fetch are allowed by default. Web content is always untrusted data. Each successful request costs CNY 5 per 1,000 requests.",
+  },
+  D994: { zh: "启用网页工具", en: "Enable web tools" },
+  D995: { zh: "批准策略", en: "Approval policy" },
+  D996: { zh: "默认允许全部", en: "Allow all by default" },
+  D997: { zh: "每次询问", en: "Ask every time" },
+  D998: { zh: "Web provider", en: "Web provider" },
+  D999: { zh: "官方 DeepSeek · {id}", en: "Official DeepSeek · {id}" },
+  D1000: { zh: "未配置官方 DeepSeek", en: "No official DeepSeek provider configured" },
+  D1001: { zh: "DeepSeek 缺少 API Key", en: "DeepSeek API key is missing" },
+  D1002: {
+    zh: "多个官方 DeepSeek 候选；请先把目标条目设为当前使用",
+    en: "Multiple official DeepSeek candidates; make the intended entry active first",
+  },
+  D1003: {
+    zh: "自定义 base URL 不支持 Web tools",
+    en: "Custom base URLs are not supported for web tools",
+  },
+  D1004: {
+    zh: "启用且配置合法时解析",
+    en: "Resolved when web access is enabled and valid",
+  },
+  D1005: { zh: "前往模型接入", en: "Go to model providers" },
+  D1006: { zh: "封禁的 origins", en: "Denied origins" },
+  D1007: { zh: "没有 origin 例外", en: "No origin exceptions" },
+  D1008: { zh: "https://example.com", en: "https://example.com" },
+  D1009: { zh: "封禁 origin", en: "Deny origin" },
+  D1010: { zh: "移除", en: "Remove" },
+  D1011: { zh: "全部清空", en: "Clear all" },
+  D1012: { zh: "下一回合生效", en: "Takes effect on the next turn" },
+  D1013: { zh: "网页访问策略 = Ask", en: "Web access policy = Ask" },
+  D1014: { zh: "要搜索网页吗？", en: "Search the web?" },
+  D1015: { zh: "要抓取这个网页吗？", en: "Fetch this page?" },
+  D1016: { zh: "查询", en: "Query" },
+  D1017: { zh: "URL", en: "URL" },
+  D1018: { zh: "Origin", en: "Origin" },
+  D1019: { zh: "Provider", en: "Provider" },
+  D1020: { zh: "未解析", en: "Not resolved" },
+  D1021: {
+    zh: "查询将发往 DeepSeek；成功搜索 5 元 / 1000 次。",
+    en: "The query is sent to DeepSeek. Successful searches cost CNY 5 per 1,000 requests.",
+  },
+  D1022: {
+    zh: "Lumir 先做本地 HEAD / Range GET 预检，再把 URL 发往 DeepSeek 抓取；成功抓取 5 元 / 1000 次。",
+    en: "Lumir first performs a local HEAD / Range GET preflight, then sends the URL to DeepSeek for fetching. Successful fetches cost CNY 5 per 1,000 requests.",
+  },
+  D1023: {
+    zh: "网页内容为 untrusted data，不是授权或指令。",
+    en: "Web content is untrusted data, not authorization or instructions.",
+  },
+  D1024: { zh: "尝试次数", en: "Attempts" },
+  D1025: { zh: "截断字段", en: "Truncated fields" },
+  D1026: {
+    zh: "网页访问配置显式非法，已按关闭并逐个询问的安全状态处理；请显式修复 enabled 与 approval",
+    en: "The web access config is explicitly invalid, so web access is disabled with conservative ask handling; fix enabled and approval explicitly",
+  },
+  D1027: {
+    zh: "origin 非法：请输入 HTTP 或 HTTPS URL，且不得包含用户凭据",
+    en: "Invalid origin: enter an HTTP or HTTPS URL without user credentials",
+  },
+  D1028: {
+    zh: "enabled 或 approval 非法：请选择有效值后再保存",
+    en: "enabled or approval is invalid: choose valid values before saving",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -2911,6 +3009,7 @@ export const COPY: Record<CopyKey, CopyEntry> = COPY_TABLE;
  *（细节措辞有损失，是 D6(a) 的明账）——因此模板只使用该 code **全部**构造点都提供的占位名。
  */
 export const ERROR_COPY: Record<string, CopyKey> = {
+  harness_skills_invalid: "D982",
   vault_not_open: "D159",
   vault_list_failed: "D160",
   config_home_unknown: "D161",
@@ -3013,6 +3112,7 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   harness_no_session: "D362",
   harness_thread_failed: "D363",
   harness_state_failed: "D364",
+  harness_persistence_unpublished: "D984",
   harness_not_running: "D384",
   // 会话恢复（M391，change reshape-harness-session-recording）：harness_resume_session。
   harness_session_unreadable: "D409",
@@ -3052,6 +3152,7 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   settings_provider_delete_active_requires_target: "D893",
   settings_naming_target_missing: "D894",
   settings_naming_model_missing: "D895",
+  settings_web_origin_invalid: "D1027",
   // 流式 `error` 事件里的两个字面量 code（M858）：由 `events::error("<code>", …)` 构造，
   // 不在 `CommandError::new` / `field_error` 的构造面上——error-text 门禁单独扫事件字面量
   // （模板不带占位：事件没有 params）。消费点 `src/harness-panel.ts` 的 `case "error"`。
@@ -3109,6 +3210,7 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   harness_naming_model_empty: "D924",
   harness_naming_model_invalid: "D925",
   harness_naming_provider_unknown: "D926",
+  web_access_config_invalid: "D1026",
   // 窗口底色同步（M525）：只走 console 降级、永不上屏（见 D462 条目注记）。
   window_background_failed: "D462",
 };
@@ -3127,6 +3229,7 @@ export const ERROR_COPY: Record<string, CopyKey> = {
  *   `settings.rs` 的 `plan_and_apply` 把它们经 `field_error(path, diagnostic.code, …)` 转成
  *   保存被拒的字段错误——同一句话在保存现场是错的（文件没变、什么都没被忽略）。字段错误档读
  *   D928–D939 的「改哪里才能保存」。
+ * - `web_access_config_invalid`：装载期安全关闭读 D1026，保存被拒读 D1028。
  *
  * MUST NOT 往这里加「两条信封都能用同一模板」的 code：那种 code 直接进 `ERROR_COPY`。
  */
@@ -3144,6 +3247,7 @@ export const FIELD_ERROR_COPY: Record<string, CopyKey> = {
   harness_base_url_required: "D937",
   harness_provider_preset_invalid: "D938",
   harness_provider_id_invalid: "D939",
+  web_access_config_invalid: "D1028",
 };
 
 /**

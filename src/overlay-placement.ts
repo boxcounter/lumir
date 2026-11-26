@@ -53,6 +53,8 @@ export interface OverlayWidthInput {
   fontSize: number;
   /** 组件级下限覆盖（px）；缺省取档位下限。 */
   minWidth?: number;
+  /** 组件级可读宽上限覆盖（em）；缺省取档位上限。 */
+  maxEm?: number;
   /** 宿主两侧留白（px）；缺省取档位值（8）。 */
   inset?: number;
 }
@@ -83,7 +85,7 @@ export function resolveOverlayWidth(input: OverlayWidthInput): OverlayWidth {
   const natural = Math.max(0, finite(input.natural));
   const host = Math.max(0, finite(input.host));
   const fontSize = finite(input.fontSize) > 0 ? finite(input.fontSize) : 12;
-  const cap = spec.maxEm * fontSize;
+  const cap = finite(input.maxEm ?? spec.maxEm) * fontSize;
   const avail = Math.max(0, host - 2 * inset);
   const max = Math.min(cap, avail);
   const floor = Math.min(finite(input.minWidth ?? spec.minWidth), max);
@@ -186,16 +188,18 @@ export function overlayFontSize(el: HTMLElement): number {
  *
  * 坐标基准：`position: fixed` 的浮层以视口为包含块；`absolute` 的以 `offsetParent` 为包含块
  * （本仓是 chip 外面的 wrapper）。两者都从视口坐标折算，调用方不必各判一次。
+ * `requestMeasure` 消费者可在 read 阶段量好 `measuredBaseLeft` 并传入，避免 write 阶段再读布局。
  */
-export function applyOverlayPlacement(el: HTMLElement, placement: OverlayPlacement): void {
+export function applyOverlayPlacement(el: HTMLElement, placement: OverlayPlacement, measuredBaseLeft?: number): void {
   if (!isLayoutCapable(el)) return;
   el.style.width = `${placement.width}px`;
   el.style.translate = "";
   el.style.right = "auto";
-  const offsetParent = el.offsetParent as HTMLElement | null;
-  const base =
+  const offsetParent = measuredBaseLeft === undefined ? el.offsetParent as HTMLElement | null : null;
+  const base = measuredBaseLeft ?? (
     offsetParent !== null && typeof offsetParent.getBoundingClientRect === "function"
       ? offsetParent.getBoundingClientRect().left
-      : 0;
+      : 0
+  );
   el.style.left = `${placement.left - base}px`;
 }

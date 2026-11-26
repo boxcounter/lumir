@@ -8,12 +8,18 @@
 #   2. 目录语境的提示行与候选收窄是 AX 可见文本 + 真索引的联合读数；chromium 场景已覆盖 DOM
 #      逐条文本，这里补「真 webview 下同样成立」。
 #
-# 本组不覆盖：候选的像素宽度与滚动手感（视觉层 / Alex 手感裁决）、深层后代被排除的解析矩阵
+# 本组不覆盖：候选的像素宽度与滚动手感（视觉层 / Alex 手感裁决）、候选高亮行（AX 无稳定读数形态，
+# 判在 chromium 的 quick-open-active-target 场景）、深层后代被排除的解析矩阵
 # （tests/unit/quick-open.test.ts）。
+#
+# 候选行的可访问名是**整条显示路径**（视觉上的目录前缀 / 文件名 / 尾 `/` 分段只留布局用途）：
+# 「直接子目录以尾斜杠出现在候选里」判的就是这个连续名；「深层后代 MUST NOT 混入」的负向断言
+# 也依赖同一形态——可访问名若退回按内容合成，WKWebView 会在段边界插空格
+# （实测 `qo-dir/ 深层 /`），正向连续串恒不命中、负向断言则在深后代被列出来时仍会绿。
 id: "230d-quick-open-select-all-dir-children"
 item: 655
 tier: full
-title: 按路径快速打开（⌘P）之四：输入框内 ⌘A 全选输入串 / 目录语境只列直接子级文件、深层后代不混入
+title: 按路径快速打开（⌘P）之四：输入框内 ⌘A 全选输入串 / 目录语境只列一层文件与子目录、深层后代不混入
 open: goto-line-long.md
 marker: "JUMP-TARGET-39"
 config:
@@ -47,10 +53,12 @@ steps:
   - name: 目录语境的结果区
     do: settle
     expect:
-      - label: 提示行说明这是目录、只列直接子级文件
-        ax: { has: "/qo-dir 是目录 · 直接子级文件 1 条/" }
+      - label: 提示行说明这是目录、直接子项含文件与子目录
+        ax: { has: "/qo-dir 是目录 · 直接子项 2 条/" }
       - label: 直接子级文件出现在候选里
         ax: { has: "qo-dir/直接子项.md" }
+      - label: 直接子目录以尾斜杠出现在候选里
+        ax: { has: "qo-dir/深层/" }
       - label: 深层后代 MUST NOT 混入直接子级结果
         ax: { not: "qo-dir/深层/后代.md" }
       - shot: 01-目录语境直接子级
@@ -65,7 +73,10 @@ steps:
         ax: { has: "/qo-dir 是目录，不能打开/" }
       - label: 直接子级文件尚未打开（标记不在正文里）
         ax: { not: "DIRECT-CHILD-655-MARKER" }
-  - name: 第二次 Enter 打开当前游标所在的直接子级候选
+  - name: 游标移到直接子级文件（目录排序在文件之前时不得误进入子目录）
+    do: key
+    key: down
+  - name: 第二次 Enter 打开当前游标所在的直接子级文件候选
     do: key
     key: enter
   - name: 等直接子级文件装载
@@ -101,3 +112,9 @@ steps:
     key: escape
 
 ---
+
+本场景判目录语境的两段式（第一次 Enter 只揭示、第二次打开游标行）与 ⌘A 全选；目录语境的候选
+高亮仍是「首行起步、移动后 Enter 消费游标行」的既有合同，本场景按 Enter 的实际结果验证它（不读
+高亮样式——AX dump 没有稳定读数形态，理由见 230a 的「覆盖边界」）。「高亮行 = Enter 目标」与
+「无对应候选时不高亮」的不变量由 chromium 的 `tests/visual/scenes/quick-open-active-target.spec.ts`
+钉住。

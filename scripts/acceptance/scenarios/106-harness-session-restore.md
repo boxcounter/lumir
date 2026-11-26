@@ -75,7 +75,7 @@ steps:
           painted: { min: 60 }
       - shot: 01-选择器
 
-  - name: 点历史会话行——恢复续聊（恢复命令读末条 llm_request、折叠末尾响应、开新留存文件；
+  - name: 点历史会话行——恢复续聊（读末条 llm_request 并折叠末尾响应，首次真实发送才发布新文件；
       M406 起行走 clickInNode 坐标通道——menuitem 嵌进行壳（div + 删除钮兄弟）后，KimiCU 的
       菜单快照守卫对索引点击一律报 stale「menu item is no longer on-screen」，两跑两复现）
     do: clickInNode
@@ -165,8 +165,8 @@ steps:
 1. 发一条提问产生一个会话（源会话落盘）；
 2. 「＋新会话」把源会话切成历史会话；
 3. 打开标题栏 harness 段的**会话浮层**，历史会话选择器列出源会话（会话名 = 首条用户消息）；
-4. 点该行**恢复**——后端读源文件最后一条会话轮次 `llm_request` 的完整请求体，system + messages
-   原样灌回内存态并**开新留存文件**（`opened_from=restore`、`restored_from`=源会话 id）；
+4. 点该行**恢复**——后端只读源文件最后一条会话轮次 `llm_request` 的完整请求体，system + messages
+   原样灌回内存态；首次真实发送才发布新留存文件（`opened_from=restore`、`restored_from`=源会话 id）；
 5. **恢复后 transcript 重建**（M398，design §6.2「面板（transcript）从灌回的 input 重建」）：
    后端把灌回的 wire 记录映射成面板消息随恢复返回，面板重放历史——源会话的**用户消息**与
    **助手回复**都上屏，`resetView` 之后不再是空面板；

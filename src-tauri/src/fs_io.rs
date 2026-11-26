@@ -753,7 +753,14 @@ pub fn scan_dir(
     policy: &IgnorePolicy,
     dir_rel: &str,
 ) -> Result<Vec<FsEntry>, CommandError> {
-    let dir = resolve_in_vault(root, dir_rel)?;
+    let dir = if dir_rel.is_empty() {
+        root.canonicalize().map_err(|e| {
+            CommandError::new("fs_read_failed", format!("无法访问 vault 根：{e}"))
+                .param("reason", e.to_string())
+        })?
+    } else {
+        resolve_in_vault(root, dir_rel)?
+    };
     let meta = std::fs::metadata(&dir).map_err(|e| {
         CommandError::new("fs_read_failed", format!("无法访问 {dir_rel}：{e}"))
             .param("rel", dir_rel)
@@ -1376,6 +1383,90 @@ pub fn read_text_snapshot(root: &Path, rel: &str) -> Result<(String, String), Co
         .param("rel", rel)
     })?;
     Ok((content, revision))
+}
+
+/// Quick Open 显式外部目录的一层只读条目。没有 size/mtime/lazy/revision 消费者。
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct ExternalDirEntry {
+    pub path: String,
+    pub kind: FsEntryKind,
+}
+
+/// 只读列出一个绝对目录的直接子文件和子目录；不递归、不监听、不建索引、不写盘。
+pub fn list_external_dir(path: &str) -> Result<Vec<ExternalDirEntry>, CommandError> {
+    if path.is_empty() {
+        return Err(CommandError::new("fs_path_invalid", "路径为空"));
+    }
+    let raw = Path::new(path);
+    if !raw.is_absolute() {
+        return Err(
+            CommandError::new("fs_path_invalid", format!("只允许绝对路径：{path}"))
+                .param("path", path),
+        );
+    }
+    if raw.components().any(|c| matches!(c, Component::ParentDir)) {
+        return Err(
+            CommandError::new("fs_path_invalid", format!("路径不允许包含 ..：{path}"))
+                .param("path", path),
+        );
+    }
+    let canon = raw.canonicalize().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            CommandError::new("fs_not_found", format!("目录不存在：{path}")).param("rel", path)
+        } else {
+            CommandError::new("fs_read_failed", format!("无法读取 {path}：{e}"))
+                .param("rel", path)
+                .param("reason", e.to_string())
+        }
+    })?;
+    let meta = std::fs::metadata(&canon).map_err(|e| {
+        CommandError::new("fs_read_failed", format!("无法读取 {path}：{e}"))
+            .param("rel", path)
+            .param("reason", e.to_string())
+    })?;
+    if !meta.is_dir() {
+        return Err(CommandError::new(
+            "fs_path_invalid",
+            format!("{path} 不是目录"),
+        ));
+    }
+    let rd = std::fs::read_dir(&canon).map_err(|e| {
+        CommandError::new("fs_scan_failed", format!("无法读取目录 {path}：{e}"))
+            .param("rel", path)
+            .param("reason", e.to_string())
+    })?;
+    let mut entries = Vec::new();
+    for item in rd {
+        let item = item.map_err(|e| {
+            CommandError::new(
+                "fs_scan_failed",
+                format!("无法读取目录 {path} 下的条目：{e}"),
+            )
+            .param("rel", path)
+            .param("reason", e.to_string())
+        })?;
+        let name = item.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let Ok(meta) = std::fs::metadata(item.path()) else {
+            continue;
+        };
+        let kind = if meta.is_dir() {
+            FsEntryKind::Dir
+        } else if meta.is_file() {
+            FsEntryKind::File
+        } else {
+            continue;
+        };
+        entries.push(ExternalDirEntry {
+            path: canon.join(name).to_string_lossy().into_owned(),
+            kind,
+        });
+    }
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(entries)
 }
 
 /// vault **外**文本文件的只读读取（change quick-open-file-oct23 的 `fs-io` ADDED
@@ -3408,6 +3499,65 @@ mod tests {
         assert_eq!(
             read_external_text(link.to_str().unwrap()).unwrap(),
             "# hello"
+        );
+    }
+
+    #[test]
+    fn list_external_dir_returns_one_sorted_level_without_writes() {
+        let v = TempVault::with_fixture();
+        let root = v.0.canonicalize().unwrap();
+        let note = root.join("note.md");
+        let before = std::fs::read(&note).unwrap();
+        let before_mtime = std::fs::metadata(&note).unwrap().modified().unwrap();
+        let entries = list_external_dir(root.to_str().unwrap()).unwrap();
+        let paths: Vec<String> = entries.iter().map(|entry| entry.path.clone()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                root.join(".DS_Store").to_string_lossy().into_owned(),
+                root.join(".git").to_string_lossy().into_owned(),
+                root.join("LICENSE").to_string_lossy().into_owned(),
+                root.join("main.rs").to_string_lossy().into_owned(),
+                root.join("node_modules").to_string_lossy().into_owned(),
+                root.join("note.md").to_string_lossy().into_owned(),
+                root.join("pic.png").to_string_lossy().into_owned(),
+                root.join("sub").to_string_lossy().into_owned(),
+            ]
+        );
+        assert!(entries
+            .iter()
+            .all(|entry| entry.kind == FsEntryKind::File || entry.kind == FsEntryKind::Dir));
+        assert_eq!(entries.last().unwrap().kind, FsEntryKind::Dir);
+        assert!(!paths.iter().any(|path| path.ends_with("deep/a.txt")));
+        assert_eq!(std::fs::read(&note).unwrap(), before);
+        assert_eq!(
+            std::fs::metadata(&note).unwrap().modified().unwrap(),
+            before_mtime
+        );
+    }
+
+    #[test]
+    fn list_external_dir_rejects_relative_parent_missing_and_file() {
+        let v = TempVault::with_fixture();
+        for bad in ["note.md", "sub/deep", "./sub"] {
+            assert_eq!(list_external_dir(bad).unwrap_err().code, "fs_path_invalid");
+        }
+        let dotdot = format!("{}/../{}", v.0.display(), v.0.display());
+        assert_eq!(
+            list_external_dir(&dotdot).unwrap_err().code,
+            "fs_path_invalid"
+        );
+        let missing = v.0.join("missing");
+        assert_eq!(
+            list_external_dir(missing.to_str().unwrap())
+                .unwrap_err()
+                .code,
+            "fs_not_found"
+        );
+        let file = v.0.join("note.md");
+        assert_eq!(
+            list_external_dir(file.to_str().unwrap()).unwrap_err().code,
+            "fs_path_invalid"
         );
     }
 
@@ -5781,7 +5931,23 @@ mod tests {
             "fs_path_invalid",
             "目标不是目录"
         );
-        assert_eq!(scan_dir(&v.0, &p, "").unwrap_err().code, "fs_path_invalid");
+        let root_entries = scan_dir(&v.0, &p, "").expect("Quick Open 可读取 vault 根");
+        let root_paths: Vec<&str> = root_entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect();
+        assert_eq!(
+            root_paths,
+            [
+                "LICENSE",
+                "main.rs",
+                "node_modules",
+                "note.md",
+                "pic.png",
+                "sub"
+            ]
+        );
+        assert!(!p.is_materialized(""));
         // 失败的调用 MUST NOT 留下物化登记（登记只在成功路径上）
         assert!(!p.is_materialized("note.md"));
     }

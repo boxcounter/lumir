@@ -5,6 +5,7 @@ import type { HarnessProviderConfig } from "./HarnessProviderConfig";
 import type { PermissionMode } from "./PermissionMode";
 import type { SessionNamingConfig } from "./SessionNamingConfig";
 import type { SubagentsConfig } from "./SubagentsConfig";
+import type { WebAccessConfig } from "./WebAccessConfig";
 
 /**
  * `[harness]` 表（change add-harness-probe §11）：对话运行时的配置面。
@@ -59,4 +60,4 @@ attachment_naming: AttachmentNamingConfig,
 /**
  * 子代理运行（change add-harness-subagents design §14）：开关 + 预算上限 + 次数 / 并发闸。
  */
-subagents: SubagentsConfig, };
+subagents: SubagentsConfig, web_access: WebAccessConfig, };

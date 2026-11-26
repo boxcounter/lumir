@@ -292,20 +292,24 @@ fn expand_image_refs_from(
         };
         let mut expanded_parts = Vec::with_capacity(parts.len());
         for part in parts {
-            let url = part["image_url"].as_str().unwrap_or("");
-            let Some(name) = url.strip_prefix(ATTACHMENT_SCHEME) else {
-                expanded_parts.push(part.clone());
+            let mut cleaned = part.clone();
+            if let Some(object) = cleaned.as_object_mut() {
+                object.remove("lumir_skill");
+            }
+            let url = cleaned["image_url"].as_str().unwrap_or("");
+            let Some(name) = url.strip_prefix(ATTACHMENT_SCHEME).map(str::to_string) else {
+                expanded_parts.push(cleaned);
                 continue;
             };
-            if part["type"].as_str() != Some("input_image") {
-                expanded_parts.push(part.clone());
+            if cleaned["type"].as_str() != Some("input_image") {
+                expanded_parts.push(cleaned);
                 continue;
             }
-            let bytes = read_image_bytes_from(dir, name)?;
-            let mut expanded = part.clone();
+            let bytes = read_image_bytes_from(dir, &name)?;
+            let mut expanded = cleaned;
             // 引用名形态已由 `read_image_bytes_from` 校验；`mime_of_name` 的 None 分支到此不可达
             // （防御值取落盘默认子类型 webp，与旧口径一致）。
-            let subtype = mime_of_name(name).unwrap_or("webp");
+            let subtype = mime_of_name(&name).unwrap_or("webp");
             expanded["image_url"] = serde_json::json!(format!(
                 "data:image/{};base64,{}",
                 subtype,
@@ -347,7 +351,7 @@ pub fn expand_image_refs(
         })
     });
     if !has_refs {
-        return Ok(input.to_vec());
+        return expand_image_refs_from(input, Path::new(""));
     }
     let dir = vault_attachments_dir(vault_id)?;
     expand_image_refs_from(input, &dir)
@@ -366,6 +370,9 @@ pub fn expand_image_refs(
 pub fn panel_text_of_content(content: &[serde_json::Value]) -> Option<String> {
     let mut lines: Vec<String> = Vec::new();
     for part in content {
+        if part.get("lumir_skill").is_some() {
+            continue;
+        }
         match part["type"].as_str() {
             Some("input_text") | Some("output_text") => {
                 if let Some(text) = part["text"].as_str() {
@@ -796,5 +803,29 @@ mod tests {
         // 无节：原样。
         let none = parse_delivery_parts(r#"[{"kind":"text","text":"问"}]"#).unwrap();
         assert_eq!(apply_context_section(none, None).len(), 1);
+    }
+
+    #[test]
+    fn no_image_wire_still_strips_skill_marker_without_resolving_attachments() {
+        let input = vec![serde_json::json!({
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "question"},
+                {"type": "input_text", "text": "[已加载 Skill：demo]\nUNIQUE-SKILL-BODY", "lumir_skill": "demo"}
+            ]
+        })];
+        let expanded = expand_image_refs(&input, "vault-id-must-not-be-resolved").unwrap();
+        let wire = serde_json::to_string(&expanded).unwrap();
+        assert!(!wire.contains("lumir_skill"));
+        assert!(wire.contains("UNIQUE-SKILL-BODY"));
+        assert!(expanded[0]["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|part| {
+                part["text"]
+                    .as_str()
+                    .is_some_and(|text| text.starts_with("[已加载 Skill：demo]"))
+            }));
     }
 }

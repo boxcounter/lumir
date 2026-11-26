@@ -566,7 +566,7 @@ test("完整性门禁：字段错误 / 事件字面量 / 装载期诊断的模�
   assert.ok(Object.keys(eventEntries).length >= 2, `事件档只查到 ${Object.keys(eventEntries).length} 条`);
   assert.ok(Object.keys(fileEntries).length >= 3, `配置文件状态档只查到 ${Object.keys(fileEntries).length} 条`);
   const dualEnvelope = [...diagnosticCodes].filter((code) => REJECT_ON_WRITE_CODES.has(code));
-  assert.ok(dualEnvelope.length >= 12, `双信封诊断 code 只查到 ${dualEnvelope.length} 个`);
+  assert.ok(dualEnvelope.length >= 13, `双信封诊断 code 只查到 ${dualEnvelope.length} 个`);
   for (const code of dualEnvelope) {
     assert.ok(code in diagnosticEntries, `${code} 的装载期诊断档没有被分列检查`);
   }

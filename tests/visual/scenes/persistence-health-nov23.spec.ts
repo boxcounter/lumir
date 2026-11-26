@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
 import { expectScreenshot } from "./expect-screenshot";
 
@@ -80,6 +80,8 @@ interface HarnessStubOptions {
   /** 新会话成功后的 `harness_state` 全部挂起，直到页面调用 `__resolveNewSessionStates()`；
    *  用于构造「空会话快照回包晚于新 token 事件」的现场（复审 P1）。 */
   deferNewSessionSnapshots?: boolean;
+  /** deferred 快照的 token 与健康载荷；缺省为空健康。 */
+  deferredSnapshot?: { session_token: number; persistence?: Record<string, unknown> };
   /** `recovery_backup` 是否失败（写失败子条件）。 */
   backupFails?: boolean;
   /** `recovery_list` 是否失败（枚举失败子条件）。 */
@@ -105,12 +107,12 @@ async function stubHealth(page: Page, options: HarnessStubOptions = {}): Promise
       w.__deferNewSessionStates = false;
       const empty = JSON.stringify({
         vault: opts.root,
-        session_token: 0,
+        session_token: opts.deferredSnapshot?.session_token ?? 0,
         messages: [],
         usage: { ctx_pct: 0, cache_pct_session: 0 },
         pending_approvals: [],
         warn_ctx_pct: 85,
-        persistence: {
+        persistence: opts.deferredSnapshot?.persistence ?? {
           state: "ok",
           since_ts: 0,
           severity: null,
@@ -168,6 +170,7 @@ async function stubHealth(page: Page, options: HarnessStubOptions = {}): Promise
             restored_items: 0,
             messages: [],
             session_token: opts.resumeSessionToken ?? 0,
+            switched: true,
           };
         }
         w.__resumeStarted = true;
@@ -179,6 +182,7 @@ async function stubHealth(page: Page, options: HarnessStubOptions = {}): Promise
               restored_items: 0,
               messages: [],
               session_token: opts.resumeSessionToken ?? 0,
+              switched: true,
             });
           };
         });
@@ -261,6 +265,20 @@ async function closeStickyForPixels(page: Page): Promise<void> {
     if (active instanceof HTMLElement) active.blur();
   });
   await settleForPixels(page);
+}
+
+async function expectWarningBlockGeometry(note: Locator): Promise<void> {
+  const geometry = await note.evaluate((el) => {
+    const style = getComputedStyle(el);
+    return {
+      width: el.getBoundingClientRect().width,
+      marginLeft: style.marginLeft,
+      marginRight: style.marginRight,
+      padding: style.padding,
+    };
+  });
+  expect(Math.abs(geometry.width - 465)).toBeLessThanOrEqual(0.5);
+  expect(geometry).toMatchObject({ marginLeft: "-8px", marginRight: "-8px", padding: "4px 6px" });
 }
 
 /** 从当前焦点开始按 Tab，直到焦点落到 sticky 的原生关闭钮上（最多 80 次）。
@@ -1162,6 +1180,7 @@ test("V2p 像素基线：Harness degraded（当前写失败）警示块", async 
   await expect(note).toBeVisible();
   await expect(note).toHaveText("对话暂未保存。请检查磁盘空间或目录权限；恢复后会继续写入。");
   await closeStickyForPixels(page);
+  await expectWarningBlockGeometry(note);
   await expectScreenshot(page, "harness-degraded.png");
   await expectScreenshot(note, "harness-degraded-warning-block.png");
 });
@@ -1186,6 +1205,7 @@ test("V3p 像素基线：state=ok + history gap（尚未写入）", async ({ pag
   await expect(note).toContainText("此前部分对话记录未能保存；新内容已恢复写入。");
   await expect(note).toContainText("现在退出，这段对话将无法恢复。");
   await closeStickyForPixels(page);
+  await expectWarningBlockGeometry(note);
   await expectScreenshot(page, "harness-history-gap.png");
   await expectScreenshot(note, "harness-history-gap-warning-block.png");
 });
@@ -1219,6 +1239,7 @@ test("V3bp 像素基线：state=ok + history gap（已恢复写入；02b 同形�
   );
   await expect(note).toHaveText("此前部分对话记录未能保存；新内容已恢复写入。");
   await closeStickyForPixels(page);
+  await expectWarningBlockGeometry(note);
   await expectScreenshot(page, "harness-history-gap-written.png");
   await expectScreenshot(note, "harness-history-gap-written-warning-block.png");
 });
@@ -1236,4 +1257,77 @@ test("V4p 像素基线：文档备份失败横幅", async ({ page }) => {
   await settleForPixels(page);
   await expectScreenshot(page, "recovery-banner.png");
   await expectScreenshot(banner, "recovery-banner-element.png");
+});
+
+test("迟到的旧 switched 回包不得取消新视图的 persistence 快照", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHealth(page, {
+    sessionToken: 41,
+    resumeSessionToken: 42,
+    resumePersistence: degradedGap(42),
+    deferredSnapshot: { session_token: 42, persistence: degradedGap(42) },
+    sessions: [
+      { session_id: "s-old-a", first_user_text: "旧会话 A", ts: 1757000000000 },
+      { session_id: "s-old-b", first_user_text: "旧会话 B", ts: 1757000000001 },
+    ],
+  });
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, any>;
+    const internals = w.__TAURI_INTERNALS__;
+    const original = internals.invoke;
+    let calls = 0;
+    w.__resumeCalls = 0;
+    w.__resumeResolvers = {};
+    internals.invoke = async (cmd: string, args: any) => {
+      if (cmd === "harness_resume_session") {
+        const call = calls++;
+        w.__resumeCalls = calls;
+        return new Promise((resolve) => {
+          w.__resumeResolvers[call] = (info: unknown) => {
+            if (call === 1) w.__afterResume = true;
+            resolve(info);
+          };
+        });
+      }
+      return original(cmd, args);
+    };
+    w.__resolveResumeCall = (call: number, info: unknown) => w.__resumeResolvers[call](info);
+  });
+  await openPanel(page);
+  const note = page.locator("[data-persistence-health]");
+
+  await page.locator(".lumir-hp-session").click();
+  await page.locator(".lumir-hp-sesspop-history").nth(0).click();
+  await page.locator(".lumir-hp-session").click();
+  await page.locator(".lumir-hp-sesspop-history").nth(1).click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as Record<string, any>).__resumeCalls)).toBe(2);
+
+  await page.evaluate(() => {
+    const w = window as unknown as Record<string, any>;
+    w.__deferNewSessionStates = true;
+    w.__resolveResumeCall(1, {
+      session_id: "s-new-b",
+      restored_items: 0,
+      messages: [],
+      session_token: 42,
+      switched: true,
+    });
+  });
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as Record<string, any>).__newSessionStateResolvers.length))
+    .toBeGreaterThan(0);
+
+  await page.evaluate(() => {
+    const w = window as unknown as Record<string, any>;
+    w.__resolveResumeCall(0, {
+      session_id: "s-new-a",
+      restored_items: 0,
+      messages: [],
+      session_token: 43,
+      switched: true,
+    });
+    w.__resolveNewSessionStates();
+  });
+  await expect(note).toBeVisible({ timeout: 5000 });
+  await expect(note).toContainText("此前部分记录也未能保存");
 });

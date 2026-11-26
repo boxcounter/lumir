@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：277
-- 验收项（不同 item 编号）：246
-- 分档：core 31 / full 236 / bundle 5 / evidence 5（full 批 = 全部 277 个，含其余各档）
+- 场景：298
+- 验收项（不同 item 编号）：267
+- 分档：core 32 / full 256 / bundle 5 / evidence 5（full 批 = 全部 298 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -239,8 +239,8 @@
 | 552 | `161-harness-path-link`<br>`221-harness-path-line-range` | harness 输出里的 vault 路径可点击（新标签 + 行号锚定 + 卡片路径）<br>harness 输出里的行范围路径可点击（:起-止 落到起始行，畸形形态不吞半截） | full<br>full |
 | 553 | `162-harness-dir-link` | harness 输出里的 vault 目录引用可点击（左栏定位） | full |
 | 554 | `168-paste-image-semantic-name` | 贴图后异步语义改名 + 正文引用同步 + toast 撤销（change add-semantic-image-naming） | full |
-| 655 | `230a-path-forms`<br>`230b-lazy-and-external-readonly`<br>`230c-restart-and-focus-scopes`<br>`230d-quick-open-select-all-dir-children` | 按路径快速打开（⌘P）之一：深层路径一次 Enter 落文件 / 冒号文件名整串优先 / path:line 落点不重开 / vault 内零命中<br>按路径快速打开（⌘P）之二：索引外惰性文件按精确路径打开 / vault 外只读打开（⌘S 不写盘、键入不生效）/ 外部路径不存在按找不到处置<br>按路径快速打开（⌘P）之三：重启后 vault 外标签不回来、vault 内标签照常恢复、文件树与 harness composer 焦点下同样命中<br>按路径快速打开（⌘P）之四：输入框内 ⌘A 全选输入串 / 目录语境只列直接子级文件、深层后代不混入 | full<br>full<br>full<br>full |
-| 702 | `231-quick-open-long-path-width`<br>`232-harness-ctxpop-width` | 快速打开浮层宽度：长路径下输入面按 26em 展开、路径全文仍在 AX 里<br>Context 气泡：长读数 hover 翻出、三段内容齐全且确实绘制（P 档 34em 上限；宽度数字归 chromium 矩阵） | full<br>full |
+| 655 | `230a-path-forms`<br>`230b-lazy-and-external-readonly`<br>`230c-restart-and-focus-scopes`<br>`230d-quick-open-select-all-dir-children` | 按路径快速打开（⌘P）之一：深层路径一次 Enter 落文件 / 冒号文件名整串优先 / path:line 落点不重开 / vault 内零命中<br>按路径快速打开（⌘P）之二：索引外惰性文件按精确路径打开 / vault 外只读打开（⌘S 不写盘、键入不生效）/ 外部路径不存在按找不到处置<br>按路径快速打开（⌘P）之三：重启后 vault 外标签不回来、vault 内标签照常恢复、文件树与 harness composer 焦点下同样命中<br>按路径快速打开（⌘P）之四：输入框内 ⌘A 全选输入串 / 目录语境只列一层文件与子目录、深层后代不混入 | full<br>full<br>full<br>full |
+| 702 | `231-quick-open-long-path-width`<br>`232-harness-ctxpop-width` | 快速打开浮层宽度：长路径下输入面按 50vw 响应式档展开、路径全文仍在 AX 里<br>Context 气泡：长读数 hover 翻出、三段内容齐全且确实绘制（P 档 34em 上限；宽度数字归 chromium 矩阵） | full<br>full |
 | 703 | `234-harness-table-horizontal-scroll` | harness 对话宽表：固有宽铺开、横向滚轮在表格区域执行、滚动前后截图（几何归 chromium 矩阵） | full |
 | 704 | `252-cron-click-after-exit`<br>`252-harness-activity-presence`<br>`253-harness-vault-activity` | 应用退出后点击通知：跨进程恢复、快照会话与四类拒绝（change add-cron-notification-relaunch §8.2）<br>harness 面板的活动在场：收起期间的在途 / 未读提示，打开面板即清算，停止不点亮<br>harness 跨 vault 往返的在途准确：切回仍在途不呈空闲、续渲染并对账；完成后往返呈未读并在面板在场时清算 | bundle<br>full<br>full |
 | 705 | `269-harness-path-line-sentence-period` | 句末句号不吞行号（path:line. 仍是整段可点并落到目标行） | full |
@@ -264,3 +264,24 @@
 | 723 | `723-harness-composer-inline-cards` | composer 零长度 inline cards：精确块序 + scoped AX + 一步 undo + 纯文本复制 + 草稿 v3 | core |
 | 724 | `724-harness-session-order` | 会话清单按最后活动排序（每文件一行）：恢复不置顶、sidecar 不计入、compact 不沿链、缺时间回落、打开期间不重排 | full |
 | 725 | `725-harness-approval-visibility` | 待批可见性：脱离态下批准卡到达仍有标题栏信号与未读；回底决策后清算；停止撤回无幻影 | full |
+| 726 | `726-harness-skill-hybrid-invocation` | Skill 混合调用：显式 refs 确定性注入 + 自动 skill_load 分控 + deny/非法 fail closed + 普通路径与草稿恢复 | core |
+| 727 | `727-harness-progress-tail` | 输出尾行：状态矩阵 / 工具先行 / 待批 / 停止 / 跨 vault 接管 / 空态与自动回合 detached | full |
+| 728 | `728-harness-lazy-restore-view` | 查看历史零写盘：标题与通知、同源重复点击、A→B→A、空源首次发送才发布 | full |
+| 729 | `729-harness-lazy-restore-current-busy` | 当前已发布文件直切：空闲与 busy 均成功，busy 切换另一历史被拒且零副作用 | full |
+| 730 | `730-harness-lazy-restore-first-send` | 首次真实发送唯一发布：初始批次顺序、双击只受理一轮、源行再次发送形成第二分支 | full |
+| 731 | `731-harness-lazy-restore-publish-retry` | 首次发布失败不阻断对话：provider 后置失败入内存批次，权限恢复后显式重试同文件精确计数 | full |
+| 732 | `732-harness-lazy-restore-unpublished-guard` | 未发布批次守卫：发布仍失败拒绝切换与新会话；权限恢复后旧 pending 恰好发布一次再执行 | full |
+| 733 | `733-harness-lazy-restore-preflight-exit` | 查看后退出不复活；provider 前置拒绝不激活 pending（无新文件、无临时文件、错误可见） | full |
+| 734 | `734-default-note-name` | 新建文件默认名：始终预填并全选、键入替换、Enter 接受、Escape 取消、撞名递增、焦点落正文 | full |
+| 865 | `865-wikilink-caret-reveal-nov24` | wikilink 键盘 / 指针进入源码、修饰键旧语义与精确 undo / save | full |
+| 866 | `866-wikilink-suggestion-nov24` | 行内 [[ 候选：过滤 / 键鼠接受 / Escape / 空态 / 特殊扩展名与零隐式写入 | full |
+| 867 | `867-wikilink-suggestion-native-refresh-nov25` | 行内 [[ 候选：原生逐字输入立即打开、query 逐拍同步、逐字删除关闭 | full |
+| 868 | `868-harness-skill-menu-ux-nov25` | Skill 候选：Ctrl+N/P 同方向键、长列表高亮揭示与响应式加宽（change fix-skill-menu-ux-nov25） | full |
+| 869 | `869-harness-web-default-audit` | Web 默认无卡审计：未配置 provider 仍显示 query / provider / attempts / untrusted，无批准卡 | full |
+| 870 | `870-harness-web-ask-preview` | Web Ask 预览：完整 URL / origin / provider / 双路外发 / 费用 / untrusted；拒绝不执行 | full |
+| 871 | `871-harness-web-deny` | Web deny：deny 规则直接拒绝、不预检、不请求 provider，审计不写外发说明 | full |
+| 872 | `872-harness-web-disabled` | web_access.enabled=false：Web 工具不注册，幻觉调用回送 tool_unknown，无批准卡 | full |
+| 873 | `873-harness-web-no-auto-curl` | Web 失败不自动降级 curl：provider 未配置仍不自动 curl，后续 curl 仍进批准闸 | full |
+| 874 | `874-quick-open-external-directory-and-stable-layout` | Quick Open 外部目录一层候选、子目录进入、外部文件只读与输入框 bbox 稳定 | full |
+| 875 | `875-harness-markdown-bold` | Harness Markdown strong：有序列表空行后的缩进续段在流式中间态与终态均不显示字面星号 | full |
+| 876 | `876-harness-web-production-no-injection` | 生产 dev 不激活验收注入：哨兵端点零使用、URL 规则不放宽、provider 仍只有 official | full |

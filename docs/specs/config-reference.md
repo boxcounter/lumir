@@ -448,6 +448,33 @@ change 的 [design §9](../../openspec/changes/add-harness-subagents/design.md)�
 上下文用量（成功摘要会把父会话上下文再发一次，量级取决于当时上下文，不在这条乘法里）。
 `enabled=false` 是唯一能把它归零的开关。
 
+### 1.10 `harness.web_access` 表（网页访问）
+
+网页访问的开关与批准策略（change `add-harness-web-fetch-search-nov24`；行为语义真源是该 change
+的 harness / settings delta）。**位置在 `[harness]` 表内**，与会话 / 附件 / 子代理同域；provider
+与 Key 仍归 `harness.providers`，origin deny 仍归 `harness.permissions.deny`，本表不复制它们。
+
+| 键 | 类型 | 默认 | 取值范围 | 生效时机 | 真源 |
+|---|---|---|---|---|---|
+| `harness.web_access.enabled` | boolean | `true` | `true` / `false` | 每次发送时由命令入口重读配置 ⇒ 改动**下一个回合**生效；`false` 时 `web_search` / `web_fetch` 不注册（模型幻觉调用回送 `tool_unknown`），不删除 provider、origin deny 或会话历史 | `harness/web/config.rs` 的 `WebAccessConfig` / `validate_web_access` |
+| `harness.web_access.approval` | string 枚举 | `"allow_all"` | `"allow_all"` \| `"ask"` | 同上；`allow_all` 默认直接执行，`ask` 才进入批准闸。判定顺序恒为 deny > 既有硬层 > 本键，deny 永远优先；本键不参与 allow 规则或会话缓存授权 | 同上 |
+
+口径：
+
+- **缺省即默认**：`web_access` 表 / 单键缺席 = 出厂值，不告警。恢复默认 = 删键；不要求重启，
+  也不清空 origin deny。
+- **显式非法 fail-closed**：整表错形状、`enabled` 非布尔、`approval` 非字符串或未知枚举 ⇒
+  该表进入局部 `Invalid`，安全读数为 `enabled=false, approval="ask"`，产生稳定
+  `web_access_config_invalid`；工具不注册，直接调用也返回该错误，且**零网络请求**、不解析
+  provider。**MUST NOT** 触发整文件回落：`providers`、`permissions.allow` / `deny` 与其它
+  `[harness]` 键原样保留；设置修复写不得顺手清空 origin deny。
+- **写通道与 revision**：设置快照 / patch / revision 覆盖两键，写入走既有 `settings_apply` 原子
+  通道；同一 revision 的并发 patch 只有一笔成功，另一笔得到 `settings_revision_conflict`，文件
+  逐字节不变。改 provider / 切换当前项不重置这两键。
+- **origin deny 的生效时机**：`web_fetch(origin)` 规则仍在 `permissions.deny`，按权限规则的
+  revision 写入；每次 Fetch 的权限判定与预检现场读取，改动**下一次判定**生效。本表只提供
+  「查看 / 新增 / 移除 / 清空」的只读投影与写入口，MUST NOT 建立第二份 origin 状态。
+
 ## 2. 解析与容错口径
 
 - **未知键忽略**：新版写入的字段旧版读取不报错（向前兼容）。未知键在应用回写时**原样保留**（见 §3）。

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "先搜一下网页。",
+      "chunks": ["先搜一下网页。"],
+      "tool_calls": [
+        {
+          "id": "call_web_search",
+          "name": "web_search",
+          "arguments": "{\"query\":\"stage5 web audit\"}"
+        }
+      ]
+    },
+    {
+      "text": "WEB-SEARCH-DONE"
+    }
+  ]
+}

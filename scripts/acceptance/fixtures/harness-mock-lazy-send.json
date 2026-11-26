@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "responses": [
+    { "text": "LAZY-OK", "delay_ms": 1500, "usage": { "input_tokens": 100, "cached_tokens": 0, "output_tokens": 1 } }
+  ]
+}

@@ -142,6 +142,7 @@ pub fn run() {
             // vault 外只读读取通道（change quick-open-file-oct23 的 fs-io ADDED）：只服务
             // quick-open 的 vault 外只读会话，绝对路径 + 常规文件 + 50MB 上限全部在 Rust 侧。
             commands::fs_read_external,
+            commands::fs_list_external_dir,
             commands::fs_read_attachment,
             // 剪贴板图片落盘（change paste-clipboard-image，M416）：转码 + 内容寻址命名 +
             // 全 vault 去重 + 原子写（见 fs_io::write_attachment）。
@@ -198,6 +199,7 @@ pub fn run() {
             // abort 为 M348 新增（发送钮停止态点击，design §5「不再继续」）。
             // set_thinking_effort 为 M362 新增（思考程度档位，会话内生效、不写回配置）。
             harness::harness_send,
+            harness::harness_skills_list,
             // 失败轮次的显式重试（change add-harness-turn-retry-nov23）：只重发失败的那一次
             // provider 往返；守卫与 vision 前置闸在 `Runtime::begin_retry`。
             harness::harness_retry,
@@ -1093,12 +1095,12 @@ impl CronRuntime {
 /// 调度工具端口的 tauri 实现（change add-cron-conversational-registration tasks 2.2）：
 /// 落盘逻辑与「什么是一条合法任务」都在 `cron.rs`（无 tauri 依赖），本结构只补两件接线层才有
 /// 的东西——配置目录解析与重载通道。
-pub struct CronToolPort {
-    app: tauri::AppHandle,
+pub struct CronToolPort<R: tauri::Runtime> {
+    app: tauri::AppHandle<R>,
 }
 
-impl CronToolPort {
-    pub fn new(app: tauri::AppHandle) -> Self {
+impl<R: tauri::Runtime> CronToolPort<R> {
+    pub fn new(app: tauri::AppHandle<R>) -> Self {
         Self { app }
     }
 
@@ -1138,7 +1140,7 @@ impl CronToolPort {
     }
 }
 
-impl cron::CronPort for CronToolPort {
+impl<R: tauri::Runtime> cron::CronPort for CronToolPort<R> {
     fn create(
         &self,
         draft: cron::CronTaskDraft,

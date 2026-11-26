@@ -2,6 +2,7 @@ import { createShell } from "./shell";
 import { createEditor } from "./editor";
 import { isDocSession, textModeOf } from "./editor";
 import type { EditorHandle, EditorSession } from "./editor";
+import { linkSuggestionIsOpen, linkSuggestionIsSettling } from "./link-suggest";
 import { createImageViewer, imageModelineText } from "./image-viewer";
 import type { ImageInfo, ImageViewerHandle } from "./image-viewer";
 import type { EditorView } from "@codemirror/view";
@@ -23,6 +24,7 @@ import {
   fsCreateDir,
   fsCreateFile,
   fsMoveEntry,
+  fsListExternalDir,
   fsReadAttachment,
   fsReadExternal,
   fsReadSnapshot,
@@ -1101,6 +1103,7 @@ const editor: EditorHandle = {
     forEachEditor((handle) => handle.setAttachmentProvider(provider)),
   setWikilinkResolver: (resolver) =>
     forEachEditor((handle) => handle.setWikilinkResolver(resolver)),
+  setLinkSuggestFiles: (files) => forEachEditor((handle) => handle.setLinkSuggestFiles(files)),
   setLightbox: (lightbox) => forEachEditor((handle) => handle.setLightbox(lightbox)),
   collectImages: (state, from, to) => activeEditor().collectImages(state, from, to),
   setTableFullscreen: (fullscreen) =>
@@ -1152,6 +1155,7 @@ const editor: EditorHandle = {
 // `setPathLinkIndex` 下发；面板只认可打开的文本类文件，过滤的判据在 `src/tree.ts` 的
 // `linkableVaultPaths`——单一实现，本文件只调用）。
 let vaultFilePaths: string[] = [];
+injectEach((handle) => handle.setLinkSuggestFiles(() => vaultFilePaths));
 /** 是否已有 vault 装载成功；onOpenVault 失败时据此决定空态还是浮条提示。 */
 let vaultLoaded = false;
 /** 已装载的 vault 根（`vaultLoaded` 为真时有效）：启动恢复有两条入口（完成信号与首次
@@ -1526,6 +1530,7 @@ const quickOpen = createQuickOpen({
   // 目录判定复用装配层已有的那一份（`isVaultDirPath`：树未就绪时恒假，隔开构造时序窗口）。
   isDir: (path) => isVaultDirPath(path),
   probe: (paths) => fsPathsExist([...paths]),
+  scanDirectory: (path, external) => external ? fsListExternalDir(path) : fsScanDir(path),
   // 打开意图取 "new"（D4：与文件树点击同落点）。行跳转走 `jumpPlanFor`，与 harness 路径点击
   // 共用同一份「打开 → 落点 → 下一帧复核」编排。
   openVaultPath: (path, line) => {
@@ -3601,12 +3606,14 @@ async function handleCronOpenSession(payload: { vault: string; session_id: strin
   try {
     await ensureCronVault(payload.vault);
     target = { targetVault: loadedRoot ?? payload.vault, viewToken: harnessPanel.viewToken() };
-    await invoke("harness_resume_session", { session_id: payload.session_id });
+    const resume = (await invoke("harness_resume_session", {
+      session_id: payload.session_id,
+    })) as { switched: boolean };
     const stillCurrent =
       harnessPanel.isViewCurrent(target.viewToken) && loadedRoot === target.targetVault;
-    // 清目标 vault 的活动记录；只在目标仍当前、世代未变时复位视图并重取快照。取代旧的
-    // `vaultChanged("", null)` + `vaultChanged(root)` 空哨兵（它会破坏显示门、触发两次完整重建）。
-    harnessPanel.reloadSessionView(target);
+    // 真正切换才清目标 vault 的活动记录并复位视图；当前文件直切只打开面板。
+    // 视图重载仍受目标 vault 与世代守卫，取代旧的 `vaultChanged` 空哨兵。
+    if (resume.switched) harnessPanel.reloadSessionView(target);
     // 只在这一代视图里打开面板：切走后 MUST NOT 把 B 的 harness pane 打开（那会抢走用户
     // 正在看的东西）。A 的恢复内容留在后端会话里，切回 A 时由快照重建。
     if (stillCurrent) openHarnessPane(false);
@@ -3932,7 +3939,11 @@ const keymapContext = {
   // M277 的两条命令同款：`code-block.toggle-fullscreen` 在遮罩已开时恒真（toggle 关闭可达），
   // 否则要求命中一块代码块（caret 在块内或块的横滚容器持焦——容器持焦那条是 DOM 事实，
   // 与 tableFullscreenTarget 的入口 ① 同口径）；`block.copy` 要求命中一个可复制的块。
-  commandGate: (command: CommandId) => {
+  commandGate: (command: CommandId, event: KeyboardEvent) => {
+    if (
+      (command === "editor.cursor-up" || command === "editor.cursor-down") &&
+      linkSuggestionIsOpen(editor.view) && (linkSuggestionIsSettling(editor.view) || event.isComposing || event.keyCode === 229)
+    ) return false;
     if (command === "table.toggle-fullscreen") {
       return tableFullscreen.isOpen() || tableFullscreenTarget(editor.view) !== null;
     }

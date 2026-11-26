@@ -87,6 +87,9 @@ import {
   composerImageOrdinals,
   composerInlineCards,
   composerIsEmpty,
+  composerSkillEffect,
+  composerSkillsField,
+  composerSkillsJson,
   createComposerState,
   insertComposerText,
   mergeRejectedComposerContent,
@@ -98,6 +101,8 @@ import type { ComposerContent, PlacedAttachment } from "./harness-composer";
 import { createComposerImeCoordinator } from "./harness-composer-ime";
 import { currentLanguage, errorText, formatDate, formatRelative, onRelabel, t, tPlural } from "./copy";
 import type { CopyKey, Language } from "./copy";
+import { progressTailView } from "./harness-progress-tail";
+export { stageCopyKey } from "./harness-progress-tail";
 import {
   configGet,
   configSetValue,
@@ -115,6 +120,7 @@ import {
   harnessRetry,
   harnessSend,
   harnessSetThinkingEffort,
+  harnessSkillsList,
   harnessState,
   harnessSubagentContinue,
   harnessSubagentStop,
@@ -125,6 +131,10 @@ import {
 } from "./ipc";
 import type { HarnessEvent } from "./ipc";
 import type { DecisionReason } from "./bindings/DecisionReason";
+import type { WebApprovalPayload } from "./bindings/WebApprovalPayload";
+import type { WebProviderStatus } from "./bindings/WebProviderStatus";
+import { parseWebAudit, webAuditFromPanelText } from "./web-audit";
+import type { WebAuditMetadata } from "./web-audit";
 import type { ThinkingEffort } from "./bindings/ThinkingEffort";
 import {
   assembleHarnessContext,
@@ -133,6 +143,12 @@ import {
 } from "./harness-context";
 import type { HarnessContextBlock, HarnessContextSource } from "./harness-context";
 import { createHarnessDraftStore } from "./harness-draft";
+import { hoverSkillHighlight, moveSkillHighlight, sameSkillMenuState, skillMenuNavigationDelta, skillSelectionSpec, skillTokenAt, syncSkillMenuState } from "./skill-menu";
+import { isFullyVisibleWithin, revealElementWithin } from "./selector-reveal";
+import { scheduleCompositionSettle, cancelCompositionSettle } from "./composition-settle";
+import type { SkillMenuState } from "./skill-menu";
+import { skillCatalogRefreshEffect, skillChips } from "./skill-chips";
+import type { SkillSummary } from "./bindings/SkillSummary";
 import {
   activityDisplayed,
   activityKind,
@@ -852,11 +868,12 @@ export function permissionDescription(mode: PermissionMode): string {
 }
 
 /** 判定依据的宽容解析（M459，事件与快照两条入口同一份判据）：只认三个**可上卡**的 kind
- *  （Rust `DecisionReason` 的 `deny_rule` 不产批准卡、不会到前端，故不认）；形状不合一律
+ *  （Rust `DecisionReason` 的 `deny_rule` 不产批准卡、不会到前端，故不认）；Web 策略另认
+ * `web_access_policy`。形状不合一律
  *  `undefined`——调用方据此不出该行，MUST NOT 伪造依据（旧载荷 / 未来新增 kind 的降级面）。 */
 export function parseDecisionReason(value: unknown): DecisionReason | undefined {
   if (typeof value !== "object" || value === null) return undefined;
-  const raw = value as { kind?: unknown; command?: unknown; mode?: unknown };
+  const raw = value as { kind?: unknown; command?: unknown; mode?: unknown; approval?: unknown };
   switch (raw.kind) {
     case "dangerous_wrapper":
       return typeof raw.command === "string" && raw.command !== ""
@@ -868,6 +885,8 @@ export function parseDecisionReason(value: unknown): DecisionReason | undefined 
       return PERMISSION_MODES.find((mode) => mode === raw.mode) !== undefined
         ? { kind: "mode_default", mode: raw.mode as PermissionMode }
         : undefined;
+    case "web_access_policy":
+      return raw.approval === "ask" ? { kind: "web_access_policy", approval: "ask" } : undefined;
     default:
       return undefined;
   }
@@ -889,9 +908,139 @@ export function approvalReasonText(reason: DecisionReason | undefined): string |
         mode: permissionFullName(reason.mode),
         desc: permissionDescription(reason.mode),
       });
+    case "web_access_policy":
+      return t("D1013");
     default:
       return null;
   }
+}
+
+const WEB_PROVIDER_STATUSES: readonly WebProviderStatus[] = [
+  "ready",
+  "not_evaluated",
+  "missing",
+  "missing_key",
+  "ambiguous",
+  "custom_base_url",
+];
+
+export function parseWebApprovalPreview(value: unknown): WebApprovalPayload | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const raw = value as Record<string, unknown>;
+  const operation = raw.operation === "search" ? "search" : raw.operation === "fetch" ? "fetch" : undefined;
+  if (operation === undefined) return undefined;
+  if (operation === "search" && typeof raw.query !== "string") return undefined;
+  if (operation === "fetch" && (typeof raw.url !== "string" || typeof raw.origin !== "string")) return undefined;
+  if (raw.provider !== null && typeof raw.provider !== "string") return undefined;
+  if (raw.provider_id !== null && typeof raw.provider_id !== "string") return undefined;
+  if (!WEB_PROVIDER_STATUSES.includes(raw.provider_status as WebProviderStatus)) return undefined;
+  if (raw.trust !== "untrusted") return undefined;
+  if (typeof raw.local_precheck !== "boolean" || typeof raw.provider_fetch !== "boolean") return undefined;
+  if (raw.cost_per_1000_success_cny !== 5) return undefined;
+  return {
+    operation,
+    query: operation === "search" ? (raw.query as string) : undefined,
+    url: operation === "fetch" ? (raw.url as string) : undefined,
+    origin: operation === "fetch" ? (raw.origin as string) : undefined,
+    provider: raw.provider === null ? null : (raw.provider as string),
+    provider_id: raw.provider_id === null ? null : (raw.provider_id as string),
+    provider_status: raw.provider_status as WebProviderStatus,
+    trust: "untrusted",
+    local_precheck: raw.local_precheck,
+    provider_fetch: raw.provider_fetch,
+    cost_per_1000_success_cny: 5,
+  };
+}
+
+function renderWebApprovalBlock(el: HTMLElement, preview: WebApprovalPayload): void {
+  el.replaceChildren();
+  const kv = document.createElement("dl");
+  kv.className = "lumir-hp-cron-kv";
+  const addRow = (label: CopyKey, value: string | null): void => {
+    if (value === null || value === "") return;
+    const dt = document.createElement("dt");
+    dt.textContent = t(label);
+    const dd = document.createElement("dd");
+    dd.textContent = value;
+    kv.append(dt, dd);
+  };
+  if (preview.operation === "search") {
+    addRow("D1016", preview.query ?? null);
+  } else {
+    addRow("D1018", preview.origin ?? null);
+  }
+  addRow("D1019", preview.provider_id ?? t("D1020"));
+  el.append(kv);
+  if (preview.operation === "search" && preview.query !== undefined) {
+    const pre = document.createElement("pre");
+    pre.className = "lumir-hp-argv";
+    pre.textContent = preview.query;
+    el.append(pre);
+  } else if (preview.operation === "fetch" && preview.url !== undefined) {
+    const pre = document.createElement("pre");
+    pre.className = "lumir-hp-argv";
+    pre.setAttribute("aria-label", t("D1017"));
+    pre.textContent = preview.url;
+    el.append(pre);
+  }
+  const egress = document.createElement("p");
+  egress.className = "lumir-hp-approval-note";
+  egress.textContent = t(preview.operation === "search" ? "D1021" : "D1022");
+  const trust = document.createElement("p");
+  trust.className = "lumir-hp-approval-note";
+  trust.textContent = t("D1023");
+  el.append(egress, trust);
+}
+
+function createWebAuditBlock(metadata: WebAuditMetadata): HTMLElement {
+  const el = document.createElement("section");
+  el.className = "lumir-hp-web-audit";
+  el.dataset.webAudit = metadata.operation;
+  const kv = document.createElement("dl");
+  kv.className = "lumir-hp-cron-kv";
+  const addRow = (label: CopyKey, value: string | null): void => {
+    if (value === null || value === "") return;
+    const dt = document.createElement("dt");
+    dt.textContent = t(label);
+    const dd = document.createElement("dd");
+    dd.textContent = value;
+    kv.append(dt, dd);
+  };
+  addRow("D1019", metadata.provider_id ?? t("D1020"));
+  addRow("D1024", String(metadata.attempts));
+  if (metadata.truncated) addRow("D1025", metadata.truncated_fields.join(", "));
+  el.append(kv);
+  const input = metadata.operation === "search" ? metadata.query : metadata.url;
+  if (input !== null && input !== "") {
+    const pre = document.createElement("pre");
+    pre.className = "lumir-hp-argv";
+    pre.setAttribute("aria-label", t(metadata.operation === "search" ? "D1016" : "D1017"));
+    pre.textContent = input;
+    el.append(pre);
+  }
+  const egress = document.createElement("p");
+  egress.className = "lumir-hp-approval-note";
+  // 只陈述**实际发生**的外发路径：未配置 / 权限拒绝 / 参数非法时 query 与 URL 都没有离开
+  // 本机；预检失败时 URL 到了本地预检但没有发往 DeepSeek。两种情形都不渲染外发说明，
+  // 避免把「将要」写成「已经」（预览卡仍按路线描述，见 renderWebApprovalBlock）。
+  const egressKey =
+    metadata.operation === "search"
+      ? metadata.provider_fetch
+        ? ("D1021" as const)
+        : null
+      : metadata.local_precheck && metadata.provider_fetch
+        ? ("D1022" as const)
+        : null;
+  const trust = document.createElement("p");
+  trust.className = "lumir-hp-approval-note";
+  trust.textContent = t("D1023");
+  if (egressKey !== null) {
+    egress.textContent = t(egressKey);
+    el.append(egress, trust);
+  } else {
+    el.append(trust);
+  }
+  return el;
 }
 
 /** 定时任务批准预览（change add-cron-conversational-registration design §6.3 契约）：形状由
@@ -1443,25 +1592,6 @@ export function reduceSendPhase(phase: SendPhase, event: SendEvent): SendPhase {
 }
 
 /**
- * 阶段行文案键（change fix-harness-approval-visibility-nov23 design §3.2）：零 DOM 的纯选择器，
- * 优先级 **停止中 > 等待批准 > 等待响应 / 生成中** 只在这里写一次。
- *
- * - 待批档只在 `running` 成立：`idle` + 待决集合是陈旧数据（旧快照缺在途读数 / 终态后迟到），
- *   没有在途轮次可依附，MUST NOT 产出待批键；`stopping` 时用户已请求停止，先读 D400。
- * - `pending` 只来自面板的 `hasPendingApprovals()`（`pendingApprovals.size > 0`），MUST NOT 由
- *   事件种类、计时、文案或另一枚布尔推导。
- */
-export function stageCopyKey(
-  phase: SendPhase,
-  pending: boolean,
-  stageWaiting: boolean,
-): "D400" | "D976" | "D381" | "D382" {
-  if (phase === "stopping") return "D400";
-  if (phase === "running" && pending) return "D976";
-  return stageWaiting ? "D381" : "D382";
-}
-
-/**
  * IME 组合期 Enter 拦截门（M361 2.3）：WKWebView 下「确认候选」那拍 Enter 的
  * keydown.isComposing 不可靠——WebKit 先派 compositionend 再派确认 keydown（isComposing
  * 已是 false），现行早退挡不住，发送被误触发。改用 compositionstart/end 自跟踪 + 双序防线：
@@ -1834,7 +1964,10 @@ export function approvalArgsText(request: {
   diff?: string | undefined;
   argv?: readonly string[] | undefined;
   cronTask?: CronTaskPreview | undefined;
+  web?: WebApprovalPayload | undefined;
 }): string {
+  if (request.web?.operation === "search") return request.web.query ?? "";
+  if (request.web?.operation === "fetch") return request.web.url ?? "";
   if (request.argv !== undefined) return formatArgv(request.argv);
   if (request.diff !== undefined) return diffPathOf(request.diff) ?? "";
   if (request.cronTask !== undefined) {
@@ -2418,13 +2551,12 @@ export function renderMarkdownInto(
 }
 
 /**
- * 流式源 → 「已完成块 / 进行中尾块」切分：块边界 = 代码围栏之外的空行。围栏内（``` / ~~~
- * 之间）的空行不是边界——那是代码的一部分。返回 finalized（可安全一次性渲染、渲染后不
- * 再变）与 tail（每帧重渲）的分界偏移。
+ * 流式源 → 「已完成块 / 进行中尾块」切分：块边界 = 代码围栏之外的空行。列表内部与末尾列表
+ * 之后的空行只作候选：后续缩进续段仍可能属于该列表，须等后续顶层块确认列表关闭后才定稿。
  */
-function finalizedUpTo(source: string): number {
+export function finalizedUpTo(source: string): number {
   let inFence: string | null = null;
-  let boundary = 0;
+  const boundaries: number[] = [];
   let offset = 0;
   for (const line of source.split("\n")) {
     const fence = /^\s*(```+|~~~+)/.exec(line);
@@ -2432,12 +2564,33 @@ function finalizedUpTo(source: string): number {
       if (inFence === null) inFence = fence[1][0];
       else if (fence[1][0] === inFence) inFence = null;
     } else if (inFence === null && line.trim() === "") {
-      // +1 把空行本身吃进 finalized：末块从重渲区里整段退出。
-      boundary = offset + line.length + 1;
+      boundaries.push(offset + line.length + 1);
     }
     offset += line.length + 1;
   }
-  return boundary;
+  return finalizedBoundaryFromTop(boundaries, mdParser.parse(source).topNode);
+}
+
+export function finalizedBoundaryFromTop(boundaries: readonly number[], top: MdSyntaxNode): number {
+  let node = top.lastChild;
+  for (let index = boundaries.length - 1; index >= 0; index--) {
+    const boundary = boundaries[index];
+    while (
+      node !== null &&
+      ((node.name !== "BulletList" && node.name !== "OrderedList") || node.from >= boundary)
+    ) {
+      node = node.prevSibling;
+    }
+    if (
+      node !== null &&
+      node.from < boundary &&
+      (node.nextSibling === null || boundary <= node.to)
+    ) {
+      continue;
+    }
+    return boundary;
+  }
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -2469,6 +2622,7 @@ interface PendingApproval {
   /** 定时任务预览（change add-cron-conversational-registration §6.3，可缺席）：任务要素块的
    *  数据源，随语言重绘时按它重跑 `renderCronTaskBlock`。 */
   cronTask?: CronTaskPreview | undefined;
+  web?: WebApprovalPayload | undefined;
   /** 会话记忆粒度 / 持久规则原文（change harness-permission-rules-oct23）：随语言重上按钮
    *  文案时的插值素材；缺键 = 该按钮不存在。 */
   remember?: string | undefined;
@@ -2549,6 +2703,7 @@ export interface TaskApprovalRequest {
   reason?: DecisionReason | undefined;
   /** 定时任务预览（change add-cron-conversational-registration §6.3；子运行不可达这类工具）。 */
   cronTask?: CronTaskPreview | undefined;
+  web?: WebApprovalPayload | undefined;
   /** 会话记忆粒度（change harness-permission-rules-oct23 design §5；缺键 = 不渲染该按钮）。 */
   remember?: string | undefined;
   /** 持久规则原文（同上；缺键 = 不渲染该按钮）。 */
@@ -3800,7 +3955,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // 前端不知道。eink 下转明度表达（见 css 的 keyframes 分叉）。
   const progress = document.createElement("div");
   progress.className = "lumir-hp-progress";
-  progress.hidden = true;
+  progress.setAttribute("hidden", "");
   const stageLine = document.createElement("div");
   stageLine.className = "lumir-hp-stage";
   const barTrack = document.createElement("div");
@@ -4016,7 +4171,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   taskList.className = "lumir-tp-list";
   taskArea.append(taskHead, taskList);
 
-  panel.append(transcriptViewport, progress, taskArea, composerArea);
+  panel.append(transcriptViewport, taskArea, composerArea);
 
   // ── 跟随滚动控制器（M644，change improve-harness-streaming-scroll design §2/§3）──────────
   // 判据与写底编排全在 `src/harness-scroll-lock.ts`（纯模型层，单一真源）：这里只是适配器——
@@ -4092,7 +4247,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  在事件过滤时就丢了，因此该轮终态到达时要按后端快照对账一次渲染面，把残缺的流式泡换成
    *  留存里的完整消息。`sent` / 终态 / 进入快照报不在途都清它。 */
   let midTakeover = false;
-  let stageWaiting = true; // 阶段指示：首个 text_chunk 到达前 = 「等待响应」，之后 = 「生成中」。
+  let stageWaiting = true; // 首个 reasoning / tool / text 产出前 = 「等待响应」，之后 = 「生成中」。
   /** 停止钩子（M348 对接面）：处理中点击发送钮（= 停止态）时调用。面板创建即接上真实
    *  handler（调 harness_abort，中断语义 = 「不再继续」，收口等后端 aborted 终态事件）；
    *  setStopHandler 保留给装配层/测试覆盖，未注册时点击只走状态机。
@@ -4405,6 +4560,328 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const cardData = new WeakMap<Element, QuoteCard | MessageQuoteCard | ImageCard>();
   let imeGateState = imeKeyGate();
   let quoteJumpHandler: ((card: QuoteCard) => void) | null = null;
+  const skillMenuEl = document.createElement("div");
+  skillMenuEl.className = "lumir-hp-skill-menu";
+  skillMenuEl.hidden = true;
+  skillMenuEl.setAttribute("role", "listbox");
+  skillMenuEl.setAttribute("aria-label", t("D978"));
+  composerArea.append(skillMenuEl);
+  let skillMenuState: SkillMenuState | null = null;
+  let skillCatalog: readonly SkillSummary[] | null = null;
+  let skillCatalogEpoch = 0;
+  let skillTokenFrom: number | null = null;
+  let skillMenuIntentFrom: number | null = null;
+  let skillCatalogInFlight: { vault: string | null; epoch: number } | null = null;
+  let programmaticComposerReset = 0;
+  /** 上一次放置确立的滚动位置与游标可见性——`if-clipped` 的「原本完整可见」判据。 */
+  let skillMenuPlacedScrollTop = 0;
+  let skillMenuPlacedActiveVisible = false;
+
+  function hideSkillMenu(): void {
+    skillMenuState = null;
+    skillMenuPlacedActiveVisible = false;
+    skillMenuEl.hidden = true;
+    skillMenuEl.replaceChildren();
+    skillMenuEl.removeAttribute("data-armed");
+    unregisterEscapeLayer("harness-skill-menu");
+    composerView?.contentDOM.removeAttribute("aria-activedescendant");
+  }
+
+  function closeSkillMenu(): void {
+    hideSkillMenu();
+    skillMenuIntentFrom = null;
+    skillTokenFrom = null;
+  }
+
+  function resetSkillCatalog(): void {
+    closeSkillMenu();
+    skillCatalog = null;
+    skillTokenFrom = null;
+    skillCatalogInFlight = null;
+    skillCatalogEpoch += 1;
+  }
+
+  /** 候选盒的垂直夹取宿主要是**面板**（`.lumir-harness`，它才是 `overflow: hidden` 的裁切者），
+   *  不是 composer 区；允许向上覆盖 transcript。max-height 的上限唯一真源是 CSS
+   *  （`.lumir-hp-skill-menu`），这里只按可用空间再收缩，MUST NOT 另留一份硬编码上限。 */
+  const SKILL_MENU_PANEL_MARGIN = 8;
+  const SKILL_MENU_CARET_GAP = 4;
+
+  /** 实测行高（随 --lumir-hp-scale 变）：用于判断一侧空间是否还放得下一整行。 */
+  function skillMenuRowHeight(): number {
+    const first = skillMenuEl.firstElementChild;
+    return first === null ? 0 : first.getBoundingClientRect().height;
+  }
+
+  /** 真实可见带 = menuRect ∩ panelRect ∩ viewport（合同 selector-contract C2）。
+   *  菜单自身的 `clientHeight` 看不见祖先裁切——用它当视口会让「盒内、屏外」的项被判为可见。 */
+  function skillMenuClip(menuRect: DOMRect, panelRect: DOMRect): { top: number; bottom: number } {
+    return {
+      top: Math.max(menuRect.top, panelRect.top, 0),
+      bottom: Math.min(menuRect.bottom, panelRect.bottom, window.innerHeight),
+    };
+  }
+
+  function updateSkillMenuHighlight(): void {
+    const state = skillMenuState;
+    if (state === null) return;
+    const highlighted = state.highlighted;
+    Array.from(skillMenuEl.children).forEach((option, index) => {
+      const selected = highlighted === index;
+      option.classList.toggle("is-selected", selected);
+      option.setAttribute("aria-selected", String(selected));
+    });
+    skillMenuEl.dataset.armed = state.armed ? "true" : "false";
+    composerView.contentDOM.setAttribute("aria-activedescendant", `lumir-hp-skill-option-${highlighted}`);
+    relayoutSkillMenu("cursor");
+  }
+
+  /** 只重排几何，不重建 items：resize / 分隔条拖动 / 同状态回包都只需要新的位置。
+   *  与 `renderSkillMenu`（重建 DOM）分开，状态去重才不会连带跳过几何（C2：盒必须等于真实 clip）。
+   *
+   *  揭示分两种（C3）：
+   *  - `cursor`：游标刚变，按合同必揭示（越界才滚，带内不动）。
+   *  - `if-clipped`：游标没变。只揭示「上一次放置时完整可见、被新几何挤出带」的游标——可见性
+   *    判据取上一次放置确立的几何（`skillMenuActiveVisibleAtLastPlacement`），不取此刻的 clip：
+   *    面板 / 视口收缩的事件到达时浏览器已经把新尺寸应用到 clip 上。用户手动滚开的阅读位置
+   *    MUST NOT 被同状态回包 / resize 拉回游标项（那不是几何变化造成的，是用户在读别处）。 */
+  function relayoutSkillMenu(reveal: "cursor" | "if-clipped"): void {
+    const state = skillMenuState;
+    if (state === null || skillMenuEl.hidden) return;
+    const option = skillMenuEl.children[state.highlighted] as HTMLElement | undefined;
+    if (option === undefined) {
+      placeSkillMenu();
+      skillMenuPlacedActiveVisible = false;
+      return;
+    }
+    // 「原本完整可见」按上一次放置确立的几何判，不按此刻的 clip：面板 / 视口收缩的事件到达时
+    // 浏览器已把新尺寸应用到 clip 上，此刻读到的往往已经是「被裁掉」，正分支永远不会触发（N5）。
+    const wasFullyVisible = reveal === "if-clipped" && skillMenuActiveVisibleAtLastPlacement();
+    const clip = placeSkillMenu();
+    if (clip === null) {
+      skillMenuPlacedActiveVisible = false;
+      return;
+    }
+    if (reveal === "cursor" || wasFullyVisible) revealElementWithin(skillMenuEl, option, clip);
+    // 本次放置确立的几何：下一次 if-clipped 的「原本完整可见」判据。
+    skillMenuPlacedScrollTop = skillMenuEl.scrollTop;
+    skillMenuPlacedActiveVisible = isFullyVisibleWithin(skillMenuEl, option, clip);
+  }
+
+  /** `if-clipped` 的判据：上次放置时游标完整可见，且此后用户没有滚动过候选（位置仍是我们留下的）。
+   *  可见性变化只能来自几何 ⇒ 该揭示；用户滚开 ⇒ 那是阅读位置，重排 MUST NOT 拉回（N1）。 */
+  function skillMenuActiveVisibleAtLastPlacement(): boolean {
+    return skillMenuPlacedActiveVisible &&
+      Math.abs(skillMenuEl.scrollTop - skillMenuPlacedScrollTop) <= 0.5;
+  }
+
+  function highlightSkillMenuItem(index: number): void {
+    if (skillMenuState === null) return;
+    const hovered = hoverSkillHighlight(skillMenuState, index);
+    if (hovered === skillMenuState) return;
+    skillMenuState = hovered;
+    updateSkillMenuHighlight();
+  }
+
+  /** 指针选意只认**真实指针移动**（`mousemove`），不认 `mouseenter`：揭示滚动会把另一行搬到
+   *  静止指针下面，`mouseenter` 会在那一刻改掉键盘刚选中的游标（合同 C6「hover 不得抹掉游标」）。
+   *  整表只挂一个监听，option 重建时不重复注册。 */
+  skillMenuEl.addEventListener("mousemove", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const option = target.closest(".lumir-hp-skill-option");
+    if (option === null) return;
+    const index = Array.from(skillMenuEl.children).indexOf(option);
+    if (index >= 0) highlightSkillMenuItem(index);
+  });
+
+  function renderSkillMenu(): void {
+    const state = skillMenuState;
+    if (state === null) {
+      hideSkillMenu();
+      return;
+    }
+    skillMenuEl.hidden = false;
+    registerEscapeLayer("harness-skill-menu", closeSkillMenu);
+    skillMenuEl.replaceChildren();
+    state.items.forEach((item, index) => {
+      const option = document.createElement("div");
+      option.className = "lumir-hp-skill-option";
+      option.id = `lumir-hp-skill-option-${index}`;
+      option.setAttribute("role", "option");
+      const name = document.createElement("span");
+      name.className = "lumir-hp-skill-name";
+      name.textContent = item.name;
+      const description = document.createElement("span");
+      description.className = "lumir-hp-skill-description";
+      description.textContent = item.description;
+      option.append(name, description);
+      option.addEventListener("mousedown", (event) => event.preventDefault());
+      option.addEventListener("click", () => selectSkillMenuItem(index));
+      skillMenuEl.append(option);
+    });
+    updateSkillMenuHighlight();
+  }
+
+  function moveSkillMenu(delta: number): void {
+    if (skillMenuState === null) return;
+    skillMenuState = moveSkillHighlight(skillMenuState, delta);
+    updateSkillMenuHighlight();
+  }
+
+  function placeSkillMenu(): { top: number; bottom: number } | null {
+    const state = skillMenuState;
+    if (state === null || !isLayoutCapable(skillMenuEl)) return null;
+    const caret = composerView.coordsAtPos(composerView.state.selection.main.head);
+    const host = composerArea.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    if (caret === null) return null;
+    const fontSize = overlayFontSize(skillMenuEl);
+    const avail = Math.max(0, host.width - 16);
+    const width = placeOverlay({
+      tier: "list",
+      natural: measureOverlayNaturalWidth(skillMenuEl),
+      host: host.width,
+      hostLeft: host.left,
+      fontSize,
+      maxEm: 48,
+      minWidth: Math.max(200, 0.85 * avail),
+      anchor: { left: caret.left, right: caret.right },
+      preferred: "left",
+    });
+    skillMenuEl.style.width = `${width.width}px`;
+    skillMenuEl.style.left = `${width.left - host.left}px`;
+
+    // 盒先归位再谈揭示：菜单只能往上覆盖 transcript，不能被 composer 区或面板裁掉。
+    // max-height 上限的唯一真源是 CSS；这里不解析 getComputedStyle 的字符串（百分比等非 px
+    // 计算值会被 parseFloat 静默误读），改为清空 inline 上限后**实测**受 CSS 约束的高度——
+    // 单位由浏览器负责，JS 只按可用空间再收缩（收缩值必小于实测高度，不会越过 CSS 上限）。
+    // 清空上限会让菜单瞬时展开、浏览器把 scrollTop 钳到新 maxScroll：先记下来，定高后恢复，
+    // 否则 reveal 会按被钳小的位置判「已可见」而不回滚（C3 带内不动）。
+    const preservedScrollTop = skillMenuEl.scrollTop;
+    skillMenuEl.style.maxHeight = "";
+    const rowHeight = skillMenuRowHeight();
+    const naturalHeight = skillMenuEl.getBoundingClientRect().height;
+    const limitTop = Math.max(panelRect.top, 0) + SKILL_MENU_PANEL_MARGIN;
+    const limitBottom = Math.min(panelRect.bottom, window.innerHeight) - SKILL_MENU_PANEL_MARGIN;
+    // 下方放置以控制行（模型 chip / 发送钮等常驻可交互件）的顶缘为界：候选不得压住它。
+    const belowTop = caret.bottom + SKILL_MENU_CARET_GAP;
+    const belowLimit = Math.min(limitBottom, ctl.getBoundingClientRect().top - SKILL_MENU_CARET_GAP);
+    const aboveBottom = caret.top - SKILL_MENU_CARET_GAP;
+    const belowSpace = Math.max(0, belowLimit - belowTop);
+    const aboveSpace = Math.max(0, aboveBottom - limitTop);
+    // 放置优先级：下方放得下 ⇒ 下方；否则上方放得下 ⇒ 上方；都放不下时优先收缩上方，
+    // 上方连一行都放不下才用下方（同样收缩到控制行顶缘以上）。上翻后盒底不越过 caret。
+    let below: boolean;
+    let available: number;
+    if (naturalHeight <= belowSpace) {
+      below = true;
+      available = naturalHeight;
+    } else if (naturalHeight <= aboveSpace) {
+      below = false;
+      available = naturalHeight;
+    } else if (aboveSpace > 0 && aboveSpace >= rowHeight) {
+      below = false;
+      available = aboveSpace;
+    } else if (belowSpace > 0 && belowSpace >= rowHeight) {
+      below = true;
+      available = belowSpace;
+    } else if (aboveSpace >= belowSpace) {
+      below = false;
+      available = aboveSpace;
+    } else {
+      below = true;
+      available = belowSpace;
+    }
+    if (available < naturalHeight) skillMenuEl.style.maxHeight = `${available}px`;
+    const height = skillMenuEl.getBoundingClientRect().height;
+    const top = below ? belowTop : aboveBottom - height;
+    const clamped = Math.min(Math.max(top, limitTop), Math.max(limitTop, limitBottom - height));
+    skillMenuEl.style.top = `${clamped - host.top}px`;
+    // 定高之后再恢复：展开读数期间被钳掉的滚动位置只允许存在于这一拍内部，揭示仍按真实带判定。
+    skillMenuEl.scrollTop = preservedScrollTop;
+    return skillMenuClip(skillMenuEl.getBoundingClientRect(), panelRect);
+  }
+
+  function syncSkillMenu(forceCatalog = false, fromCatalog = false): void {
+    if (programmaticComposerReset > 0 || composerIsComposing()) {
+      closeSkillMenu();
+      return;
+    }
+    const token = skillTokenAt(
+      composerView.state.doc.toString(),
+      composerView.state.selection.main.head,
+    );
+    if (token === null) {
+      closeSkillMenu();
+      return;
+    }
+    if (fromCatalog && skillMenuIntentFrom !== token.from) {
+      closeSkillMenu();
+      return;
+    }
+    if (!fromCatalog) skillMenuIntentFrom = token.from;
+    const newToken = token.from !== skillTokenFrom;
+    skillTokenFrom = token.from;
+    if (forceCatalog || newToken) {
+      refreshSkillCatalog(true);
+    }
+    const next = syncSkillMenuState(
+      skillMenuState,
+      composerView.state.doc.toString(),
+      composerView.state.selection.main.head,
+      skillCatalog ?? [],
+    );
+    // IME settle、catalog 回包与文档回调可能对同一份最终文档各算一次：状态没变就不重建 DOM，
+    // 但几何仍要重排——面板尺寸 / 位置可能已变（resize 后回包），盒必须仍等于真实 clip。
+    if (sameSkillMenuState(skillMenuState, next)) {
+      relayoutSkillMenu("if-clipped");
+      return;
+    }
+    skillMenuState = next;
+    renderSkillMenu();
+  }
+
+  function refreshSkillCatalog(force: boolean): void {
+    if (skillCatalogInFlight !== null || (!force && skillCatalog !== null)) return;
+    const vault = currentVault;
+    const epoch = ++skillCatalogEpoch;
+    const request = { vault, epoch };
+    skillCatalogInFlight = request;
+    void harnessSkillsList().then((items) => {
+      if (epoch !== skillCatalogEpoch || vault !== currentVault) return;
+      skillCatalog = items;
+      composerView.dispatch({ effects: skillCatalogRefreshEffect.of(null) });
+      syncSkillMenu(false, true);
+    }).catch(() => {
+      // 最新成功清单保留；初次失败仍是 null，refs chip 不误标 missing/disabled。
+    }).finally(() => {
+      if (skillCatalogInFlight === request) skillCatalogInFlight = null;
+    });
+  }
+
+  function selectSkillMenuItem(index?: number): void {
+    if (skillMenuState === null) return;
+    if (index !== undefined) {
+      // 指针点击本身就是显式选择：同一次动作里先武装游标，再走与键盘同一个接受路径。
+      const next = hoverSkillHighlight(skillMenuState, index);
+      if (next !== skillMenuState) {
+        skillMenuState = next;
+        updateSkillMenuHighlight();
+      }
+    }
+    if (skillMenuState === null) return;
+    const selected = skillSelectionSpec(composerView.state.doc.toString(), skillMenuState);
+    if (selected === null) return;
+    const { skill, ...spec } = selected;
+    composerView.dispatch({
+      ...spec,
+      effects: composerSkillEffect.of({ type: "add", ref: skill }),
+    });
+    closeSkillMenu();
+    composerView.focus();
+  }
+
   const composerViewExtensions = [
     EditorView.lineWrapping,
     composerInlineCards({
@@ -4424,9 +4901,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       }).join(" / "),
       prune: () => imageThumbCache.prune(),
     }),
+    skillChips(() => skillCatalog, {
+      missing: t("D979"),
+      userDisabled: t("D980"),
+      invalid: t("D981"),
+    }),
     EditorView.contentAttributes.of({
       "aria-label": t("D328"),
       "aria-multiline": "true",
+      "aria-autocomplete": "list",
       spellcheck: "false",
     }),
     EditorView.updateListener.of((update) => {
@@ -4439,15 +4922,18 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           requestAnimationFrame(() => (update.view as unknown as { measure(): void }).measure());
         }
       }
-      if (update.docChanged || update.selectionSet || cardsChanged) {
+      const skillsChanged = update.startState.field(composerSkillsField)
+        !== update.state.field(composerSkillsField);
+      if (update.docChanged || update.selectionSet || cardsChanged || skillsChanged) {
         updateEmptyClass();
         markDraft();
       }
+      if (update.docChanged || (update.selectionSet && skillMenuState !== null)) syncSkillMenu();
     }),
   ];
   const composerView = new EditorView({
     parent: composer,
-    state: createComposerState({ text: "", caret: 0, cards: [] }, composerViewExtensions),
+    state: createComposerState({ text: "", caret: 0, cards: [], skills: [] }, composerViewExtensions),
   });
 
   // ── composer 草稿（change composer-draft-persistence，design §4/§5/§7）──────────────
@@ -4466,7 +4952,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   function markDraft(): void {
     const content = composerContentOf(composerView.state);
-    draft.schedule(content.text, content.caret, content.cards);
+    draft.schedule(content.text, content.caret, content.cards, content.skills);
   }
 
   /** 离散 flush：把待写内容立刻落盘（输入区失焦 / 面板关闭 / 窗口失焦 / 退出）。防抖是主
@@ -4878,11 +5364,18 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     composer.classList.toggle("is-empty", composerIsEmpty(composerView.state));
   }
 
-  function resetComposer(content: Parameters<typeof createComposerState>[0] = { text: "", caret: 0, cards: [] }): void {
-    composerView.setState(createComposerState(content, composerViewExtensions));
-    syncComposerAriaValue();
-    updateEmptyClass();
-    imageThumbCache.prune();
+  function resetComposer(content: Parameters<typeof createComposerState>[0] = { text: "", caret: 0, cards: [], skills: [] }): void {
+    programmaticComposerReset += 1;
+    try {
+      closeSkillMenu();
+      skillTokenFrom = null;
+      composerView.setState(createComposerState(content, composerViewExtensions));
+      syncComposerAriaValue();
+      updateEmptyClass();
+      imageThumbCache.prune();
+    } finally {
+      programmaticComposerReset -= 1;
+    }
   }
 
   function syncAttachmentProjection(previous: readonly PlacedAttachment[]): void {
@@ -5048,7 +5541,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 发送钮 / 阶段指示按当前相位重取文案（running 时钮面是「停止」、进度条阶段行重渲）。
     // 相位取**当前 vault 的记录**（按 vault 键控之后唯一的一份投影）。
     renderedPhase = currentActivity().phase;
-    applySendPhase(renderedPhase);
+    applySendPhase(renderedPhase, true);
     // 活动状态文案（处理中 / 有新的回复 / 有失败结果）随语言重绘：可访问名与状态文本
     // 同源（change add-harness-activity-presence 任务 3.6）。
     applyActivityBadge();
@@ -6041,6 +6534,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (!selPop.hidden) placeSelPop();
     if (!effHint.hidden) placeEffHint();
     if (!sessPop.hidden) placeSessPop();
+    // Skill 候选的 clip 宿主是面板本身：窗口 / 面板尺寸变化后必须重排（不重建 items），
+    // 只在几何把原本可见的游标挤出带时揭示——已经滚开去读别的行时不得被拉回。
+    relayoutSkillMenu("if-clipped");
   }
   const overlayResize = new ResizeObserver(() => reclampOpenOverlays());
   overlayResize.observe(panel);
@@ -6052,7 +6548,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  M351 图标化：钮面是两枚 SVG glyph（↑ 发送 / ■ 停止），D329/D378 落 title 与 aria-label
    *  ——textContent 赋值会抹掉 glyph 子节点，可读名不能再走钮面文本。
    *  `next` 由 [`dispatchActivity`] 从活动模型取出：本函数只落 DOM，MUST NOT 反写相位。 */
-  function applySendPhase(next: SendPhase): void {
+  function applySendPhase(next: SendPhase, relabelOnly = false): void {
     const running = next !== "idle";
     sendButton.classList.toggle("is-busy", running);
     const label = running ? t("D378") : t("D329");
@@ -6062,8 +6558,23 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     sendGo.toggleAttribute("hidden", running);
     sendStop.toggleAttribute("hidden", !running);
     sendButton.disabled = next === "stopping";
-    progress.hidden = !running;
-    if (running) applyStage();
+    if (relabelOnly) {
+      applyStage();
+      return;
+    }
+    const view = progressTailView({
+      phase: next,
+      pending: hasPendingApprovals(),
+      stageWaiting,
+      midTakeover,
+    });
+    const heightBefore = transcript.scrollHeight;
+    progress.hidden = !view.visible;
+    if (view.visible) ensureTailLast();
+    progress.dataset.phase = next;
+    // 只测量尾行显隐 / 置尾 / 相位形态；applyStage 的文案重施不进入这段几何账。
+    follow.layoutMutated(transcript.scrollHeight - heightBefore);
+    applyStage();
   }
 
   /**
@@ -6121,6 +6632,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         if (enterSnapshotApplies(prev, event)) {
           turnOpen = event.inFlight;
           midTakeover = event.inFlight;
+          if (event.inFlight) stageWaiting = false;
         }
         break;
       case "reset_view":
@@ -6241,14 +6753,24 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     applyActivityBadge();
   }
 
-  /** 阶段行施加（applySendPhase 的 running 分支调用）。文案键由纯选择器 [`stageCopyKey`] 决定
-   *  ——**停止中 > 等待批准 > 等待响应 / 生成中** 的优先级只在那一处写一次。待批档的文案值
-   *  是 D976「等待批准…」；`stopping` 第一时间换 D400「正在停止…」，停止反馈的即时性由前端
-   *  这半承担（后端收口前不再停在「等待响应 / 正在生成回复」的误读上，M374）。写 DOM 前比较
-   *  旧文本：同一待批集合期间的重复投递 / 工具行更新不产生新的 mutation。 */
+  /** 阶段文案的唯一 DOM 写点：只换文本，不触发布局、置尾或贴底。优先级由纯模型
+   *  [`progressTailView`] 单点给出：停止中 > 等待批准 > 中途接管 > 等待响应 / 生成中。 */
   function applyStage(): void {
-    const text = t(stageCopyKey(currentActivity().phase, hasPendingApprovals(), stageWaiting));
+    const view = progressTailView({
+      phase: currentActivity().phase,
+      pending: hasPendingApprovals(),
+      stageWaiting,
+      midTakeover,
+    });
+    const text = t(view.copyKey);
     if (stageLine.textContent !== text) stageLine.textContent = text;
+  }
+
+  /** 首个 reasoning / tool / text 任一有效产出都离开等待；流式路径只重施文案。 */
+  function markAssistantOutputStarted(): void {
+    if (!stageWaiting) return;
+    stageWaiting = false;
+    if (currentActivity().phase !== "idle") applyStage();
   }
 
   sendButton.addEventListener("click", () => {
@@ -6296,12 +6818,33 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   //   - 内容增长 → `follow.contentGrew()`（following 贴底、detached 只更新未读）；
   //   - 强制回底白名单（发送消息 / 快照重建 / 恢复会话 / 重新打开面板）→ `follow.jumpToBottom()`。
 
-  function syncEmptyHint(): void {
-    if (transcript.childElementCount === 0 && !transcript.contains(emptyHint)) {
-      transcript.append(emptyHint);
-    } else if (transcript.childElementCount > 1 && transcript.contains(emptyHint)) {
-      emptyHint.remove();
+  function ensureTailLast(): void {
+    if (progress.hidden) return;
+    if (progress.parentElement !== transcript || transcript.lastElementChild !== progress) {
+      transcript.append(progress);
     }
+  }
+
+  /** transcript 顶层追加的唯一入口；运行时兜底覆盖绕过本 helper 的追加。 */
+  function appendTranscriptNode(node: Node): void {
+    transcript.append(node);
+    ensureTailLast();
+  }
+
+  const transcriptTailObserver = new MutationObserver((records) => {
+    if (!records.some((record) => record.addedNodes.length > 0)) return;
+    ensureTailLast();
+  });
+  transcriptTailObserver.observe(transcript, { childList: true });
+
+  function transcriptHasContent(): boolean {
+    return Array.from(transcript.children).some((el) => el !== progress && el !== emptyHint);
+  }
+
+  function syncEmptyHint(): void {
+    const hasContent = transcriptHasContent();
+    if (!hasContent && !transcript.contains(emptyHint)) appendTranscriptNode(emptyHint);
+    else if (hasContent && transcript.contains(emptyHint)) emptyHint.remove();
   }
 
   // ── 消息 meta 行（M351，design §3.1/§4）：who（角色）+ when（时间读数）─────────────
@@ -6391,7 +6934,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
     el.append(body);
     if (source !== "") attachCopyButton(el, source);
-    transcript.append(el);
+    appendTranscriptNode(el);
     lastAssistantEl = null; // 用户消息开新轮：恢复路径的工具记录挂点作废
     syncEmptyHint();
     follow.jumpToBottom(); // 分流表 #1：用户发送 = 白名单动作，新消息必须在眼前
@@ -6504,13 +7047,20 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     el.className = "lumir-hp-tools";
     const host = streamingEl ?? lastAssistantEl;
     if (host !== null) host.append(el);
-    else transcript.append(el);
+    else appendTranscriptNode(el);
     activeTools = { el, rows: [], running: null };
     // 工具块落位后，其后的正文必须开新段（留在工具块之后）——currentSeg 封在这里：
     // 不清的话下一轮正文会继续追加进工具块之前的旧段，工具行被埋回消息末尾（M374 的
     // 时序倒置在「段后还有正文」的轮次里复现）。
     currentSeg = null;
     return activeTools;
+  }
+
+  /** 审计块统一追加点：**先有工具行、再追加审计**，并进 `rows`（折叠计数与逐行显隐）。 */
+  function appendWebAuditToBlock(block: ToolsBlock, audit: WebAuditMetadata): void {
+    const element = createWebAuditBlock(audit);
+    block.el.append(element);
+    block.rows.push(element);
   }
 
   /** 轮次终态收尾（幂等；done / aborted / error 经 finalizeStreamingMessage 共用本出口，
@@ -6607,6 +7157,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   interface SettledApprovalCall {
     name: string;
     row: HTMLElement;
+    /** 该行所在的工具块：done 到达时审计块必须追加到同一块、同一行之后。 */
+    block: ToolsBlock;
     approved: boolean;
     consumed: boolean;
     /** 认领该记录的 done call_id；快照兜底项在第一次 done 后升级，重复同 id done 因此幂等。 */
@@ -7033,6 +7585,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     status: "started" | "done",
     summary: string,
     callId: string | null = null,
+    web?: unknown,
   ): void {
     // `task` 工具行由 run 事件驱动终态（design §12.2 第 2 条：行在调用时创建、之后只就地更新）。
     // 通用 done 配对会把并行多调用的行配错（`block.running` 只有一个），因此单独一条路径。
@@ -7126,11 +7679,18 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
             text.append(document.createTextNode(" "), outEl);
           }
         }
+        if (slot.approved) {
+          // 批准执行的 Web 调用与 allow_all 同形：attempts / truncated / provider 错误细节
+          // 必须可见（D1024 / D1025）。拒绝没有执行，不建审计块。
+          const audit = parseWebAudit(web);
+          if (audit !== undefined) appendWebAuditToBlock(slot.block, audit);
+        }
         if (callId !== null) doneCallIds.add(callId);
         follow.contentGrew();
         return;
       }
     }
+    const audit = status === "done" ? parseWebAudit(web) : undefined;
     const block = ensureToolsBlock();
     if (status === "started") {
       const row = document.createElement("div");
@@ -7182,6 +7742,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       block.el.append(row);
       block.rows.push(row);
     }
+    // 审计块排在工具行之后（行已在上一分支落位）：无 running 行的乱序 done 也保持
+    // 「工具行 → 审计」顺序，不能把审计先追加到块尾再建行。
+    if (audit !== undefined) appendWebAuditToBlock(block, audit);
     if (status === "done" && callId !== null) doneCallIds.add(callId);
     syncEmptyHint();
     follow.contentGrew();
@@ -7201,7 +7764,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     body.textContent = summary;
     details.append(summaryEl, body);
     el.append(line, details);
-    transcript.append(el);
+    appendTranscriptNode(el);
     syncEmptyHint();
     follow.contentGrew();
   }
@@ -7225,7 +7788,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     label.className = "lumir-hp-error-text";
     label.textContent = text;
     el.append(label);
-    transcript.append(el);
+    appendTranscriptNode(el);
     lastErrorEl = el;
     lastErrorText = text;
     attachErrorRetryAction(el, retryTurnValue);
@@ -7302,7 +7865,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     btn.setAttribute("aria-label", t("D962"));
     btn.addEventListener("click", () => beginRetry(turn));
     row.append(label, btn);
-    transcript.append(row);
+    appendTranscriptNode(row);
     retryTailEl = row;
     syncEmptyHint();
     follow.contentGrew();
@@ -7390,7 +7953,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const ask =
       tool === "cli_run"
         ? t("D340")
-        : tool === "vault_create"
+        : tool === "web_search"
+          ? t("D1014")
+          : tool === "web_fetch"
+            ? t("D1015")
+            : tool === "vault_create"
           ? t("D412")
           : tool === "vault_patch"
             ? t("D339")
@@ -7422,6 +7989,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (cronEl !== null && pending.cronTask !== undefined) {
       renderCronTaskBlock(cronEl, pending.cronTask);
     }
+    const webEl = pending.element.querySelector<HTMLElement>(".lumir-hp-approval-web");
+    if (webEl !== null && pending.web !== undefined) {
+      renderWebApprovalBlock(webEl, pending.web);
+    }
     // 待决行的「等待批准」尾注同口径重取（行是交互中的 UI，不是历史记录）；argsText 是
     // 数据（命令 / 文件名），不译文。路径目标随行重建（结构化参数 → 可点段）。
     pending.row.replaceChildren(
@@ -7430,7 +8001,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     );
     // vault_delete 的后果说明（D435）是 chrome 文案，随语言重取。
     const note = pending.element.querySelector(".lumir-hp-approval-note");
-    if (note !== null) note.textContent = t("D435");
+    if (note !== null && pending.tool === "vault_delete") note.textContent = t("D435");
     const reason = pending.element.querySelector<HTMLTextAreaElement>(".lumir-hp-reason");
     if (reason !== null) {
       reason.placeholder = t("D338");
@@ -7544,16 +8115,21 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     pending.wrap.replaceWith(term);
 
     // 块内行替换成终态单元（折叠时整单元随块隐藏）+ running 指针清掉 + done 抑制槽。
+    let owningBlock: ToolsBlock | null = null;
     for (const block of [activeTools, ...sealedToolBlocks]) {
       if (block === null) continue;
       const index = block.rows.indexOf(row);
-      if (index >= 0) block.rows[index] = term;
+      if (index >= 0) {
+        block.rows[index] = term;
+        owningBlock = block;
+      }
       if (block.running === row) block.running = null;
     }
     {
       const entry: SettledApprovalCall = {
         name: pending.tool,
         row,
+        block: owningBlock ?? ensureToolsBlock(),
         approved,
         consumed: false,
         callId: pending.callId ?? null,
@@ -7672,6 +8248,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     reason?: DecisionReason | undefined;
     /** 定时任务预览（change add-cron-conversational-registration §6.3；其它工具缺键）。 */
     cronTask?: CronTaskPreview | undefined;
+    web?: WebApprovalPayload | undefined;
     /** 会话记忆粒度（change harness-permission-rules-oct23；缺键 = 不渲染该按钮）。 */
     remember?: string | undefined;
     /** 持久规则原文（同上；缺键 = 不渲染该按钮）。 */
@@ -7738,6 +8315,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       const basis = document.createElement("div");
       basis.className = "lumir-hp-approval-basis";
       el.append(basis);
+    }
+    if (request.web !== undefined) {
+      const webEl = document.createElement("div");
+      webEl.className = "lumir-hp-approval-web";
+      renderWebApprovalBlock(webEl, request.web);
+      el.append(webEl);
     }
     // 定时任务要素块（change add-cron-conversational-registration design §6.3）：紧跟判定依据
     // 行之后、diff / argv 与按钮之前——与它们同一层级。内容全来自批准载荷（含线程算好的
@@ -7834,6 +8417,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       purpose: request.purpose,
       reason: request.reason,
       cronTask: request.cronTask,
+      web: request.web,
       remember: request.remember,
       persistRule: request.persistRule,
       argsText,
@@ -8042,7 +8626,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     streamingEl.className = "lumir-hp-msg lumir-hp-msg-assistant";
     streamingEl.append(createWhoLine("assistant", Date.now()));
     // 正文段与工具块按到达序懒建追加（who 行之后），见 textSegments 的注释。
-    transcript.append(streamingEl);
+    appendTranscriptNode(streamingEl);
     streamingText = "";
     syncEmptyHint();
   }
@@ -8859,7 +9443,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       });
       body.append(textEl, button);
       el.append(body);
-      transcript.append(el);
+      appendTranscriptNode(el);
       wakeNotice = { el, text: textEl, button };
       syncEmptyHint();
       follow.contentGrew(); // 分流表口径：自动提示不拽视口
@@ -8895,7 +9479,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       body.append(line);
     }
     el.append(head, body);
-    transcript.append(el);
+    appendTranscriptNode(el);
     syncEmptyHint();
     follow.contentGrew(); // 分流表 #12：后台完成通知不拽视口
   }
@@ -8908,7 +9492,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     body.className = "lumir-hp-notice-body";
     body.textContent = text;
     el.append(body);
-    transcript.append(el);
+    appendTranscriptNode(el);
     syncEmptyHint();
     follow.contentGrew(); // 分流表 #13：同上（兜底上屏）
   }
@@ -8959,15 +9543,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 缓冲首个正文的到达序 = 段创建的排序位次（M383：与思考块创建按 seq 合并落位）。
         if (text !== "" && chunkBuffer === "") pendingSegSeq = seq;
         chunkBuffer += text;
-        // 阶段指示推进：首个 chunk 到达 = 模型开始生成（「等待响应」→「生成中」）。
-        if (stageWaiting) {
-          stageWaiting = false;
-          if (currentActivity().phase !== "idle") applyStage();
-        }
+        markAssistantOutputStarted();
         scheduleFlush();
         return;
       }
       case "reasoning_chunk": {
+        markAssistantOutputStarted();
         // M383：同帧 text→think 交错时，先把已缓冲的正文落位（开段建出、序在思考之前）
         // 再登记本思考——否则思考后到达的正文会并进思考前的段，帧内事件序倒置（r1 评审 P2）。
         // 缓冲为空时不 flush（纯思考流的热路径不受影响）。
@@ -8994,6 +9575,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         return;
       }
       case "tool_call":
+        markAssistantOutputStarted();
         // 清单块挂当前 agent 消息（design §3.3）：工具先于首个 text_chunk 到达是常态
         // （模型先调工具后说话）——先立一条空 agent 消息，正文 chunk 随后开新段落在
         // 工具块之后（M374：工具行保持在它发生的文本段之前的原位）。
@@ -9003,6 +9585,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           event.status === "done" ? "done" : "started",
           typeof event.summary === "string" ? event.summary : "",
           typeof event.call_id === "string" ? event.call_id : null,
+          event.web,
         );
         return;
       case "approval_request":
@@ -9017,6 +9600,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
             reason: parseDecisionReason(event.reason),
             // 定时任务预览（§6.3 契约）：形状不合 / 缺键 = undefined ⇒ 不建要素块。
             cronTask: parseCronTaskPreview(event.cron_task),
+            web: parseWebApprovalPreview(event.web),
             // 两枚次级动作（change harness-permission-rules-oct23）：与事件 / 快照入口同一份
             // 宽容解析（缺键 / 非字符串 = 不渲染该按钮——D3 翻转后的缺键语义）。
             ...approvalActionsFromPayload(event),
@@ -9224,11 +9808,21 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 停止不是失败：任何残留的重试动作都随这一轮一起失效（begin_turn 已清空后端 failed）。
         removeRetryActions();
         // 本轮被用户停止（M348）：中断语义是「不再继续」——已流式产出保留（上面的
-        // text_chunk 已落进流式泡），标注「已停止」，收口回 idle，
+        // text_chunk 已落进流式泡）。先收口回 idle 隐藏尾行，再标注「已停止」；
         // composer 立即可开新一轮。无产出（停止在首个 chunk 前）时补一条「Agent ·
         // 已停止」标记消息——被取消的轮次在消息流里显式封闭，不再读作「一个没有得到
         // 处理的问题」（M374；标记是 live 面：快照侧无对应留存记录，重载后不重建）。
         const el = finalizeStreamingMessage();
+        // 待决批准项随中断收回（design §5）：未决策的批准卡撤下、解壳回工具行——它们的
+        // 唯一出口（点击）已失效，后端那条通道已被 Withdrawn 关闭。统一撤回函数负责标
+        // D383「已停止」、清集合、使决策闭包失效；正常路径下 Withdrawn 的 done（turn_aborted
+        // 失败摘要）已先把行翻面为 is-fail，没翻面的（事件缺口）在撤回落点补翻，不留永恒
+        // 「等待批准」幻影行。撤回排在终态投影之前（先撤卡 / 清集合，再施加终态）。
+        withdrawPendingApprovals("aborted");
+        // 先施加终态隐藏尾行，再落「已停止」标记；aborted 不产生未读。
+        if (accounted !== null && prevActivity !== null) {
+          projectActivity(vault, accounted, prevActivity);
+        }
         if (el !== null) {
           attachStoppedMark(el);
         } else {
@@ -9236,19 +9830,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           marker.className = "lumir-hp-msg lumir-hp-msg-assistant";
           marker.append(createWhoLine("assistant", Date.now()));
           attachStoppedMark(marker);
-          transcript.append(marker);
+          appendTranscriptNode(marker);
           syncEmptyHint();
           follow.contentGrew(); // 分流表 #14：中断收口不拽视口
-        }
-        // 待决批准项随中断收回（design §5）：未决策的批准卡撤下、解壳回工具行——它们的
-        // 唯一出口（点击）已失效，后端那条通道已被 Withdrawn 关闭。统一撤回函数负责标
-        // D383「已停止」、清集合、使决策闭包失效；正常路径下 Withdrawn 的 done（turn_aborted
-        // 失败摘要）已先把行翻面为 is-fail，没翻面的（事件缺口）在撤回落点补翻，不留永恒
-        // 「等待批准」幻影行。撤回排在终态投影之前（先撤卡 / 清集合，再施加终态）。
-        withdrawPendingApprovals("aborted");
-        // `aborted` 不产生未读（D2：停止是用户自己按的，提醒他只是复述他刚做的事）。
-        if (accounted !== null && prevActivity !== null) {
-          projectActivity(vault, accounted, prevActivity);
         }
         if (takeover) fetchSnapshot("content");
         return;
@@ -9369,7 +9953,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         }
         // 中断轮留存的产出：标注「已停止」（M348，D383；status 缺省 = 正常完成不标）。
         if (record.status === "stopped") attachStoppedMark(el);
-        transcript.append(el);
+        appendTranscriptNode(el);
         lastAssistantEl = el; // 其后的 tool 记录挂进这条消息的清单块
       }
     } else if (role === "tool" && typeof record.name === "string") {
@@ -9514,6 +10098,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         block.el.append(row);
         block.rows.push(row);
       }
+      if (approved) {
+        // 与 live 的 ask 批准后路径同形：恢复出来的已批准 Web 调用也显示完整审计
+        // （attempts / truncated / provider 错误细节）。拒绝没有执行，不建块。
+        const audit = webAuditFromPanelText(record.text);
+        if (audit !== undefined) appendWebAuditToBlock(block, audit);
+      }
       return;
     }
     const failed =
@@ -9534,6 +10124,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     );
     block.el.append(row);
     block.rows.push(row);
+    const audit = webAuditFromPanelText(record.text);
+    if (audit !== undefined) {
+      const element = createWebAuditBlock(audit);
+      block.el.append(element);
+      block.rows.push(element);
+    }
   }
 
   /**
@@ -9651,6 +10247,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         reason: parseDecisionReason(pending.reason),
         // 定时任务预览（§6.3）：与事件入口同一份解析（快照缺键 = 旧载荷，不建块）。
         cronTask: parseCronTaskPreview(pending.cron_task),
+        web: parseWebApprovalPreview(pending.web),
         // 两枚次级动作（change harness-permission-rules-oct23）：与事件入口同一份宽容解析
         // （快照缺键 = 不渲染按钮——D3 翻转后的缺键语义，危险卡因此不会被复活死按钮）。
         ...approvalActionsFromPayload(pending),
@@ -9820,6 +10417,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    * 「新会话」后切到 B，回包到达时清 B 会把 B 的未读 / 在途清掉。
    */
   function resetView(options: { clearActivityFor: string | null }): void {
+    resetSkillCatalog();
     // **视图换代 ⇒ 所有在途快照作废**（推进 `snapshotSeq`）：`resetView` 之后到达的回包属于
     // 上一代视图，落地时会把旧会话的 messages 重放进刚清空的渲染面。新建会话是这条交错最容易
     // 命中的入口——它成功之后只有 `resetView`，相位是 idle → idle（`phaseEpoch` 不推进），
@@ -9948,6 +10546,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const loaded = await draft.load(currentVaultId).catch(() => null);
     if (seq !== draftSeq || loaded === null || !composerIsPristine()) return;
     resetComposer(loaded);
+    refreshSkillCatalog(false);
   }
 
   // 后端不可用（纯浏览器预览 / 命令未注册）时按空会话降级——面板本身照常可用，
@@ -9994,6 +10593,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   function performSend(): void {
     if (currentActivity().phase !== "idle") return;
     const content = composerContentOf(composerView.state);
+    const skillsJson = composerSkillsJson(composerView.state);
     const blocks = composerBlocks(composerView.state);
     const projection = projectComposerDelivery(composerView.state);
     const { panelText: text, parts } = projection;
@@ -10031,7 +10631,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 绑定（那时可能已经切了 vault、用户也可能已经在 composer 里继续输入）。
     const sendDraftVaultId = currentVaultId;
     const sendDraftEditVersion = draft.editVersion();
-    harnessSend(JSON.stringify(parts), block !== null ? serializeHarnessContext(block) : "")
+    harnessSend(JSON.stringify(parts), block !== null ? serializeHarnessContext(block) : "", skillsJson)
       .then(() => {
         // 成功回执按**发送时**的 vault + 编辑版本清草稿：切走之后 A 的草稿仍要清（否则切回 A
         // 会复活已发送内容）；同视图等待期间的新输入不能被这轮回执取消 / 删除（版本已变 ⇒
@@ -10115,7 +10715,29 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       dispatchComposerCommand("editor.redo");
       return;
     }
+    if (skillMenuState !== null) {
+      const delta = skillMenuNavigationDelta(event);
+      if (delta !== null) {
+        event.preventDefault();
+        moveSkillMenu(delta);
+        return;
+      }
+    }
+    if (event.ctrlKey && !event.metaKey && !event.altKey &&
+        (event.key.toLowerCase() === "n" || event.key.toLowerCase() === "p")) {
+      closeSkillMenu();
+      return;
+    }
     if (mod) return;
+    // 武装只接受**无修饰**的 Enter / Tab（change delta「武装时无修饰的 Enter / Tab」）：
+    // Shift+Enter 换行、Shift+Tab 焦点回退、Alt 组合保持原义（C7）。
+    if (skillMenuState !== null && skillMenuState.armed &&
+        !event.shiftKey && !event.altKey &&
+        (event.key === "Enter" || event.key === "Tab")) {
+      event.preventDefault();
+      selectSkillMenuItem();
+      return;
+    }
     if (event.key === "Enter") {
       event.preventDefault();
       if (event.shiftKey) insertComposerText(composerView, "\n", "input.shift-enter");
@@ -10123,12 +10745,20 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }, true);
   composer.addEventListener("compositionstart", () => {
+    cancelCompositionSettle(composerView, "skill-menu");
+    closeSkillMenu();
     (composerView as unknown as { measure(): void }).measure();
     imeGateState = imeGateCompositionStart(imeGateState);
   });
   composer.addEventListener("compositionend", () => {
     imeGateState = imeGateCompositionEnd(imeGateState, Date.now());
     composerIme.compositionEnd(viewGeneration);
+    // 组合结束后按**最终文档**重算一次：组合期的同步一律关候选，提交事务到达时
+    // composerIsComposing() 可能仍为真；不补这一拍，候选会停在关闭态或旧 query 上。
+    scheduleCompositionSettle(composerView, "skill-menu", () => {
+      if (composerIsComposing()) return;
+      syncSkillMenu();
+    });
   });
   composer.addEventListener("copy", (event: ClipboardEvent) => {
     if (event.clipboardData === null) return;
@@ -10159,7 +10789,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     insertComposerText(composerView, text, "input.drop");
   }, true);
   composer.addEventListener("focusin", () => refreshChip());
-  composer.addEventListener("focusout", () => flushDraft());
+  composer.addEventListener("focusout", () => {
+    closeSkillMenu();
+    flushDraft();
+  });
 
   // ── 新建会话（harness 段 ＋钮与会话浮层动作项共用一条路径；两个入口一个语义）──
   function startNewSession(): void {
@@ -10480,8 +11113,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       });
   }
 
-  /** 恢复选中历史会话（选择器点击路径，M392/M398）：恢复 = 后端读源文件最后一条会话轮次
-   *  llm_request 的完整请求体、system + input 原样灌进**新**会话并续写新留存文件
+  /** 恢复选中历史会话（选择器点击路径，M392/M398）：后端只读源文件并重建内存视图；
+   *  首次真实 llm_request 才原子发布新留存文件
    *  （harness_resume_session；busy / 跨 vault / 留存损坏由后端拒绝，D409–D411 经
    *  errorText 按 code 渲染上错误行）。
    *
@@ -10494,75 +11127,42 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  （留存重算：最近一次真实读数 + 会话累计），经 harness_state 快照应用——控制行/气泡恢复后
    *  即有真值；从未发过请求的会话快照 has_usage=false，读数区保持隐藏（不假读数）。 */
   function resumeSession(entry: SessionEntry): void {
-    // 恢复期间先退役旧逻辑会话的 token 并藏掉旧状态行：新会话的写失败事件可能在 Promise
-    // 回执之前到达（后端在返回前写 notice / inherit），必须能显示；回执失败时整体回滚。
-    const previousToken = persistenceSessionToken;
-    const previousView = persistenceView;
-    const previousHidden = persistenceLineHidden;
-    const previousShown = historyStickyShown.has(currentVault ?? "");
-    if (previousToken !== null) retiredPersistenceTokens.add(previousToken);
-    persistenceSessionToken = null;
-    // 恢复期间旧 persistence 轻量快照的迟到回包整体作废（回执后以新快照为地板）。
-    persistenceSnapshotSeq += 1;
-    hidePersistenceLine();
-    // 发起时定格（design §7 / §14.3b）：记录只清发起 vault；DOM 复位 / 内容渲染 / 快照重取
-    // 只在视图仍是发起视图时执行——切走后 A 的恢复内容 MUST NOT 渲染进 B。
     const actionVault = currentVault;
     const actionToken = viewGeneration;
+    const previousToken = persistenceSessionToken;
     harnessResumeSession(entry.sessionId)
       .then((info) => {
         if (actionVault !== null && (actionVault !== currentVault || actionToken !== viewGeneration)) {
-          // 只清 A 的记录（恢复 = A 换了会话）；B 的记录、transcript 与快照一概不动。
-          activity.reset(actionVault);
+          if (info.switched !== false) {
+            if (previousToken !== null) retiredPersistenceTokens.add(previousToken);
+            activity.reset(actionVault);
+          }
           return;
         }
+        if (info.switched === false) {
+          setSessPop(false);
+          return;
+        }
+        if (previousToken !== null) retiredPersistenceTokens.add(previousToken);
+        persistenceSnapshotSeq += 1;
         resetView({ clearActivityFor: actionVault });
-        // 从历史恢复 = 新逻辑会话：采纳回执里的新 token；**MUST NOT** 在这里 reset 健康读数
-        // （会抹掉先于回执到达的真实写失败事件）。完整 persistence 快照随后做地板。
         persistenceSessionToken = persistenceSessionTokenOf(info.session_token);
         historyStickyShown.delete(currentVault ?? "");
+        hidePersistenceLine();
         fetchPersistenceSnapshot();
         renderSnapshotMessages(Array.isArray(info.messages) ? info.messages : []);
         firstUserText = entry.firstUserText;
-        // 恢复后的标题 = 选中项的有效标题（后端 `SessionSummary.title` 的同一读数；恢复入口在
-        // 源有标题时把 inherit 记录写进新文件，值与此一致——design D7/D11）。
         sessionTitle = entry.title;
         applySessionName();
-        // 恢复批次收尾落在末尾（与 restoreSnapshot 末尾同一句）：`appendSnapshotMessage` 的
-        // assistant 分支是裸 `transcript.append(el)`、不滚——恢复 transcript 以 assistant 收尾
-        // （会话常态：末轮答复后用户尚未再提问）时少了这一句就停在最末 user 消息处、收尾回复
-        // 折在视口外（M398 r1 P1）。user / tool 分支自带滚动不足以覆盖这个尾形态。
-        follow.jumpToBottom(); // 分流表 #16：恢复历史会话必须从末尾读起（既有语义）
+        follow.jumpToBottom();
         refreshThinkingState();
         refreshUsageState();
-        // 恢复出的会话若带子运行分桶（M589 的恢复重算），任务区的用量区要跟着出来——
-        // 恢复命令只回放消息，不含读数快照（M590 真机场景 192：恢复后用量区整块缺席）。
         refreshTaskState();
-        // 相位（spec「恢复会话」也是进入时点之一）：`resetView` 只做视图复位，真相取自
-        // 快照的 `in_flight`——协议上恢复会被在途轮次挡住（`harness_busy`），所以这里通常
-        // 读回空闲；但读口存在，将来放宽协议时不必再改这条路径。
         fetchActivitySnapshot();
       })
       .catch((e: unknown) => {
-        // 视图世代守卫（design §7）：换代之后到达的旧回包属于上一段会话——整条 no-op，
-        // 不写 B 的持久化状态、不把 A 的错误行写进 B。
         if (actionVault !== null && actionVault !== currentVault) return;
         if (actionToken !== viewGeneration) return;
-        // 恢复失败：恢复旧逻辑会话的身份 / 读数 / 显隐与「已提示」标记；期间若误接纳了
-        // 新 token 的事件，一并作废。
-        if (
-          persistenceSessionToken !== null &&
-          persistenceSessionToken !== previousToken
-        ) {
-          retiredPersistenceTokens.add(persistenceSessionToken);
-        }
-        if (previousToken !== null) retiredPersistenceTokens.delete(previousToken);
-        persistenceSessionToken = previousToken;
-        persistenceView = previousView;
-        persistenceLineHidden = previousHidden;
-        renderPersistenceLine();
-        if (previousShown) historyStickyShown.add(currentVault ?? "");
-        else historyStickyShown.delete(currentVault ?? "");
         appendError(t("D348", { message: errorText(e) }));
       });
   }

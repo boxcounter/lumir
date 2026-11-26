@@ -56,6 +56,8 @@ steps:
         ax: { has: "BUBBLE-PROBE" }
       - label: 代码块那一行在场（超长行整行渲染，横向滚动条的载体）
         ax: { has: "longIdentifier" }
+      # 排版证据：用户气泡 padding 8/12px，正文 15px/1.58 且对比度 ≥7:1；
+      # 代码块 12.5px/1.55、padding 10/12px、radius 8px，局部横滚与细条不变。
       - shot: 01-light-气泡与代码块
 
   - name: 切到 dark（点 modeline 主题钮一档）

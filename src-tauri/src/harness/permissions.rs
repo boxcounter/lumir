@@ -60,7 +60,7 @@ pub enum Decision {
 /// 批准卡「判定依据」行与 deny 回送文案的共同数据源——前端只按 `kind` 取文案，MUST NOT 自行推导层级。
 ///
 /// 只列**有消费者**的层（REVIEW.md 「声明了却没有消费者」条）：`DenyRule` 只进回送模型的错误文案（deny 不产批准卡，
-/// 见 change design §3）；其余三个变体随批准请求事件与 `harness_state` 快照两条通道到前端。
+/// 见 change design §3）；其余四个变体随批准请求事件与 `harness_state` 快照两条通道到前端。
 /// 自动放行的层（allow 规则命中 / 会话内缓存命中 / 只读白名单 / vault 内写重定向）**不产出依据**
 /// ——它们没有「被拦下」的界面面。序列化形状是 internally tagged（`{"kind": …, …}`，serde 与
 /// ts-rs 共用同一份定义）。
@@ -77,6 +77,9 @@ pub enum DecisionReason {
     DangerousCommand,
     /// 第 5 层：模式默认分层（`mode` = 判定当时读到的档位；前端据它取档名与档释义）。
     ModeDefault { mode: PermissionMode },
+    WebAccessPolicy {
+        approval: super::web::config::WebApproval,
+    },
 }
 
 /// 判定输出（M459）：结论 + 依据。
@@ -167,6 +170,29 @@ pub fn decide(
     let reason =
         (decision == Decision::Ask).then_some(DecisionReason::ModeDefault { mode: judge.mode });
     Verdict { decision, reason }
+}
+
+pub fn decide_web(
+    permissions: &HarnessPermissions,
+    tool: &str,
+    subject: &str,
+    approval: super::web::config::WebApproval,
+) -> Verdict {
+    if let Some(rule) = matching_rule(&permissions.deny, tool, subject) {
+        return Verdict {
+            decision: Decision::Deny,
+            reason: Some(DecisionReason::DenyRule {
+                rule: rule.to_string(),
+            }),
+        };
+    }
+    match approval {
+        super::web::config::WebApproval::AllowAll => Verdict::auto(Decision::Allow),
+        super::web::config::WebApproval::Ask => Verdict {
+            decision: Decision::Ask,
+            reason: Some(DecisionReason::WebAccessPolicy { approval }),
+        },
+    }
 }
 
 /// 危险黑名单命中的依据：只看**外层 argv[0]**——包装器类点名（`zsh -lc …` 的「内容不可知」
@@ -1867,7 +1893,7 @@ fn normalize(path: &Path) -> std::path::PathBuf {
 
 /// 首个命中的规则原文（无命中为 `None`）——M459 起 `decide` 用它的带值形态（deny 规则原文要
 /// 随依据回送）；匹配语义完全共用 [`rule_matches`]，不存在第二份匹配实现（REVIEW.md 「同一语义两处真源」条）。
-fn matching_rule<'a>(rules: &'a [String], tool: &str, subject: &str) -> Option<&'a str> {
+pub(crate) fn matching_rule<'a>(rules: &'a [String], tool: &str, subject: &str) -> Option<&'a str> {
     rules
         .iter()
         .find(|rule| rule_matches(rule, tool, subject))
@@ -4326,5 +4352,93 @@ mod tests {
             Decision::Allow
         );
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn web_decision_uses_only_deny_and_web_approval() {
+        let permissions = HarnessPermissions {
+            allow: vec![
+                "web_search".to_string(),
+                "web_fetch(https://example.com)".to_string(),
+            ],
+            deny: Vec::new(),
+        };
+        for approval in [
+            super::super::web::config::WebApproval::AllowAll,
+            super::super::web::config::WebApproval::Ask,
+        ] {
+            let verdict = decide_web(&permissions, "web_search", "synthetic query", approval);
+            match approval {
+                super::super::web::config::WebApproval::AllowAll => {
+                    assert_eq!(verdict.decision, Decision::Allow);
+                    assert!(verdict.reason.is_none());
+                }
+                super::super::web::config::WebApproval::Ask => {
+                    assert_eq!(verdict.decision, Decision::Ask);
+                    assert_eq!(
+                        verdict.reason,
+                        Some(DecisionReason::WebAccessPolicy {
+                            approval: super::super::web::config::WebApproval::Ask,
+                        })
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn web_deny_wins_over_allow_all_and_matching_allow_rule() {
+        let permissions = HarnessPermissions {
+            allow: vec![
+                "web_search".to_string(),
+                "web_fetch(https://example.com)".to_string(),
+            ],
+            deny: vec![
+                "web_search".to_string(),
+                "web_fetch(https://example.com)".to_string(),
+            ],
+        };
+        for (tool, subject) in [
+            ("web_search", "synthetic query"),
+            ("web_fetch", "https://example.com"),
+        ] {
+            let verdict = decide_web(
+                &permissions,
+                tool,
+                subject,
+                super::super::web::config::WebApproval::AllowAll,
+            );
+            assert_eq!(verdict.decision, Decision::Deny, "{tool}");
+            assert!(matches!(
+                verdict.reason,
+                Some(DecisionReason::DenyRule { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn web_permission_subject_preserves_query_and_canonicalizes_origin() {
+        let query = "  synthetic query with spaces  ";
+        assert_eq!(
+            super::super::tools::permission_subject(
+                "web_search",
+                &serde_json::json!({"query": query})
+            ),
+            query
+        );
+        assert_eq!(
+            super::super::tools::permission_subject(
+                "web_fetch",
+                &serde_json::json!({"url": "HTTPS://EXAMPLE.COM:443/a?q=1#fragment"})
+            ),
+            "https://example.com"
+        );
+        assert_eq!(
+            super::super::tools::permission_subject(
+                "web_fetch",
+                &serde_json::json!({"url": "http://Example.Org:8080/a"})
+            ),
+            "http://example.org:8080"
+        );
     }
 }

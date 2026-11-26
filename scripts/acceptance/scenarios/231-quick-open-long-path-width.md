@@ -1,23 +1,26 @@
 ---
-# 浮层宽度合同（M702，change overlay-width-contract-oct24）的真机判据之一：⌘P 的输入面在
-# WKWebView 下按 26em 展开、不再被 300px 定值挤住。
+# Quick Open 独立响应式宽度的真机判据：⌘P 的输入面在 WKWebView 下按
+# clamp(26em,50vw,56em) 展开、不再被 26em 约定宽挤住。
 #
 # 为什么这条判据只能在真机层：字体是系统 WKWebView 的 -apple-system / PingFang SC，字形宽度与
-# chromium 有 <3% 差异（M698 §8）；「325px 的盒子在真机上够不够放下典型路径」这种边界读数只有
+# chromium 有 <3% 差异（M698 §8）；「600px 的盒子在真机上够不够放下典型路径」这种边界读数只有
 # 真机截图 + 几何读数能答。chromium 层（tests/visual/scenes/m702-overlay-width.spec.ts）判行内
 # 两段结构与文本，判不了真机字形下的实际宽度。
 #
 # 判据的落点：输入框是浮层里唯一有稳定 AX 名字的节点（AXComboBox「按路径快速打开文件」）——
-# 它的宽度 = 浮层宽 − 2×(border + 12px margin)。旧定值 300px 下输入框 ≈ 263 截图px，新 325px 下
-# ≈ 287（本机截图相对窗口是 0.96 倍：1200pt 窗口 → 1152px 截图）。故 minWidth 280 是这一条的
-# 区分度阈值（旧形态 263 < 280 必红；新形态 287 过线）。
+# 它的宽度 = 浮层宽 − 2×(border + 12px margin)。26em 旧档下输入框 ≈ 287 截图px，新 50vw 档下
+# ≈ 551（本机截图相对窗口是 0.96 倍：1200pt 窗口 → 1152px 截图）。故 minWidth 450 是这一条的
+# 区分度阈值（旧 26em 形态 ≈287 < 450 必红；新形态 ≈551 过线）。
 #
 # 不覆盖（如实登记）：目录前缀的省略号是绘制层形态，AX 读不到；「文件名完整」由 chromium 的
-# 结构断言（.lumir-qo-dirs 出省略号 + .lumir-qo-name 不溢出）与 title 全路径承担。
+# 结构断言（.lumir-qo-dirs 出省略号 + .lumir-qo-name 不溢出）与 title 全路径承担。候选高亮行
+# 同样不在本场景：AX dump 没有稳定读数形态（理由见 230a 的「覆盖边界」），高亮不变量由
+# tests/visual/scenes/quick-open-active-target.spec.ts 钉住；本场景的查询 `kickoff` 只有一条候选，
+# Enter 目标与高亮行在真机上恰好同一条。
 id: "231-quick-open-long-path-width"
 item: 702
 tier: full
-title: 快速打开浮层宽度：长路径下输入面按 26em 展开、路径全文仍在 AX 里
+title: 快速打开浮层宽度：长路径下输入面按 50vw 响应式档展开、路径全文仍在 AX 里
 open: goto-line-long.md
 marker: "JUMP-TARGET-39"
 config:
@@ -56,10 +59,10 @@ steps:
     expect:
       - label: 候选行的文本是完整相对路径（不是被裁的尾段——title 与文本内容都是全文）
         ax: { has: "areas/work/clients/acme/2026/q4/meetings/2026-10-24-kickoff-notes-final-v2.md" }
-      - label: 输入面宽度（旧定值 300px 下输入框 ≈ 263 截图px；26em 档下 ≈ 287）——几何 + 绘制两段
+      - label: 输入面宽度（26em 旧档下输入框 ≈287 截图px；50vw 新档下 ≈551）——几何 + 绘制两段
         geom:
           target: { role: AXComboBox, name: "按路径快速打开文件" }
-          minWidth: 280
+          minWidth: 450
           minHeight: 18
           painted: { min: 30 }
       - shot: 01-长路径候选
@@ -69,10 +72,9 @@ steps:
     key: escape
 ---
 
-spec 判据（ui-design-system「浮层宽度分档与可读宽度注册表」，change
-`overlay-width-contract-oct24` 的 delta）：⌘P 属 L 单行列表档，宽度 SHALL 是
-`min(26em, 100vw − 28px)`（容器 font-size = 行文本 12.5px ⇒ 325px），MUST NOT 用与内容
-无关的定值把长路径挤成尾省略。行的截断方向 SHALL 保住文件名（目录前缀可中段省略），
+spec 判据（change `add-quick-open-directory-stable-nov25`）：⌘P 使用独立的
+`clamp(26em,50vw,56em)` + `max-width:calc(100vw - 28px)`，MUST NOT 随查询或候选变化；TOC 仍沿用
+`overlay-width-contract-oct24` 的 26em 档。行的截断方向 SHALL 保住文件名（目录前缀可中段省略），
 全路径 MUST 有 `title` 兜底。
 
 M698 实测（`.local/reports/m698-overlay-width-audit-oct24.md` §3.1）：旧定值 300px 下，

@@ -260,13 +260,15 @@ fn register_failed<C: RunContext>(
 /// `harness_new_session` 又被 busy 挡住——该 vault 的 harness 到 app 重启前全瘫。
 /// `catch_unwind` 兜底：panic 路径发 error 事件并照常释放 busy（会话锁已改为
 /// poison 容忍，恐慌后仍可取回）。
-pub fn run_turn(
-    app: tauri::AppHandle,
+#[allow(clippy::too_many_arguments)] // 发送与 cron 共用的线程入口；显式技能名是本轮输入的一部分。
+pub fn run_turn<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     runtime: Runtime,
     scope: VaultScope,
     config: HarnessConfig,
     parts: impl Into<DeliveryInput>,
     context_section: Option<String>,
+    skill_names: Vec<String>,
     origin: TurnOrigin,
 ) {
     run_turn_inner(
@@ -277,6 +279,7 @@ pub fn run_turn(
         TurnInput::User {
             parts: parts.into(),
             context_section,
+            skill_names,
         },
         origin,
     );
@@ -285,8 +288,8 @@ pub fn run_turn(
 /// 显式重试的线程入口（change add-harness-turn-retry-nov23 design §4.2 第 7 条）：
 /// `begin_retry` 已消费 `failed` 并 `begin_turn`（相位 Running），本函数**MUST NOT** 再调
 /// `acquire_turn`。线程体与发送路径同一份实现（sink / client / catch_unwind / release / title）。
-pub fn run_turn_resume(
-    app: tauri::AppHandle,
+pub fn run_turn_resume<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     runtime: Runtime,
     scope: VaultScope,
     config: HarnessConfig,
@@ -303,8 +306,8 @@ pub fn run_turn_resume(
 }
 
 /// `run_turn` 与 `run_turn_resume` 共用的线程体。
-fn run_turn_inner(
-    app: tauri::AppHandle,
+fn run_turn_inner<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     runtime: Runtime,
     scope: VaultScope,
     config: HarnessConfig,
@@ -432,8 +435,29 @@ pub fn run_turn_for(
     context_section: Option<String>,
     client: &mut dyn LlmClient,
 ) {
-    // 与生产入口同一份播种（`run_turn` 的注释即契约）：单测 / 子运行驱动的轮次也吃同一份
-    // 「本轮生效规则」，不给测试面留一条不同的判定路径。
+    run_turn_for_with_skills(
+        sink,
+        runtime,
+        scope,
+        config,
+        parts,
+        context_section,
+        Vec::new(),
+        client,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn run_turn_for_with_skills(
+    sink: &dyn EventSink,
+    runtime: &Runtime,
+    scope: &VaultScope,
+    config: &HarnessConfig,
+    parts: impl Into<DeliveryInput>,
+    context_section: Option<String>,
+    skill_names: Vec<String>,
+    client: &mut dyn LlmClient,
+) {
     runtime.seed_permissions(&config.permissions);
     let mut ctx = SessionContext::new(sink, runtime, scope, config);
     let _ = run_turn_core_with_mode(
@@ -442,6 +466,37 @@ pub fn run_turn_for(
         TurnInput::User {
             parts: parts.into(),
             context_section,
+            skill_names,
+        },
+        TurnOrigin::Interactive,
+        client,
+    );
+}
+
+/// 验收构建专用（`acceptance-web` feature）：与 [`run_turn_for`] 同一条循环，但把 Web 端口
+/// 换成合成 HTTP 装配。普通构建不编译本函数。
+#[cfg(feature = "acceptance-web")]
+#[allow(clippy::too_many_arguments)]
+pub fn run_turn_for_with_web_port(
+    sink: &dyn EventSink,
+    runtime: &Runtime,
+    scope: &VaultScope,
+    config: &HarnessConfig,
+    parts: impl Into<DeliveryInput>,
+    context_section: Option<String>,
+    client: &mut dyn LlmClient,
+    web_port: std::sync::Arc<dyn super::web::WebToolPort>,
+) {
+    runtime.seed_permissions(&config.permissions);
+    let mut ctx =
+        SessionContext::new(sink, runtime, scope, config).with_web_port_for_acceptance(web_port);
+    let _ = run_turn_core_with_mode(
+        &mut ctx,
+        config,
+        TurnInput::User {
+            parts: parts.into(),
+            context_section,
+            skill_names: Vec::new(),
         },
         TurnOrigin::Interactive,
         client,
@@ -461,6 +516,31 @@ pub fn run_turn_resume_for(
 ) {
     runtime.seed_permissions(&config.permissions);
     let mut ctx = SessionContext::new(sink, runtime, scope, config);
+    let _ = run_turn_core_with_mode(
+        &mut ctx,
+        config,
+        TurnInput::Resume { user_text },
+        TurnOrigin::Retry,
+        client,
+    );
+}
+
+/// 验收构建专用的显式重试入口（`acceptance-web` feature）：与 [`run_turn_resume_for`]
+/// 同一条循环，但把 Web 端口换成合成 HTTP 装配——用于证明真实 LLM 失败后的显式重试不会
+/// 重放 Web 工具或增加 Web HTTP 次数。
+#[cfg(feature = "acceptance-web")]
+pub fn run_turn_resume_for_with_web_port(
+    sink: &dyn EventSink,
+    runtime: &Runtime,
+    scope: &VaultScope,
+    config: &HarnessConfig,
+    user_text: String,
+    client: &mut dyn LlmClient,
+    web_port: std::sync::Arc<dyn super::web::WebToolPort>,
+) {
+    runtime.seed_permissions(&config.permissions);
+    let mut ctx =
+        SessionContext::new(sink, runtime, scope, config).with_web_port_for_acceptance(web_port);
     let _ = run_turn_core_with_mode(
         &mut ctx,
         config,
@@ -493,6 +573,7 @@ pub(crate) enum TurnInput {
     User {
         parts: DeliveryInput,
         context_section: Option<String>,
+        skill_names: Vec<String>,
     },
     Preloaded {
         /// 通知文本（标题素材；自动回合不触发自动命名）。
@@ -527,6 +608,103 @@ impl TurnOrigin {
     }
 }
 
+pub const EXPLICIT_SKILL_HEADER_PREFIX: &str = "[已加载 Skill：";
+
+fn explicit_skill_text(name: &str, content: &str) -> String {
+    format!("{EXPLICIT_SKILL_HEADER_PREFIX}{name}]\n{content}")
+}
+
+fn emit_explicit_skill_error<C: RunContext>(ctx: &mut C, name: &str, output: ToolOutput) {
+    let call_id = format!("explicit-skill-{name}");
+    let summary = format!("name: {name}");
+    ctx.sink().emit(events::tool_call(
+        "skill_load",
+        "started",
+        &summary,
+        &call_id,
+    ));
+    let status = if output.value["code"].as_str() == Some("permission_denied") {
+        "denied"
+    } else {
+        "error"
+    };
+    let result_summary = summarize_result(status, &output);
+    ctx.sink().emit(events::tool_call(
+        "skill_load",
+        "done",
+        &result_summary,
+        &call_id,
+    ));
+    let _ = ctx.with_session(|session| {
+        session.push_panel(PanelMessage {
+            role: "tool".into(),
+            text: Some(output.value.to_string()),
+            summary: Some(result_summary),
+            name: Some("skill_load".into()),
+            status: Some(status.into()),
+            reasoning: None,
+            decision: None,
+            ts: jsonl::unix_secs_now(),
+        });
+    });
+}
+
+fn explicit_skill_parts<C: RunContext>(
+    ctx: &mut C,
+    skills: &[super::context::SkillEntry],
+    names: &[String],
+) -> Vec<serde_json::Value> {
+    let mut seen = std::collections::HashSet::new();
+    let mut parts = Vec::new();
+    for name in names {
+        if !super::context::explicit_skill_name_valid(name) || !seen.insert(name.clone()) {
+            continue;
+        }
+        let Some(skill) = skills.iter().find(|skill| skill.name == *name) else {
+            continue;
+        };
+        let args = serde_json::json!({"name": name});
+        let verdict = ctx.decide("skill_load", name, &args);
+        if verdict.decision != Decision::Allow {
+            let message = denied_message("skill_load", name, verdict.reason.as_ref());
+            emit_explicit_skill_error(ctx, name, ToolOutput::err("permission_denied", message));
+            continue;
+        }
+        if !skill.invocation.valid {
+            emit_explicit_skill_error(
+                ctx,
+                name,
+                ToolOutput::err(
+                    "skill_invocation_invalid",
+                    format!("技能 {name} 的调用元数据非法"),
+                ),
+            );
+            continue;
+        }
+        if !skill.invocation.user_invocable {
+            emit_explicit_skill_error(
+                ctx,
+                name,
+                ToolOutput::err(
+                    "skill_user_invocation_disabled",
+                    format!("技能 {name} 不允许用户显式调用"),
+                ),
+            );
+            continue;
+        }
+        let output = tools::load_explicit_skill(skill);
+        let Some(content) = output.value["content"].as_str() else {
+            continue;
+        };
+        parts.push(serde_json::json!({
+            "type": "input_text",
+            "text": explicit_skill_text(name, content),
+            "lumir_skill": name,
+        }));
+    }
+    parts
+}
+
 pub(crate) fn run_turn_core_with_mode<C: RunContext>(
     ctx: &mut C,
     config: &HarnessConfig,
@@ -542,14 +720,17 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
     let mut resumed_user_text: Option<String> = None;
     let mut parts: Option<DeliveryInput> = None;
     let mut context_section: Option<String> = None;
+    let mut skill_names: Vec<String> = Vec::new();
     match input {
         TurnInput::User {
             parts: user_parts,
             context_section: user_context,
+            skill_names: user_skills,
         } => {
             ctx.begin_user_turn();
             parts = Some(user_parts);
             context_section = user_context;
+            skill_names = user_skills;
         }
         TurnInput::Preloaded { user_text } => preloaded = Some(user_text),
         TurnInput::Resume { user_text } => resumed_user_text = Some(user_text),
@@ -565,12 +746,18 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
         .clone()
         .or_else(|| resumed_user_text.clone())
         .unwrap_or_default();
+    let root = ctx.vault_root().to_path_buf();
+    let skills = super::context::discover_skills(&root);
     if let Some(parts) = parts {
+        let explicit_parts = explicit_skill_parts(ctx, &skills, &skill_names);
         let context_section_for_session = context_section.clone();
         let enqueue = ctx.with_session(|s| {
             let parts =
                 super::attachments::apply_context_section(parts.0, context_section.as_deref());
-            let item = super::attachments::user_item_of_parts(&parts);
+            let mut item = super::attachments::user_item_of_parts(&parts);
+            if let Some(content) = item["content"].as_array_mut() {
+                content.extend(explicit_parts);
+            }
             let panel_text = item["content"]
                 .as_array()
                 .and_then(|content| super::attachments::panel_text_of_content(content))
@@ -600,17 +787,19 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
     let panel_base = ctx.with_session(|s| s.panel_len()).unwrap_or(0);
 
     // 工具执行面在回合开始时取一次快照（vault 根 / 忽略策略都是回合级事实）。
-    let root = ctx.vault_root().to_path_buf();
     let policy = ctx.ignore_policy().clone();
-    let skills = super::context::discover_skills(&root);
     // 调度工具端口在回合开始时取一次（与工具定义快照同刻）：交互路径有、交接契约槽位与
     // 子运行没有。`Arc` 由这里持有，`ToolContext` 只借它的 trait object。
     let cron_port = ctx.cron_port();
+    let web_port = ctx.web_port();
     let tctx = ToolContext {
         root: &root,
         policy: &policy,
         skills: &skills,
         cron: cron_port.as_deref(),
+        web: web_port.as_deref(),
+        web_access: config.web_access,
+        web_abort: ctx.web_abort(),
     };
 
     let mut rounds: usize = 0;
@@ -709,7 +898,21 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
                 overflow_retried = true;
                 rounds -= 1; // 重试同一轮，不占循环额度
                 match compact_now(ctx, config, client) {
-                    Ok(()) => {
+                    Ok(super::run::CompactOutcome::SkippedUnpublished) => {
+                        ctx.persist(llm_error_payload(&error));
+                        let retry_turn = register_failed(
+                            ctx,
+                            allow_retry,
+                            &turn_user_text,
+                            llm::error_retryable(&error),
+                        );
+                        emit_terminal(
+                            ctx,
+                            events::error_with_retry(&error.code, &error.message, retry_turn),
+                        );
+                        return None;
+                    }
+                    Ok(super::run::CompactOutcome::Rotated) => {
                         // 压缩重试成功：撤销刚才那条「上下文超限」错误，否则子运行引擎会把
                         // 已恢复的请求误判为终态（设计 §7.5 的「沿用一次重试」）。
                         ctx.on_llm_error_recovered();
@@ -1360,14 +1563,20 @@ fn handle_call<C: RunContext>(
     // 三件调度工具只在交互路径「已知」：判据与定义注册面、`ToolContext::cron` 同源——
     // 无人值守运行 / 子运行里同名调用仍是清单外的工具名（change
     // add-cron-conversational-registration design §2.2）。
+    let is_web = super::web::WEB_TOOL_NAMES.contains(&call.name.as_str());
+    let invalid_web = is_web
+        && tctx.web.is_some()
+        && tctx.web_access.status == crate::harness::web::config::WebAccessConfigStatus::Invalid;
     let known = tools::TOOL_NAMES.contains(&call.name.as_str())
-        || (tools::CRON_TOOL_NAMES.contains(&call.name.as_str()) && tctx.cron.is_some());
-    let subject = tools::permission_subject(&call.name, &args);
+        || (tools::CRON_TOOL_NAMES.contains(&call.name.as_str()) && tctx.cron.is_some())
+        || (is_web && (tctx.web.is_some() || !ctx.tool_allowed(&call.name)));
 
     // 批准闸决定（面板 decision 字段的数据源，M413）：只有 ask 档批准闸产出
     // approved / rejected；allow / deny / 重定向路径没有批准动作，字段缺席。
     let mut gate_decision: Option<&'static str> = None;
-    let output = if !known {
+    let output = if invalid_web {
+        tools::execute(&call.name, &args, tctx, &|| ctx.aborted())
+    } else if !known {
         ToolOutput::err("tool_unknown", format!("未知工具：{}", call.name))
     } else if !ctx.tool_allowed(&call.name) {
         // 执行层二次校验（design §8.2）：子运行只拿到定义白名单里的工具，未声明的调用
@@ -1384,21 +1593,28 @@ fn handle_call<C: RunContext>(
     } else if let Err(output) = tools::check_purpose(&call.name, &args) {
         // purpose 校验在判定管线之前（design §3.4）：ask 档批准卡必须已有用途句可展示。
         output
+    } else if let Err(output) = super::web::precheck(&call.name, &args) {
+        output
     } else {
+        let subject = tools::permission_subject(&call.name, &args);
         // 判定与批准缓存命中都经上下文（缓存键 / 层序在实现侧，见 `RunContext::decide`）；
         // 只有「已知 + 参数合法 + purpose 合法」的调用才进判定（回抽前同样不判定前两档）。
         let verdict = ctx.decide(&call.name, &subject, &args);
         match verdict.decision {
             // 模式层不产出 Deny（只读档 = Always Ask），Deny 只来自第 1 层的用户 deny 规则。
             // M459：回送文案带上命中的规则原文（「是哪条规则拦的」不必回配置文件核对）。
-            Decision::Deny => ToolOutput::err(
-                "permission_denied",
-                denied_message(&call.name, &subject, verdict.reason.as_ref()),
-            ),
+            Decision::Deny => {
+                let message = denied_message(&call.name, &subject, verdict.reason.as_ref());
+                if is_web {
+                    super::web::denied_output(&call.name, &args, message)
+                } else {
+                    ToolOutput::err("permission_denied", message)
+                }
+            }
             // deny 的留痕是 wire 口径：带 `permission_denied` 错误码的结果随历史进
             // 下一条 llm_request.messages（tool_denied 事件类已废弃），面板 tool 行
             // 的细分状态照常由 status 承担。
-            Decision::Allow => tools::execute(&call.name, &args, tctx),
+            Decision::Allow => tools::execute(&call.name, &args, tctx, &|| ctx.aborted()),
             Decision::Ask => {
                 // 判定依据（M459）随批准请求进批准闸——事件与快照两条通道同取这一个值。
                 let (out, decision) = gated_execute(
@@ -1451,11 +1667,16 @@ fn finish_call<C: RunContext>(
     // 事件 status 只发契约内的 started|done（m303 面板按非 done 即 started 归并——
     // 发细分值会产生永不完结的「正在执行」幻影行）；细分状态放 summary（D344 展示）。
     let result_summary = summarize_result(status, &output);
-    ctx.sink().emit(events::tool_call(
+    let web = super::web::operation(&call.name).map(|operation| {
+        let input = serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
+        super::web::output::audit_metadata(operation, &output.value, &input)
+    });
+    ctx.sink().emit(events::tool_call_with_web(
         &call.name,
         "done",
         &result_summary,
         &call.call_id,
+        web,
     ));
     // 面板快照持久化 summary（M367）：成功 = 参数摘要（恢复后工具行显示「调用了什么工具、
     // 带了什么参数」）；失败 = 结果摘要（含细分状态与错误码）。修前 summary 恒 None，面板
@@ -1537,7 +1758,8 @@ fn gated_actions(
 ) -> Option<permissions::PermissionActions> {
     match reason {
         Some(permissions::DecisionReason::DangerousWrapper { .. })
-        | Some(permissions::DecisionReason::DangerousCommand) => None,
+        | Some(permissions::DecisionReason::DangerousCommand)
+        | Some(permissions::DecisionReason::WebAccessPolicy { .. }) => None,
         _ => permissions::permission_prefix(tool, argv, subject),
     }
 }
@@ -1588,7 +1810,8 @@ fn gated_execute<C: RunContext>(
         actions.as_ref().and_then(|a| a.rule.clone()),
         tx,
     )
-    .with_cron_task(preview.cron_task.clone());
+    .with_cron_task(preview.cron_task.clone())
+    .with_web(preview.web.clone());
     // 事件载荷（purpose / 判定依据与批准卡同源）由上下文在挂起成功后发行；无人值守槽位
     // 在这里得到 `approval_required`（程序性中止原因已由上下文置进会话）。
     let decision = match ctx.approval(request, rx) {
@@ -1629,7 +1852,13 @@ fn gated_execute<C: RunContext>(
         // 写工具带预览基准 revision 执行：批准窗内文件被改 ⇒ fs_patch_file CAS
         // 拒掉（document_conflict 回送模型），落盘不与已批准 diff 分叉。
         (
-            tools::execute_with_revision(&call.name, args, tctx, preview.revision.as_deref()),
+            tools::execute_with_revision(
+                &call.name,
+                args,
+                tctx,
+                preview.revision.as_deref(),
+                &|| ctx.aborted(),
+            ),
             Some("approved"),
         )
     } else {
@@ -1653,7 +1882,7 @@ fn compact_now<C: RunContext>(
     ctx: &mut C,
     config: &HarnessConfig,
     client: &mut dyn LlmClient,
-) -> Result<(), CommandError> {
+) -> Result<super::run::CompactOutcome, CommandError> {
     const COMPACT_INSTRUCTION: &str = "\
 把以下对话历史压缩成一份续聊摘要，供新会话接着工作：保留用户的目标与关键诉求、\
 已经确认的决策、工具调用的关键结果（读了什么、改了什么、批准与否）、尚未完成的动作。\
@@ -1962,9 +2191,9 @@ pub(crate) fn run_auto_turn_acquired(
 }
 
 /// AppHandle 事件发射（真机路径；payload 是 JSON 对象，m303 零改动接入）。
-pub(crate) struct TauriEventSink(pub(crate) tauri::AppHandle);
+pub(crate) struct TauriEventSink<R: tauri::Runtime>(pub(crate) tauri::AppHandle<R>);
 
-impl EventSink for TauriEventSink {
+impl<R: tauri::Runtime> EventSink for TauriEventSink<R> {
     fn emit(&self, payload: serde_json::Value) {
         use tauri::Emitter;
         let _ = self.0.emit(events::EVENT_NAME, payload);
@@ -1976,14 +2205,14 @@ impl EventSink for TauriEventSink {
 ///
 /// `forward` 为 `None` = 无人值守运行槽：事件**不**发往面板（其 transcript 不属于用户当前
 /// 会话）；为 `Some` 时照旧转发（交互槽位行为一字不变）。
-struct TerminalSink {
+struct TerminalSink<R: tauri::Runtime> {
     /// 弱引用（见 `run_turn` 构造点）：运行实例结束后终态无处可记，静默跳过即可
     /// （此时也没有回执消费者）。
     runtime: super::WeakRuntime,
-    forward: Option<TauriEventSink>,
+    forward: Option<TauriEventSink<R>>,
 }
 
-impl EventSink for TerminalSink {
+impl<R: tauri::Runtime> EventSink for TerminalSink<R> {
     fn emit(&self, payload: serde_json::Value) {
         if let Some(runtime) = self.runtime.upgrade() {
             match payload["type"].as_str() {
@@ -3000,6 +3229,10 @@ mod tests {
             self.inner.cron_port()
         }
 
+        fn web_port(&self) -> Option<std::sync::Arc<dyn crate::harness::web::WebToolPort>> {
+            self.inner.web_port()
+        }
+
         fn decide(
             &self,
             tool: &str,
@@ -3039,6 +3272,10 @@ mod tests {
 
         fn aborted(&self) -> bool {
             self.inner.aborted()
+        }
+
+        fn web_abort(&self) -> std::sync::Arc<dyn Fn() -> bool + Send + Sync> {
+            self.inner.web_abort()
         }
 
         fn vault_root(&self) -> &std::path::Path {
@@ -3083,7 +3320,10 @@ mod tests {
             self.inner.external_mock_consumed()
         }
 
-        fn begin_compacted_session(&mut self, summary: &str) -> Result<(), CommandError> {
+        fn begin_compacted_session(
+            &mut self,
+            summary: &str,
+        ) -> Result<crate::harness::run::CompactOutcome, CommandError> {
             self.inner.begin_compacted_session(summary)
         }
 
@@ -3115,6 +3355,7 @@ mod tests {
             TurnInput::User {
                 parts: "问题".to_string().into(),
                 context_section: None,
+                skill_names: Vec::new(),
             },
             TurnOrigin::Interactive,
             &mut client,
@@ -3378,7 +3619,7 @@ mod tests {
             );
         }
         // 发射点总数（F15 的 10 个位点 / 11 条语句）：上面的循环只抓「绕过 helper」，抓不到
-        // 「整条语句被误删」，因此把两类调用的条数分别钉住——交互回合 7 条走
+        // 「整条语句被误删」，因此把两类调用的条数分别钉住——交互回合 8 条走
         // `emit_terminal`，配置级 / panic / 自动回合 4 条走 `emit_terminal_on`。
         fn calls_of(source: &str, name: &str) -> usize {
             let needle = format!("{name}(");
@@ -3395,8 +3636,8 @@ mod tests {
             .unwrap_or(source);
         assert_eq!(
             calls_of(production, "emit_terminal"),
-            7,
-            "交互回合的终态发射语句数变了（预期 7：入队失败 / 压缩重试 / LLM / 空响应 / done / 中止两条）"
+            8,
+            "交互回合的终态发射语句数变了（预期 8：入队失败 / overflow 跳过 / 压缩重试 / LLM / 空响应 / done / 中止两条）"
         );
         assert_eq!(
             calls_of(production, "emit_terminal_on"),
@@ -3841,5 +4082,1020 @@ mod tests {
             "自动回合的 error 事件不带 retry：{error}"
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    struct EnvGuard {
+        home: Option<std::ffi::OsString>,
+        xdg: Option<std::ffi::OsString>,
+    }
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.home {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+            match &self.xdg {
+                Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+                None => std::env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
+    }
+
+    struct Fixture {
+        root: std::path::PathBuf,
+        scope: VaultScope,
+        config: HarnessConfig,
+        _env: EnvGuard,
+    }
+
+    fn fixture(name: &str) -> Fixture {
+        let root =
+            std::env::temp_dir().join(format!("lumir-turn-skill-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let env = EnvGuard {
+            home: std::env::var_os("HOME"),
+            xdg: std::env::var_os("XDG_CONFIG_HOME"),
+        };
+        std::env::set_var("HOME", root.join("home"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+        for (skill, policy) in [
+            ("default", ""),
+            ("user-only", "disable-model-invocation: true\n"),
+            ("model-only", "user-invocable: false\n"),
+            ("invalid", "user-invocable: yes\n"),
+        ] {
+            let dir = root.join(".agents/skills").join(skill);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("SKILL.md"),
+                format!("---\ndescription: discovered-{skill}\n{policy}---\nUNIQUE-BODY-{skill}"),
+            )
+            .unwrap();
+        }
+        std::fs::create_dir_all(root.join(".agents/skills/too-large")).unwrap();
+        std::fs::write(
+            root.join(".agents/skills/too-large/SKILL.md"),
+            "x".repeat(201 * 1024),
+        )
+        .unwrap();
+        let policy = IgnorePolicy::load(
+            &root,
+            &[".gitignore".to_string()],
+            &crate::config::VaultConfig::default().ignore,
+        );
+        Fixture {
+            scope: VaultScope {
+                root: root.clone(),
+                policy,
+                vault_id: format!("skill-hybrid-{name}"),
+            },
+            config: crate::config::test_mock(Some("/tmp/skill-hybrid.json")),
+            root,
+            _env: env,
+        }
+    }
+
+    #[test]
+    fn explicit_and_automatic_paths_keep_their_positive_controls() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("mixed");
+        let discovered = super::super::context::discover_skills(&fixture.root);
+        assert!(discovered
+            .iter()
+            .any(|skill| skill.description == "discovered-user-only"));
+        let runtime = Runtime::default();
+        runtime
+            .acquire_turn(&fixture.scope, &fixture.config)
+            .unwrap();
+        let script = r#"{"responses":[
+          {"tool_calls":[{"id":"auto-model-only","name":"skill_load","arguments":"{\"name\":\"model-only\"}"}]},
+          {"text":"done"}
+        ]}"#;
+        let mut client = llm::MockClient::from_str(script, "skill-mixed").unwrap();
+        let _counter_lock = tools::skill_content_test_lock();
+        tools::reset_skill_content_load_count();
+        run_turn_for_with_skills(
+            &NullSink,
+            &runtime,
+            &fixture.scope,
+            &fixture.config,
+            "question",
+            None,
+            vec![
+                "user-only".into(),
+                "model-only".into(),
+                "invalid".into(),
+                "default".into(),
+                "default".into(),
+                "too-large".into(),
+                "bad grammar".into(),
+                "missing".into(),
+            ],
+            &mut client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert_eq!(tools::skill_content_load_count(), 4);
+
+        let input = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let persisted = serde_json::to_string(&input).unwrap();
+        assert!(persisted.contains("UNIQUE-BODY-user-only"));
+        assert!(persisted.contains("UNIQUE-BODY-default"));
+        assert!(
+            persisted.contains("UNIQUE-BODY-model-only"),
+            "禁手动保留自动工具结果正向对照"
+        );
+        assert!(!persisted.contains("UNIQUE-BODY-invalid"));
+        let user = input.iter().find(|item| item["role"] == "user").unwrap();
+        let skill_parts: Vec<_> = user["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|part| part.get("lumir_skill").is_some())
+            .collect();
+        assert_eq!(skill_parts.len(), 2);
+        assert_eq!(skill_parts[0]["lumir_skill"], "user-only");
+        assert_eq!(skill_parts[1]["lumir_skill"], "default");
+        let panel =
+            super::super::attachments::panel_text_of_content(user["content"].as_array().unwrap())
+                .unwrap();
+        assert_eq!(panel, "question");
+        let material = super::super::title::material(&input, None);
+        assert!(!material.contains("UNIQUE-BODY-user-only"));
+        assert!(!material.contains("UNIQUE-BODY-default"));
+
+        let wire = serde_json::to_string(client.received_inputs()).unwrap();
+        assert!(!wire.contains("lumir_skill"));
+        assert!(wire.contains("UNIQUE-BODY-user-only"));
+        assert!(wire.contains("UNIQUE-BODY-default"));
+        assert!(wire.contains("UNIQUE-BODY-model-only"));
+        assert!(!wire.contains("UNIQUE-BODY-invalid"));
+
+        let session_id = runtime.current_session_id(&fixture.scope).unwrap();
+        let file = jsonl::read_session_file(
+            &jsonl::vault_sessions_dir(&fixture.scope.vault_id)
+                .unwrap()
+                .join(format!("{session_id}.jsonl")),
+        )
+        .unwrap();
+        let requests: Vec<&serde_json::Value> = file
+            .records
+            .iter()
+            .filter(|record| record["kind"] == "llm_request")
+            .map(|record| &record["request"]["messages"])
+            .collect();
+        assert!(!requests.is_empty());
+        let request_json = serde_json::to_string(&requests).unwrap();
+        assert!(request_json.contains("UNIQUE-BODY-user-only"));
+        assert!(request_json.contains("UNIQUE-BODY-default"));
+        assert!(request_json.contains("UNIQUE-BODY-model-only"));
+        assert!(!request_json.contains("UNIQUE-BODY-invalid"));
+        assert!(request_json.contains("lumir_skill"));
+
+        let mut retry_client =
+            llm::MockClient::from_str(r#"{"responses":[{"text":"retry-done"}]}"#, "skill-retry")
+                .unwrap();
+        run_turn_resume_for(
+            &NullSink,
+            &runtime,
+            &fixture.scope,
+            &fixture.config,
+            "question".into(),
+            &mut retry_client,
+        );
+        assert_eq!(
+            tools::skill_content_load_count(),
+            4,
+            "重试只回放 input，不重新显式加载"
+        );
+        let retried = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let user = retried.iter().find(|item| item["role"] == "user").unwrap();
+        assert_eq!(
+            user["content"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|part| part.get("lumir_skill").is_some())
+                .count(),
+            2,
+            "重试不重复追加显式 part",
+        );
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn auto_compact_does_not_reinject_explicit_skill() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("compact");
+        let mut config = fixture.config.clone();
+        config.auto_compact = true;
+        config.warn_ctx_pct = 0.0;
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&fixture.scope, &config).unwrap();
+        let script = r#"{"responses":[
+          {"text":"done","usage":{"input_tokens":100,"cached_tokens":0,"output_tokens":1}},
+          {"text":"摘要"}
+        ]}"#;
+        let mut client = llm::MockClient::from_str(script, "skill-compact").unwrap();
+        let _counter_lock = tools::skill_content_test_lock();
+        tools::reset_skill_content_load_count();
+        run_turn_for_with_skills(
+            &NullSink,
+            &runtime,
+            &fixture.scope,
+            &config,
+            "question",
+            None,
+            vec!["default".into()],
+            &mut client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert_eq!(tools::skill_content_load_count(), 1, "压缩不得重新显式加载");
+        let compacted = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let json = serde_json::to_string(&compacted).unwrap();
+        assert!(json.contains("摘要"));
+        assert!(
+            !json.contains("lumir_skill"),
+            "新逻辑会话只接收摘要，不重新注入 Skill part"
+        );
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn restore_replays_history_without_reinjection_and_new_policy_applies() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("restore-policy");
+        let runtime = Runtime::default();
+        runtime
+            .acquire_turn(&fixture.scope, &fixture.config)
+            .unwrap();
+        let script = r#"{"responses":[
+          {"tool_calls":[{"id":"auto-model-only","name":"skill_load","arguments":"{\"name\":\"model-only\"}"}]},
+          {"text":"done"}
+        ]}"#;
+        let mut client = llm::MockClient::from_str(script, "skill-restore").unwrap();
+        let _counter_lock = tools::skill_content_test_lock();
+        tools::reset_skill_content_load_count();
+        run_turn_for_with_skills(
+            &NullSink,
+            &runtime,
+            &fixture.scope,
+            &fixture.config,
+            "question",
+            None,
+            vec!["default".into()],
+            &mut client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert_eq!(tools::skill_content_load_count(), 2);
+        let source_input = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let source_id = runtime.current_session_id(&fixture.scope).unwrap();
+        runtime.new_session(&fixture.scope).unwrap();
+        let resumed = runtime
+            .resume_session(&fixture.scope, &fixture.config, &source_id)
+            .unwrap();
+        assert!(resumed.restored_items > 0);
+        let restored_input = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        assert_eq!(
+            restored_input, source_input,
+            "恢复必须原样灌回最后请求与响应历史"
+        );
+        assert_eq!(tools::skill_content_load_count(), 2, "恢复不得重新显式加载");
+
+        std::fs::write(
+            fixture.root.join(".agents/skills/default/SKILL.md"),
+            "---\ndescription: changed\ndisable-model-invocation: true\n---\nUNIQUE-BODY-default",
+        )
+        .unwrap();
+        runtime
+            .acquire_turn(&fixture.scope, &fixture.config)
+            .unwrap();
+        let mut new_client = llm::MockClient::from_str(
+            r#"{"responses":[
+              {"tool_calls":[{"id":"new-auto","name":"skill_load","arguments":"{\"name\":\"default\"}"}]},
+              {"text":"new done"}
+            ]}"#,
+            "skill-new-policy",
+        )
+        .unwrap();
+        run_turn_for(
+            &NullSink,
+            &runtime,
+            &fixture.scope,
+            &fixture.config,
+            "new question",
+            None,
+            &mut new_client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert_eq!(
+            tools::skill_content_load_count(),
+            2,
+            "策略变更后的新自动调用不得加载"
+        );
+        let wire = serde_json::to_string(new_client.received_inputs()).unwrap();
+        assert!(wire.contains("skill_model_invocation_disabled"));
+        assert!(
+            wire.contains("UNIQUE-BODY-default"),
+            "旧显式正文仍保留在历史"
+        );
+        assert!(
+            wire.contains("UNIQUE-BODY-model-only"),
+            "旧自动工具结果仍保留在历史"
+        );
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn deny_matrix_blocks_both_loaders_after_discovery() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        for mode in [
+            crate::config::PermissionMode::ReadOnly,
+            crate::config::PermissionMode::VaultWrite,
+            crate::config::PermissionMode::FullAccess,
+        ] {
+            for rule in ["skill_load", "skill_load(default)"] {
+                let fixture = fixture(&format!("deny-{}-{}", mode.as_str(), rule.contains('(')));
+                let discovered = super::super::context::discover_skills(&fixture.root);
+                let default = discovered
+                    .iter()
+                    .find(|skill| skill.name == "default")
+                    .unwrap();
+                assert_eq!(default.description, "discovered-default");
+                assert!(default.invocation.valid && default.invocation.model_invocable);
+                let mut config = fixture.config.clone();
+                config.permission_mode = mode;
+                config.permissions.deny = vec![rule.to_string()];
+                let runtime = Runtime::default();
+                runtime.acquire_turn(&fixture.scope, &config).unwrap();
+                let script = r#"{"responses":[
+                  {"tool_calls":[{"id":"denied-auto","name":"skill_load","arguments":"{\"name\":\"default\"}"}]},
+                  {"text":"done"}
+                ]}"#;
+                let mut client = llm::MockClient::from_str(script, "skill-denied").unwrap();
+                let _counter_lock = tools::skill_content_test_lock();
+                tools::reset_skill_content_load_count();
+                run_turn_for_with_skills(
+                    &NullSink,
+                    &runtime,
+                    &fixture.scope,
+                    &config,
+                    "question",
+                    None,
+                    vec!["default".into()],
+                    &mut client,
+                );
+                runtime.release_turn(&fixture.scope);
+                assert_eq!(tools::skill_content_load_count(), 0, "{mode:?} {rule}");
+                let input = runtime
+                    .with_session(&fixture.scope, |session| session.input().to_vec())
+                    .unwrap();
+                assert!(!serde_json::to_string(&input)
+                    .unwrap()
+                    .contains("UNIQUE-BODY-default"));
+                let wire = serde_json::to_string(client.received_inputs()).unwrap();
+                assert!(!wire.contains("UNIQUE-BODY-default"), "{mode:?} {rule}");
+                assert!(wire.contains("permission_denied"));
+                let _ = std::fs::remove_dir_all(&fixture.root);
+            }
+        }
+    }
+
+    #[test]
+    fn web_hallucination_distinguishes_disabled_from_invalid() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        for (name, web_access, cron_contract, expected_code) in [
+            (
+                "disabled",
+                crate::harness::web::config::WebAccessConfig {
+                    enabled: false,
+                    ..Default::default()
+                },
+                false,
+                "tool_unknown",
+            ),
+            (
+                "invalid",
+                crate::harness::web::config::validate_web_access(Some(&serde_json::json!(null))).0,
+                false,
+                "web_access_config_invalid",
+            ),
+            (
+                "invalid-cron",
+                crate::harness::web::config::validate_web_access(Some(&serde_json::json!(null))).0,
+                true,
+                "tool_unknown",
+            ),
+        ] {
+            let fixture = fixture(&format!("web-hallucination-{name}"));
+            let mut config = fixture.config.clone();
+            config.web_access = web_access;
+            let runtime = Runtime::default();
+            runtime.acquire_turn(&fixture.scope, &config).unwrap();
+            if cron_contract {
+                runtime.set_tool_policy(
+                    &fixture.scope,
+                    crate::harness::run::ToolPolicy {
+                        allow: tools::TOOL_NAMES.map(str::to_string).to_vec(),
+                    },
+                );
+            }
+            let script = r#"{"responses":[
+              {"tool_calls":[{"id":"web-1","name":"web_search","arguments":"{\"query\":\"synthetic\"}"}]},
+              {"text":"done"}
+            ]}"#;
+            let mut client = llm::MockClient::from_str(script, "web-hallucination").unwrap();
+            run_turn_for(
+                &NullSink,
+                &runtime,
+                &fixture.scope,
+                &config,
+                "question",
+                None,
+                &mut client,
+            );
+            runtime.release_turn(&fixture.scope);
+            let input = runtime
+                .with_session(&fixture.scope, |session| session.input().to_vec())
+                .unwrap();
+            let output = input
+                .iter()
+                .find(|item| item["type"] == "function_call_output")
+                .expect("Web 幻觉调用必须有 output")["output"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let output: serde_json::Value = serde_json::from_str(&output).unwrap();
+            assert_eq!(output["code"], serde_json::json!(expected_code), "{output}");
+            if expected_code == "web_access_config_invalid" {
+                assert_eq!(output["provider"], serde_json::Value::Null);
+                assert_eq!(output["provider_id"], serde_json::Value::Null);
+                assert_eq!(output["attempts"], serde_json::json!(0));
+            }
+            let _ = std::fs::remove_dir_all(&fixture.root);
+        }
+    }
+
+    fn wait_for_web_approval(
+        runtime: &Runtime,
+        scope: &VaultScope,
+        config: &HarnessConfig,
+    ) -> super::session::PendingApprovalSnapshot {
+        for _ in 0..2_000 {
+            let snapshot = runtime.snapshot(scope, config);
+            if let Some(pending) = snapshot.pending_approvals.first() {
+                return pending.clone();
+            }
+            std::thread::park_timeout(std::time::Duration::from_millis(1));
+        }
+        panic!("2 秒内没有 Web 批准请求")
+    }
+
+    fn reject_web_approval(runtime: &Runtime, scope: &VaultScope, request_id: &str) {
+        runtime
+            .with_session(scope, |session| {
+                session.resolve_approval(
+                    request_id,
+                    false,
+                    Some("stage2 synthetic reject".to_string()),
+                    false,
+                    false,
+                )
+            })
+            .unwrap()
+            .unwrap();
+    }
+
+    #[test]
+    fn web_permission_matrix_uses_web_policy_in_every_mode() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("web-permission-matrix");
+        for mode in [
+            crate::config::PermissionMode::ReadOnly,
+            crate::config::PermissionMode::VaultWrite,
+            crate::config::PermissionMode::FullAccess,
+        ] {
+            for approval in [
+                crate::harness::web::config::WebApproval::AllowAll,
+                crate::harness::web::config::WebApproval::Ask,
+            ] {
+                let mut config = fixture.config.clone();
+                config.permission_mode = mode;
+                config.web_access.approval = approval;
+                let runtime = Runtime::default();
+                runtime.acquire_turn(&fixture.scope, &config).unwrap();
+                let sink = NullSink;
+                let ctx = SessionContext::new(&sink, &runtime, &fixture.scope, &config);
+                let verdict = ctx.decide(
+                    "web_search",
+                    "synthetic query",
+                    &serde_json::json!({"query": "synthetic query"}),
+                );
+                match approval {
+                    crate::harness::web::config::WebApproval::AllowAll => {
+                        assert_eq!(verdict.decision, Decision::Allow, "{mode:?}");
+                        assert!(verdict.reason.is_none());
+                    }
+                    crate::harness::web::config::WebApproval::Ask => {
+                        assert_eq!(verdict.decision, Decision::Ask, "{mode:?}");
+                        assert_eq!(
+                            verdict.reason,
+                            Some(permissions::DecisionReason::WebAccessPolicy {
+                                approval: crate::harness::web::config::WebApproval::Ask,
+                            }),
+                            "{mode:?} 不得回落 ModeDefault"
+                        );
+                    }
+                }
+                runtime.release_turn(&fixture.scope);
+            }
+        }
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn web_ask_ignores_allow_rules_and_session_approval_cache() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("web-ask-ignores-allow-and-cache");
+        let mut config = fixture.config.clone();
+        config.permission_mode = crate::config::PermissionMode::FullAccess;
+        config.web_access.approval = crate::harness::web::config::WebApproval::Ask;
+        config.permissions.allow = vec![
+            "web_search".to_string(),
+            "web_fetch(https://example.com)".to_string(),
+        ];
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&fixture.scope, &config).unwrap();
+        let sink = NullSink;
+        let mut ctx = SessionContext::new(&sink, &runtime, &fixture.scope, &config);
+        for (tool, subject, args) in [
+            (
+                "web_search",
+                "synthetic query",
+                serde_json::json!({"query": "synthetic query"}),
+            ),
+            (
+                "web_fetch",
+                "https://example.com",
+                serde_json::json!({"url": "https://example.com/a"}),
+            ),
+        ] {
+            ctx.remember_approval(tool, subject);
+            let verdict = ctx.decide(tool, subject, &args);
+            assert_eq!(verdict.decision, Decision::Ask, "{tool}");
+            assert_eq!(
+                verdict.reason,
+                Some(permissions::DecisionReason::WebAccessPolicy {
+                    approval: crate::harness::web::config::WebApproval::Ask,
+                }),
+                "allow 规则与会话缓存都不得授权 {tool}"
+            );
+        }
+        runtime.release_turn(&fixture.scope);
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn web_ask_preview_is_structured_identical_in_event_and_snapshot() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        for operation in ["search", "fetch"] {
+            let fixture = fixture(&format!("web-ask-preview-{operation}"));
+            let mut config = if operation == "fetch" {
+                crate::config::test_harness(
+                    "deepseek-work",
+                    crate::config::test_provider(
+                        crate::config::ProviderPreset::Deepseek,
+                        "stage2-secret",
+                        &[],
+                    ),
+                )
+            } else {
+                fixture.config.clone()
+            };
+            config.permission_mode = crate::config::PermissionMode::FullAccess;
+            config.web_access.approval = crate::harness::web::config::WebApproval::Ask;
+            let runtime = Runtime::default();
+            runtime.acquire_turn(&fixture.scope, &config).unwrap();
+            let sink = Collect::default();
+            let events = sink.0.clone();
+            let (call_name, arguments) = if operation == "search" {
+                (
+                    "web_search",
+                    serde_json::json!({"query": "synthetic query with spaces"}).to_string(),
+                )
+            } else {
+                (
+                    "web_fetch",
+                    serde_json::json!({"url": "HTTPS://EXAMPLE.COM:443/a?q=1"}).to_string(),
+                )
+            };
+            let script = serde_json::json!({
+                "responses": [
+                    {"tool_calls": [{"id": "web-preview", "name": call_name, "arguments": arguments}]},
+                    {"text": "done"}
+                ]
+            })
+            .to_string();
+            let mut client = llm::MockClient::from_str(&script, "web-preview").unwrap();
+            let runtime_worker = runtime.clone();
+            let scope_worker = fixture.scope.clone();
+            let config_worker = config.clone();
+            let worker = std::thread::spawn(move || {
+                run_turn_for(
+                    &sink,
+                    &runtime_worker,
+                    &scope_worker,
+                    &config_worker,
+                    "question",
+                    None,
+                    &mut client,
+                );
+            });
+            let pending = wait_for_web_approval(&runtime, &fixture.scope, &config);
+            let pending_json = serde_json::to_value(&pending).unwrap();
+            let event_json = events
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|event| event["type"] == "approval_request")
+                .cloned()
+                .expect("Ask 必须发 approval_request");
+            reject_web_approval(&runtime, &fixture.scope, &pending.id);
+            worker.join().unwrap();
+            runtime.release_turn(&fixture.scope);
+
+            assert_eq!(pending_json["web"], event_json["web"]);
+            assert_eq!(pending_json["reason"], event_json["reason"]);
+            assert_eq!(pending_json["reason"]["kind"], "web_access_policy");
+            assert_eq!(pending_json["reason"]["approval"], "ask");
+            assert!(pending_json.get("remember").is_none());
+            assert!(pending_json.get("persist_rule").is_none());
+            let web = &pending_json["web"];
+            assert_eq!(web["trust"], "untrusted");
+            assert_eq!(web["cost_per_1000_success_cny"], 5);
+            if operation == "search" {
+                assert_eq!(web["operation"], "search");
+                assert_eq!(web["query"], "synthetic query with spaces");
+                assert_eq!(web["provider"], serde_json::Value::Null);
+                assert_eq!(web["provider_id"], serde_json::Value::Null);
+                assert_eq!(web["provider_status"], "missing");
+                assert_eq!(web["local_precheck"], false);
+                assert_eq!(web["provider_fetch"], true);
+            } else {
+                assert_eq!(web["operation"], "fetch");
+                assert_eq!(web["url"], "HTTPS://EXAMPLE.COM:443/a?q=1");
+                assert_eq!(web["origin"], "https://example.com");
+                assert_eq!(web["provider"], "deepseek");
+                assert_eq!(web["provider_id"], "deepseek-work");
+                assert_eq!(web["provider_status"], "ready");
+                assert_eq!(web["local_precheck"], true);
+                assert_eq!(web["provider_fetch"], true);
+            }
+            let _ = std::fs::remove_dir_all(&fixture.root);
+        }
+    }
+
+    #[test]
+    fn web_userinfo_url_fails_before_ask_without_card() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("web-userinfo-precheck");
+        let mut config = fixture.config.clone();
+        config.permission_mode = crate::config::PermissionMode::FullAccess;
+        config.web_access.approval = crate::harness::web::config::WebApproval::Ask;
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&fixture.scope, &config).unwrap();
+        let sink = Collect::default();
+        let events = sink.0.clone();
+        let script = r#"{"responses":[
+          {"tool_calls":[{"id":"web-userinfo","name":"web_fetch","arguments":"{\"url\":\"https://user:pass@example.com/a\"}"}]},
+          {"text":"done"}
+        ]}"#;
+        let mut client = llm::MockClient::from_str(script, "web-userinfo").unwrap();
+        let runtime_worker = runtime.clone();
+        let scope_worker = fixture.scope.clone();
+        let config_worker = config.clone();
+        let worker = std::thread::spawn(move || {
+            run_turn_for(
+                &sink,
+                &runtime_worker,
+                &scope_worker,
+                &config_worker,
+                "question",
+                None,
+                &mut client,
+            );
+        });
+        let mut pending = None;
+        for _ in 0..2_000 {
+            let snapshot = runtime.snapshot(&fixture.scope, &config);
+            if let Some(request) = snapshot.pending_approvals.first() {
+                pending = Some(request.id.clone());
+                break;
+            }
+            if worker.is_finished() {
+                break;
+            }
+            std::thread::park_timeout(std::time::Duration::from_millis(1));
+        }
+        if let Some(request_id) = pending {
+            reject_web_approval(&runtime, &fixture.scope, &request_id);
+        }
+        worker.join().unwrap();
+        runtime.release_turn(&fixture.scope);
+        assert!(
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|event| event["type"] != "approval_request"),
+            "带凭据 URL 不得生成批准卡"
+        );
+        let input = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let output = input
+            .iter()
+            .find(|item| item["type"] == "function_call_output")
+            .unwrap()["output"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let output: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(output["code"], "web_url_blocked");
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn web_fetch_localhost_fails_before_provider_in_both_configuration_states() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        // 876 的反向合同在交互路径上的等价物：provider 已配置与未配置两种状态都必须先报
+        // URL 安全拒绝，而不是 web_provider_unconfigured，且 ask 档不得为它生成批准卡。
+        for (name, keep_provider) in [
+            ("web-localhost-provider-ready", true),
+            ("web-localhost-provider-missing", false),
+        ] {
+            let fixture = fixture(name);
+            let mut config = fixture.config.clone();
+            config.permission_mode = crate::config::PermissionMode::FullAccess;
+            config.web_access.approval = crate::harness::web::config::WebApproval::Ask;
+            if !keep_provider {
+                config.providers.clear();
+            }
+            let runtime = Runtime::default();
+            runtime.acquire_turn(&fixture.scope, &config).unwrap();
+            let sink = Collect::default();
+            let events = sink.0.clone();
+            let script = r#"{"responses":[
+              {"tool_calls":[{"id":"web-localhost","name":"web_fetch","arguments":"{\"url\":\"http://localhost:9/probe\"}"}]},
+              {"text":"done"}
+            ]}"#;
+            let mut client = llm::MockClient::from_str(script, "web-localhost").unwrap();
+            run_turn_for(
+                &sink,
+                &runtime,
+                &fixture.scope,
+                &config,
+                "question",
+                None,
+                &mut client,
+            );
+            runtime.release_turn(&fixture.scope);
+            assert!(
+                events
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|event| event["type"] != "approval_request"),
+                "{name} 被拒 URL 不得生成批准卡"
+            );
+            let input = runtime
+                .with_session(&fixture.scope, |session| session.input().to_vec())
+                .unwrap();
+            let output = input
+                .iter()
+                .find(|item| item["type"] == "function_call_output")
+                .unwrap_or_else(|| panic!("{name} 缺少工具结果"))["output"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let output: serde_json::Value = serde_json::from_str(&output).unwrap();
+            assert_eq!(output["code"], "web_url_blocked", "{name}");
+            assert_eq!(output["provider"], serde_json::Value::Null, "{name}");
+            assert_eq!(output["attempts"], 0, "{name}");
+            assert_eq!(output["local_precheck"], false, "{name}");
+            assert_eq!(
+                output["source"]["url"], "http://localhost:9/probe",
+                "{name}"
+            );
+            let events = events.lock().unwrap();
+            let done = events
+                .iter()
+                .find(|event| event["type"] == "tool_call" && event["status"] == "done")
+                .unwrap_or_else(|| panic!("{name} 缺少 done 事件"));
+            assert_eq!(done["web"]["code"], "web_url_blocked", "{name}");
+            assert_eq!(done["web"]["local_precheck"], false, "{name}");
+            assert_eq!(done["web"]["provider_fetch"], false, "{name}");
+            assert_eq!(done["web"]["attempts"], 0, "{name}");
+            drop(events);
+            let _ = std::fs::remove_dir_all(&fixture.root);
+        }
+    }
+
+    #[test]
+    fn web_allow_all_finishes_without_approval_card() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("web-allow-all-no-card");
+        let mut config = fixture.config.clone();
+        config.permission_mode = crate::config::PermissionMode::FullAccess;
+        config.web_access.approval = crate::harness::web::config::WebApproval::AllowAll;
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&fixture.scope, &config).unwrap();
+        let sink = Collect::default();
+        let events = sink.0.clone();
+        let script = r#"{"responses":[
+          {"tool_calls":[{"id":"web-allowed","name":"web_search","arguments":"{\"query\":\"synthetic query\"}"}]},
+          {"text":"done"}
+        ]}"#;
+        let mut client = llm::MockClient::from_str(script, "web-allow-all").unwrap();
+        run_turn_for(
+            &sink,
+            &runtime,
+            &fixture.scope,
+            &config,
+            "question",
+            None,
+            &mut client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert!(runtime
+            .snapshot(&fixture.scope, &config)
+            .pending_approvals
+            .is_empty());
+        assert!(events
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|event| event["type"] != "approval_request"));
+        let input = runtime
+            .with_session(&fixture.scope, |session| session.input().to_vec())
+            .unwrap();
+        let output = input
+            .iter()
+            .find(|item| item["type"] == "function_call_output")
+            .expect("allow_all 必须直接进入 Web port")["output"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let output: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(output["code"], "web_provider_unconfigured");
+        assert_eq!(output["attempts"], 0);
+        let events = events.lock().unwrap();
+        let done = events
+            .iter()
+            .find(|event| event["type"] == "tool_call" && event["status"] == "done")
+            .expect("Web done 事件");
+        assert_eq!(done["web"]["query"], "synthetic query");
+        assert_eq!(done["web"]["provider"], serde_json::Value::Null);
+        assert_eq!(done["web"]["provider_id"], serde_json::Value::Null);
+        assert_eq!(done["web"]["attempts"], 0);
+        assert_eq!(done["web"]["cost_per_1000_success_cny"], 5);
+        assert_eq!(done["web"]["local_precheck"], false);
+        assert_eq!(
+            done["web"]["provider_fetch"], false,
+            "未配置时没有 provider 请求"
+        );
+        assert_eq!(done["web"]["trust"], "untrusted");
+        assert!(done["web"].get("results").is_none());
+        assert!(done["web"].get("content").is_none());
+        drop(events);
+        let _ = std::fs::remove_dir_all(&fixture.root);
+    }
+
+    #[test]
+    fn web_done_audit_local_precheck_and_provider_fetch_follow_actual_facts() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let cases = [
+            ("web-audit-allow-unconfigured", false, None),
+            ("web-audit-ask-unconfigured", true, None),
+            (
+                "web-audit-deny",
+                false,
+                Some("web_fetch(https://example.com)"),
+            ),
+        ];
+        for (name, ask, deny) in cases {
+            let fixture = fixture(name);
+            let mut config = fixture.config.clone();
+            config.permission_mode = crate::config::PermissionMode::FullAccess;
+            config.web_access.approval = if ask {
+                crate::harness::web::config::WebApproval::Ask
+            } else {
+                crate::harness::web::config::WebApproval::AllowAll
+            };
+            if let Some(rule) = deny {
+                config.permissions.deny = vec![rule.to_string()];
+            }
+            let runtime = Runtime::default();
+            runtime.acquire_turn(&fixture.scope, &config).unwrap();
+            let sink = Collect::default();
+            let events = sink.0.clone();
+            let script = r#"{"responses":[
+              {"tool_calls":[{"id":"web-matrix","name":"web_fetch","arguments":"{\"url\":\"https://example.com/a\"}"}]},
+              {"text":"done"}
+            ]}"#;
+            let mut client = llm::MockClient::from_str(script, "web-audit-matrix").unwrap();
+            if ask {
+                let runtime_worker = runtime.clone();
+                let scope_worker = fixture.scope.clone();
+                let config_worker = config.clone();
+                let worker = std::thread::spawn(move || {
+                    run_turn_for(
+                        &sink,
+                        &runtime_worker,
+                        &scope_worker,
+                        &config_worker,
+                        "question",
+                        None,
+                        &mut client,
+                    );
+                });
+                let pending = wait_for_web_approval(&runtime, &fixture.scope, &config);
+                runtime
+                    .with_session(&fixture.scope, |session| {
+                        session.resolve_approval(&pending.id, true, None, false, false)
+                    })
+                    .unwrap()
+                    .unwrap();
+                worker.join().unwrap();
+            } else {
+                run_turn_for(
+                    &sink,
+                    &runtime,
+                    &fixture.scope,
+                    &config,
+                    "question",
+                    None,
+                    &mut client,
+                );
+            }
+            runtime.release_turn(&fixture.scope);
+            let events = events.lock().unwrap();
+            let done = events
+                .iter()
+                .find(|event| event["type"] == "tool_call" && event["status"] == "done")
+                .unwrap_or_else(|| panic!("{name} 缺少 done 事件"));
+            assert_eq!(done["web"]["local_precheck"], false, "{name}");
+            assert_eq!(done["web"]["provider_fetch"], false, "{name}");
+            assert_eq!(done["web"]["attempts"], 0, "{name}");
+            let _ = std::fs::remove_dir_all(&fixture.root);
+        }
+    }
+
+    #[test]
+    fn web_deny_finishes_without_approval_card() {
+        let _env_lock = crate::harness::xdg_test_lock();
+        let fixture = fixture("web-deny-no-card");
+        let mut config = fixture.config.clone();
+        config.permission_mode = crate::config::PermissionMode::FullAccess;
+        config.web_access.approval = crate::harness::web::config::WebApproval::Ask;
+        config.permissions.deny = vec!["web_search".to_string()];
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&fixture.scope, &config).unwrap();
+        let sink = Collect::default();
+        let events = sink.0.clone();
+        let script = r#"{"responses":[
+          {"tool_calls":[{"id":"web-denied","name":"web_search","arguments":"{\"query\":\"synthetic query\"}"}]},
+          {"text":"done"}
+        ]}"#;
+        let mut client = llm::MockClient::from_str(script, "web-denied").unwrap();
+        run_turn_for(
+            &sink,
+            &runtime,
+            &fixture.scope,
+            &config,
+            "question",
+            None,
+            &mut client,
+        );
+        runtime.release_turn(&fixture.scope);
+        assert!(runtime
+            .snapshot(&fixture.scope, &config)
+            .pending_approvals
+            .is_empty());
+        assert!(events
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|event| event["type"] != "approval_request"));
+        let _ = std::fs::remove_dir_all(&fixture.root);
     }
 }

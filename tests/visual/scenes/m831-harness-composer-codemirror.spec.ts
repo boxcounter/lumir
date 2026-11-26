@@ -139,7 +139,7 @@ test("新会话清除同 vault 草稿：落盘删除后 reload 不复活旧输�
   await page.addInitScript(() => {
     const w = window as unknown as Record<string, any>;
     if (localStorage.getItem("m831-draft") === null) {
-      localStorage.setItem("m831-draft", JSON.stringify({ version: 3, text: "OLD-DRAFT", caret: 9, cards: [] }));
+      localStorage.setItem("m831-draft", JSON.stringify({ version: 3, text: "OLD-DRAFT", caret: 9, cards: [], skills: [] }));
     }
     let stored: string | null = localStorage.getItem("m831-draft");
     w.__draftPuts = [];
@@ -171,7 +171,7 @@ test("新会话清除同 vault 草稿：落盘删除后 reload 不复活旧输�
 });
 
 // ── 竖直移动的列位口径（M834）─────────────────────────────────────────────────────────
-// CM 的 cursorLineUp/Down 把 goal column 当**像素 x**；composer 字体是比例字体（13px SF Pro），
+// CM 的 cursorLineUp/Down 把 goal column 当**像素 x**；composer 字体是比例字体（15px SF Pro），
 // 两行同一字符列的像素宽不相等 ⇒ 真机 140：第二段行尾（列 2）按 ⌃P 落列 3。合同（HC1）要求
 // 列位是**行内字符列**：行选仍交给 CM moveVertically，落点按字符列在目标渲染行里重算。
 type ComposerViewState = { head: number; anchor: number; goal: number | null; doc: string };
@@ -197,7 +197,7 @@ async function openDraftComposer(page: Page, text: string, caret: number): Promi
     const w = window as unknown as Record<string, any>;
     const invoke = w.__TAURI_INTERNALS__.invoke;
     w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: unknown) => {
-      if (cmd === "harness_draft_get") return JSON.stringify({ version: 3, ...draft, cards: [] });
+      if (cmd === "harness_draft_get") return JSON.stringify({ version: 3, ...draft, cards: [], skills: [] });
       if (cmd === "harness_draft_put") return null;
       if (cmd === "harness_state") {
         return JSON.stringify({ messages: [], usage: { ctx_pct: 0, cache_pct_session: 0 }, pending_approval: null, warn_ctx_pct: 85 });
@@ -292,25 +292,29 @@ test("软折行仍逐屏行移动（行选归 CM，列位按屏行内字符列�
   expect((await composerState(page)).head).toBe(second + 5);
 });
 
-// 折行点序列（第 i 项 = 第 i 屏行行首的文档位置）。用它把「逐屏行」断言写成元素级相等：
-// 既钉住场景的固定几何（1200×800 下 200 个 `abcdefghij` 折成 70/140/200），又不把噪声写死。
+// 折行点序列（第 i 项 = 第 i 屏行行首的文档位置）。字号改变会移动折行点，
+// 因此从真实屏行边界取期望，行为断言仍逐位置精确相等。
 async function composerRowStarts(page: Page): Promise<number[]> {
   return page.evaluate(() => {
     const view = (document.querySelector(".lumir-hp-composer .cm-content") as any).cmTile.root.view;
-    const EditorSelection = view.state.selection.constructor as { cursor(pos: number): any };
-    const starts: number[] = [0];
-    for (;;) {
-      const next = view.moveToLineBoundary(EditorSelection.cursor(starts[starts.length - 1]), true, true).head;
-      if (next <= starts[starts.length - 1] || next > view.state.doc.length) break;
-      starts.push(next);
-      if (next === view.state.doc.length) break;
+    const starts: number[] = [];
+    const seen = new Set<number>();
+    for (let pos = 0; pos <= view.state.doc.length; pos += 1) {
+      const top = Math.round(view.coordsAtPos(pos, 1).top);
+      if (!seen.has(top)) {
+        seen.add(top);
+        starts.push(pos);
+      }
     }
+    if (starts[starts.length - 1] !== view.state.doc.length) starts.push(view.state.doc.length);
     return starts;
   });
 }
 
 test("连续 ⇧⌃N 逐屏行扩选：head 落到 70 / 140 / 200（行首 assoc 不回退）", async ({ page }) => {
   const long = "abcdefghij".repeat(20);
+  // 15px 下用更宽视口保持本用例的 70 字符折行几何，原行为断言逐字不变。
+  await page.setViewportSize({ width: 1370, height: 800 });
   await openDraftComposer(page, long, 0);
   const rows = await composerRowStarts(page);
   // 场景几何钉点（与本文件其它几何断言同口径）：200 字符在本机折成 4 屏行。
@@ -329,6 +333,7 @@ test("连续 ⇧⌃N 逐屏行扩选：head 落到 70 / 140 / 200（行首 assoc
 
 test("连续 ⇧⌃P 钳到折行点后仍继续上移（行尾 assoc=-1 不越行）", async ({ page }) => {
   const doc = "i".repeat(200) + "w".repeat(200) + "i".repeat(200);
+  await page.setViewportSize({ width: 1370, height: 800 });
   await openDraftComposer(page, doc, 407);
   const rows = await composerRowStarts(page);
   const index = rows.findIndex((start, i) => start <= 407 && (i === rows.length - 1 || rows[i + 1] > 407));

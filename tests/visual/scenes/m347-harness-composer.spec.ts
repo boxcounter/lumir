@@ -416,6 +416,35 @@ test("composer 控制行：合并选择器三维写回 / 形态合同 / ctx 读�
   // 气泡的像素基线（M443 建立的元素级判据；本场景此前只 hover 不截图）：
   // **M533 改了行集 ⇒ 既有基线必失配**——新实图另存主仓 test-results/m533-ctxpop-slim/
   // 供 Alex 过目，基线更新是人肉裁决点（见 tests/visual/README.md 的「更新基线」）。
+  const typography = await ctxPop.evaluate((el) => {
+    const popStyle = getComputedStyle(el);
+    const composerStyle = getComputedStyle(document.querySelector(".lumir-hp-composer")!);
+    return {
+      popFontSize: popStyle.fontSize,
+      popLineHeight: popStyle.lineHeight,
+      popFontWeight: popStyle.fontWeight,
+      popLetterSpacing: popStyle.letterSpacing,
+      composerFontSize: composerStyle.fontSize,
+      composerLineHeight: composerStyle.lineHeight,
+      children: [...el.children].map((child) => {
+        const style = getComputedStyle(child);
+        return { fontSize: style.fontSize, lineHeight: style.lineHeight };
+      }),
+    };
+  });
+  expect(typography).toEqual({
+    popFontSize: "12px",
+    popLineHeight: "18px",
+    popFontWeight: "400",
+    popLetterSpacing: "normal",
+    composerFontSize: "15px",
+    composerLineHeight: "23.7px",
+    children: [
+      { fontSize: "12px", lineHeight: "18px" },
+      { fontSize: "12px", lineHeight: "18px" },
+      { fontSize: "12px", lineHeight: "18px" },
+    ],
+  });
   await expectScreenshot(ctxPop, "m347-ctxpop-cache-metrics.png");
   await page.mouse.move(10, 10);
   await expect(ctxPop).toBeHidden();
@@ -569,9 +598,9 @@ test("权限 chip（M414）：短名读数 / 三档浮层全名 + 释义 / 档�
 test("ctx hover 泡边界收编：窄面板下完整可见（三主题），不越出面板可视区", async ({ page }) => {
   // M378 根因的复现条件：浮层默认右锚 right:-18px、宽度下限 224px（向左延 ~206px），祖先
   // .lumir-harness 有 overflow:hidden——面板窄时浮层左缘被裁（Alex「hint 显示不全」）。
-  // 760px 宽视口把 harness pane 压到默认锚必溢出左缘的宽度；每条主题下量浮层边界 ⊆
-  // 面板边界，并量「未收编左缘」作证这条断言非空转（它 < 面板左缘 = 不收编必红）。
-  await page.setViewportSize({ width: 760, height: 600 });
+  // 740px 宽视口在 composer 新外侧留白下仍把 harness pane 压到默认锚必溢出左缘；
+  // 每条主题下量浮层边界 ⊆ 面板边界，并量「未收编左缘」作证断言非空转。
+  await page.setViewportSize({ width: 740, height: 600 });
   await stubTauri(page, VAULT);
   await stubHarnessComposer(page);
   await page.goto("/");
@@ -620,10 +649,9 @@ test("ctx hover 泡边界收编：窄面板下完整可见（三主题），不�
         popLeft: c.left,
         popRight: c.right,
         popWidth: c.width,
-        // 未收编默认左缘的**上界** = 读数右缘 + 18px 探出 − 宽度下限 224px（right:-18px 锚的
-        // 算式）。M702 起气泡宽随内容增长（P 档），实际宽度 ≥ 224 ⇒ 实际左缘 ≤ 这个值：
-        // 它小于面板左缘即证明「不收编必越界」，作为复现条件仍然成立（且更保守）。
-        unclampedPopLeft: w.right + 18 - 224,
+        // 未收编默认左缘 = 读数右缘 + 18px 探出 − 当前实际浮层宽（right:-18px 锚）。
+        // 宽度在收编时不改变，因此这是精确反推，不再用 224px 下限估一个上界。
+        unclampedPopLeft: w.right + 18 - c.width,
       };
     });
 
@@ -741,11 +769,11 @@ test("字号是**一套设置**：⌘+/-/0 让编辑器与 harness 面板一起�
       Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--editor-font-size")),
     );
 
-  // 基线：编辑器内容 15px、面板根字号 --fs-ui 13px。
+  // 基线：编辑器内容 15px；refined-rows-720 起 composer 同样为 15px。
   await expect.poll(editorFontPx).toBe(15);
-  await expect.poll(composerFontPx).toBe(13);
+  await expect.poll(composerFontPx).toBe(15);
 
-  // 焦点在 composer：⌘= 同时放大两个内容面（编辑器 15→17；面板 13 × 17/15 ≈ 14.73）。
+  // 焦点在 composer：⌘= 同时放大两个内容面（编辑器 15→17；composer 15 × 17/15 = 17）。
   await composer.click();
   await page.keyboard.press("Meta+=");
   await expect.poll(editorFontPx).toBe(17);
@@ -753,10 +781,10 @@ test("字号是**一套设置**：⌘+/-/0 让编辑器与 harness 面板一起�
   await page.keyboard.press("Meta+=");
   await expect.poll(editorFontPx).toBe(19);
   await expect.poll(composerFontPx).toBeGreaterThan(16);
-  // ⌘0 两个面一起回各自的基线（编辑器回配置字号 15；面板回 --fs-ui 13）。
+  // ⌘0 两个面一起回各自的基线（编辑器回配置字号 15；composer 回 --fs-body 15）。
   await page.keyboard.press("Meta+0");
   await expect.poll(editorFontPx).toBe(15);
-  await expect.poll(composerFontPx).toBe(13);
+  await expect.poll(composerFontPx).toBe(15);
 
   // 焦点在编辑器：结果与焦点无关（M378 的焦点路由已废止）——两个面照样一起变。
   await page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content').click();
@@ -766,7 +794,7 @@ test("字号是**一套设置**：⌘+/-/0 让编辑器与 harness 面板一起�
   // ⌘- 回退：编辑器 17 → 15，面板随缩放比回基线。
   await page.keyboard.press("Meta+-");
   await expect.poll(editorFontPx).toBe(15);
-  await expect.poll(composerFontPx).toBe(13);
+  await expect.poll(composerFontPx).toBe(15);
 });
 
 test("权限规则段滚动条：隐藏档，溢出态下删除钮不被压住（M660 #1 追加）", async ({ page }) => {
@@ -984,4 +1012,252 @@ test("idle 遗留待批：不落卡、发送新轮不复活「等待批准」", 
   await expect(page.locator(".lumir-hp-pend")).toHaveCount(0);
   await expect(page.locator(".lumir-hp-seg-status")).toBeHidden();
   await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("处理中");
+});
+
+// ── 输出尾行（change move-harness-progress-to-output-tail-nov23）─────────────────
+
+async function openProgressTailPanel(page: Page): Promise<void> {
+  await stubTauri(page, VAULT);
+  await stubHarnessComposer(page);
+  await stubApprovalState(page, { inFlight: false, pending: [] });
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("第一段");
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await waitSnapshot(page);
+}
+
+for (const item of [
+  { name: "工具调用", event: { type: "tool_call", name: "Read", status: "started", summary: "harness-note.md" }, proof: ".lumir-hp-tool-row" },
+  { name: "思考分片", event: { type: "reasoning_chunk", index: 0, text: "先思考，再决定如何回答。" }, proof: ".lumir-hp-think" },
+] as const) {
+  test(`尾行首个有效产出：只发${item.name}、全程无 text_chunk 也离开等待`, async ({ page }) => {
+    await openProgressTailPanel(page);
+    await page.locator(".lumir-hp-composer .cm-content").fill(`${item.name}先行`);
+    await page.locator(".lumir-hp-send").click();
+    await expect(page.locator(".lumir-hp-stage")).toHaveText("等待响应…");
+    await fireHarness(page, item.event);
+    await expect(page.locator(".lumir-hp-stage")).toHaveText("正在生成回复…");
+    await expect(page.locator(item.proof)).toHaveCount(1);
+  });
+}
+
+test("尾行结构：transcript 末位 / 节点与几何恒定 / 顶层追加兜底 / 停止冻结 / 终态先离场", async ({ page }) => {
+  await openProgressTailPanel(page);
+  await page.locator(".lumir-hp-composer .cm-content").fill("尾行结构与几何");
+  await page.locator(".lumir-hp-send").click();
+  const progress = page.locator(".lumir-hp-progress");
+  const transcript = page.locator(".lumir-hp-transcript");
+  await expect(progress).toBeVisible();
+
+  const waiting = await progress.evaluate((el) => {
+    const transcriptEl = el.parentElement;
+    const previous = el.previousElementSibling;
+    const rect = el.getBoundingClientRect();
+    const previousRect = previous?.getBoundingClientRect();
+    (window as unknown as Record<string, unknown>).__progressTailNode = el;
+    return {
+      parentClass: transcriptEl?.className ?? "",
+      isLast: transcriptEl?.lastElementChild === el,
+      order: getComputedStyle(el).order,
+      padding: getComputedStyle(el).padding,
+      marginTop: getComputedStyle(el).marginTop,
+      height: rect.height,
+      gap: previousRect === undefined ? Number.NaN : rect.top - previousRect.bottom,
+    };
+  });
+  expect(waiting.parentClass).toContain("lumir-hp-transcript");
+  expect(waiting.isLast).toBe(true);
+  expect(waiting.order).toBe("1");
+  expect(waiting.padding).toBe("0px");
+  expect(waiting.marginTop).toBe("-12px");
+  expect(waiting.gap).toBeGreaterThanOrEqual(3);
+  expect(waiting.gap).toBeLessThanOrEqual(5);
+
+  await fireHarness(page, { type: "text_chunk", text: "正文到达后尾行仍在末尾。" });
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("正在生成回复…");
+  const generating = await progress.evaluate((el) => {
+    const previous = el.previousElementSibling;
+    const rect = el.getBoundingClientRect();
+    const previousRect = previous?.getBoundingClientRect();
+    return {
+      sameNode: (window as unknown as Record<string, unknown>).__progressTailNode === el,
+      isLast: el.parentElement?.lastElementChild === el,
+      height: rect.height,
+      gap: previousRect === undefined ? Number.NaN : rect.top - previousRect.bottom,
+    };
+  });
+  expect(generating.sameNode).toBe(true);
+  expect(generating.isLast).toBe(true);
+  expect(generating.height).toBe(waiting.height);
+  expect(generating.gap).toBeGreaterThanOrEqual(3);
+  expect(generating.gap).toBeLessThanOrEqual(5);
+
+  await fireHarness(page, { type: "compact", summary: "合成压缩摘要" });
+  await expect.poll(() => progress.evaluate((el) => el.parentElement?.lastElementChild === el)).toBe(true);
+  await transcript.locator(":scope > .lumir-hp-compact").evaluate((el) => el.remove());
+  await transcript.evaluate((el) => {
+    const stray = document.createElement("div");
+    stray.className = "lumir-hp-notice";
+    stray.textContent = "绕过 helper 的顶层追加";
+    el.append(stray);
+  });
+  await expect.poll(() => progress.evaluate((el) => el.parentElement?.lastElementChild === el)).toBe(true);
+  await transcript.evaluate((el) => {
+    for (const child of Array.from(el.children)) {
+      if (child.textContent === "绕过 helper 的顶层追加") child.remove();
+    }
+  });
+
+  await page.locator(".lumir-hp-send").click();
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("正在停止…");
+  await expect(progress).toHaveAttribute("data-phase", "stopping");
+  expect(await page.locator(".lumir-hp-bar-fill").evaluate((el) => getComputedStyle(el).animationName)).toBe("none");
+  expect(await progress.evaluate((el) => el.getBoundingClientRect().height)).toBe(waiting.height);
+  await page.locator(".modeline-theme").click();
+  await page.locator(".modeline-theme").click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "eink");
+  const einkBar = await page.locator(".lumir-hp-bar-fill").evaluate((el) => ({
+    animation: getComputedStyle(el).animationName,
+    width: el.getBoundingClientRect().width,
+    trackWidth: el.parentElement!.getBoundingClientRect().width,
+  }));
+  expect(einkBar.animation).toBe("none");
+  expect(einkBar.width).toBe(einkBar.trackWidth);
+
+  await fireHarness(page, { type: "aborted" });
+  await expect(progress).toBeHidden();
+  const stoppedTail = transcript.locator(":scope > :not(.lumir-hp-progress):not(.lumir-hp-empty)").last();
+  await expect(stoppedTail).toContainText("已停止");
+
+  await page.locator(".lumir-hp-composer .cm-content").fill("错误终态次序");
+  await page.locator(".lumir-hp-send").click();
+  await fireHarness(page, { type: "error", code: "llm_upstream", message: "合成上游错误" });
+  await expect(progress).toBeHidden();
+  await expect(transcript.locator(":scope > .lumir-hp-error").last()).toBeVisible();
+  await expect(transcript.locator(":scope > :not(.lumir-hp-progress):not(.lumir-hp-empty)").last()).toHaveClass(/lumir-hp-error/);
+});
+
+test("语言重绘零布局测量：真实切换只换文案，identity / phase / 条形 / 滚动位不变", async ({ page }) => {
+  await openProgressTailPanel(page);
+  await page.locator(".lumir-hp-composer .cm-content").fill("语言重绘零测量");
+  await page.locator(".lumir-hp-send").click();
+  const progress = page.locator(".lumir-hp-progress");
+  const transcript = page.locator(".lumir-hp-transcript");
+  await expect(progress).toBeVisible();
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("等待响应…");
+
+  await transcript.evaluate((el) => {
+    const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, "scrollHeight");
+    if (descriptor?.get === undefined) throw new Error("scrollHeight getter 不可探针化");
+    const getter = descriptor.get;
+    const progressEl = el.querySelector(".lumir-hp-progress");
+    const bar = el.querySelector(".lumir-hp-bar-fill");
+    if (progressEl === null || bar === null) throw new Error("尾行探针目标不在场");
+    const w = window as unknown as Record<string, any>;
+    w.__relabelProbe = { count: 0 };
+    w.__relabelSync = {
+      count: -1,
+      stageText: "",
+      node: progressEl,
+      sameNode: false,
+      phaseBefore: (progressEl as HTMLElement).dataset.phase,
+      phaseAfter: "",
+      scrollTopBefore: el.scrollTop,
+      scrollTopAfter: -1,
+      animationBefore: getComputedStyle(bar).animationName,
+      animationAfter: "",
+    };
+    Object.defineProperty(el, "scrollHeight", {
+      configurable: true,
+      get() {
+        w.__relabelProbe.count += 1;
+        return getter.call(this);
+      },
+    });
+    const isLanguageCycle = (event: KeyboardEvent) =>
+      event.key.toLowerCase() === "l" && event.shiftKey && (event.metaKey || event.ctrlKey);
+    const capture = (event: KeyboardEvent) => {
+      if (isLanguageCycle(event)) w.__relabelProbe.count = 0;
+    };
+    const bubble = (event: KeyboardEvent) => {
+      if (!isLanguageCycle(event)) return;
+      const current = el.querySelector(".lumir-hp-progress")!;
+      // Keymap 已在本窗口的前置监听里同步完成语言重绘；此读数先于 ResizeObserver / rAF。
+      Object.assign(w.__relabelSync, {
+        count: w.__relabelProbe.count,
+        stageText: current.querySelector(".lumir-hp-stage")!.textContent,
+        sameNode: w.__relabelSync.node === current,
+        phaseAfter: (current as HTMLElement).dataset.phase,
+        scrollTopAfter: el.scrollTop,
+        animationAfter: getComputedStyle(current.querySelector(".lumir-hp-bar-fill")!).animationName,
+      });
+    };
+    window.addEventListener("keydown", capture, true);
+    window.addEventListener("keydown", bubble);
+    w.__relabelCleanup = () => {
+      window.removeEventListener("keydown", capture, true);
+      window.removeEventListener("keydown", bubble);
+    };
+  });
+
+  await page.locator(".lumir-hp-composer .cm-content").click();
+  await page.keyboard.press("Meta+Shift+L");
+  await expect(page.locator(".lumir-hp-stage")).toHaveText("Waiting for a response…");
+  const after = await transcript.evaluate((el) => {
+    const w = window as unknown as Record<string, any>;
+    if (w.__relabelSync.count < 0) throw new Error("未捕获语言切换的同步重绘终点");
+    Reflect.deleteProperty(el, "scrollHeight");
+    w.__relabelCleanup();
+    return w.__relabelSync;
+  });
+  expect(after.count, "同一 keydown 任务内的语言重绘不得读取 transcript.scrollHeight").toBe(0);
+  expect(after.stageText).toBe("Waiting for a response…");
+  expect(after.sameNode).toBe(true);
+  expect(after.phaseAfter).toBe(after.phaseBefore);
+  expect(after.scrollTopAfter).toBe(after.scrollTopBefore);
+  expect(after.animationAfter).toBe(after.animationBefore);
+});
+
+// 施工前由排版归档后的实现实测回填；不得按印象改这个对账基准。
+const PRE_CHANGE_IDLE_CENTER = { cx: 959.75, cy: 338 };
+
+test("空态尾行：提示不被误撤且中心不随显隐移动，idle 与排版后施工前中心一致", async ({ page }) => {
+  await openProgressTailPanel(page);
+  const empty = page.locator(".lumir-hp-empty");
+  const transcript = page.locator(".lumir-hp-transcript");
+  const center = () => empty.evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    return { cx: rect.left + rect.width / 2, cy: rect.top + rect.height / 2, top: rect.top };
+  });
+  const idle = await center();
+  expect(Math.abs(idle.cx - PRE_CHANGE_IDLE_CENTER.cx)).toBeLessThanOrEqual(1);
+  expect(Math.abs(idle.cy - PRE_CHANGE_IDLE_CENTER.cy)).toBeLessThanOrEqual(1);
+
+  await fireHarness(page, { type: "auto_turn_started" });
+  const progress = page.locator(".lumir-hp-progress");
+  await expect(progress).toBeVisible();
+  await expect(empty).toBeVisible();
+  const running = await center();
+  expect(Math.abs(running.top - idle.top)).toBeLessThanOrEqual(1);
+  const positive = await progress.evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    const viewport = el.parentElement!.getBoundingClientRect();
+    return { height: rect.height, top: rect.top, bottom: rect.bottom, viewportTop: viewport.top, viewportBottom: viewport.bottom };
+  });
+  expect(positive.height).toBeGreaterThan(0);
+  expect(positive.top).toBeGreaterThanOrEqual(positive.viewportTop - 1);
+  expect(positive.bottom).toBeLessThanOrEqual(positive.viewportBottom + 1);
+  const emptyStyle = await empty.evaluate((el) => {
+    const style = getComputedStyle(el);
+    return { position: style.position, top: style.top, right: style.right, bottom: style.bottom, left: style.left, fontSize: style.fontSize, lineHeight: style.lineHeight, padding: style.padding };
+  });
+  expect(emptyStyle).toEqual({ position: "absolute", top: "16px", right: "16px", bottom: "12px", left: "16px", fontSize: "13px", lineHeight: "20.54px", padding: "24px" });
+
+  await fireHarness(page, { type: "done" });
+  await expect(progress).toBeHidden();
+  await expect(empty).toBeVisible();
+  expect(Math.abs((await center()).top - idle.top)).toBeLessThanOrEqual(1);
+  expect(await transcript.evaluate((el) => el.scrollHeight)).toBeGreaterThan(0);
 });

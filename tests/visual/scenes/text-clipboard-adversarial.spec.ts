@@ -237,7 +237,7 @@ async function openComposer(
         return invoke(cmd, args);
       };
     },
-    { draft: { version: 3, text, caret, cards: cards.map((card) => ({ card, at: 0 })) }, providers: standardProviders() },
+    { draft: { version: 3, text, caret, cards: cards.map((card) => ({ card, at: 0 })), skills: [] }, providers: standardProviders() },
   );
   await page.goto("/");
   await page.locator('.ft-row[title="oracle.md"]').click();
@@ -475,9 +475,12 @@ pageTest("正文跨 widget 选区粘贴：源码区间精确替换，渲染字�
     await page.waitForTimeout(620);
     await page.keyboard.press("Meta+z");
     await expect.poll(async () => (await bodyState(page)).doc, { message: `${c.name}: undo` }).toBe(WIDGET_DOC);
-    for (const selector of [".cm-lp-list-marker", ".cm-lp-wikilink"]) {
-      await expect.poll(async () => page.locator(selector).count()).toBeGreaterThan(0);
-    }
+    await expect.poll(async () => page.locator(".cm-lp-list-marker").count()).toBeGreaterThan(0);
+    // undo 恢复的是触及 wikilink 的旧选区：源码保持显露，只有移出选区后才恢复 widget。
+    await expect(page.locator(".cm-lp-wikilink")).toHaveCount(0);
+    expect((await bodyState(page)).doc).toContain("[[note]]");
+    await setBodySelection(page, 0);
+    await expect.poll(async () => page.locator(".cm-lp-wikilink").count()).toBeGreaterThan(0);
   }
 });
 

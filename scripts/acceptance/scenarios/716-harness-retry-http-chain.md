@@ -11,6 +11,9 @@ config:
   harness:
     provider: mock
     fixture: "$fixtures/harness-mock-retry-http-chain.json"
+    # 本场景不验证 Web；显式关闭以固定工具面（阶段5回扫）。
+    web_access:
+      enabled: false
 steps:
   - name: ⌘⇧A 打开 harness pane
     do: keys

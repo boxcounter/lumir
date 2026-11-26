@@ -57,6 +57,7 @@ pub mod thinking;
 pub mod title;
 pub mod tools;
 pub mod turn;
+pub mod web;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -609,11 +610,37 @@ impl Runtime {
             .unwrap_or(false)
     }
 
+    fn guard_unpublished_replacement(&self, scope: &VaultScope) -> Result<(), CommandError> {
+        let mut sessions = self
+            .inner
+            .sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let Some(session) = sessions.get_mut(&scope.key()) else {
+            return Ok(());
+        };
+        if !session.jsonl().has_unpublished_history() {
+            return Ok(());
+        }
+        let transitions = session.jsonl().transitions();
+        session.jsonl().try_publish_pending();
+        let unpublished = session.jsonl().has_unpublished_history();
+        drop(sessions);
+        transitions.flush();
+        if unpublished {
+            return Err(CommandError::new(
+                "harness_persistence_unpublished",
+                "对话暂未保存，不能切换或新建会话；请先检查磁盘空间与目录权限后重试",
+            ));
+        }
+        Ok(())
+    }
+
     /// 「新会话」（`harness_new_session` 的实现体，命令层只解析 scope）。
     ///
-    /// 不变量：**任意会话状态下调用 new_session 均成功，结果恒为新空会话**。
-    /// 无会话（从未提问 / 刚重置）时目标状态已成立，平凡成功；busy（在途轮次或在批准闸上
-    /// 等待）是唯一失败态，返回 `harness_busy`。
+    /// 无会话（从未提问 / 刚重置）时目标状态已成立，平凡成功；busy 返回 `harness_busy`。
+    /// 已激活且仍未发布的恢复批次若再次发布失败，则返回
+    /// `harness_persistence_unpublished`，当前会话与缓冲保持不变。其余空闲调用结果恒为新空会话。
     ///
     /// 历史（M350）：旧实现用 `with_session` 探测 busy，无会话时被 `harness_no_session`
     /// 短路成错误——面板「New session → 报错 → 再点仍报错」的根因就是新建会话前恰好
@@ -626,8 +653,7 @@ impl Runtime {
                 "对话正在处理中，请等本轮结束或完成批准后再开新会话",
             ));
         }
-        self.reset_session(scope);
-        Ok(())
+        self.reset_session(scope)
     }
 
     /// 「新会话」重置：丢弃旧会话对象（消息历史随之清空），下次访问按新会话装配
@@ -638,7 +664,8 @@ impl Runtime {
     ///
     /// **思考程度档位随会话对象一起丢弃**（M362，Alex 裁决点 1「新会话回到默认」）——
     /// 档位是会话状态，不存在这里的第二个副本，故这一处 remove 就是重置的完整实现。
-    pub fn reset_session(&self, scope: &VaultScope) {
+    pub fn reset_session(&self, scope: &VaultScope) -> Result<(), CommandError> {
+        self.guard_unpublished_replacement(scope)?;
         let mut sessions = self
             .inner
             .sessions
@@ -653,12 +680,12 @@ impl Runtime {
                 .unwrap_or_else(|e| e.into_inner())
                 .insert(scope.key(), "reset");
         }
+        Ok(())
     }
 
-    /// 从留存文件恢复会话（`harness_resume_session` 的实现体）：读源文件最后一条
-    /// 会话轮次 `llm_request` 的完整请求体，system + messages 原样灌进一个新会话，
-    /// 续写**新** JSONL 文件（opened_from=restore，restored_from=源会话 id）。busy 态拒绝
-    /// （与 new_session 同口径）；非 busy 时替换当前会话。
+    /// 从留存文件恢复会话（`harness_resume_session` 的实现体）：只读源文件并重建内存会话，
+    /// 查看阶段不建目录或文件；首次真实 `llm_request` 才发布 opened_from=restore 的新 JSONL。
+    /// 当前文件与同源 pending 直切；真正切换时 busy 拒绝，未发布批次由统一守卫保护。
     ///
     /// **面板视角一并重建**（M398，design §6.2「面板（transcript）从灌回的 input 重建」）：
     /// 灌回的 wire 条目经 [`restored_panel_messages`] 映射成面板消息（user / assistant /
@@ -670,19 +697,39 @@ impl Runtime {
         config: &HarnessConfig,
         session_id: &str,
     ) -> Result<session::SessionResumeInfo, CommandError> {
-        if self.session_busy(scope) {
-            return Err(CommandError::new(
-                "harness_busy",
-                "对话正在处理中，请等本轮结束后再恢复会话",
-            ));
-        }
         if !jsonl::is_valid_session_id(session_id) {
             return Err(CommandError::new(
                 "harness_session_invalid",
                 format!("非法的 session id：{session_id}"),
             ));
         }
-        let path = jsonl::vault_sessions_dir(&scope.vault_id)?.join(format!("{session_id}.jsonl"));
+        {
+            let mut sessions = self
+                .inner
+                .sessions
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some(current) = sessions.get_mut(&scope.key()) {
+                let current_id = jsonl::JsonlWriter::session_id_from_path(current.jsonl().path());
+                let same_pending = current.jsonl().pending_restore_source() == Some(session_id);
+                if current_id.as_deref() == Some(session_id) || same_pending {
+                    return Ok(session::SessionResumeInfo {
+                        session_id: current_id.unwrap_or_else(|| session_id.to_string()),
+                        session_token: current.subagent_token(),
+                        restored_items: 0,
+                        messages: Vec::new(),
+                        switched: false,
+                    });
+                }
+                if current.is_busy() {
+                    return Err(CommandError::new(
+                        "harness_busy",
+                        "对话正在处理中，请等本轮结束后再恢复会话",
+                    ));
+                }
+            }
+        }
+        let path = jsonl::vault_sessions_path(&scope.vault_id)?.join(format!("{session_id}.jsonl"));
         let file = jsonl::read_session_file(&path)?;
         let open = &file.session_open;
         if !session_belongs_to_scope(open, scope) {
@@ -830,12 +877,6 @@ impl Runtime {
             // 逐 run 终态汇总种子（M822）：这份文件再被恢复时，`task` 行的终态真源不断档。
             "subrun_runs": serde_json::to_value(&subrun_runs).unwrap_or_default(),
         });
-        let writer = jsonl::JsonlWriter::create(
-            &new_id,
-            &scope.vault_id,
-            &open_payload,
-            self.persistence_reporter(scope),
-        )?;
         // 面板视角重建（M398）：灌回的 input 项映射成面板消息，reasoning 明文挂其后的
         // assistant。先建好再 move `restored` 进会话。approval sidecar（kind=approval，
         // 批准的终态记录）按文件序收集，供工具行回填 decision——「已采纳 / 已拒绝」的
@@ -874,6 +915,26 @@ impl Runtime {
                 ts: jsonl::unix_secs_now(),
             });
         }
+        let mut initial_records = Vec::new();
+        if let Some(title) = &inherited_title {
+            initial_records.push(title::inherit_payload(title));
+        }
+        initial_records.extend(restored_notices.iter().map(|notice| {
+            serde_json::json!({
+                "kind": "notice_delivered",
+                "run_ids": notice.run_ids,
+                "wake_batch": notice.wake_batch,
+                "shown_at": jsonl::unix_secs_now(),
+            })
+        }));
+        let writer = jsonl::JsonlWriter::create_restore(
+            &new_id,
+            session_id,
+            &scope.vault_id,
+            &open_payload,
+            initial_records,
+            self.persistence_reporter(scope),
+        )?;
         let mut new_session =
             session::Session::new(scope.root.clone(), system, restored, effort, writer);
         // 会话两份视角（input / panel）随同一个动作一起成立——不重建的话恢复出的会话面板为空，
@@ -887,32 +948,16 @@ impl Runtime {
         // 分桶落种与之同源（同一条「live 与留存可推导值一致」纪律）。
         new_session.restore_subrun_usage(subrun_buckets);
         new_session.restore_subrun_runs(subrun_runs);
-        // 重建通知的投递标记复制进新文件（同一批的 run_ids / wake_batch）：这份会话若在
-        // 通知进入任何 `llm_request` 之前再次被退出，下一次恢复仍能重建它。
-        for notice in &restored_notices {
-            new_session.jsonl().record(&serde_json::json!({
-                "kind": "notice_delivered",
-                "run_ids": notice.run_ids,
-                "wake_batch": notice.wake_batch,
-                "shown_at": jsonl::unix_secs_now(),
-            }));
-        }
-        // 继承标题（design D7）：新文件 `session_open` 之后紧接一条 `inherit` 记录。恢复入口只在
-        // 非 busy 时可达，因此这里不违反「标题记录只在会话空闲时追加」（此处新文件还没有任何
-        // 请求 / 响应对，记录也不会插进一对之间）。
         if let Some(title) = &inherited_title {
-            new_session.jsonl().record(&title::inherit_payload(title));
             new_session.set_title(Some(title.clone()));
         }
         let new_token = new_session.subagent_token();
-        let transitions = new_session.jsonl().transitions();
+        self.guard_unpublished_replacement(scope)?;
         self.inner
             .sessions
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(scope.key(), new_session);
-        // 恢复期间写 notice / inherit 的失败跃迁：插入会话、释放锁之后再发（P2-4）。
-        transitions.flush();
         self.inner
             .pending_open
             .lock()
@@ -923,6 +968,7 @@ impl Runtime {
             session_token: new_token,
             restored_items,
             messages,
+            switched: true,
         })
     }
 
@@ -1692,6 +1738,15 @@ fn vault_scope(vault: &crate::commands::VaultState) -> Result<VaultScope, Comman
     })
 }
 
+#[tauri::command(rename_all = "snake_case")]
+pub fn harness_skills_list(
+    vault: tauri::State<'_, crate::commands::VaultState>,
+) -> Result<Vec<context::SkillSummary>, CommandError> {
+    let scope = vault_scope(&vault)?;
+    let skills = context::discover_skills(&scope.root);
+    Ok(context::skill_summaries(&skills))
+}
+
 /// 发送一条提问。立即返回：工具循环在 `lumir-harness-llm` 专线程跑，进展经
 /// `harness:event` 事件推送；上下文块 `context_json` 是 TS 侧组装的
 /// `{path, selection?} | {path, viewport_range?}`（宽容解析，见 [`turn::parse_context`]）。
@@ -1704,16 +1759,28 @@ fn vault_scope(vault: &crate::commands::VaultState) -> Result<VaultScope, Comman
 /// **不建会话、不入队**；前端收到该 code → toast + 把消息里的图片卡片标错误态（前端
 /// MUST NOT 另立能力判定）。放行后含图消息照常入队——会话侧与 JSONL 恒为引用形态，
 /// base64 展开落在 client 发送前（`attachments::expand_image_refs`）。
+fn parse_explicit_skill_names(skills_json: &str) -> Result<Vec<String>, CommandError> {
+    serde_json::from_str::<Vec<String>>(skills_json).map_err(|e| {
+        CommandError::new(
+            "harness_skills_invalid",
+            format!("Skill 选择元数据必须是字符串数组：{e}"),
+        )
+        .param("reason", e.to_string())
+    })
+}
+
 #[tauri::command(rename_all = "snake_case")]
-pub fn harness_send(
+pub fn harness_send<R: tauri::Runtime>(
     vault: tauri::State<'_, crate::commands::VaultState>,
     runtime: tauri::State<'_, Runtime>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<R>,
     parts_json: String,
     context_json: String,
+    skills_json: String,
 ) -> Result<(), CommandError> {
     let scope = vault_scope(&vault)?;
     let config = config::load()?.config.harness;
+    let skill_names = parse_explicit_skill_names(&skills_json)?;
     let parts = attachments::parse_delivery_parts(&parts_json)?;
     // 发送期缺失态（task 4.7）：没有 provider / 缺 Key / 缺 Base URL / 没有模型时在建会话之前
     // 给出人话错误——顺序在图片闸之前，否则「没有 provider 却附了图」会报成图片不支持。
@@ -1731,6 +1798,7 @@ pub fn harness_send(
         config,
         parts,
         context_section,
+        skill_names,
         // 交互发送没有运行交接契约：注册表原样暴露（`None`）。
         None,
         None,
@@ -1794,13 +1862,14 @@ pub fn harness_retry(
 /// 之后挂到 runtime 上，`SessionContext` 构造时读取并过滤工具定义，`release_turn` 清掉。
 /// 交互发送传 `None`（没有交接契约 ⇒ 完整注册表）；cron 两个槽位都传契约值。
 #[allow(clippy::too_many_arguments)] // 两个入口共用这一条运行实现；拆结构体只会把参数换个容器。
-fn start_turn(
-    app: tauri::AppHandle,
+fn start_turn<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     runtime: Runtime,
     scope: VaultScope,
     config: HarnessConfig,
     parts: Vec<attachments::DeliveryPart>,
     context_section: Option<String>,
+    skill_names: Vec<String>,
     tool_policy: Option<run::ToolPolicy>,
     completion: Option<Box<dyn FnOnce() + Send>>,
     origin: turn::TurnOrigin,
@@ -1823,6 +1892,7 @@ fn start_turn(
                 config,
                 parts,
                 context_section,
+                skill_names,
                 origin,
             );
             if let Some(completion) = completion {
@@ -2032,6 +2102,7 @@ pub fn harness_cron_run(
         config,
         parts,
         None,
+        Vec::new(),
         // 契约的工具白名单原样交给运行层：`SessionContext` 只暴露其中声明的工具。
         // 定时 / 点击两个槽位共用这一条链路（点击槽也用契约值，不回落交互全量）。
         Some(spec.tool_policy),
@@ -2370,6 +2441,8 @@ pub(crate) fn xdg_test_lock() -> std::sync::MutexGuard<'static, ()> {
     LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+#[cfg(test)]
+mod lazy_restore_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2901,7 +2974,7 @@ mod tests {
 
     /// `new_session` 的状态机合同（验收场景 92 的低层判据）：
     ///
-    /// **任意空闲会话状态下调用均成功，结果恒为新空会话**；busy 是唯一失败态。
+    /// **普通空闲会话状态下调用均成功，结果恒为新空会话**；未发布批次的例外由 lazy_restore_tests 另行覆盖。
     /// 历史（M350）：旧实现无会话时被 `harness_no_session` 短路成错误——「新会话 → 报错 →
     /// 再点仍报错」的根因。这条用例把三态一次钉死，防它被 `with_session` 的严格语义带回来。
     #[test]
@@ -3818,5 +3891,51 @@ mod tests {
         assert_eq!(error.code, "harness_busy");
         runtime.release_turn(&scope);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn restored_web_panel_preserves_source_error_and_truncation_metadata() {
+        let search = serde_json::json!({
+            "ok": true, "provider": "deepseek", "provider_id": "deepseek-work",
+            "operation": "search", "attempts": 1, "trust": "untrusted",
+            "truncated": true, "truncated_fields": ["results"],
+            "query": "full synthetic query", "results": []
+        })
+        .to_string();
+        let fetch = serde_json::json!({
+            "ok": false, "provider": "deepseek", "provider_id": "deepseek-work",
+            "operation": "fetch", "attempts": 3, "trust": "untrusted",
+            "truncated": false, "truncated_fields": [], "code": "web_http_error",
+            "message": "synthetic", "http_status": 503,
+            "source": {"url": "https://other.example/b", "title": "", "snippet": null,
+                "summary": null, "content": null, "content_format": null,
+                "site": "other.example", "date": null, "authority": null}
+        })
+        .to_string();
+        let restored = vec![
+            session::function_call_item(
+                "web-1",
+                "web_search",
+                r#"{"query":"full synthetic query"}"#,
+            ),
+            session::function_call_item(
+                "web-2",
+                "web_fetch",
+                r#"{"url":"https://other.example/b"}"#,
+            ),
+            session::function_call_output_item("web-1", &search),
+            session::function_call_output_item("web-2", &fetch),
+        ];
+        let messages = restored_panel_messages(&restored, &[], &[]);
+        assert_eq!(messages.len(), 2);
+        let search_text = messages[0].text.as_deref().unwrap();
+        assert!(search_text.contains("\"truncated\":true"));
+        assert!(search_text.contains("\"truncated_fields\":[\"results\"]"));
+        assert!(search_text.contains("full synthetic query"));
+        let fetch_text = messages[1].text.as_deref().unwrap();
+        assert!(fetch_text.contains("https://other.example/b"));
+        assert!(fetch_text.contains("\"http_status\":503"));
+        assert!(fetch_text.contains("\"attempts\":3"));
+        assert_eq!(messages[1].status.as_deref(), Some("error"));
     }
 }

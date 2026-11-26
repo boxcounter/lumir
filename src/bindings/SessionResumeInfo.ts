@@ -3,12 +3,12 @@ import type { PanelMessage } from "./PanelMessage";
 
 /**
  * `harness_resume_session` 的返回（ts-rs 导出；前端恢复 UI mission 的消费形状）：
- * 从留存文件恢复出来的会话**续写的新会话**——新 session id 是新 JSONL 留存的文件名，
- * 前端据此知道「当前会话接在了哪份留存上」，面板重渲染走 `harness_state`。
+ * 查看阶段只重建内存会话；session id 是未发布或已发布的恢复身份，
+ * `switched=false` 时前端不得重放返回消息。
  */
 export type SessionResumeInfo = { 
 /**
- * 续写的新会话 id（`sessions/<vault 稳定 id>/<id>.jsonl` 的文件名）。
+ * 当前或未发布的恢复身份；首次真实请求前不保证对应文件已存在。
  */
 session_id: string, 
 /**
@@ -28,4 +28,8 @@ restored_items: number,
  * 挂在紧随其后的 assistant 消息上），新会话的 `panel` 与之一致（同一份重建结果的副本，
  * 快照恢复与本次返回因此不会漂）。前端据此一次重放、不必再拉 `harness_state`。
  */
-messages: Array<PanelMessage>, };
+messages: Array<PanelMessage>, 
+/**
+ * 是否真正替换了当前会话；false 表示当前文件直切或同源 pending 复用。
+ */
+switched: boolean, };

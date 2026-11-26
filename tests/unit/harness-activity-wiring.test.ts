@@ -157,12 +157,12 @@ test("相位写入：applySendPhase 只落 DOM（函数体里不得回写相位�
 
 test("相位写入：除 renderActivity 外没有第二处调 applySendPhase 做跃迁", () => {
   // 允许的两类：renderActivity 内的 `applySendPhase(state.phase)`，以及 applyLabels 的
-  // 重取文案（同一相位重绘 DOM，不是跃迁）。其余调用点都算第二写入口。
-  const calls = [...PANEL_SOURCE.matchAll(/applySendPhase\((?!state\.phase\)|renderedPhase\)|next:)/g)];
+  // `applySendPhase(renderedPhase, true)`（只重取按钮与阶段文案，不是跃迁）。其余都算第二写入口。
+  const calls = [...PANEL_SOURCE.matchAll(/applySendPhase\((?!state\.phase\)|renderedPhase(?:, true)?\)|next:)/g)];
   assert.deepEqual(
     calls.map((m) => m.index),
     [],
-    "只允许 renderActivity(state.phase) 与 applyLabels(renderedPhase) 两处",
+    "只允许 renderActivity(state.phase) 与 applyLabels(renderedPhase, true) 两处",
   );
   assert.match(RENDER, /applySendPhase\(state\.phase\)/, "唯一跃迁落 DOM 点在 renderActivity");
 });
@@ -256,6 +256,15 @@ test("restoreSnapshot：in_flight 只在进入档位被读（对账档连读都�
     const inside = allowed.some((range) => index >= range.start && index < range.end);
     assert.ok(inside, `in_flight 出现越界读取（位置 ${index}）：对账路径不得读它`);
   }
+});
+
+test("同源恢复 no-op 只关浮层，发生在任何视图复位与 token 更换之前", () => {
+  const noop = RESUME.indexOf("if (info.switched === false)");
+  const reset = RESUME.indexOf("resetView(");
+  const adopt = RESUME.indexOf("persistenceSessionToken = persistenceSessionTokenOf");
+  assert.ok(noop >= 0, "必须显式处理 switched=false");
+  assert.ok(noop < reset && noop < adopt, "no-op 必须先于 resetView 与新 token 采纳返回");
+  assert.match(RESUME.slice(noop, reset), /setSessPop\(false\);\s*return;/);
 });
 
 test("恢复会话也是进入时点：只读相位、不重放内容", () => {

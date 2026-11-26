@@ -1479,7 +1479,8 @@ body {
 .cm-lp-block-scroll,
 .cm-lp-table-scroll,
 .cm-lp-math-block,
-.cm-lp-mermaid {
+.cm-lp-mermaid,
+.lumir-hp-skill-menu {
   scrollbar-width: thin;
 }
 .lumir-hp-codeblock::-webkit-scrollbar,
@@ -1489,7 +1490,8 @@ body {
 .cm-lp-block-scroll::-webkit-scrollbar,
 .cm-lp-table-scroll::-webkit-scrollbar,
 .cm-lp-math-block::-webkit-scrollbar,
-.cm-lp-mermaid::-webkit-scrollbar {
+.cm-lp-mermaid::-webkit-scrollbar,
+.lumir-hp-skill-menu::-webkit-scrollbar {
   width: 4px;
   height: 4px;
 }
@@ -1500,7 +1502,8 @@ body {
 .cm-lp-block-scroll::-webkit-scrollbar-thumb,
 .cm-lp-table-scroll::-webkit-scrollbar-thumb,
 .cm-lp-math-block::-webkit-scrollbar-thumb,
-.cm-lp-mermaid::-webkit-scrollbar-thumb {
+.cm-lp-mermaid::-webkit-scrollbar-thumb,
+.lumir-hp-skill-menu::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 2px;
 }
@@ -1511,7 +1514,8 @@ body {
 .cm-lp-block-scroll::-webkit-scrollbar-track,
 .cm-lp-table-scroll::-webkit-scrollbar-track,
 .cm-lp-math-block::-webkit-scrollbar-track,
-.cm-lp-mermaid::-webkit-scrollbar-track {
+.cm-lp-mermaid::-webkit-scrollbar-track,
+.lumir-hp-skill-menu::-webkit-scrollbar-track {
   background: transparent;
 }
 /* 块级横滚容器（M180）：表格与代码块共用同一套横滚机制与同一个 class——键位层的命中条件
@@ -2562,27 +2566,86 @@ body {
   border: 1px solid var(--border);
 }
 
-/* 轻量大纲浮层（M148）与按路径快速打开浮层（M655 的 `.lumir-qo`）：**同一条几何**、两个名字。
-   为什么写成选择器列表而不是复制一份规则：几何/配色/滚动口径只有一份真源（REVIEW.md
-   「同一语义两处真源」条）——快速打开浮层（change quick-open-file-oct23 的 design §8）要求
-   直接复用本段几何、MUST NOT 新增色值 / 字号 / 圆角 token。两个 class 是**互斥的**（各自
-   查各自的浮层），`.lumir-qo` 因此不继承 `.lumir-toc` 的任何选择器语义。
-   绝对定位贴**指示段上方**，不占任何常驻空间。
-   壳 = --preview-bg + 1px --border + --shadow-raise（tokens v1.1 浮层配方；eink 无阴影，
-   分层改由白底 + 实心黑框承担）。
-   定位块是 modeline（M211 前挂在已删除的标题区）：指示段今天在**窗口最后一行**，浮层因此向上展开
-   （`bottom: 100%`）。左端偏移由 src/toc.ts 的 place() 按指示段视口坐标算，内边距常量与
-   modeline 的左右内边距同值（14px）。
+/* 行内 wikilink 候选：Quick Open 的列表几何与浮层 token；定位由 placeOverlay + caret 决定。 */
+.lumir-link-suggest {
+  position: fixed;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  max-width: 26em;
+  padding: var(--sp-3) 0 0;
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r10);
+  box-shadow: var(--shadow-raise);
+  font-size: var(--fs-ui-s);
+}
+.lumir-link-suggest-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  outline: none;
+  padding: var(--sp-2);
+}
+.lumir-link-suggest-list[hidden] {
+  display: none;
+}
+.lumir-link-suggest-empty {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 3px var(--sp-6);
+  font-size: var(--fs-ui);
+  color: var(--text-3);
+}
+.lumir-link-suggest-item {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 26px;
+  line-height: 26px;
+  padding: 0 var(--sp-4);
+  border-radius: var(--r6);
+  font-size: var(--fs-ui-s);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+.lumir-link-suggest-item.is-active {
+  background: var(--sel);
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+.lumir-link-suggest-item:hover {
+  background: var(--hover);
+}
+.lumir-link-suggest-item[aria-disabled="true"] {
+  color: var(--text-3);
+  cursor: default;
+}
+.lumir-link-suggest-dirs {
+  flex: 0 10000000 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+.lumir-link-suggest-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:root[data-theme="eink"] .lumir-link-suggest-item.is-active {
+  color: var(--sel-text);
+}
 
-   高度口径（M157 需求）：上限是**窗口内容区高的 80%**，约束的是浮层**总高**——列向 flex +
-   全局 `* { box-sizing: border-box }`，所以这里的 max-height 天然含顶部内边距与底部提示，
-   不要再写 `calc(80vh - 提示高)` 那类减法（会引入第二处高度真源）。60 条标题的 fixture 下
-   整体高度就是这条上限，列表成为唯一滚动容器（`.lumir-toc-list` 的 flex + min-height: 0）。
-   vh 随窗口重排即时生效，不需要 JS 监听 resize。
-   已知边界（M211 重算）：浮层底边贴 modeline 上沿，向上取 min(80vh, 自然高)。窗口内容区高
-   H 下，可用高度 = H − 42（标题栏）− 25（modeline）：`H − 67 ≥ 0.8H` ⇔ `H ≥ 335px`；
-   更矮的窗口下浮层上沿可能越出窗口顶部（不加钳制，见 change toc-popover-emacs-keys-and-max-height
-   的非目标）。标题条数少时约束换成自然高度（输入行 + 列表 + 提示）。 */
+/* TOC 与 Quick Open 共用 modeline 锚点、浮层 token 和行样式，不再共用宽度/高度布局。
+   TOC 保持 26em flex 形态及其短窗口既有边界。Quick Open（O7）改用网格：候选/空态同区域、
+   提示居中、输入框置底；总高同时受 80vh 与 modeline 上方实际可用高度（100vh − 67px）约束，
+   正常窗口候选区至少 6 行，短窗口只压缩结果区，输入框不得被推出视口。 */
 .lumir-toc,
 .lumir-qo {
   position: absolute;
@@ -2591,12 +2654,6 @@ body {
   z-index: 15;
   display: flex;
   flex-direction: column;
-  /* 宽度（M702，change overlay-width-contract-oct24 的 L 档）：内容上限 26em，字体基准取
-     行文本字号（--fs-ui-s = 12.5px，故 26em = 325px）——M698 实测典型 48 字符 vault 路径
-     固有宽 302px，旧定值 300px 恰好裁掉 8.8%（文件名尾段）。右侧留 14px 与左端 --sp-7 对称，
-     窗口比浮层窄时按 100vw 收窄、不越出窗口。列表宽度 MUST NOT 随输入逐帧抖动：
-     深层路径的超长部分由行的两段结构（目录前缀可省略 + 文件名完整）承担。 */
-  width: min(26em, calc(100vw - 28px));
   font-size: var(--fs-ui-s);
   max-height: 80vh;
   padding: var(--sp-3) 0 0;
@@ -2605,6 +2662,19 @@ body {
   /* 浮层归 r10（定稿 .ovl-pop，index.html:685；M217 裁决，tokens 出处表补记随 M220 批次）。 */
   border-radius: var(--r10);
   box-shadow: var(--shadow-raise);
+}
+.lumir-toc {
+  width: min(26em, calc(100vw - 28px));
+}
+.lumir-qo {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  width: clamp(26em, 50vw, 56em);
+  max-width: calc(100vw - 28px);
+  max-height: min(80vh, calc(100vh - 67px));
+  /* 六行结果区 + 一行提示/输入的整框最小高；5.68em 随字号覆盖固定行。
+     短窗时 min-height 与 max-height 同受两条实际上限约束，grid 只压缩第一行。 */
+  min-height: min(calc(6 * 26px + 2 * var(--sp-2) + 5.68em), 80vh, calc(100vh - 67px));
 }
 /* 优先级 0-2-0 > `.lumir-toc` 的 0-1-0：加了 display: flex 之后这里的隐藏仍然生效
    （空态与关闭态的防线是 tests/visual 的 toc-outline 场景）。 */
@@ -2626,6 +2696,17 @@ body {
 .lumir-toc-list[hidden],
 .lumir-qo-list[hidden] {
   display: none;
+}
+.lumir-qo-list,
+.lumir-qo-empty {
+  grid-area: 1 / 1;
+  min-height: 0;
+}
+.lumir-qo-hint {
+  grid-row: 2;
+}
+.lumir-qo-input {
+  grid-row: 3;
 }
 /* 输入筛选行（change list-filter）：列向 flex 的固定行，MUST NOT 被压缩——浮层总高上限
    （80vh）因此不含它的伸缩。下划线形态（底线 --border、focus 转 --accent），与搜索面板的
@@ -2658,12 +2739,9 @@ body {
   color: var(--text-3);
 }
 /* 列表行（定稿 .opop .pop-row，index.html:697-704、:715-719）：h26 / radius 6 / 左 padding
-   d0 8、d1 26（步进 18px，随 --toc-depth 归一后的层差；--toc-depth 由 src/toc.ts 写入）。
-   结果区的「直接打开」行（M700 的 `.lumir-qo-direct`）复用这一份几何——它是同一条列表里的
-   另一种行，不是第二种行高 / 字号（MUST NOT 为它新增 token）。 */
+   d0 8、d1 26（步进 18px，随 --toc-depth 归一后的层差；--toc-depth 由 src/toc.ts 写入）。 */
 .lumir-toc-item,
-.lumir-qo-item,
-.lumir-qo-direct {
+.lumir-qo-item {
   height: 26px;
   line-height: 26px;
   padding: 0 var(--sp-4) 0
@@ -2686,55 +2764,26 @@ body {
   font-weight: var(--fw-emphasis);
 }
 .lumir-toc-item.is-active,
-.lumir-qo-item.is-active,
-.lumir-qo-direct.is-active {
+.lumir-qo-item.is-active {
   background: var(--sel);
   box-shadow: inset 0 0 0 1px currentColor;
 }
 /* hover 与选中同族（design §2.7 #1 的类推行：is-active = 树选中态、hover = --hover）——
    声明在选中态之后，与 .ft-row 的次序一致（同一心智模型：悬停反馈压过常驻选中底色）。 */
 .lumir-toc-item:hover,
-.lumir-qo-item:hover,
-.lumir-qo-direct:hover {
+.lumir-qo-item:hover {
   background: var(--hover);
-}
-/* 结果区的「直接打开」行（M700）：几何与候选同一份（上面那条选择器列表），这里只加**两段
-   文本**横排的布局——动作文本（D589 / D590）压掉溢出，落点行标记（D591）不压缩。独立 class
-   是判据分离的需要：既有视觉断言钉的是 `.lumir-qo-item` 的逐条候选文本，直接行复用会让
-   「候选集合」的判据混进一条动作提示。不新增色值 / 字号 / 圆角（落点行取提示行同档的
-   --text-3 / --fs-label）。 */
-.lumir-qo-direct {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-}
-.lumir-qo-direct-path {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.lumir-qo-direct-line {
-  flex: 0 0 auto;
-  color: var(--text-3);
-  font-size: var(--fs-label);
 }
 /* 快速打开行的路径两段（M702，change overlay-width-contract-oct24 design §4 / W5）：
    目录前缀先收缩、**文件名整体不先裁**——旧的单行尾省略会把文件名（路径的身份主体）
    整段吃掉（M698 实测：77 字符深层路径裁 42.5%，文件名消失）。两段拼接后的 textContent
    仍是完整相对路径，匹配语义与既有逐条文本断言不变；放不下时目录前缀出省略号
    （`notes/2026/…/name.md` 的中间折叠形态）。
-   收缩次序 = `dirs → prefix/suffix → name`（shrink 比 10⁷ : 10⁵ : 1，比例越大前置项越先
-   吃满缺口）：
-   - 候选行只有 dirs + name，目录归零后才轮到文件名；
-   - **直接打开行多一段动作前缀（`按 Enter 打开` / 英文模板的 ` read-only` 尾串），它先被牺牲**
-     ——M702 r1 现场：1200×800 正常窗口下目录已归零，224/231px 的文件名仍被裁 7px，因为前缀
-     `flex: none` 不可收缩。前缀/后缀同样 `min-width: 0` + ellipsis，文件名只在它们归零后、
-     极端窄宿主里才截（title 兜底前的最后一级，不是设计意图）。中段比例（10⁵ 对 1）保证
-     前缀还有余量时文件名分到的缺口 < 0.1px，不会出现「前缀剩 15px、文件名仍差 2px」的残留。 */
-.lumir-qo-item,
-.lumir-qo-direct-path {
+   收缩次序 = `dirs → suffix → name`（shrink 比 10⁷ : 10⁵ : 1，比例越大前置项越先吃满缺口）。
+   候选行只有 dirs + name（目录另有尾 `/` suffix），目录归零后才轮到文件名；文件名只在极端
+   窄宿主里才截（title 兜底前的最后一级，不是设计意图）。中段比例（10⁵ 对 1）保证 suffix
+   还有余量时文件名分到的缺口 < 0.1px，不会出现「suffix 剩 15px、文件名仍差 2px」的残留。 */
+.lumir-qo-item {
   display: flex;
   align-items: center;
   min-width: 0;
@@ -2753,8 +2802,7 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 直接打开行的动作文本前缀（「按 Enter 打开」/「按 Enter 只读打开」）与模板尾串（英文
-   ` read-only`）：放不下时**先于文件名**收缩并出省略号——动作提示是辅助信息，文件名是身份主体。 */
+/* 路径前后固定文本（如目录尾 `/`）：放不下时先于文件名收缩并出省略号，文件名是身份主体。 */
 .lumir-qo-prefix,
 .lumir-qo-suffix {
   flex: 0 100000 auto;
@@ -2767,8 +2815,7 @@ body {
    M291 起不再排除 `:hover`（理由同 .ft-row.is-current：黑字下两种状态都可读）。 */
 :root[data-theme="eink"] .lumir-toc-item.is-current,
 :root[data-theme="eink"] .lumir-toc-item.is-active,
-:root[data-theme="eink"] .lumir-qo-item.is-active,
-:root[data-theme="eink"] .lumir-qo-direct.is-active {
+:root[data-theme="eink"] .lumir-qo-item.is-active {
   color: var(--sel-text);
 }
 /* eink 规则⑧：filter 输入的聚焦强调走**线宽**档（下划线形态在 eink 无颜色可用）——

@@ -158,6 +158,63 @@ test("place：负例——320px host 上不可能产出 390px 宽（M698 的越�
   assert.ok(p.left + p.width <= 320 - 8);
 });
 
+test("Skill 宽度合同：可用宽度 × 自然宽 × 字号分布上目标宽、上限与边界同时成立", () => {
+  for (const host of [120, 200, 280, 420, 700, 1200]) {
+    for (const natural of [80, 180, 360, 900]) {
+      for (const fontSize of [12, 25.56]) {
+        const avail = Math.max(0, host - 16);
+        const cap = Math.min(48 * fontSize, avail);
+        const target = Math.min(Math.max(200, 0.85 * avail), cap);
+        const solved = resolveOverlayWidth({
+          tier: "list",
+          natural,
+          host,
+          fontSize,
+          maxEm: 48,
+          minWidth: Math.max(200, 0.85 * avail),
+        });
+        assert.equal(solved.width, Math.min(Math.max(natural, target), cap), `host=${host} natural=${natural} fontSize=${fontSize}`);
+        assert.ok(solved.width <= avail + 1e-9, `host=${host}：候选越出 pane`);
+        assert.ok(solved.width <= 48 * fontSize + 1e-9, `host=${host} fontSize=${fontSize}：候选超过 48em`);
+      }
+    }
+  }
+});
+
+test("Skill 宽度合同：独立数值期望钉住下限、自然宽、em 上限与极窄宿主", () => {
+  const cases = [
+    { host: 120, natural: 80, fontSize: 12, expected: 104 },
+    { host: 200, natural: 360, fontSize: 12, expected: 184 },
+    { host: 280, natural: 80, fontSize: 12, expected: 224.4 },
+    { host: 280, natural: 250, fontSize: 12, expected: 250 },
+    { host: 700, natural: 80, fontSize: 12, expected: 576 },
+    { host: 700, natural: 900, fontSize: 12, expected: 576 },
+    { host: 1200, natural: 1400, fontSize: 25.56, expected: 1184 },
+  ] as const;
+  for (const item of cases) {
+    const avail = Math.max(0, item.host - 16);
+    const solved = resolveOverlayWidth({
+      tier: "list",
+      natural: item.natural,
+      host: item.host,
+      fontSize: item.fontSize,
+      maxEm: 48,
+      minWidth: Math.max(200, 0.85 * avail),
+    });
+    assert.equal(
+      solved.width,
+      item.expected,
+      `host=${item.host} natural=${item.natural} fontSize=${item.fontSize}：独立期望值=${item.expected}`,
+    );
+  }
+});
+
+test("Skill 宽度合同：48em 是组件覆盖，通用 list 档仍保持 26em", () => {
+  const input = { tier: "list", natural: 900, host: 1200, fontSize: 12 } as const;
+  assert.equal(resolveOverlayWidth(input).width, 26 * 12);
+  assert.equal(resolveOverlayWidth({ ...input, maxEm: 48 }).width, 48 * 12);
+});
+
 test("place：非法读数不制造 NaN / 越界", () => {
   const p = placeOverlay({
     ...base(),

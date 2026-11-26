@@ -1,0 +1,565 @@
+use std::io::Read;
+use std::net::{SocketAddr, ToSocketAddrs};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use reqwest::blocking::Client;
+use reqwest::header::{CONTENT_TYPE, LOCATION, RANGE};
+use reqwest::{StatusCode, Url};
+
+use crate::config::HarnessPermissions;
+
+use super::output::{WebEnvelope, WebErrorCode, WebOperation};
+use super::url::{blocked_host, globally_routable, Origin};
+use crate::harness::permissions::matching_rule;
+
+const RANGE_BODY_LIMIT: usize = 4096;
+const CANCEL_POLL: Duration = Duration::from_millis(25);
+
+#[derive(Debug, Clone, Copy)]
+pub struct PreflightLimits {
+    pub hop_timeout: Duration,
+    pub chain_timeout: Duration,
+    pub max_redirects: usize,
+}
+
+impl Default for PreflightLimits {
+    fn default() -> Self {
+        Self {
+            hop_timeout: Duration::from_secs(10),
+            chain_timeout: Duration::from_secs(30),
+            max_redirects: 5,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreflightHop {
+    pub url: String,
+    pub body_bytes_read: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreflightSuccess {
+    pub submitted_url: String,
+    pub source_url: String,
+    pub hops: Vec<PreflightHop>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreflightError {
+    pub code: WebErrorCode,
+    pub message: String,
+}
+
+impl PreflightError {
+    pub(crate) fn new(code: WebErrorCode, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+
+    pub fn into_envelope(self) -> WebEnvelope {
+        WebEnvelope::failure(WebOperation::Fetch, self.code, self.message, None, 0)
+    }
+}
+
+pub trait WebDnsResolver: Send + Sync {
+    fn resolve(&self, host: &str) -> Result<Vec<SocketAddr>, String>;
+}
+
+#[derive(Debug, Default)]
+pub struct SystemDnsResolver;
+
+impl WebDnsResolver for SystemDnsResolver {
+    fn resolve(&self, host: &str) -> Result<Vec<SocketAddr>, String> {
+        (host, 0)
+            .to_socket_addrs()
+            .map(|items| items.collect())
+            .map_err(|error| error.to_string())
+    }
+}
+
+pub trait WebTransport: Send + Sync {
+    fn send(
+        &self,
+        method: TransportMethod,
+        url: Url,
+        addrs: &[SocketAddr],
+        timeout: Duration,
+        aborted: Arc<dyn Fn() -> bool + Send + Sync>,
+    ) -> Result<TransportResponse, PreflightError>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportMethod {
+    Head,
+    GetRange,
+}
+
+#[derive(Debug)]
+pub struct TransportResponse {
+    pub status: StatusCode,
+    pub content_type: Option<String>,
+    pub location: Option<String>,
+    pub body_bytes_read: usize,
+}
+
+#[derive(Default)]
+pub struct ReqwestWebTransport {
+    #[cfg(any(test, feature = "acceptance-web"))]
+    addr_mapper: Option<Arc<dyn Fn(SocketAddr) -> SocketAddr + Send + Sync>>,
+    #[cfg(any(test, feature = "acceptance-web"))]
+    root_certificates: Vec<reqwest::Certificate>,
+    #[cfg(any(test, feature = "acceptance-web"))]
+    use_system_proxy: bool,
+}
+
+impl ReqwestWebTransport {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[cfg(any(test, feature = "acceptance-web"))]
+    pub fn with_test_mapping(
+        mapper: impl Fn(SocketAddr) -> SocketAddr + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            addr_mapper: Some(Arc::new(mapper)),
+            root_certificates: Vec::new(),
+            use_system_proxy: false,
+        }
+    }
+
+    #[cfg(any(test, feature = "acceptance-web"))]
+    pub fn with_test_mapping_and_roots(
+        mapper: impl Fn(SocketAddr) -> SocketAddr + Send + Sync + 'static,
+        root_certificates: Vec<Vec<u8>>,
+    ) -> Self {
+        Self {
+            addr_mapper: Some(Arc::new(mapper)),
+            root_certificates: root_certificates
+                .into_iter()
+                .filter_map(|pem| reqwest::Certificate::from_pem(&pem).ok())
+                .collect(),
+            use_system_proxy: false,
+        }
+    }
+
+    #[cfg(any(test, feature = "acceptance-web"))]
+    pub fn with_system_proxy_for_negative_test(mut self) -> Self {
+        self.use_system_proxy = true;
+        self
+    }
+
+    fn mapped_addrs(&self, addrs: &[SocketAddr]) -> Vec<SocketAddr> {
+        #[cfg(any(test, feature = "acceptance-web"))]
+        if let Some(mapper) = &self.addr_mapper {
+            return addrs.iter().copied().map(|addr| mapper(addr)).collect();
+        }
+        addrs.to_vec()
+    }
+}
+
+impl WebTransport for ReqwestWebTransport {
+    fn send(
+        &self,
+        method: TransportMethod,
+        url: Url,
+        addrs: &[SocketAddr],
+        timeout: Duration,
+        aborted: Arc<dyn Fn() -> bool + Send + Sync>,
+    ) -> Result<TransportResponse, PreflightError> {
+        let host = resolution_host(&url)?;
+        let addrs = self.mapped_addrs(addrs);
+        let builder = Client::builder();
+        #[cfg(any(test, feature = "acceptance-web"))]
+        let builder = if self.use_system_proxy {
+            builder
+        } else {
+            builder.no_proxy()
+        };
+        #[cfg(not(test))]
+        let builder = builder.no_proxy();
+        let builder = builder
+            .redirect(reqwest::redirect::Policy::none())
+            .retry(reqwest::retry::never())
+            .connect_timeout(timeout)
+            .timeout(timeout)
+            .resolve_to_addrs(&host, &addrs);
+        #[cfg(any(test, feature = "acceptance-web"))]
+        let mut builder = builder;
+        #[cfg(any(test, feature = "acceptance-web"))]
+        if !self.root_certificates.is_empty() {
+            builder = builder.tls_built_in_root_certs(false);
+        }
+        #[cfg(any(test, feature = "acceptance-web"))]
+        for certificate in &self.root_certificates {
+            builder = builder.add_root_certificate(certificate.clone());
+        }
+        let client = builder.build().map_err(|error| {
+            PreflightError::new(WebErrorCode::WebNetworkFailed, error.to_string())
+        })?;
+        let request = match method {
+            TransportMethod::Head => client.head(url),
+            TransportMethod::GetRange => client.get(url).header(RANGE, "bytes=0-4095"),
+        };
+        let mut response = request.send().map_err(|error| {
+            if aborted() {
+                PreflightError::new(WebErrorCode::WebCancelled, "网页预检已取消")
+            } else if error.is_timeout() {
+                PreflightError::new(WebErrorCode::WebTimeout, "网页预检超时")
+            } else {
+                PreflightError::new(WebErrorCode::WebNetworkFailed, error.to_string())
+            }
+        })?;
+        let status = response.status();
+        let content_type = single_content_type(&response);
+        let location = response
+            .headers()
+            .get(LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let mut body_bytes_read = 0;
+        if method == TransportMethod::GetRange {
+            let mut buffer = [0_u8; 1024];
+            while body_bytes_read < RANGE_BODY_LIMIT {
+                if aborted() {
+                    return Err(PreflightError::new(
+                        WebErrorCode::WebCancelled,
+                        "网页预检已取消",
+                    ));
+                }
+                let read = response.read(&mut buffer).map_err(|error| {
+                    if aborted() {
+                        PreflightError::new(WebErrorCode::WebCancelled, "网页预检已取消")
+                    } else if error.kind() == std::io::ErrorKind::TimedOut {
+                        PreflightError::new(WebErrorCode::WebTimeout, "网页预检超时")
+                    } else {
+                        PreflightError::new(WebErrorCode::WebNetworkFailed, error.to_string())
+                    }
+                })?;
+                if read == 0 {
+                    break;
+                }
+                body_bytes_read = (body_bytes_read + read).min(RANGE_BODY_LIMIT);
+            }
+        }
+        Ok(TransportResponse {
+            status,
+            content_type,
+            location,
+            body_bytes_read,
+        })
+    }
+}
+
+pub fn run_preflight(
+    raw_url: &str,
+    permissions: &HarnessPermissions,
+    resolver: Arc<dyn WebDnsResolver>,
+    transport: Arc<dyn WebTransport>,
+    aborted: Arc<dyn Fn() -> bool + Send + Sync>,
+    limits: PreflightLimits,
+) -> Result<PreflightSuccess, PreflightError> {
+    validate_url_length(raw_url)?;
+    Origin::from_url(raw_url)
+        .map_err(|error| PreflightError::new(WebErrorCode::WebUrlBlocked, error))?;
+    let mut current = Url::parse(raw_url)
+        .map_err(|error| PreflightError::new(WebErrorCode::WebUrlBlocked, error.to_string()))?;
+    let chain_deadline = Instant::now() + limits.chain_timeout;
+    let mut redirects = 0;
+    let mut hops = Vec::new();
+    loop {
+        let hop_deadline = Instant::now() + limits.hop_timeout;
+        if aborted() {
+            return Err(cancelled());
+        }
+        let origin = Origin::from_url(current.as_str())
+            .map_err(|error| PreflightError::new(WebErrorCode::WebUrlBlocked, error))?;
+        if let Some(rule) = matching_rule(&permissions.deny, "web_fetch", &origin.as_str()) {
+            return Err(PreflightError::new(
+                WebErrorCode::PermissionDenied,
+                format!("命中 deny 规则 {rule}"),
+            ));
+        }
+        let host = resolution_host(&current)?;
+        let remaining = remaining_time(chain_deadline, hop_deadline)?;
+        let resolver = resolver.clone();
+        let addresses = run_bounded(remaining, aborted.clone(), move || {
+            resolver
+                .resolve(&host)
+                .map_err(|_| PreflightError::new(WebErrorCode::WebDnsFailed, "目标 DNS 解析失败"))
+        })?;
+        if addresses.is_empty() {
+            return Err(PreflightError::new(
+                WebErrorCode::WebDnsFailed,
+                "目标 DNS 没有可用地址",
+            ));
+        }
+        if addresses.iter().any(|addr| !globally_routable(addr.ip())) {
+            return Err(PreflightError::new(
+                WebErrorCode::WebDnsBlocked,
+                "目标包含非全局单播地址",
+            ));
+        }
+        let remaining = remaining_time(chain_deadline, hop_deadline)?;
+        let head = execute_bounded(
+            transport.clone(),
+            TransportMethod::Head,
+            current.clone(),
+            addresses.clone(),
+            remaining,
+            aborted.clone(),
+        )?;
+        if is_redirect(head.status) {
+            hops.push(PreflightHop {
+                url: current.as_str().to_string(),
+                body_bytes_read: head.body_bytes_read,
+            });
+            current = redirect_target(&current, &head, redirects, limits.max_redirects)?;
+            redirects += 1;
+            continue;
+        }
+        let mut hop = head;
+        if hop.status != StatusCode::OK
+            && !matches!(
+                hop.status,
+                StatusCode::METHOD_NOT_ALLOWED | StatusCode::NOT_IMPLEMENTED
+            )
+        {
+            return Err(PreflightError::new(
+                WebErrorCode::WebHttpError,
+                format!("目标 HEAD 返回 HTTP {}", hop.status),
+            ));
+        }
+        let mut classification = content_class(&hop);
+        if classification == ContentClass::Unknown {
+            let remaining = remaining_time(chain_deadline, hop_deadline)?;
+            let get = execute_bounded(
+                transport.clone(),
+                TransportMethod::GetRange,
+                current.clone(),
+                addresses,
+                remaining,
+                aborted.clone(),
+            )?;
+            if is_redirect(get.status) {
+                hops.push(PreflightHop {
+                    url: current.as_str().to_string(),
+                    body_bytes_read: get.body_bytes_read,
+                });
+                current = redirect_target(&current, &get, redirects, limits.max_redirects)?;
+                redirects += 1;
+                continue;
+            }
+            if !matches!(get.status, StatusCode::OK | StatusCode::PARTIAL_CONTENT) {
+                return Err(PreflightError::new(
+                    WebErrorCode::WebHttpError,
+                    format!("目标 Range GET 返回 HTTP {}", get.status),
+                ));
+            }
+            hop = get;
+            classification = content_class(&hop);
+        }
+        match classification {
+            ContentClass::Html => {
+                let submitted_url = current.as_str().to_string();
+                hops.push(PreflightHop {
+                    url: submitted_url.clone(),
+                    body_bytes_read: hop.body_bytes_read,
+                });
+                return Ok(PreflightSuccess {
+                    submitted_url: submitted_url.clone(),
+                    source_url: submitted_url,
+                    hops,
+                });
+            }
+            ContentClass::Unsupported => {
+                return Err(PreflightError::new(
+                    WebErrorCode::WebUnsupportedContent,
+                    "目标不是 HTML / XHTML；可另行选择 curl",
+                ));
+            }
+            ContentClass::Unknown => {
+                return Err(PreflightError::new(
+                    WebErrorCode::WebContentTypeUnknown,
+                    "无法确认目标为 HTML；可另行选择 curl",
+                ));
+            }
+        }
+    }
+}
+
+fn execute_bounded(
+    transport: Arc<dyn WebTransport>,
+    method: TransportMethod,
+    url: Url,
+    addrs: Vec<SocketAddr>,
+    timeout: Duration,
+    aborted: Arc<dyn Fn() -> bool + Send + Sync>,
+) -> Result<TransportResponse, PreflightError> {
+    let worker_abort = aborted.clone();
+    run_bounded(timeout, aborted, move || {
+        transport.send(method, url, &addrs, timeout, worker_abort)
+    })
+}
+
+pub(super) fn run_bounded<T: Send + 'static>(
+    timeout: Duration,
+    aborted: Arc<dyn Fn() -> bool + Send + Sync>,
+    work: impl FnOnce() -> Result<T, PreflightError> + Send + 'static,
+) -> Result<T, PreflightError> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(work());
+    });
+    let deadline = Instant::now() + timeout;
+    loop {
+        if aborted() {
+            return Err(cancelled());
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(PreflightError::new(
+                WebErrorCode::WebTimeout,
+                "网页预检超时",
+            ));
+        }
+        match receiver.recv_timeout(remaining.min(CANCEL_POLL)) {
+            Ok(result) => {
+                if aborted() {
+                    return Err(cancelled());
+                }
+                return result;
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(PreflightError::new(
+                    WebErrorCode::WebNetworkFailed,
+                    "预检工作单元异常结束",
+                ));
+            }
+        }
+    }
+}
+
+fn remaining_time(chain: Instant, hop: Instant) -> Result<Duration, PreflightError> {
+    let remaining = chain.min(hop).saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(PreflightError::new(
+            WebErrorCode::WebTimeout,
+            "网页预检超时",
+        ));
+    }
+    Ok(remaining)
+}
+
+fn cancelled() -> PreflightError {
+    PreflightError::new(WebErrorCode::WebCancelled, "网页预检已取消")
+}
+
+fn validate_url_length(raw_url: &str) -> Result<(), PreflightError> {
+    if raw_url.is_empty() || raw_url.chars().count() > 8192 {
+        return Err(PreflightError::new(
+            WebErrorCode::WebArgsInvalid,
+            "Web Fetch url 长度必须为 1–8192 字符",
+        ));
+    }
+    Ok(())
+}
+
+fn resolution_host(url: &Url) -> Result<String, PreflightError> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| PreflightError::new(WebErrorCode::WebUrlBlocked, "URL 缺少 host"))?;
+    if let Some(message) = blocked_host(host) {
+        return Err(PreflightError::new(WebErrorCode::WebUrlBlocked, message));
+    }
+    Ok(host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_string())
+}
+
+fn single_content_type(response: &reqwest::blocking::Response) -> Option<String> {
+    let mut values = response.headers().get_all(CONTENT_TYPE).iter();
+    let first = values.next()?.to_str().ok()?.to_string();
+    if values.any(|value| value.to_str().ok() != Some(first.as_str())) {
+        return None;
+    }
+    Some(first)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContentClass {
+    Html,
+    Unsupported,
+    Unknown,
+}
+
+fn content_class(response: &TransportResponse) -> ContentClass {
+    let Some(content_type) = &response.content_type else {
+        return ContentClass::Unknown;
+    };
+    let media = content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    match media.as_str() {
+        "text/html" | "application/xhtml+xml" => ContentClass::Html,
+        "" => ContentClass::Unknown,
+        _ => ContentClass::Unsupported,
+    }
+}
+
+fn is_redirect(status: StatusCode) -> bool {
+    matches!(
+        status,
+        StatusCode::MOVED_PERMANENTLY
+            | StatusCode::FOUND
+            | StatusCode::SEE_OTHER
+            | StatusCode::TEMPORARY_REDIRECT
+            | StatusCode::PERMANENT_REDIRECT
+    )
+}
+
+fn redirect_target(
+    current: &Url,
+    response: &TransportResponse,
+    redirects: usize,
+    max_redirects: usize,
+) -> Result<Url, PreflightError> {
+    if redirects >= max_redirects {
+        return Err(PreflightError::new(
+            WebErrorCode::WebRedirectLimit,
+            "重定向超过 5 次",
+        ));
+    }
+    let location = response
+        .location
+        .as_deref()
+        .ok_or_else(|| PreflightError::new(WebErrorCode::WebUrlBlocked, "重定向缺少 Location"))?;
+    if location.is_empty() || location.contains('\\') || location.chars().any(char::is_control) {
+        return Err(PreflightError::new(
+            WebErrorCode::WebUrlBlocked,
+            "Location 为空、含控制字符或反斜杠",
+        ));
+    }
+    let next = current
+        .join(location)
+        .map_err(|error| PreflightError::new(WebErrorCode::WebUrlBlocked, error.to_string()))?;
+    validate_url_length(next.as_str())?;
+    if current.scheme() == "https" && next.scheme() == "http" {
+        return Err(PreflightError::new(
+            WebErrorCode::WebUrlBlocked,
+            "HTTPS → HTTP scheme downgrade 被禁止",
+        ));
+    }
+    Origin::from_url(next.as_str())
+        .map_err(|error| PreflightError::new(WebErrorCode::WebUrlBlocked, error))?;
+    Ok(next)
+}

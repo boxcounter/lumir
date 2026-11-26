@@ -12,6 +12,9 @@ config:
     permissions:
       allow: ["cli(*)"]
       deny: ["cli(rm *)"]
+    # 本场景不验证 Web；显式关闭以固定工具面（阶段5回扫）。
+    web_access:
+      enabled: false
 steps:
   - name: 记下基线（rm 绝不能真跑：内容与 mtime 双判据）
     do: record

@@ -304,6 +304,77 @@ fn create_cases_all() {
 }
 
 #[test]
+fn wikilink_suggestion_full_path_round_trip_matrix() {
+    fn graph_for(paths: &[&str]) -> LinkGraph {
+        let mut graph = LinkGraph::new();
+        for path in paths {
+            graph.upsert(path, None);
+        }
+        graph
+    }
+    fn assert_resolves(graph: &LinkGraph, path: &str) {
+        let raw = format!("[[{path}]]");
+        let resolved = graph
+            .resolve_link("source.md", &raw)
+            .unwrap_or_else(|error| panic!("{raw}: resolve failed: {error}"));
+        assert_eq!(resolved.status, LinkStatus::Resolved, "{raw}");
+        assert_eq!(resolved.path.as_deref(), Some(path), "{raw}");
+    }
+
+    for (paths, accepted) in [
+        (&["foo.md", "foo.md.md"][..], &["foo.md", "foo.md.md"][..]),
+        (
+            &["dir/foo.md", "dir/foo.md.md"][..],
+            &["dir/foo.md", "dir/foo.md.md"][..],
+        ),
+        (
+            &["a/note.md", "a/note.MD"][..],
+            &["a/note.md", "a/note.MD"][..],
+        ),
+        (&["foo.md", "dir/foo.md"][..], &["dir/foo.md"][..]),
+        (
+            &["note.md", "dir/note.MD"][..],
+            &["note.md", "dir/note.MD"][..],
+        ),
+        (
+            &["a/Note.md", "b/note.md"][..],
+            &["a/Note.md", "b/note.md"][..],
+        ),
+        (&["Café.md"][..], &["Café.md"][..]),
+        (&["笔记/中文.md"][..], &["笔记/中文.md"][..]),
+        (&["путь/заметка.MD"][..], &["путь/заметка.MD"][..]),
+        (
+            &["family/👩\u{200d}👩\u{200d}👧\u{200d}👦.md"][..],
+            &["family/👩\u{200d}👩\u{200d}👧\u{200d}👦.md"][..],
+        ),
+    ] {
+        let graph = graph_for(paths);
+        for path in accepted {
+            assert_resolves(&graph, path);
+        }
+    }
+
+    let duplicate_root = graph_for(&["foo.md", "dir/foo.md"]);
+    let ambiguous = duplicate_root
+        .resolve_link("source.md", "[[foo.md]]")
+        .unwrap();
+    assert_eq!(ambiguous.status, LinkStatus::Ambiguous);
+
+    let markdown_extension = graph_for(&["notes/readme.markdown"])
+        .resolve_link("source.md", "[[notes/readme.markdown]]")
+        .unwrap();
+    assert_eq!(markdown_extension.status, LinkStatus::Unresolved);
+
+    // 旧「去扩展名 / folded stem」算法会把 foo.md.md 插成 [[foo.md]]，实际解析到另一份文件。
+    let old_algorithm = graph_for(&["foo.md", "foo.md.md"])
+        .resolve_link("source.md", "[[foo.md]]")
+        .unwrap();
+    assert_eq!(old_algorithm.status, LinkStatus::Resolved);
+    assert_eq!(old_algorithm.path.as_deref(), Some("foo.md"));
+    assert_ne!(old_algorithm.path.as_deref(), Some("foo.md.md"));
+}
+
+#[test]
 fn create_never_overwrites_existing_file() {
     // 索引过期守卫（spec §4.4）：静态 vault 无法建模，直接构造——
     // 图建成后在磁盘上手工放置同名文件（不更新图），create 必须报错且不覆盖。
