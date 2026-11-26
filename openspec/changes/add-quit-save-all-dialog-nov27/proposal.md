@@ -45,8 +45,8 @@ Alex 2026-11-27 的需求：**退出前提醒改用弹框**。因为未保存时
   弹框内循环；Escape 等同「取消」；关闭后焦点还原到打开前的元素；状态行 `role="status"`
   读屏可达。
 - **产品侧：旧 toast 路径切断**：`save-controller.ts` 的 `showQuitBlocked()` 与 D232 的
-  toast 消费点删除（零消费者，不保留双写 / 过渡）。文案表新增弹框标题、说明、主按钮、
-  保存中 / 失败 / 退出被拒状态行（D1068–D1072），「取消」复用 D136。
+  toast 消费点删除（零消费者，不保留双写 / 过渡）。文案表新增标题、说明、主按钮与五条状态行
+  （保存中 / 保存失败 / 保存后新 dirty / 退出被拒 / 正在退出，D1068–D1075），「取消」复用 D136。
 - **测试**：
   - 单测：`tests/unit/quit-flow.test.ts`（保存成功才退出、失败不退出、保存期间新 dirty 不退出、
     代次失效后不退出、重复触发单飞、退出被拒不自动重试）。
@@ -78,7 +78,7 @@ Alex 2026-11-27 的需求：**退出前提醒改用弹框**。因为未保存时
 - 影响的代码：
   - 前端：`src/quit-dialog.ts`（新增）、`src/main.ts`（装配与 `app:quit_blocked` 接线）、
     `src/save-controller.ts`（删除 toast 出口）、`src/ipc.ts`（`appQuit`）、
-    `src/copy-data.ts` / `文案-Copy.md`（D1068–D1072）、`src/style.css`（弹框样式）。
+    `src/copy-data.ts` / `文案-Copy.md`（D1068–D1075）、`src/style.css`（弹框样式）。
   - 后端：`src-tauri/src/commands.rs`（`app_quit` + 守卫判据 + 单测）、`src-tauri/src/lib.rs`
     （注册命令）。
   - 测试：`tests/unit/quit-flow.test.ts`、`tests/visual/scenes/quit-save-all-dialog-nov27.spec.ts`、

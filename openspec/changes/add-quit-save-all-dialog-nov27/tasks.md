@@ -11,14 +11,14 @@
 
 ## 2. 文案与样式
 
-- [x] 2.1 `文案-Copy.md` / `src/copy-data.ts`：新增 D1068 标题、D1069 说明、D1070 主按钮、D1071 保存中状态、D1072 保存失败状态、D1073 退出被拒状态（中英两列）；「取消」复用 D136；更新 deck 末位与分配记录。
+- [x] 2.1 `文案-Copy.md` / `src/copy-data.ts`：新增 D1068 标题、D1069 说明、D1070 主按钮、D1071 保存中、D1072 保存失败、D1073 保存后新 dirty、D1074 退出被拒、D1075 正在退出（中英两列）；「取消」复用 D136；更新 deck 末位与分配记录。
 - [x] 2.2 `src/style.css`：新增 `.lumir-quit-overlay` / `.lumir-quit-card` / 标题 / 说明 / 状态行 / 按钮行样式；全部取既有 token；eink 1.4px 边框 / 无阴影 / 黑色焦点轮廓；`[hidden]` 显式补回。
 
 ## 3. 测试
 
 - [x] 3.1 `tests/unit/quit-flow.test.ts`：保存成功 → 退出；保存失败 → 不退出且状态 failed；保存成功但本地新 dirty → 不退出；保存期间关闭（代次失效）→ 完成时不退出；并发触发单飞；`app_quit` 拒绝 → failed 且不自动重试；`app_quit` 网络错误 → failed；退出在途再次被拦 → failed(quit) 且旧代次结果不覆盖。
 - [x] 3.2 Rust 单测：`quit_allowed` 的 dirty=true / false 两档与稳定 code。
-- [x] 3.3 `tests/visual/scenes/quit-save-all-dialog-nov27.spec.ts`：结构 / 计算属性断言（遮罩居中、卡片 token、按钮层级与主次色、三主题 eink 规则、焦点初始 / Tab 圈定 / Escape / 背景 inert / 关闭后焦点还原 / 连续 `quit_blocked` 单弹框 / 保存中禁用 / 失败留场）。像素断言留待基线批准，本批不调 `expectScreenshot`。
+- [x] 3.3 `tests/visual/scenes/quit-save-all-dialog-nov27.spec.ts`：结构 / 计算属性断言（遮罩居中、卡片 token、按钮层级与主次色、三主题 eink 规则、焦点初始 / Tab 圈定 / Escape / 背景 inert / 关闭后焦点还原 / 连续 `quit_blocked` 单弹框 / 保存中禁用 / 失败留场）；三主题整页像素断言见 6.3（已批准并由 `expectScreenshot` 验证）。
 
 ## 4. 真机场景与文档
 
@@ -35,7 +35,7 @@
 - [x] 5.5 `bash scripts/docs-check.sh` 通过。
 - [x] 5.6 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过。
 - [x] 5.7 `node scripts/acceptance/run.mjs --check` 通过。
-- [x] 5.8 视觉候选截图（三主题）落 `.local/missions/add-quit-save-all-dialog-nov27/visual-candidates/`，不更新像素基线。
+- [x] 5.8 视觉候选截图（三主题）落 `.local/missions/add-quit-save-all-dialog-nov27/visual-candidates/`；候选经批准后已转正为三张正式基线（见 6.3），其余基线不动。
 
 ## 6. 待真机 / 待终审（本轮不执行，未勾即未完）
 
