@@ -237,3 +237,28 @@ K3 复审指出 `.editor-notice-action`（D107 空态「New note」入口）同�
 
 剩余（主会话执行）：`877` / `263` 真机验收、完整 `gate.sh quick/visual`、正式视觉基线
 `--update`（Alex 过目候选后；含 `m645-startup-surface/startup-dark` 的陈旧基线与首启 / tips 新基线）。
+
+## 11. 正式视觉基线更新（2026-11-26，Alex 批准）
+
+Alex 明确批准「首启基线」。按 `tests/visual/README.md` 的基线纪律与候选清单更新：
+
+- 新增 spec `tests/visual/scenes/first-run-onboarding-nov25.spec.ts`：首启模式 / 首启 tips /
+  老用户空 vault（D107 + New note）三态 × 三主题，各一张整页像素断言。首启模式走
+  `expectStartupScreenshot`（启动面在场即截图对象），tips 与老用户空态走 `expectScreenshot`
+  的撤下门与 chrome 就绪门。
+- 生成命令：`LUMIR_VISUAL_PORT=4174 pnpm --dir tests/visual exec playwright test
+  scenes/first-run-onboarding-nov25.spec.ts --project=chromium --update-snapshots`。
+  新增 9 张：`first-run-{light,dark,eink}`、`tips-{light,dark,eink}`、
+  `old-user-empty-{light,dark,eink}`（`tests/visual/baselines/first-run-onboarding-nov25.spec.ts-snapshots/`）。
+- **候选一致性核对**：9 张正式基线与 Alex 过目的 `baseline-candidates/` 同名图逐像素解码比对，
+  **9/9 完全一致（0 变化像素）**——最终产品 tip 与批准候选是同一画面。
+- **`m645-startup-surface/startup-dark` 重录**：默认 `--update-snapshots` 因修复面积占 960k
+  像素的 0.034%（低于 `maxDiffPixelRatio 0.001`）不重写；改用
+  `--update-snapshots=all` 只跑 dark 用例重录。新基线与 `startup-restoring-dark` 候选逐字节
+  一致。`startup-light` / `startup-eink` **未更新**（更新前后 sha256 相同），与候选的差异分别
+  为 413 px / maxDiff 33（UA 黑 → token `#21201a`，在像素门通道阈值内）与 11 px / maxDiff 2
+  （截图时序噪声），均按「只核对不更新」处理。
+- 验证：新 spec 9/9；`m645-startup-surface` 4/4；`first-run-empty-state` / `startup-restore` /
+  `app-main` / `toc-outline` / `quick-open` / `m149-tabs` / `m293-eink-literal-tokens` /
+  `m831` chromium 合计 90/90；webkit-realua 的 `first-run-empty-state` 10/10；`docs-check` PASS。
+- 未跑完整 `gate.sh quick/visual`（主会话在大文档 marker 修复后统一跑）；未归档 / merge / push。

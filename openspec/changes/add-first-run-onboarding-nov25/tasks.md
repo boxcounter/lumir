@@ -134,8 +134,9 @@
 - [x] 6.5 `app-main.spec.ts` 第一条若要保留旧空态基线，改为非首启的失效 `lastVault`；真首启另立
       用例与基线。新增 tips 结构 / 几何用例：只覆盖 root doc pane、harness 可见、三主题 token
       正确、无 `overflow` 容器（滚动条注册表不新增条目）。
-- [ ] 6.6 三主题截图交 Alex 过目后再 `--update`；更新后核对 `app-main` / 首启模式 / tips 基线的
-      时间戳与预期变化面，避免「删左栏 UI」式静默假绿。
+- [x] 6.6 三主题截图交 Alex 过目后再 `--update`；更新后核对 `app-main` / 首启模式 / tips 基线的
+      时间戳与预期变化面，避免「删左栏 UI」式静默假绿。（2026-11-26 Alex 批准首启基线：
+      新增 9 张 + 重录 `m645-startup-surface/startup-dark`，详见 evidence §11。）
 - [x] 6.7 命令闸门用例：首启模式下按 `Cmd-,` / `Cmd-Shift-A` / `Cmd-/`，断言 settings /
       harness / bindings overlay 不出现、无 `settings_get` / `config_set`、pane 与布局零变化；
       造一次 `[keys]` 重绑后的重装现场复跑；首启撤下后同一组键恢复原行为；断言 `#app.inert`
