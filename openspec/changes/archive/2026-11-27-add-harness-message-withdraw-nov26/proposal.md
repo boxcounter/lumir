@@ -125,7 +125,28 @@ harness 的对话面板没有用户消息的删除 / 编辑 / 重发入口：发
 - **验收**：新增真机场景 882（撤回三层判据 + A 删除的 glob 判据）；Rust 单测 18 条、子代理 1 条、
   事件信封 1 条、前端单测 9 条 + 令牌账本 8 条、真面板 chromium 4 条。
 
-## 节点 2（归档前填写）
+## 节点 2：归档记录
 
-待实现批收尾按 `docs/process/openspec-workflow.md` 的五要件填写：节点 1 依据、reviewer verdict
-与绑定 tip、tasks 完成数（真机 882 执行项待验收批）、门禁输出行与证据目录、delta 对账三项读数。
+**归档前（2026-11-27）**：
+
+1. **方案已批准**：节点 1 于 2026-11-26 通过（Alex 原话「我允许明确删除 A」「你可以安排实现了」）；
+   实现期未静默扩 scope——K3 三轮复审的返修均属本 proposal 合同内的加固（目标锁定、事件闸、
+   恢复栅栏、回滚终态、令牌分账、Skill 原名、兼容事件水位）。
+2. **独立 reviewer clean / merge**：K3 verdict `clean/merge`，绑定 tip
+   `2654b4110d91e66b31a9aaefcc200cf267824d7b`，无开放 P1 / P2 / P3
+   （`/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/add-harness-message-withdraw-nov26/k3-verdict.md`）。
+   该 tip 之后只有合并与**测试 / 判据面**改动：`6d1c1754` 合入 master；`5e2c726c`（真机判据按
+   composer 外作用域）、`f789fae2`（`node` 断言忽略编辑器内部文本 + 非空前缀真面板用例、验收
+   README / REVIEW 补条）——不改产品行为，`withdraw_tests` 18/18 仍绿。
+3. **tasks 完成**：全部勾选；3.3 的真机证据见第 4 条，5.1 即本记录；实现批读数与归档分支复跑
+   的差异已在 3.2 / 4.2 就地标注。
+4. **门禁与真机证据**：实现批 quick `GATE RESULT: 13/13 PASS（SKIP 0）`（日志
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/add-harness-message-withdraw-nov26/gate-quick-k3r2-final.log`；
+   归档分支复跑：前端全量 2145 条、`docs-check` PASS、撤回真面板 5/5、`withdraw_tests` 18/18）。
+   真机 882 **PASS，13 断言**（2026-11-27；
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-27-ux-goal-r4/882-harness-withdraw-message/`）。
+5. **规格对账**：`node scripts/openspec-archive-check.mjs` PASS（22 份 delta / 18 条 MODIFIED /
+   342 段，0 静默丢段；归档队列条目唯一）；`validate --all --strict` 44 passed / 0 failed；
+   归档队列有且仅有一条本 change 条目（`docs/backlog.md` 的「归档跟踪队列」）。
+
+**归档后（2026-11-27）**：待归档提交与审计后追加。
