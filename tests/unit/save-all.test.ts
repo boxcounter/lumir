@@ -6,8 +6,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  SAVE_ALL_LOG_LIMIT,
   createSaveAllBarrier,
-  formatSaveAllLog,
   initialSaveAllLog,
 } from "../../src/save-all.ts";
 import type { SaveAllBarrierDeps, SaveAllLogState, SaveAllRecord } from "../../src/save-all.ts";
@@ -271,13 +271,42 @@ test("代次单调：每次成功触发的日志追加新代次的 running / ok�
   );
 });
 
-test("日志容量有界，seq 仍单调（滚动后验收通道可凭基线 seq 判断连续性）", () => {
-  const records = Array.from({ length: 20 }, (_, index) => ({
-    seq: index,
-    generation: index,
-    state: "ok" as const,
-  }));
-  const text = formatSaveAllLog(records);
-  assert.ok(text.startsWith("save-all-log s0:g0:ok"));
-  assert.ok(text.endsWith("s19:g19:ok"));
+test("日志容量有界：真实 run() 超过 cap=12 后滚动，seq 连续且最后一组 running→ok 仍可归属", async () => {
+  // K3 最新 verdict：不能只格式化手工记录——必须让屏障真实跑过 cap，验证滚动后的形状与归属。
+  assert.equal(SAVE_ALL_LOG_LIMIT, 12);
+  const rig = createRig();
+  const barrier = createSaveAllBarrier(rig.deps);
+  for (let i = 0; i < 6; i++) {
+    assert.equal(await barrier.run(), true, `第 ${i + 1} 次 run 必须成功`);
+  }
+  assert.equal(barrier.generation(), 6);
+
+  // 初始 idle + 6 × (running + ok) = 13 条 → 滚动掉最早一条，剩 seq 1..12。
+  const records = lastRecords(rig);
+  assert.equal(records.length, SAVE_ALL_LOG_LIMIT);
+  assert.deepEqual(
+    records.map((record) => record.seq),
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+    "seq 必须连续（滚动只从头部丢弃，不重编号）",
+  );
+  assert.deepEqual(records.slice(-2), [
+    { seq: 11, generation: 6, state: "running" },
+    { seq: 12, generation: 6, state: "ok" },
+  ]);
+
+  // 滚动后仍可归属：基线取最后一次 run 之前的那条记录（s10/g5 ok），
+  // 新日志里的 s11 running g6 → s12 ok g6 是一次快速完成，必须被验收通道接受。
+  const baseline = records[records.length - 3];
+  assert.deepEqual(baseline, { seq: 10, generation: 5, state: "ok" });
+  const logText = rig.logs.at(-1)!;
+  const ax = `- app: X\n- pid: 1\n\`\`\`\n- [7] AXStaticText = "${logText}"\n\`\`\``;
+  // @ts-expect-error 验收侧 .mjs 无类型声明；跨层运行期对账见 installed-app.test.mjs
+  const { waitSaveAllCompletion } = await import("../../scripts/acceptance/lib/installed-app.mjs");
+  const result = await waitSaveAllCompletion({
+    pid: 1,
+    readState: async () => ax,
+    baselineSeq: baseline.seq,
+    baselineGeneration: baseline.generation,
+  });
+  assert.deepEqual(result, { generation: 6, seq: 12, reads: 1 });
 });

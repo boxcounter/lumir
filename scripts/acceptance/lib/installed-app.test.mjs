@@ -408,6 +408,20 @@ test("归属：基线 g3 时直接出现 g5 ok → 不得放行（无归属的�
   );
 });
 
+test("归属：基线记录已被日志滚动掉（records[0].seq > baselineSeq）→ 拒绝", async () => {
+  // 基线 seq 0 已经不在日志里（最早是 s3）；无法证明本次操作与完成信号的连续性，必须失败。
+  await assert.rejects(
+    () =>
+      waitSaveAllCompletion({
+        pid: PID,
+        baselineSeq: 0,
+        baselineGeneration: 0,
+        readState: async () => logAx("s3:g3:ok s4:g4:running s5:g4:ok"),
+      }),
+    /状态日志已滚动到基线之后/,
+  );
+});
+
 test("归属：本次触发被 busy 拒绝、之后别的代次 ok 覆盖不上（K3 反例）", async () => {
   // 基线 s1/g3；触发后：g4 running（另一个操作在跑）、g4 busy（本次触发被单飞拒绝）、
   // g4 ok（那个操作完成）。只看「有 ok」或「代次更大」会误放行。

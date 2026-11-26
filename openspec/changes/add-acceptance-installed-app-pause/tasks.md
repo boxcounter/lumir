@@ -16,14 +16,14 @@
 
 ## 3. 测试
 
-- [x] 3.1 `scripts/acceptance/lib/installed-app.test.mjs`（47 条）：目标发现、保存前 ⌘Q = 0、保存失败不跑、只正常 ⌘Q、安装版未运行、成功 / 失败 / 中断均不 open、第二次调用零副作用、锁归属、退出码语义、**日志归属（基线 g3 → g5 ok / busy 被别代 ok 覆盖 / 跨代 ok / 旧 ok / 快速完成）+ 跨层格式对账**、默认 exec 的真实可执行探针。
+- [x] 3.1 `scripts/acceptance/lib/installed-app.test.mjs`（48 条）：目标发现、保存前 ⌘Q = 0、保存失败不跑、只正常 ⌘Q、安装版未运行、成功 / 失败 / 中断均不 open、第二次调用零副作用、锁归属、退出码语义、**日志归属（基线 g3 → g5 ok / busy 被别代 ok 覆盖 / 跨代 ok / 旧 ok / 快速完成）+ 跨层格式对账**、默认 exec 的真实可执行探针。
 - [x] 3.2 挂进 `scripts/acceptance/check-suite.sh`（docs-check 与 gate 共用）。
 - [x] 3.3 产品侧单测：新增 `tests/unit/save-all.test.ts`（11 条：三种失败、前置 / 同步期间新 dirty、并发单飞、代次单调、日志容量）；`vault-switcher.test.ts` / `reading-position.test.ts` 断言 resolved-false 与 reject 两档；`command-meta.test.ts` 断言新命令的标签 / KEYLESS / 无默认绑定；Rust 侧两条 `put_reports_false_when_disk_write_fails`。
-- [x] 3.4 反向验证（本轮实测留证，原卷在 `.local/missions/add-acceptance-installed-app-pause/mutations/`）：① 去掉本次操作等待；② 接受任意 ok（不看 running 归属）；③ 删除暂停排他检查；④ 删除屏障最后 dirty 复查（旧 P1-4）；⑤ Rust put 在磁盘失败时回 true（旧 P1-1）；⑥ 退回「代次大于基线即 ok」旧规则（K3 第二轮原 bug）；⑦ 删除 busy 拒绝。每项均变红并还原复绿。
+- [x] 3.4 反向验证（本轮实测留证，原卷在 `.local/missions/add-acceptance-installed-app-pause/mutations/`）：① 去掉本次操作等待；② 接受任意 ok（不看 running 归属）；③ 删除暂停排他检查；④ 删除屏障最后 dirty 复查（旧 P1-4）；⑤ Rust put 在磁盘失败时回 true（旧 P1-1）；⑥ 退回「代次大于基线即 ok」旧规则（K3 第二轮原 bug）；⑦ 删除 busy 拒绝；⑧ 删除日志容量上限（cap 不再滚动）；⑨ 把 cap 改成错误值。每项均变红并还原复绿。
 
 ## 4. 验收制品与文档
 
-- [x] 4.1 新增真机场景 `scripts/acceptance/scenarios/880-save-all.md`（File → Save All：两标签落盘 + `save-all#1 ok` 节点级精确判据 + 磁盘判据）与 `880b-save-all-session-flush-failure.md`（envChmod 造会话写失败 → `#1 failed`、恢复后 `#2 ok`），`coverage.mjs` 重生成 COVERAGE。
+- [x] 4.1 新增真机场景 `scripts/acceptance/scenarios/880-save-all.md`（File → Save All：两标签落盘 + 完整状态日志 `s1:g1:running → s2:g1:ok` 的节点级精确判据 + 磁盘判据）与 `880b-save-all-session-flush-failure.md`（envChmod 造会话写失败 → `s2:g1:failed`、恢复后 `s3:g2:running → s4:g2:ok`），`coverage.mjs` 重生成 COVERAGE。
 - [x] 4.2 `scripts/acceptance/README.md`：`--pause-installed` 用法、目标 / 身份 / 屏障 / ⌘Q / 锁与登记 / 证据 / 不恢复口径 / 已知边界（含待真机项）。
 - [x] 4.3 登记 `quitBundleApp` 注释矛盾为独立 finding（不在本批修）：`.tower/comms/findings/20261126-worker-installed-pause-quitbundleapp-comment-appleevent-quit.md`（git 外）。
 
@@ -43,7 +43,7 @@
 - [x] 7.3 P1-3：产品 `save-all-log s<seq>:g<代次>:<状态>` 追加式日志 + 单飞；验收触发后锁定第一条新 running 的准确代次、只接受同代次 ok；基线 g3→g5 ok、busy 被别代 ok 覆盖、旧 ok 反向测试。
 - [x] 7.4 P1-4：镜像同步 await 后复查 dirty；有新 dirty 先恢复镜像 true 再失败；deferred 竞态测试（旧实现必红）。
 - [x] 7.5 P2-1：场景 880 改节点级代次判据；新增 880b 会话真实写失败；屏障失败 / 竞态由 `save-all.test.ts` 覆盖。
-- [x] 7.6 P2-2：六项变异的具体 diff、失败输出、还原复绿原卷；design / evidence 清单一致。
+- [x] 7.6 P2-2：既有七项变异 + 本轮新增 cap 删除 / cap 值改错，共九项的具体 diff、失败输出、还原复绿原卷；design / evidence 清单一致。
 
 ## 6. 待真机 / 待终审（本轮不执行，未勾即未完）
 

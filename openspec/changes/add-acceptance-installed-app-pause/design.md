@@ -119,12 +119,13 @@ vault 名、标签标题或正文；AX 读取一律 `mode: "ax"`（不带截图�
 
 ## 4. 测试与反向验证
 
-- `scripts/acceptance/lib/installed-app.test.mjs`（47 条，挂进 `check-suite.sh`）：发现 / 身份 /
+- `scripts/acceptance/lib/installed-app.test.mjs`（48 条，挂进 `check-suite.sh`）：发现 / 身份 /
   编排顺序 / **日志归属**（基线 g3 → g5 ok、busy 被别代 ok 覆盖、跨代 ok、代次不连续、旧 ok、
   快速完成 / **跨层格式对账**）/ 菜单 / ⌘Q / 锁与登记 / 默认 exec 真实可执行探针。平台副作用全部注入假实现
   （默认 exec 除外——用 `/usr/bin/printf` 与临时 shell 桩覆盖真实默认通道）。
 - `tests/unit/save-all.test.ts`（11 条）：成功 / 会话写失败 / 阅读位置写失败 / 镜像同步失败 /
-  前置新 dirty / **同步等待期间新 dirty**（deferred，旧实现必红）/ 并发单飞 / 代次单调 / 日志容量。
+  前置新 dirty / **同步等待期间新 dirty**（deferred，旧实现必红）/ 并发单飞 / 代次单调 /
+  **容量**（真实 run 6 次超过 cap=12，断言滚动后 seq 连续、末组 running→ok 仍可归属）。
 - Rust：`vault_session::put_reports_false_when_disk_write_fails` 与
   `reading_position::put_reports_false_when_disk_write_fails`（写失败返回 false、不留半份文件），
   以及 workspace 场景里的真实权限失败断言 `Ok(false)`。
@@ -135,7 +136,9 @@ vault 名、标签标题或正文；AX 读取一律 `mode: "ax"`（不带截图�
   4. 删掉屏障的最后 dirty 复查（旧 P1-4 实现）→ deferred 竞态用例必红；
   5. 让 Rust put 在磁盘失败时回 `true` → Rust 失败链测试必红；
   6. 退回「代次大于基线即 ok」的旧规则（K3 第二轮原 bug）→ g5 ok 反例必红；
-  7. 删掉 busy 拒绝 → 「busy 被别代 ok 覆盖」反例必红。
+  7. 删掉 busy 拒绝 → 「busy 被别代 ok 覆盖」反例必红；
+  8. 删掉日志容量上限（cap 不再滚动）→ 真实 run 的容量用例必红；
+  9. 把 cap 改成错误值 → 容量用例必红。
   每项的 diff、失败输出与还原后绿色结果落在 `.local/missions/add-acceptance-installed-app-pause/mutations/`。
 - 产品侧：`tests/unit/vault-switcher.test.ts` / `reading-position.test.ts` 断言 flush 的 boolean
   语义（失败 false、成功 / 无内容 true）；`command-meta.test.ts` 断言 `document.save-all` 的
