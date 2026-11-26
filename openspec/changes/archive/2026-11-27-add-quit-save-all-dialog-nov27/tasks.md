@@ -39,7 +39,7 @@
 
 ## 6. 待真机 / 待终审（本轮不执行，未勾即未完）
 
-- [ ] 6.1 真实 WKWebView 下的整链路真机验收：dirty → ⌘Q / 关窗 → 居中弹框；保存全部并退出 → 原 pid 消失；保存失败 / 冲突 → 弹框留场且错误可见；取消 / Escape → 留场且内容逐字节不变；干净 ⌘Q → 无弹框。理由：本轮 mission 明确不执行真机，归下批真机窗口。
-- [ ] 6.2 场景 884 与 239 的真机 PASS（2026-11-27 r1/r4/r5 失败已定位：`/^取消$/` 行锚、模态期间背景 AX 不可读、保存日志标记在模态期间不可读、编辑器 raw 文本受 markdown 标记显隐影响；239 的 Escape 需在弹框打开前 `focusWindow click:true` 建立 key window——r5 只保证 app 前台，两下 Escape 可能都落到非 key 窗口。场景已修，待复跑）。
+- [x] 6.1 真实 WKWebView 整链路真机验收：884 r5 PASS 39 断言（dirty → ⌘Q 弹框、取消、保存失败留场、重试落盘/重启；`.local/acceptance/2026-11-27-ux-goal-r5/884-quit-save-all-dialog/`）；239 r6 PASS（Escape 取消、干净 ⌘Q；`.local/acceptance/2026-11-27-ux-goal-r6-239.log`）。
+- [x] 6.2 场景 884 / 239 真机 PASS：884 r5 PASS 39 断言（`.local/acceptance/2026-11-27-ux-goal-r5/884-quit-save-all-dialog/`，`status.txt` PASS）；239 r6 PASS 1/1（`.local/acceptance/2026-11-27-ux-goal-r6-239.log`）。r1/r4/r5 的假红已按节点行、模态 AX 裁剪、保存日志可读时刻与 key-window 前提修准。
 - [x] 6.3 视觉基线：三主题候选经主会话代 Alex 自审批准（2026-11-27）；已用 `scripts/visual/run.sh --update scenes/quit-save-all-dialog-nov27.spec.ts` 生成三张正式基线，其余基线不动。
-- [ ] 6.4 独立终审（非作者 reviewer clean / merge）与归档放行；归档时在 `docs/backlog.md` 归档跟踪队列落条目。理由：本 mission 明确「不要归档」。
+- [x] 6.4 独立终审（K3 clean/merge 绑 `3028f51c`，`.local/reviews/add-quit-save-all-dialog-nov27/k3-verdict.md`）与归档放行；`docs/backlog.md` 归档跟踪队列已落本 change 条目。

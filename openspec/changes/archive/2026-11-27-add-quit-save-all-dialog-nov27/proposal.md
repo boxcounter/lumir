@@ -87,3 +87,37 @@ Alex 2026-11-27 的需求：**退出前提醒改用弹框**。因为未保存时
     `scripts/acceptance/COVERAGE.md`、`scripts/acceptance/README.md`。
 - 关联约束：不改写源文件（本 change 只读展示用户文档）；仓库信息卫生（截图与 fixture 一律
   合成内容）；「变更默认直接切断」（旧 toast 路径删除、D232 随零消费者退场，编号不复用）。
+
+## 节点 2：归档记录
+
+### 归档前（五要件）
+
+1. **方案已批准**：节点 1（上节）Alex 2026-11-27 需求 + 夜间常规交互代裁授权；实现期未扩
+   scope（后续 `f4225d4b` / `fc879ea6` 仅验收场景与 Chromium/WebKit 焦点回归，无产品代码）。
+2. **独立 reviewer clean / merge**：K3 verdict `clean / merge`，绑定 tip `3028f51c`
+   （`.local/reviews/add-quit-save-all-dialog-nov27/k3-verdict.md`，P1/P2=0；P3 文档残留
+   ——D1068–D1075 区间、像素基线旧表述——已由 `12e59b47` 收口）。
+3. **tasks 完成**：全部勾选；6.3 三主题基线经主会话代 Alex 自审批准并 `expectScreenshot`
+   验证；6.1 / 6.2 由下列真机证据收口。
+4. **门禁与真机证据**：
+   - 真机 884 r5 **PASS 39 断言**：
+     `.local/acceptance/2026-11-27-ux-goal-r5/884-quit-save-all-dialog/`（`status.txt` PASS）。
+   - 真机 239 r6 **PASS 1/1**（29.2s）：`.local/acceptance/2026-11-27-ux-goal-r6-239.log`。
+   - 目标视觉 **9/9 PASS**（含三主题正式基线）；新增焦点 / Escape 回归 Chromium + 真 WebKit
+     **4/4 PASS**；`tests/visual` tsc PASS。
+   - 前端单测 **2130 / 2130 PASS**；Rust `quit_allowed` **1/1 PASS**；根 tsc / unit tsc PASS；
+     `acceptance --check` **308 场景 PASS**。
+5. **规格对账**：`scripts/openspec-archive-check.mjs` 门禁模式 PASS；
+   `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` PASS；`docs/backlog.md`
+   归档跟踪队列有且仅有一条本 change 条目。
+
+### 归档后（强制完成）
+
+- 归档提交：`a7805bf2c5f1df50f9233cf375c5f464e284742d`
+- 包装器（`node scripts/openspec-archive.mjs add-quit-save-all-dialog-nov27`）输出：
+  `multi-tabs: update` / `+ 1 added` / `Totals: + 1, ~ 0, - 0, → 0` /
+  `Change 'add-quit-save-all-dialog-nov27' archived as '2026-11-27-add-quit-save-all-dialog-nov27'`；
+  `归档后修链 0 处（扫过 4 篇 Markdown / 0 条相对链接）`；
+  `openspec-links: PASS（校验 710 条相对链接，全部可达）`；`openspec-archive: PASS`。
+- `node scripts/openspec-archive-check.mjs --archived add-quit-save-all-dialog-nov27`：
+  `PASS（openspec/changes/archive/2026-11-27-add-quit-save-all-dialog-nov27：0 条 MODIFIED，对比 0 段；人工恢复 0 段，声明认领 0 段）`（2026-11-27 03:42 CST）。
