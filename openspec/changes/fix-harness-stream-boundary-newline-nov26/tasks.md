@@ -47,8 +47,10 @@
       `字符检验。`）；终态断言只作回归面（终态全量重渲会补齐，如实登记在场景正文）
 - [x] 4.3 `node scripts/acceptance/coverage.mjs` 重新生成覆盖表（300 个场景 / 269 个 item），
       `node scripts/acceptance/run.mjs --check` PASS（300 个场景静态校验通过）
-- [ ] 4.4 **真机执行 879**（本轮不执行）：mission 边界明确本轮只做前端单测层与静态校验、不起
-      真机、不更新像素基线；执行时机 = 后续真机批次，证据落 `.local/acceptance/<日期>/879-.../`
+- [x] 4.4 **真机执行 879**：PASS——16 条 PASS（13 条断言 + 3 张截图证据），中间态判据
+      「第二片首字符在中间态即上屏」逐字命中；窗口钉尺寸 1200×800 回读生效。证据
+      `.local/acceptance/2026-11-27-ux-goal/879-harness-stream-boundary-newline/`
+      （`status.txt` = PASS，`steps.md` 逐条 PASS，`ax/` + `shots/` 齐全）。本轮未更新任何像素基线
 
 ## 5. 门禁与静态校验
 
@@ -61,8 +63,9 @@
       `harness-typography-nov23`（chromium + webkit-realua）→ 29 passed / 0 failed；不跑像素层、
       不更新基线。全量结构套件（1853 条单 worker）跑到第 159 条 0 失败后按 mission 范围中止，
       读数记在证据目录 `PARTIAL-visual-structural-fullrun-aborted.log`
-- [x] 5.5 `bash scripts/docs-check.sh` 通过
-- [x] 5.6 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
+- [x] 5.5 `bash scripts/docs-check.sh` 通过（归档批复跑 PASS；`openspec-archive-check` 门禁模式、
+      links、backlog 出口与归档队列判据一并绿）
+- [x] 5.6 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（45 passed / 0 failed）
 - [x] 5.7 `node scripts/acceptance/run.mjs --check` 通过（300 个场景）
 
 ## 6. 收尾
@@ -70,5 +73,6 @@
 - [x] 6.1 证据落主仓 `.local/missions/fix-harness-stream-boundary-newline-nov26/`（红 / 绿 /
       探针 / 门禁日志），不落 worktree
 - [x] 6.2 在 mission 分支提交（不 push、不 merge、不归档、不动视觉基线）
-- [ ] 6.3 真机 879 PASS 后落 `docs/backlog.md` 归档跟踪条目并走节点 2（本轮不做：真机未跑，
-      五要件未齐；归档由主会话终审后执行）
+- [x] 6.3 真机 879 PASS 后落 `docs/backlog.md` 归档跟踪条目并走节点 2：条目已落（删最老的一条
+      已归档历史记录腾行，队列保持 80 行硬上限）；节点 2 五要件记录写进 proposal「评审记录」块，
+      按常规通道（机器 + 独立评审放行）执行归档，归档读数回填同一块
