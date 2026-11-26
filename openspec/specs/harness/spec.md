@@ -3450,9 +3450,9 @@ composer 摘录正文 SHALL 通过 `data-excerpt + CSS ::before` 保留视觉呈
 
 ### Requirement: CM composer 的单一 history
 
-composer SHALL 使用 CodeMirror history 作为文本与卡片的唯一撤销 / 重做真源，MUST NOT 再维护 DOM / blocks 快照栈。卡片 SHALL 以 `{ id, card, anchor }` 记录：`id` 是会话内稳定身份，`anchor` 是文档中的**精确 UTF-16 偏移**（不要求行首）。卡片添加与移除 SHALL 由专用 StateEffect 更新 StateField；移除按 `id` 定位，MUST NOT 按下标定位；附件结构事务 SHALL 与相邻编辑隔离。composer MUST NOT 在现有 history 上执行 `addToHistory:false` 或 `remote` 的文档变更；装载 / 复位（草稿恢复、切 vault、新会话、会话重载、发送清空）MUST 新建 `EditorState` 重置 history；新会话与会话重载 MUST 同时清除当前 bound vault 的盘上草稿，其他 vault 的草稿与复位后的新输入不得受影响，MUST NOT 用 `state.update({annotations: Transaction.addToHistory.of(false)})` 在旧 state 上打补丁。连续文本输入 SHALL 按 CM history 聚簇；IME 整段 history SHALL 由 CM 管理，MUST NOT 在 compositionstart/end 手工压栈。导航本身 MUST NOT 产生编辑 undo 事件。
+composer SHALL 使用 CodeMirror history 作为文本与卡片的唯一撤销 / 重做真源，MUST NOT 再维护 DOM / blocks 快照栈。卡片 SHALL 以 `{ id, card, anchor }` 记录：`id` 是会话内稳定身份，`anchor` 是文档中的**精确 UTF-16 偏移**（不要求行首）。卡片添加与移除 SHALL 由专用 StateEffect 更新 StateField；移除按 `id` 定位，MUST NOT 按下标定位；附件结构事务 SHALL 与相邻编辑隔离。composer MUST NOT 在现有 history 上执行 `addToHistory:false` 或 `remote` 的文档变更；装载 / 复位（草稿恢复、切 vault、发送清空）MUST 新建 `EditorState` 重置 history。新建会话、选择 / 恢复其他会话与会话重载 MUST NOT 复位 composer：文字、引用 / 消息摘录 / 图片卡片、Skill 引用、光标与撤销历史 SHALL 原样保留，下一次发送 SHALL 进入当前选中会话；这些切换 MUST NOT 清除当前 vault 的盘上草稿——草稿只在发送成功或用户手动删除时清除，其他 vault 的草稿与保留后的新输入不得受影响。切 vault MUST 恢复各 vault 自己的草稿，MUST NOT 跨 vault 混用；会话切换 MUST 作废在途的草稿恢复，迟到的读回 MUST NOT 覆盖会话切换后保留的输入区、MUST NOT 借此重建编辑史。MUST NOT 用 `state.update({annotations: Transaction.addToHistory.of(false)})` 在旧 state 上打补丁。连续文本输入 SHALL 按 CM history 聚簇；IME 整段 history SHALL 由 CM 管理，MUST NOT 在 compositionstart/end 手工压栈。导航本身 MUST NOT 产生编辑 undo 事件。
 
-文本 Backspace / Delete、⌘A、普通输入、粘贴与 IME MUST NOT 发出附件增删 effect，因此不得增删或重排卡片；文本变更引起的 anchor 映射是机械重映射，不属于附件编辑。重置、草稿恢复、切 vault 和发送成功后的空输入 SHALL 是新的编辑史，MUST NOT 撤销回另一 vault 或已发送内容。
+文本 Backspace / Delete、⌘A、普通输入、粘贴与 IME MUST NOT 发出附件增删 effect，因此不得增删或重排卡片；文本变更引起的 anchor 映射是机械重映射，不属于附件编辑。重置、草稿恢复、切 vault 和发送成功后的空输入 SHALL 是新的编辑史，MUST NOT 撤销回另一 vault 或已发送内容。新建 / 选择 / 恢复会话与会话重载 MUST NOT 产生新的编辑史：撤销 / 重做 SHALL 跨这些会话切换保留，MUST NOT 撤销回另一 vault 或已发送内容。
 
 anchor SHALL 随 `tr.changes.mapPos(anchor, -1)` 做精确偏移映射，**MUST NOT 钳到行首**：删除行界后 anchor 落在行中时，块级 widget 在该偏移把文本拆成前后两块。映射后 SHALL 按新 anchor 与映射前视觉位次稳定排序，同锚点保持原相对次序。
 
@@ -3503,7 +3503,47 @@ anchor 的可逆性 MUST NOT 只靠 `mapPos` 反推。每次改变文档或卡�
 #### Scenario: 非 history 文档变更被拒绝
 
 - **WHEN** 代码尝试在现有 composer state 上以 `addToHistory:false` 或 `remote` 修改 doc
-- **THEN** 该事务被拒绝（开发断言 / 过滤器），composer 内容与 history 不变；装载 / 复位路径必须新建 `EditorState`，旧 history 不可达；MUST NOT 用 sync effect 的 `mapPos` 补映射
+- **THEN** 该事务被拒绝（开发断言 / 过滤器），composer 内容与 history 不变；**重建 `EditorState` 的装载 / 复位路径（草稿恢复、切 vault、发送清空）旧 history 不可达**；新建 / 选择 / 恢复会话与会话重载 MUST NOT 新建 `EditorState`，**其旧 history 仍须可达（撤销 / 重做跨这些会话切换保留）**；MUST NOT 用 sync effect 的 `mapPos` 补映射
+
+#### Scenario: 新建会话保留输入区
+
+- **WHEN** 输入区含文字、引用卡 / 图片卡与 Skill 引用，caret 在文本中部，用户点击「新会话」
+- **THEN** transcript 清空、会话名回到「新会话」；输入区的文字、卡片、Skill、光标与切换前逐字段相同，撤销历史仍可撤销；盘上草稿未被删除；随后的发送进入新会话
+
+#### Scenario: 选择 / 恢复历史会话保留输入区
+
+- **WHEN** 输入区含内容，用户从会话浮层选择另一条历史会话，或经 cron 结果通知打开其会话
+- **THEN** 只切换消息列表与会话名；输入区内容、光标与撤销历史保持，下一次发送进入恢复后的会话
+
+#### Scenario: 会话重载保留输入区
+
+- **WHEN** 输入区含内容，面板按后端当前会话重载（cron 发起失败回滚 / 打开会话通知的重载通道）
+- **THEN** transcript 按该通道重建，输入区 MUST NOT 被清空或重建编辑史；在途的草稿恢复 MUST NOT 覆盖它
+
+#### Scenario: 新建失败不清输入区
+
+- **WHEN** 用户点击「新会话」而 `harness_new_session` 的回包被拒绝
+- **THEN** 面板只追加错误行；输入区内容、卡片、光标与撤销历史与点击前相同，盘上草稿不变
+
+#### Scenario: 新会话取消发送意图但不清内容
+
+- **WHEN** `pendingSend` 已设置（组合期），用户点击「新会话」
+- **THEN** 旧视图的延迟发送被取消、插卡队列按既有口径清空；输入区的文字、卡片与光标保留，组合文本 MUST NOT 被清掉
+
+#### Scenario: 连续切换不被在途草稿恢复覆盖
+
+- **WHEN** 草稿读回在途时用户新建会话或重载会话（连续切换）
+- **THEN** 迟到的读回 MUST NOT 铺进输入区、MUST NOT 重建编辑史；输入区保持会话切换时的内容
+
+#### Scenario: 切 vault 仍按 vault 恢复草稿
+
+- **WHEN** 输入区含 vault A 的内容，用户切到 vault B 再切回 A
+- **THEN** 切到 B 时输入区按 B 自己的草稿恢复（B 无草稿则为空），切回 A 时恢复 A 的草稿；MUST NOT 把 A 的内容带进 B，MUST NOT 把 B 的草稿写进 A
+
+#### Scenario: 发送成功仍清空并清草稿
+
+- **WHEN** 用户在保留的输入区里直接发送且后端受理
+- **THEN** 输入区清空，草稿按发送时定格的归属清除（「发送与写失败保留语义」条逐字不变）
 
 ### Requirement: 新消息的附件前置序列化协议
 

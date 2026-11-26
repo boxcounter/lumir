@@ -12,7 +12,8 @@
 > 自己的草稿，不跨 vault 混用。**
 > 范围：只覆盖**同一个 vault 内**的新建 / 选择 / 恢复 / 重载会话；切 vault 的 per-vault 草稿
 > 恢复与「发送成功清空」语义逐字不动。
-> 节点 2（归档评审）：实现完成后填写。
+> 节点 2（归档评审）：**机器 + 独立评审放行**（`docs/process/openspec-workflow.md`「节点 2 五要件」），
+> 逐要件事实见本文末「归档记录」。
 
 ## Why
 
@@ -113,4 +114,39 @@
   `.local/missions/preserve-composer-across-sessions-nov26/`（git 外）。
 - 后绿：同一场景在修复后 PASS；`m831` 改准后的用例 PASS；相关既有场景回归 PASS。
 - 制品门禁：`bash scripts/docs-check.sh`、`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`。
-- 真机：场景 878 本轮不执行（任务说明明确不跑真机），由后续批次安排。
+- 真机：场景 878 实现批不执行（任务说明明确不跑真机）；发布批补跑——r3 **PASS**（19 断言，
+  `.local/acceptance/2026-11-26-release-0.19.0-r3/`），见 tasks 5.1 与下方「归档记录」。
+
+## 归档记录
+
+### 归档前（节点 2 五要件）
+
+1. **方案已批准**：节点 1 为 Alex 2026-11-26 对「新建、切换会话时保留 composer」回复「采纳」，
+   合同逐字见本文头部；实现只落地该合同（`src/harness-panel.ts` 的
+   `holdComposerAcrossSessionSwitch()` 与两处入口替换），返修 r1 只改 delta 语义与测试判据，
+   未扩大范围。
+2. **独立评审**：K3 独立复审 **clean / merge**（P1 / P2 / P3 均为 0），绑定 tip
+   `08148f2be004c2d86034f0c4a631ee76ae0e84db`，verdict
+   `.local/reviews/preserve-composer-across-sessions-nov26/k3-verdict.md`。该 tip 之后的增量为
+   合并提交 `27458d6f` 与两次场景对齐 `58ab5fd1` / `f5e9205e`（只改
+   `scripts/acceptance/scenarios/*.md`），`src/**` 零改动。
+3. **tasks 完成**：`tasks.md` 全勾（5.1 / 5.2 记录真机与归档结果），无放弃项。
+4. **门禁与真机证据**：
+   - quick：`GATE RESULT: 13/13 PASS（SKIP 0）`，日志
+     `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/harness-ux-integration-nov26/gate-quick-release-0.19.0-r2.log`；
+   - 集成测试：Rust 1382 passed / 0 failed / 6 ignored；前端单测 2075 passed；相关视觉结构 135
+     passed / 1 skipped；
+   - 首轮完整 visual：`GATE RESULT: 14/15 PASS（SKIP 0）`，唯一 FAIL 是当时未修的 `tsc-unit`
+     （既有问题，`92008fdb` 修掉），`visual-regression` PASS（1287s），日志
+     `.local/missions/harness-ux-integration-nov26/gate-visual-release-0.19.0.log`；
+   - 最终完整 visual：14 个 quick 项全 PASS，`visual-regression` 1839 passed / 1 failed（唯一失败
+     是既有 IME 低频定时用例，`tests/visual/scenes/editing-oracle.spec.ts:1143`，与本批改动面无
+     交集），该用例双引擎复跑 2/2 PASS，日志
+     `.local/missions/harness-ux-integration-nov26/gate-visual-release-0.19.0-final.log` 与
+     `ime-low-frequency-release-recheck.log`；**不声称完整 gate 15/15**；
+   - 真机：场景 878 r3 **PASS**（19 断言、26.9s），证据
+     `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-26-release-0.19.0-r3/`；
+     首轮与 r2 的失败均为场景期望对齐真实行为（`58ab5fd1` / `f5e9205e`），产品代码未改。
+5. **规格对账**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS（扫过 15 份 delta / 18 条
+   MODIFIED / 285 段 / 无静默丢段；归档队列 1 项已完成 change 有唯一条目）；`validate --all
+   --strict` 41 passed / 0 failed；`docs/backlog.md` 归档队列有且仅有一条本 change 条目。

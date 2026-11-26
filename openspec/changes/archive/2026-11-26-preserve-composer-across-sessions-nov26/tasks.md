@@ -62,9 +62,12 @@
 
 ## 5. 真机与归档
 
-- [ ] 5.1 （**本轮不执行**）真机跑场景 878：任务明确本轮禁止真机操作，场景文件随实现提交，
-      执行安排到后续批次；未跑 ⇒ 不声称真机通过
-- [ ] 5.2 （**本轮不执行**）节点 2 五要件与归档：等独立评审，本批不归档
+- [x] 5.1 真机跑场景 878：实现批禁止真机操作，场景文件随实现提交；发布批补跑——首轮 FAIL
+      （17 断言 / 2 失）与 r2 FAIL（14 断言 / 1 失）均为场景期望对齐真实行为，只改场景
+      （`58ab5fd1` / `f5e9205e`，产品代码零改动）；r3 **PASS**（19 断言、26.9s），证据
+      `.local/acceptance/2026-11-26-release-0.19.0-r3/`
+- [x] 5.2 节点 2 五要件与归档：独立 K3 clean/merge（绑定 `08148f2b`）+ 门禁与真机证据齐，
+      按五要件放行归档（记录见 proposal「归档记录」块）
 
 ## 6. 返修 r1（K3 verdict：P2-1 / P3-1 / P3-2 / P3-3）
 
@@ -100,5 +103,22 @@
   与本 change 无交集），复跑取到干净读数，原始日志为这次单跑版本。
 - 制品：`final-docs-check.log` — **PASS**；`final-openspec-validate.log` — **39 passed /
   0 failed**。三项均为原始命令输出文件，不再是摘要。
-- 未跑：`scripts/gate.sh` 全档、真机场景 878、CI（任务明确不跑）；`tests/unit` 的 tsc 在**主仓
-  master 同样**报 `tests/unit/skill-menu.test.ts` 的 `ChangeSpec` 类型错，与本批无关。
+- 实现批未跑：`scripts/gate.sh` 全档、真机场景 878、CI（任务明确不跑）；`tests/unit` 的 tsc 在
+  **主仓 master 同样**报 `tests/unit/skill-menu.test.ts` 的 `ChangeSpec` 类型错，与本批无关
+  （发布批已由 `92008fdb` 单独修掉，见下节）。
+
+## 发布批读数（2026-11-26，节点 2）
+
+- quick：`GATE RESULT: 13/13 PASS（SKIP 0）`，日志
+  `.local/missions/harness-ux-integration-nov26/gate-quick-release-0.19.0-r2.log`。
+- 集成测试：Rust **1382 passed / 0 failed / 6 ignored**（15 个 test result）；前端单测 **2075
+  passed**；相关视觉结构子集 **135 passed / 1 skipped**。
+- 首轮完整 visual：`GATE RESULT: 14/15 PASS（SKIP 0）`，唯一 FAIL 是当时未修的 `tsc-unit`
+  （既有问题，`92008fdb` 修掉），`visual-regression` **PASS**（1287s）；日志
+  `.local/missions/harness-ux-integration-nov26/gate-visual-release-0.19.0.log`。
+- 最终完整 visual：14 个 quick 项全 PASS，`visual-regression` **1285s：1839 passed / 1 failed**，
+  唯一失败是既有 IME 低频定时用例（`tests/visual/scenes/editing-oracle.spec.ts:1143`，与本批
+  改动面无交集）；该用例双引擎独立复跑 **2/2 PASS**
+  （`.local/missions/harness-ux-integration-nov26/ime-low-frequency-release-recheck.log`）。
+  `GATE RESULT: 14/15 PASS（SKIP 0）`，**不声称完整 gate 15/15**。
+- 真机：见 5.1（878 r3 PASS，19 断言）。
