@@ -97,8 +97,6 @@ CI 的 `visual.yml` 跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCTURA
 | 无机器验收的判断类开发（交互手感、新功能设计、结构调整）；探针 / 探错类步骤（结果未知、需设计退路，探针通过后的照章实现段仍归 deepseek） | `deepseek/deepseek-flash` |
 | 复杂任务、review 判断层、像素表现本身的改动（`src/style.css` 全局面、`src/preview/**` 渲染语义）——「看着对不对」是唯一判据的活 | K3.1 Pro（provider 无关的稳定 alias `k3.1-pro`；Agent 工具里也可用 alias `primary`） |
 
-K3.1 Pro 的 provider 纪律（2026-10-25 更新，取代 2026-10-24 的「只用 managed」裁决）：统一引用 provider 无关的稳定 alias `k3.1-pro`（定义在 `~/.kimi-code/config.toml` 的 `[models."k3.1-pro"]`）。要在 managed（`managed:kimi-code`）与 `Kimi For Coding` 之间切换，只改该 alias 条目的 `provider`（模型 id 不同时同改 `model`）一处，然后重启 Kimi Code；`default_model`、`[secondary_model.models]` 池键、Agent 工具派发一律引用 `k3.1-pro` / `primary`，不写 provider 前缀。`TowerSpawn` 的 worker 取池默认模型、reviewer 跟随调用方主模型（传 `primary`）；主模型为 `k3.1-pro` 时 reviewer 自动落到同一 provider。配置不热加载，改完必须重启。
-
 执行规则：
 
 - **显式指定 alias**，不依赖默认值；**prompt 写窄**：已知路径 / 行号 / 测试命令直接写进派发 prompt，砍掉子代理的探索消耗。
