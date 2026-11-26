@@ -5427,18 +5427,23 @@ export async function readAxForScreenPoint(cu, pid, { retries = 3, label = "双�
  *  否则给出 CGEvent 滚轮计划：`dy` 正 = 上滚（README 的 `scroll` 口径），`point` 是屏幕点。
  *  滚动点取目标横向中心（夹进窗口）与窗口上/下三分之一处的可滚区（树的表头之下 / 底部之上），
  *  让滚轮落在目标所在的滚动容器上，而不是标题栏或 modeline。 */
-export function planNodeIntoView({ bbox, bounds, margin = 2, linePx = 40, maxLines = 20 }) {
+export function planNodeIntoView({ bbox, bounds, topInset = 44, bottomInset = 27, linePx = 40, maxLines = 20 }) {
   if (!bbox || !bounds || !(bounds.w > 16 && bounds.h > 16)) return null;
-  // 只处理**整行都在窗口外**的形态：半截被裁的行交给调用方按旧行为处理——AX 的 bbox 是
-  // web area 的内容坐标，套件拿不到「目标所在滚动容器的可视矩形」，把 y=60 这类被表头压住
-  // 的行当「可见」会点到表头；把半截行也自动滚则会改变既有场景的语义。整行在外是唯一可判的。
-  const above = bbox.y + bbox.h <= margin;
-  const below = bbox.y >= bounds.h - margin;
-  if (!above && !below) return null;
-  const direction = above ? 1 : -1;
-  const distance = above ? margin - (bbox.y + bbox.h) : bbox.y - (bounds.h - margin);
-  const dy = direction * Math.min(maxLines, Math.max(1, Math.ceil(distance / linePx)));
+  // 判据是**点击点（bbox 中心）落在安全带内**，不是「bbox 在窗口矩形内」：本 app 的标题栏
+  // （42pt）与 modeline（25pt）盖住窗口上下缘，bbox 在窗口内但中心落在标题栏 / modeline 上时
+  // 点击打不到目标（2026-11-27 r4 现场：callout.md 被滚到 bbox y=-12..13、中心 0.5，点击落在
+  // 标题栏，标签没开出来；plain.md 被滚到中心 786，点击落在 modeline）。安全带 =
+  // [标题栏 42+2, 高 - modeline 25-2]；这是本 app 的固定 chrome 高度，改布局时同步缺省值。
+  const top = Math.min(topInset, bounds.h / 2);
+  const bottom = Math.max(bounds.h - bottomInset, bounds.h / 2);
+  const center = bbox.y + bbox.h / 2;
+  if (center >= top && center <= bottom) return null;
+  const above = center < top;
+  const targetCenter = above ? top + bbox.h / 2 : bottom - bbox.h / 2;
+  const distance = Math.abs(center - targetCenter);
+  const dy = (above ? 1 : -1) * Math.min(maxLines, Math.max(1, Math.ceil(distance / linePx)));
   const x = Math.min(Math.max(bbox.x + bbox.w / 2, 8), bounds.w - 8);
+  // 滚轮点落在窗口内的可滚区（不是标题栏 / modeline）：上滚用窗口上部、下滚用窗口下部。
   const y = above
     ? Math.min(Math.max(120, 8), bounds.h - 8)
     : Math.max(Math.min(bounds.h - 120, bounds.h - 8), 8);
@@ -5452,7 +5457,7 @@ function windowNodeOf(nodes, target) {
     : findNode(nodes, { role: target?.role, name: target?.name ?? target?.text, nth: target?.nth ?? 0 });
 }
 
-/** 把窗口外的目标节点滚进视口（通用前置，最多 6 次 CGEvent 滚轮）。
+/** 把不在可点击安全带内的目标节点滚进视口（通用前置，最多 6 次 CGEvent 滚轮）。
  *
  *  只用滚轮（`injectWheel`）不用 KimiCU 的 scroll：README「已知边界」的滚动条已记——本 app 的树
  *  滚动区与 CM `.cm-scroller` 都没作为可滚对象暴露给 KimiCU，滚轮是唯一真正产生位移的通道。
@@ -5477,14 +5482,14 @@ async function scrollNodeIntoWindow(cu, pid, target, label, note) {
     if (i === attempts - 1) break;
     const out = await injectWheel(plan.point, { dy: plan.dy });
     note?.(
-      `${label}：目标节点在窗口外（${last}），第 ${i + 1}/${attempts} 次滚轮滚入视口 ` +
+      `${label}：目标节点不在可点击安全带内（${last}），第 ${i + 1}/${attempts} 次滚轮滚入视口 ` +
         `dy=${plan.dy} @屏幕 ${Math.round(plan.point.x)},${Math.round(plan.point.y)}｜${out}`,
     );
     await sleep(500);
   }
   const b = lastBounds ?? { x: 0, y: 0, w: 0, h: 0 };
   throw new Error(
-    `${label}：目标节点在窗口外且 ${attempts} 次滚轮后仍未进入视口（${last}，` +
+    `${label}：目标节点不在可点击安全带内且 ${attempts} 次滚轮后仍未进入视口（${last}，` +
       `窗口 (${b.x},${b.y} ${b.w}×${b.h})）——若它位于不可滚动的容器里，该动作无法执行；` +
       "否则检查滚轮通道（swift + 辅助功能权限，README「已知边界」的滚动条）",
   );

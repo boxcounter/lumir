@@ -2749,13 +2749,22 @@ test("planNodeIntoView：窗口外的节点给出方向正确的滚轮计划，�
   assert.ok(below !== null && below.dy < 0, `下方的节点要下滚（dy 负）：${below?.dy}`);
   assert.equal(below.point.y, bounds.y + bounds.h - 120, "下方的滚动点落在窗口下部可滚区");
 
-  // 已完全在窗口内：不滚（negative control：判据不能恒真）
+  // 已完全在窗口内且中心在安全带内：不滚（negative control：判据不能恒真）
   assert.equal(planNodeIntoView({ bbox: { x: 16, y: 100, w: 211, h: 25 }, bounds }), null);
   // 只横向越界（纵向在窗口内）：不归本函数处理，返回 null，由调用方的窗口边界检查报错
   assert.equal(planNodeIntoView({ bbox: { x: -300, y: 100, w: 211, h: 25 }, bounds }), null);
-  // 半截被窗口上/下缘裁掉的行不自动滚（容器可视矩形不可得，半截判定会点到表头；见实现注释）
-  assert.equal(planNodeIntoView({ bbox: { x: 16, y: -10, w: 211, h: 25 }, bounds }), null);
-  assert.equal(planNodeIntoView({ bbox: { x: 16, y: 790, w: 211, h: 25 }, bounds }), null);
+  // 安全带边界（中心 = 44 / 773）本身算通过：点击点不在标题栏 / modeline 上
+  assert.equal(planNodeIntoView({ bbox: { x: 16, y: 31.5, w: 211, h: 25 }, bounds }), null);
+  assert.equal(planNodeIntoView({ bbox: { x: 16, y: 760.5, w: 211, h: 25 }, bounds }), null);
+  // r4 现场（2026-11-27）：bbox 在窗口内但中心落在标题栏 / modeline 上——必须继续滚。
+  // callout.md 被滚到 bbox y=-12..13（中心 0.5），点击落在标题栏、标签没开出来。
+  const clippedTop = planNodeIntoView({ bbox: { x: 16, y: -12, w: 211, h: 25 }, bounds });
+  assert.ok(clippedTop !== null && clippedTop.dy > 0, `被标题栏裁掉的行要继续上滚：${clippedTop?.dy}`);
+  assert.ok(clippedTop.point.y >= bounds.y + 44, "滚轮点本身不得落在标题栏里");
+  // plain.md 被滚到中心 786（modeline 775..800），点击落在 modeline。
+  const clippedBottom = planNodeIntoView({ bbox: { x: 16, y: 774, w: 211, h: 25 }, bounds });
+  assert.ok(clippedBottom !== null && clippedBottom.dy < 0, `被 modeline 压住的行要下滚：${clippedBottom?.dy}`);
+  assert.ok(clippedBottom.point.y <= bounds.y + bounds.h - 27, "滚轮点本身不得落在 modeline 里");
   // 退化几何：不制造 NaN，交给调用方
   assert.equal(planNodeIntoView({ bbox: { x: 16, y: -10, w: 211, h: 25 }, bounds: { x: 0, y: 0, w: 10, h: 10 } }), null);
   // 远距离有单次上限（多次调用逐次收敛，不一次跳完）
