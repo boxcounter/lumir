@@ -149,4 +149,15 @@ harness 的对话面板没有用户消息的删除 / 编辑 / 重发入口：发
    342 段，0 静默丢段；归档队列条目唯一）；`validate --all --strict` 44 passed / 0 failed；
    归档队列有且仅有一条本 change 条目（`docs/backlog.md` 的「归档跟踪队列」）。
 
-**归档后（2026-11-27）**：待归档提交与审计后追加。
+**归档后（2026-11-27）**：
+
+- 归档提交：`427e94d0a7731004728b59efb5fb89dfeda2aab8`（`chore(openspec): archive add-harness-message-withdraw-nov26`）。
+- 包装器输出：`Totals: + 1, ~ 0, - 0, → 0`；
+  `Change 'add-harness-message-withdraw-nov26' archived as '2026-11-27-add-harness-message-withdraw-nov26'.`
+- 修链：归档后修链 **0 处**（扫过 4 篇 Markdown / 0 条相对链接）；
+  `openspec-links: PASS（校验 710 条相对链接，全部可达）`。
+- `node scripts/openspec-archive-check.mjs --archived add-harness-message-withdraw-nov26`：
+  `PASS（openspec/changes/archive/2026-11-27-add-harness-message-withdraw-nov26：0 条 MODIFIED，
+  对比 0 段；人工恢复 0 段，声明认领 0 段）`（2026-11-27；delta 为纯 ADDED，无 MODIFIED 段可丢）。
+- `validate --all --strict`：`Totals: 43 passed, 0 failed`（归档后；归档前 44 项含本 change）；
+  `docs-check` PASS。
