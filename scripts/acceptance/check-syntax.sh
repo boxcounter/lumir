@@ -22,3 +22,14 @@ for f in scripts/acceptance/*.mjs scripts/acceptance/lib/*.mjs scripts/acceptanc
   n=$((n + 1))
 done
 echo "acceptance-syntax: ${n} 个文件通过 node --check"
+
+# Swift AX helper 的语法层（macOS 本地才跑；CI 的 docs-check 在 ubuntu，无 swiftc）：
+# 新增原生菜单通道（ax-menu.swift）后，语法错若只等真机才暴露，整条 880/880b 会起不来。
+if command -v swiftc >/dev/null 2>&1; then
+  for f in scripts/acceptance/lib/*.swift; do
+    swiftc -parse "$f"
+  done
+  echo "acceptance-syntax: Swift helper 通过 swiftc -parse"
+else
+  echo "acceptance-syntax: 无 swiftc，跳过 Swift helper 的语法检查"
+fi

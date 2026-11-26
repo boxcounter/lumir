@@ -20,7 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, geomBaselineProblem, isStaleIndexError, KEY_CHANNELS, keyChannel, keysTarget, loadScenario, matcher, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, resolveKeysTarget, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, scopedAxOrder, screenshotSize, settleEditorless } from "./execute.mjs";
+import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, geomBaselineProblem, isStaleIndexError, KEY_CHANNELS, keyChannel, keysTarget, loadScenario, matcher, menuClickInvocation, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, resolveKeysTarget, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, scopedAxOrder, screenshotSize, settleEditorless } from "./execute.mjs";
 import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
 import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, SETTLE_SAMPLE_MS, settle, StepError } from "./drive.mjs";
 import { InfraError, repoRoot, secondVaultDir } from "./util.mjs";
@@ -101,6 +101,31 @@ test("零步骤场景：checkScenario 挡空步骤表，并点出「整表写在
     problems.some((p) => p.includes("整表写在 front-matter 的闭合 `---` 之外")),
     `应给出「写到 front-matter 外」的定位提示，实际：${JSON.stringify(problems)}`,
   );
+});
+
+test("clickMenuItem：静态校验要求 menu/item 非空，调用以独立 argv 传标题（不拼源码）", () => {
+  const base = { id: "zz-click-menu", item: 1, title: "菜单点击", file: "zz-click-menu.md" };
+  const good = {
+    ...base,
+    steps: [{ name: "触发", do: "clickMenuItem", menu: "File", item: "Save All" }],
+  };
+  assert.deepEqual(checkScenario(good), [], "完整的 menu/item 不应报问题");
+
+  const missing = { ...base, steps: [{ name: "触发", do: "clickMenuItem" }] };
+  const problems = checkScenario(missing);
+  assert.ok(problems.some((p) => p.includes("需要非空 menu")), `应报缺 menu：${JSON.stringify(problems)}`);
+  assert.ok(problems.some((p) => p.includes("需要非空 item")), `应报缺 item：${JSON.stringify(problems)}`);
+
+  const invocation = menuClickInvocation(4242, "File", "Save All");
+  assert.equal(invocation.command, "/usr/bin/swift");
+  assert.equal(invocation.args.length, 4, "pid / menu / item 是三个独立 argv，不拼进脚本");
+  assert.ok(invocation.args[0].endsWith("scripts/acceptance/lib/ax-menu.swift"));
+  assert.deepEqual(invocation.args.slice(1), ["4242", "File", "Save All"]);
+
+  // 标题里的引号 / 反斜杠原样作为 argv，不会变成 AppleScript / Swift 源码
+  const tricky = menuClickInvocation(1, 'Weird "Menu"', "Item \\ Name");
+  assert.equal(tricky.args[2], 'Weird "Menu"');
+  assert.equal(tricky.args[3], "Item \\ Name");
 });
 
 test("步骤表写在 front-matter 内：零问题（正文里的 YAML 示例不误伤，仍被记录但不报）", async () => {
