@@ -1059,6 +1059,62 @@ test("ax / file 的 has·not 写数组即报 problem（数组只有 waitFor.has 
   );
 });
 
+test("模态按钮断言按 AX 节点行匹配：行锚 /^取消$/ 对 `AXButton (取消)` 恒不命中（884 r1 现场）", () => {
+  // 884 / 239 真机首跑的假红：`ax: { has: "/^取消$/" }` 要求整行恰好是「取消」，而 KimiCU 的
+  // AX 文本一行是 `- [27] AXButton (取消) @621,430 …`——按钮明明在场，行锚却永远不命中。
+  // 判据写成节点行（裸串 `AXButton (取消)` 或正则 `/AXButton \(取消\)/`）；点击的
+  // `target.name` 仍是节点字段 `^取消$`，两者不是同一层，别混。
+  const line = "          - [27] AXButton (取消) @621,430 55×31 actions=[AXPress]";
+  assert.equal(matcher("/^取消$/").test(line), false, "行首行尾锚不命中带 role / 属性的 AX 行");
+  assert.equal(matcher("/AXButton \\(取消\\)/").test(line), true, "按节点行的正则必须命中");
+  assert.equal(matcher("AXButton (取消)").test(line), true, "按节点行的裸串（子串）必须命中");
+});
+
+test("884 r1 回归：模态 AX 树里按钮按节点行可判，行锚不命中（现场 dump 的裁剪形态）", async () => {
+  // 真实 884 dump（`.local/acceptance/2026-11-27-ux-goal/884-quit-save-all-dialog/ax/02`）的裁剪：
+  // 模态打开期间 `#app` inert，树里只剩弹框；按钮行带 role / bbox / actions，`/^取消$/` 不命中。
+  const AX_QUIT_MODAL = [
+    "# Lumir App State",
+    "",
+    "- app: Lumir",
+    "- pid: 123",
+    "- window_bounds: x=8 y=40 w=1200 h=800 (screen points)",
+    "- screenshot: none — no image attached",
+    "- coords: bbox `@x,y w×h` are WINDOW-LOCAL POINTS (origin = window top-left, 1:1 points — NOT screenshot pixels)",
+    "",
+    "```text",
+    '- [0] AXApplication "Lumir"',
+    '  - [16] AXWindow "Lumir" @0,0 1200×800',
+    "    - [19] AXScrollArea @0,0 1200×800",
+    "      - [20] AXWebArea (Lumir)",
+    "        - [21] AXGroup (有未保存的修改)",
+    "          - [22] AXHeading (有未保存的修改)",
+    '            - [23] AXStaticText = "有未保存的修改"',
+    '          - [25] AXStaticText = "退出前需要先保存全部修改。保存失败时不会退出。"',
+    "          - [27] AXButton (取消) @621,430 55×31 actions=[AXPress]",
+    "          - [28] AXButton (保存全部并退出) @681,430 115×31 actions=[AXPress] (focused)",
+    "```",
+  ].join("\n");
+  const root = tmpRoot("quit-modal-ax");
+  useTmpEnv(root);
+  const scenario = {
+    steps: [
+      {
+        name: "退出确认弹框（模态打开期间只判弹框自身）",
+        expect: [
+          { label: "主按钮", ax: { has: "AXButton (保存全部并退出)" } },
+          { label: "次按钮", ax: { has: "/AXButton \\(取消\\)/" } },
+          { label: "无丢弃", ax: { not: "丢弃修改" } },
+        ],
+      },
+    ],
+  };
+  const { records } = await drive(root, scenario, {
+    cu: { state: async () => ({ text: AX_QUIT_MODAL, image: null }) },
+  });
+  assert.deepEqual(records.map((r) => r.ok), [true, true, true]);
+});
+
 test("do: waitForFile：已落盘的事件立即成立，等不到的事件如实判 FAIL（M616）", async () => {
   const root = tmpRoot("wait-for-file");
   useTmpEnv(root);

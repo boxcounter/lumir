@@ -2,7 +2,7 @@
 id: "884-quit-save-all-dialog"
 item: 884
 tier: full
-title: 退出前的保存全部确认弹框：⌘Q 弹居中模态、Escape 取消留场、保存失败留场不退出、保存全部并退出落盘
+title: 退出前的保存全部确认弹框：⌘Q 弹居中模态、取消留场、保存失败留场不退出、保存全部并退出落盘
 open: harness-note.md
 marker: "HNL-ALPHA"
 steps:
@@ -45,44 +45,40 @@ steps:
   - name: 等退出确认弹框（居中模态，不是右下角 toast）
     do: waitFor
     waitFor:
-      has: ["有未保存的修改", "保存全部并退出"]
+      has: ["有未保存的修改", "AXButton (保存全部并退出)", "AXButton (取消)"]
     timeoutMs: 15000
     expect:
       - label: 弹框标题在场
         ax: { has: "有未保存的修改" }
       - label: 主按钮「保存全部并退出」在场
-        ax: { has: "保存全部并退出" }
-      - label: 次按钮「取消」在场
-        ax: { has: "/^取消$/" }
+        ax: { has: "AXButton (保存全部并退出)" }
+      - label: 次按钮「取消」在场（按 AX 节点行匹配，不用行首行尾锚）
+        ax: { has: "/AXButton \\(取消\\)/" }
       - label: 不提供「丢弃修改」
         ax: { not: "丢弃修改" }
-      - label: 应用仍在且 dirty 标记仍在
-        ax: { has: "（未保存）" }
-      - label: 文档正文逐字节不变
-        editor: { unchangedSince: dirtyBase }
       - label: 磁盘文件未被改写
         file: { path: harness-note.md, unchangedSince: docDirty, mtimeUnchangedSince: docDirty }
       - shot: 02-CmdQ弹出退出确认
 
-  - name: 按 Escape 取消退出确认（等同「取消」）
-    do: key
-    key: escape
+  - name: 点「取消」关闭退出确认（与 Escape 等价的取消路径；Escape 由场景 239 覆盖）
+    do: click
+    target: { role: AXButton, name: "^取消$" }
 
   - name: 等弹框关闭（只关弹框：不退出、不保存、不丢弃）
     do: waitFor
     waitFor:
-      not: ["保存全部并退出"]
+      not: ["AXButton (保存全部并退出)"]
     timeoutMs: 15000
     expect:
       - label: 弹框已关闭
-        ax: { not: "保存全部并退出" }
+        ax: { not: "AXButton (保存全部并退出)" }
       - label: 应用仍在且 dirty 标记仍在
         ax: { has: "（未保存）" }
       - label: 文档正文逐字节不变
         editor: { unchangedSince: dirtyBase }
       - label: 磁盘文件未被改写
         file: { path: harness-note.md, unchangedSince: docDirty, mtimeUnchangedSince: docDirty }
-      - shot: 03-Escape取消后仍在
+      - shot: 03-取消后仍在
 
   - name: 收紧标签会话目录（造保存全部的真实失败点：文档已落盘、会话 flush 失败）
     do: envChmod
@@ -96,14 +92,14 @@ steps:
     do: keys
     keys: ["cmd+q"]
 
-  - name: 等弹框
+  - name: 等弹框（按钮节点在场才点，避免把瞬时的静态文本树当可操作态）
     do: waitFor
     waitFor:
-      has: ["保存全部并退出"]
+      has: ["AXButton (保存全部并退出)", "AXButton (取消)"]
     timeoutMs: 15000
     expect:
       - label: 弹框在场
-        ax: { has: "保存全部并退出" }
+        ax: { has: "AXButton (保存全部并退出)" }
 
   - name: 点「保存全部并退出」——保存屏障在会话 flush 处真实失败
     do: click
@@ -118,7 +114,7 @@ steps:
       - label: 错误在弹框内可见（不是 toast，也不是静默）
         ax: { has: "未能保存全部更改，退出已取消" }
       - label: 弹框仍在（失败不关闭、不退出）
-        ax: { has: "保存全部并退出" }
+        ax: { has: "AXButton (保存全部并退出)" }
       - label: 本次代次是 running → failed（没有 ok）
         node: { role: AXStaticText, name: "^save-all-log s0:g0:idle s1:g1:running s2:g1:failed$", present: true }
       - label: 本次代次 MUST NOT 出现 ok
@@ -168,12 +164,22 @@ change `add-quit-save-all-dialog-nov27`：dirty 时 ⌘Q 被后端守卫拦下�
 | 段 | 用户路径 | 期望 | 本条判据 |
 |---|---|---|---|
 | ① | dirty 文档按 `⌘Q` | 应用不退出，弹居中确认，两条动作，无「丢弃修改」 | 弹框标题 / 主按钮 / 次按钮都在 AX 里；正文与磁盘逐字节不变 |
-| ② | 按 `Escape` | 只关弹框：不退出、不保存、不丢弃 | 弹框消失、dirty 仍在、正文与磁盘逐字节不变 |
+| ② | 点「取消」（与 Escape 同义的取消路径） | 只关弹框：不退出、不保存、不丢弃 | 弹框消失、dirty 仍在、正文与磁盘逐字节不变；Escape 路径由 239 覆盖 |
 | ③ | 保存屏障真实失败（会话 flush）后点主按钮 | 弹框留场、错误可见、不退出、不自动重试 | `s2:g1:failed` 的完整日志 + 无 `g1:ok` + 文档已落盘（失败点被钉在 flush） |
 | ④ | 恢复权限后手动再点主按钮 | 第二次代次成功，随后经受控命令退出；重启后内容仍在 | `s4:g2:ok` 的完整日志（本轮在重启前无法稳定读到，见下文边界）+ 重启后磁盘判据 |
 
 ## 断言口径与已知边界
 
+- **弹框打开期间 AX 只暴露弹框本身**：`#app` 被置 `inert`（模态合同），编辑器 `AXTextArea` 与
+  modeline / 标签上的 dirty 标记都会从 AX 树消失——这不是「文档变成了空」，也不是产品丢内容。
+  因此模态打开期间**只断言磁盘**（`unchangedSince` / `mtimeUnchangedSince`）；编辑器的
+  `unchangedSince` 与 dirty 标记留到弹框关闭后的步骤再读（那时 AX 恢复，读不到才判 FAIL）。
+- **按钮要用 AX 节点行匹配**：KimiCU 的 AX 文本一行形如 `AXButton (取消) @…`，`/^取消$/` 这种
+  行首行尾锚永远匹配不到（失败现场 `ax/02` 明明有按钮）。统一写 `AXButton (取消)` / 正则
+  `/AXButton \(取消\)/`；点击的 `target.name` 仍用节点名 `^取消$`（那是节点字段，不是整行）。
+- **Escape 的修饰键状态不属于产品合同**：`escapeDisposition` 对带修饰键的 Escape 只消费、不关层；
+  真机键盘通道若残留 ⌘ 修饰位，`⌘Escape` 不会关弹框是**正确行为**。884 的取消路径改用「取消」
+  按钮（与 Escape 同义），Escape 本体由 239 的独立步骤覆盖；239 的现场已 PASS。
 - **退出本身的机器判据缺口**：套件目前没有「断言进程消失」的动词（与 239 同一条边界），
   `do: restart` 会先 `stopApp` 再起，因此「受控命令真的让进程退出」与「命令没退出、随后被
   stopApp 收掉」在套件读数里同形。本场景因此把**保存闭环**（同代次日志 / 磁盘）判死，把
