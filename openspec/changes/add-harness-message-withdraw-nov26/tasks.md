@@ -7,7 +7,7 @@
 - [x] 1.3 `Runtime::withdraw_last_turn`：idle / 来源 / 目标项校验；两段式工具确认；派生初检与发布后复核；建 B 并发布；unlink A；失败就地回滚 B；换入 B 并丢弃 A。
 - [x] 1.4 `resume_session` 与 `first_user_text` 的 `withdraw_seed` 回落（没有 `llm_request` 时）。
 - [x] 1.5 `harness_withdraw` 命令与 `lib.rs` 注册；`SessionWithdrawInfo` / `WithdrawnComposer` / `WithdrawOutcome` 的 ts-rs 导出。
-- [x] 1.6 单元测试 16 条（`harness/withdraw_tests.rs`）：前缀 / 面板截断、A 删除 + B 唯一 + seed 不含被撤回文本、切走再恢复、两段式确认零副作用、busy / 待批拒绝、来源闸、派生拒绝、删除失败回滚、尾部通知拒绝、不可读候选 fail closed、恢复占用拒绝、双故障 rollback_incomplete、失败 Skill 恢复、装配读失败、composer 素材、标题 / 用量 / `withdrawable`、重复点击幂等、令牌变化。
+- [x] 1.6 单元测试 18 条（`harness/withdraw_tests.rs`）：前缀 / 面板截断、A 删除 + B 唯一 + seed 不含被撤回文本、切走再恢复、两段式确认零副作用、busy / 待批拒绝、来源闸、派生拒绝、删除失败回滚、尾部通知拒绝、不可读候选 fail closed、恢复占用拒绝、双故障 rollback_incomplete、失败 Skill 恢复（含 >80 字符完整原名与旧记录降级）、装配读失败、composer 素材、标题 / 用量 / `withdrawable`、重复点击幂等、令牌变化。
 - [x] 1.7 K3 返修：撤回目标改为入队下标（`withdraw_target`）；尾部非交互 user 项拒绝；派生扫描 fail closed；恢复占用表 + 栅栏；装配读失败 fail closed；双故障终态；失败 Skill 从 trace 恢复。
 - [x] 1.8 事件隔离：`session_token` 信封 + 前端全事件准入；`insert_notices_into_session` / `notice_delivered` 校验 hub `parent_token`；子代理中断窗口测试。
 - [x] 1.9 令牌水位按 vault 分账（K3 复审 P1-1）：`src/harness-session-tokens.ts` 账本 + 面板接线；A/B/A、B 事件先于快照、退役与空快照语义的单元测试 6 条。

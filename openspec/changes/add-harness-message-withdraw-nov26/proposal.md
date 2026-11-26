@@ -121,8 +121,8 @@ harness 的对话面板没有用户消息的删除 / 编辑 / 重发入口：发
 - **错误码**：`harness_withdraw_not_applicable` / `_tail_notice` / `_nothing` / `_derived_exists` /
   `_resume_in_flight` / `_scan_failed` / `_read_failed` / `_publish_failed` / `_delete_failed` /
   `_rollback_incomplete` / `_failed`（文案 D1039–D1049）。
-- **验收**：新增真机场景 882（撤回三层判据 + A 删除的 glob 判据）；Rust 单测 16 条、子代理 1 条、
-  事件信封 1 条、前端单测 8 条、真面板 chromium 4 条。
+- **验收**：新增真机场景 882（撤回三层判据 + A 删除的 glob 判据）；Rust 单测 18 条、子代理 1 条、
+  事件信封 1 条、前端单测 9 条 + 令牌账本 6 条、真面板 chromium 4 条。
 
 ## 节点 2（归档前填写）
 
