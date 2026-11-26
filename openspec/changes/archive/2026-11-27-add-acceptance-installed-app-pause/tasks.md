@@ -48,9 +48,11 @@
 ## 6. 待真机 / 待终审（本轮不执行，未勾即未完）
 
 - [ ] 6.1 真实 `/Applications/Lumir.app` 的整链路真机验收：发现 → 身份复核 → 菜单 → 完成信号 →
-      ⌘Q → 原 pid 消失；以及「保存屏障失败时不 ⌘Q」「退出受阻时现场保留」两个负向现场。理由：
-      本轮 mission 明确不执行真机，归下批真机窗口。
-- [ ] 6.2 场景 880 的真机 PASS（需要先构建含本 change 的 app）。理由同上。
-- [ ] 6.3 独立终审（非作者 reviewer clean / merge）与归档放行；归档时在 `docs/backlog.md`
-      归档跟踪队列落条目（当前 80/80 行已触顶，须同批腾出一行）。理由：本 mission 明确
-      「不要归档，等独立终审」。
+      ⌘Q → 原 pid 消失；以及「保存屏障失败时不 ⌘Q」「退出受阻时现场保留」两个负向现场。
+      **放弃 / 转后续（2026-11-27 归档处置）**：本批真机只覆盖 880 / 880b 的 Save All 链路；
+      暂停通道保持「未触碰真实安装版」的边界，整链路留待后续真机窗口，不在本 change 归档前补跑。
+- [x] 6.2 场景 880 / 880b 的真机 PASS：880 **PASS 17 断言**、880b **PASS 9 断言**，证据
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-27-ux-goal-r4/`（见 summary.md 两行）。
+- [x] 6.3 独立终审（非作者 reviewer clean / merge）与归档放行：K3 对 `08cec340` 判 clean / merge
+      （`.local/reviews/add-acceptance-installed-app-pause/k3-verdict.md`）；归档队列条目已落
+      `docs/backlog.md`（同批删除一条已归档历史腾行，保持 80 行）。
