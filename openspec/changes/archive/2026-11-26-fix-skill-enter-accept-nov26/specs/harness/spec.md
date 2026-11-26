@@ -2,8 +2,8 @@
 
 > 起草注记（非规格正文）：本 change 把 Skill 候选的接受键从「全名或显式导航才武装」改为
 > 「有效高亮即接受」（Alex 2026-11-26「认可这个方案」）。转移语义的统一居所是
-> [docs/specs/selector-contract.md](../../../../../docs/specs/selector-contract.md) C4 与
-> [docs/specs/skill-menu.md](../../../../../docs/specs/skill-menu.md) S1/S5；本条只作 harness 行为增量。
+> [docs/specs/selector-contract.md](../../../../../../docs/specs/selector-contract.md) C4 与
+> [docs/specs/skill-menu.md](../../../../../../docs/specs/skill-menu.md) S1/S5；本条只作 harness 行为增量。
 > **通道**：本次必须废止 / 改名 5 个旧场景（「全名键入即武装」「视觉高亮不等于接受承诺」「异步只补高亮
 > 不武装」「被动候选不抢 Enter」等），openspec 1.12 的 MODIFIED 不允许场景改名，故按仓内先例
 > （`fix-skill-menu-ux-nov25`）走 REMOVED + ADDED，由新名「Skill 的混合调用、入口策略与候选接受」整条
