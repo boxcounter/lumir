@@ -7882,14 +7882,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       // （判据「是 JSON 才取参数」），而 M528 起 core 的成品摘要不是 JSON ⇒ 失败行的参数格
       // 整格空掉、命令本体消失（修前：arguments ≤80 字的调用严格版能解析出命令、看得见；
       // >80 字的调用原文截断后照样看不见——M528 与这处一并收口）。
-      // Web 调用若 started 摘要缺席（旧后端 / 事件缺口），用同一 done 事件的审计输入补位。
-      const directArgs = toolArgsText(name, args);
-      const argsText =
-        directArgs !== ""
-          ? directArgs
-          : WEB_TOOL_NAMES.has(name)
-            ? webInputText(undefined, audit)
-            : "";
+      // Web 调用的 done 行优先用同一 done 事件的审计输入（完整 query / URL）——它与恢复行
+      // 持久化的 `web_input` 是同一份 arguments，live / restored 因此同形；old 事件缺审计时
+      // 才回落到 started 参数摘要。非 Web 工具行为不变。
+      const auditArgs = WEB_TOOL_NAMES.has(name) ? webInputText(undefined, audit) : "";
+      const argsText = auditArgs !== "" ? auditArgs : toolArgsText(name, args);
       row.replaceChildren(
         createToolIcon(failed ? "fail" : "done"),
         createToolText(name, argsText, failed ? webFailureTail(name, summary) : undefined, toolPathTargetsOf(name, args)),

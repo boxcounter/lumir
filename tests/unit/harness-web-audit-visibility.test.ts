@@ -1353,3 +1353,24 @@ test("乱序 live 失败 done 没有 started 行：用同一 done 的审计输�
   assert.equal(argsCell(mount), "synthetic query");
   assertAuditUnitAfterRow(mount);
 });
+
+test("live done 与恢复行在长 query 上同形：都取完整输入，不靠 80 字 started 摘要", async () => {
+  const longQuery = `synthetic ${"q".repeat(120)}`;
+  const truncated = `${longQuery.slice(0, 80)}…`;
+  const live = await mountDone(
+    "web_search",
+    truncated,
+    searchAudit({ query: longQuery, result_count: 2, result_text_bytes: 1536 }),
+  );
+  const restored = await mountPanel(() =>
+    restoredSnapshot({
+      name: "web_search",
+      summary: truncated,
+      status: "done",
+      text: JSON.stringify({ ...SEARCH_SUCCESS_ENVELOPE, query: longQuery }),
+      web_input: { query: longQuery },
+    }),
+  );
+  assert.equal(argsCell(live), longQuery);
+  assert.equal(argsCell(restored.mount), longQuery);
+});
