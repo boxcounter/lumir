@@ -134,3 +134,25 @@ content pane 显示真实功能与快捷键 tips，去掉当前的新建文件�
   在 `src/bindings/AppConfig.ts`。
 - 文案 deck 当前末位 D1028（`src/copy-data.ts:2985`、`文案-Copy.md:1006`），不是调研时的 D991。
 - 验收覆盖表末位 876；下一个空号为 877（`scripts/acceptance/COVERAGE.md` 末行）。
+
+## 节点 2：归档记录
+
+**归档前（2026-11-27）**：
+
+1. **方案已批准**：节点 1 于 2026-11-25 通过（Alex 原话「采纳推荐的只读」）；实现期无静默扩 scope。
+2. **独立 reviewer clean / merge**：K3 verdict `clean/merge`，绑定 tip `c04a3abf`，P1 / P2 / P3 = 0
+   （`/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/first-run-onboarding-nov25/k3-verdict.md`）。
+   归档分支 tip `f1fe9c99` 在审阅 tip 之后只并入 master 侧合并（`59052847` +
+   `fix-no-tab-empty-state-nov27`）；首启文件集未再改动，`main.ts` 的 `renderAllTabStrips` 只把既有
+   `firstRunTipsVisible` 并入 `structuralReadOnly`，行为保持、2144 单测全绿。
+3. **tasks 完成**：全部勾选，真实读数见 tasks 7.5 / 9.3 / 9.4 / 9.5。
+4. **门禁与真机证据**：完整 `bash scripts/gate.sh visual` 在 `c04a3abf` 上
+   `GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0（日志
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/first-run-onboarding-nov25/gate-logs/gate-visual-lowload-20261127-c04a3abf.log`）；
+   真机 877 / 263 / 47c / 220 PASS，39 / 36 / 43 / 55 断言
+   （`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-27-ux-goal/`）。
+5. **规格对账**：`node scripts/openspec-archive-check.mjs` PASS（27 份 delta / 23 条 MODIFIED /
+   399 段，0 静默丢段；队列条目唯一）；`validate --all --strict` 45 passed / 0 failed；归档队列
+   有且仅有一条本 change 条目。
+
+**归档后**：ARCHIVE_PLACEHOLDER
