@@ -536,10 +536,16 @@ token 一条绑定」，而其中 `↑↓` / `⌃N` / `⌃P` 已被 `editor.curs
 `⌘1`…`⌘9` → `tab.goto-1` … `tab.goto-9`。
 `⌘}` / `⌘{` 物理上是 `⇧⌘]` / `⇧⌘[`（US 布局上 `}` / `{` 必须按 Shift；方向映射按
 macOS 惯例：`}` 侧 = 下一个、`{` 侧 = 上一个），键位表内的 token 形态 SHALL 是
-`Cmd-}` / `Cmd-{`（`{` / `}` ∈ SHIFT_IMPLIED_KEYS，Shift 已隐含在字符里），MUST NOT
-写成 `Cmd-Shift-[` / `Cmd-Shift-]`（归一化后永不命中）。`⌘⇧,` / `⌘⇧.`（M627）同理：
-物理键的 Shift 形态是 `<` / `>`，token SHALL 是 `Cmd-<` / `Cmd->`，MUST NOT 写成
-`Cmd-Shift-,` / `Cmd-Shift-.`；方向映射取「`,` 在 `.` 左侧」的直觉（`⌘⇧,` = 上一个、
+`Cmd-}` / `Cmd-{`（`{` / `}` ∈ SHIFT_IMPLIED_KEYS，Shift 已隐含在字符里）。
+**同一物理键的两种事件形态 SHALL 归一到同一 token**（change fix-tab-cycle-shift-symbols-nov27）：
+WKWebView 实测给出 `key="]"` / `key="["` + `shiftKey`（合成注入通道；NSEvent `characters` 是未 Shift 的字符；
+WebKit `keyForKeyEvent` 在无 Control 时取 `[event characters]`），归一层 SHALL 按 US 布局的
+「未 Shift 字符 → Shift 后字符」表（`SHIFTED_SYMBOLS`，与键位面板字形同一来源）把它折成
+`Cmd-}` / `Cmd-{`；表内 MUST 仍只写一条绑定，MUST NOT 为同一物理键再写
+`Cmd-Shift-]` / `Cmd-Shift-[` 的第二条绑定（`Keymap` 的重复绑定检查会拒绝）。
+`⌘⇧,` / `⌘⇧.`（M627）同理：物理键的 Shift 形态是 `<` / `>`，token SHALL 是 `Cmd-<` / `Cmd->`，
+未 Shift 字符形态（`key=","` / `key="."` + `shiftKey`）SHALL 归一到同一 token；方向映射取
+「`,` 在 `.` 左侧」的直觉（`⌘⇧,` = 上一个、
 `⌘⇧.` = 下一个，tower 拟定的假设，待 Alex 验收确认）。同一命令多条绑定（`⌃⇥` / `⌘}` /
 `⌘⇧.` 同指 `tab.next`，`⌃⇧⇥` / `⌘{` / `⌘⇧,` 同指 `tab.prev`）SHALL 走同一个命令实现，
 MUST NOT 因触发键不同而行为分叉。全部 SHALL 进 `KEY_BINDINGS` 与
@@ -566,6 +572,13 @@ MUST NOT 因触发键不同而行为分叉。全部 SHALL 进 `KEY_BINDINGS` 与
 - **WHEN** 打开三个标签且前台是第二个，按 `⌘}`（物理 `⇧⌘]`）一次，再按 `⌘{`（物理 `⇧⌘[`）两次
 - **THEN** 第一次后前台切到第三个标签；随后两次依次切到第二个、再回卷到第一个
   （与 `⌃⇥` / `⌃⇧⇥` 走同一条 `tab.next` / `tab.prev` 实现，环绕口径逐字相同）
+
+#### Scenario: 同一物理键的两种事件形态命中同一命令
+
+- **WHEN** 打开三个标签且前台是第一个，依次派发两种形态的 `⌘⇧]` 键按下事件：`key="}"` + `shiftKey`
+  （Shift 后形态），以及 `key="]"` + `shiftKey`（WKWebView 实测形态）
+- **THEN** 两次都 MUST 归一到 `Cmd-}` 并触发 `tab.next`（前台依次切到第二个、第三个标签）；
+  两次之间不得出现「一次命中、一次静默」的差异，也不得因为第二种形态改变 `[keys]` 的重绑口径
 
 #### Scenario: ⌘⇧, / ⌘⇧. 与既有循环键同命令同语义（M627）
 

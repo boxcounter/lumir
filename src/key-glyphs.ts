@@ -14,7 +14,7 @@
 //
 // 归一化复用 `normalizeKey`：字形与分发层认的是同一个 token，两处口径不许漂。
 
-import { SHIFT_IMPLIED_KEYS, normalizeKey } from "./keys";
+import { SHIFT_IMPLIED_KEYS, SHIFTED_SYMBOLS, normalizeKey } from "./keys";
 
 /** 修饰键字形，顺序即 Apple HIG 的书写顺序。 */
 const MODIFIER_GLYPHS: ReadonlyArray<readonly [string, string]> = [
@@ -26,30 +26,12 @@ const MODIFIER_GLYPHS: ReadonlyArray<readonly [string, string]> = [
 
 const MODIFIER_NAMES = new Set(MODIFIER_GLYPHS.map(([name]) => name));
 
-/** US 布局上 Shift 形态 → 物理键：反解后补 `⇧`，不把字符本身写给人看。 */
-const SHIFTED_TO_PHYSICAL: Readonly<Record<string, string>> = {
-  "!": "1",
-  "@": "2",
-  "#": "3",
-  $: "4",
-  "%": "5",
-  "^": "6",
-  "&": "7",
-  "*": "8",
-  "(": "9",
-  ")": "0",
-  _: "-",
-  "+": "=",
-  "{": "[",
-  "}": "]",
-  "|": "\\",
-  ":": ";",
-  '"': "'",
-  "<": ",",
-  ">": ".",
-  "?": "/",
-  "~": "`",
-};
+/** US 布局上 Shift 形态 → 物理键：反解后补 `⇧`，不把字符本身写给人看。
+ *  表本身在 `src/keys.ts` 的 `SHIFTED_SYMBOLS`（单一来源）——这里只做反向索引，
+ *  MUST NOT 另抄一份映射（REVIEW.md「同一语义两处真源」条）。 */
+const SHIFTED_TO_PHYSICAL: Readonly<Record<string, string>> = Object.fromEntries(
+  [...SHIFTED_SYMBOLS].map(([physical, shifted]) => [shifted, physical]),
+);
 
 const NAMED_KEY_GLYPHS: Readonly<Record<string, string>> = {
   ArrowUp: "↑",

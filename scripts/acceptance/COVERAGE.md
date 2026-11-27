@@ -78,7 +78,7 @@
 | 42 | `42-non-md-edit-guardrails` | 非 md 可编辑的护栏矩阵——二进制仍「暂不支持预览」、非 UTF-8 打开即拒、文本类不受牵连 | core |
 | 43 | `43-list-tab-indent` | 列表行缩进命令的真机链路——经 [keys] 绑到通道可达的 ⌘J / ⌘⇧J：缩进的源码写回（行模型：有序列表只动空白、不改编号）、到顶 / 非列表 / 非 md 会话无操作、一次撤销还原 | full |
 | 44 | `44-theme-live-switch` | 主题运行期切换：⌘⇧T 与 modeline 钮三档循环、逐档写回 config.json、重启后首帧持久 | full |
-| 45 | `45-tab-cycle-keys` | 标签循环键——⌃⇥ / ⌃⇧⇥ 的真机循环语义（末端 / 首端回卷、单标签无操作）＋ ⌘} / ⌘{ 的通道限制登记 | full |
+| 45 | `45-tab-cycle-keys` | 标签循环键——⌃⇥ / ⌃⇧⇥ 与 ⌘⇧] / ⌘⇧[ 的真机循环语义（末端 / 首端回卷、单标签无操作） | full |
 | 46 | `46-dotfile-jsonc-highlight` | dotfile 与 JSONC 高亮——.gitignore / .gitattributes / x.jsonc 逐字节回读与语言登记，.secret 对照组仍纯文本；三类可编辑（编辑 → 回读 → ⌘S 落盘） | full |
 | 47 | `47a-menu-basics`<br>`47b-rename-validation`<br>`47c-create-and-delete`<br>`47d-dirty-tab-linkage` | 文件树右键菜单：文件行 / 目录行项集分流、行空白区命中、Esc 收起、复制完整路径（绝对路径）、在 Finder 中显示（只读弱断言）<br>树内联重命名与校验：预填 + 获焦、改名落盘与 watcher 收敛、撞名拒绝、忽略集名拒绝、Esc 退出编辑态<br>文件删除与新建：移到废纸篓（文件 / 目录两档确认文案）、目录下新建文件（自动打开、焦点落正文并能直接键入）与子目录<br>打开中 dirty 文件的改名联动与删除处置：标签就地换名、未保存内容不丢、两种误报都不出现 | full<br>full<br>full<br>full |
 | 48 | `48-vault-registry-migration` | 注册表目录更名迁移——预置旧目录 workspaces/ 与注册项，启动后整个目录被原子搬进 vault-registry/、身份不丢、vault 照常恢复打开、迁移记一条诊断事件 | core |

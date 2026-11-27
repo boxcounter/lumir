@@ -1217,14 +1217,16 @@ PASS——合成序列里 state 语法树在组合期未跟上 list），冻结�
      （真 CM + 真键位层，断言按键 → 缩进写回）。真机侧（场景 43）只验**命令链路**——经 `[keys]` 把
      `editor.list-indent` / `editor.list-outdent` 绑到通道可达的 `Cmd-j` / `Cmd-Shift-j` 再验源码写回；
      **TAB 默认绑定那条「按键 → 命令」的链路在真机上未验**（chromium 覆盖）。
-  2. **Shift 隐含符号的 token 形态**（M242 实测，finding `20260927-worker-tab-cycle-keys-bug-shift-token.md`）：
-     注入 `cmd+shift+rightbracket` 落地的是 `key="]" + shiftKey`（Shift 标志在、字符没被替换），应用
-     归一成 `Cmd-Shift-]`，而硬件给的是 `key="}"` → `Cmd-}`；字面量形态 `cmd+}` 被 KimiCU 的键名表
-     直接拒（`unknown key`；键名表用 `rightbracket` / `leftbracket`，不是 xdotool 的 `bracketright`）。
-     ⇒ token 含 **Shift 隐含符号**（`_+{}|:"<>?~!@#$%^&*()`，即 `src/keys.ts` 的 `SHIFT_IMPLIED_KEYS`）
-     的默认绑定在真机通道上验不到（M195 的 `Cmd-+`、M242 的 `Cmd-}` / `Cmd-{` 都在此列）。**判据落
-     chromium**：`tests/visual/scenes/m242-tab-cycle-key-tokens.spec.ts`（Playwright 按 US 布局自己算
-     Shift 后的字符 ⇒ `key="}"` 的事件命中 `Cmd-}`）；token 的表内形态另有 `tests/unit/keys.test.ts` 专测。
+  2. **Shift 隐含符号的 token 形态**（M242 实测；2026-11-27 change fix-tab-cycle-shift-symbols-nov27
+     收口，不再是「不可达」）：注入 `cmd+shift+rightbracket` 落地的是 `key="]" + shiftKey`（Shift 标志在、
+     字符没被替换），旧口径归一成 `Cmd-Shift-]`、与表内 `Cmd-}` 不命中；字面量形态 `cmd+}` 仍被 KimiCU
+     的键名表直接拒（`unknown key`；键名表用 `rightbracket` / `leftbracket`，不是 xdotool 的 `bracketright`）。
+     **现状**：`normalizeKey` 把「Shift + 未 Shift 字符」与 Shift 后的字符归一到同一 token
+     （`src/keys.ts` 的 `SHIFTED_SYMBOLS`），注入形态因此命中表内的 `Cmd-}` / `Cmd-{` / `Cmd-<` / `Cmd->` /
+     `Cmd-+` 等绑定——场景 45 已用 `cmd+shift+rightbracket` / `cmd+shift+leftbracket` 验按键链路。
+     形态证据（独立 WKWebView 探针 + WebKit `keyForKeyEvent` 源码）见场景 45 的专节；探针工程与原始
+     日志在 `.local/probes/tab-navigation-keys-nov27/`（git 外）。注入形态仍**不等于**物理键盘形态
+     （TSM 翻译层可能不同），但两种形态现在同 token，行为判据不受影响；物理键手感归 Alex dogfood。
 
   **两类共通的纪律**：键盘类场景的**负向断言**必须配一条同通道可达的**正观测**（同一场景里先有一次
   成功的注入证明通道通着，再判「没变」）；红了先按丢键复跑一次再判产品缺陷（丢键是间歇的，REVIEW.md「键盘注入丢键」条）。

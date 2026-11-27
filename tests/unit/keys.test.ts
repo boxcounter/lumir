@@ -61,7 +61,38 @@ test("normalizeKey：修饰别名归一、定序固定、键名单字符大写",
 test("normalizeKey：Shift 隐含在需要它的符号里（表与事件同一口径）", () => {
   assert.equal(normalizeKey("Ctrl-Shift-_"), "Ctrl-_");
   assert.equal(normalizeKey("Ctrl-_"), "Ctrl-_");
-  assert.equal(normalizeKey("Ctrl-Shift-/"), "Ctrl-Shift-/"); // / 不在隐含集合里，Shift 保留
+  // US 布局上 ⇧/ 打出的就是 `?`：Shift 与未 Shift 的字符是同一个物理键，归一成 Shift 后的符号。
+  assert.equal(normalizeKey("Ctrl-Shift-/"), "Ctrl-?");
+  assert.equal(normalizeKey("Ctrl-?"), "Ctrl-?");
+});
+
+// change fix-tab-cycle-shift-symbols-nov27：WKWebView 对 ⌘⇧] 给出的 `KeyboardEvent.key` 是
+// **未按 Shift 的字符** `]` + shiftKey（实测：独立 WKWebView 探针，经自建 CGEvent 与 System
+// Events 两条通道各一次；WebKit 源码 `keyForKeyEvent` 在无 Control 时取 `[event characters]`）。
+// 旧口径把「Shift + 未 Shift 字符」当成另一个 token（`Cmd-Shift-]`），于是表内的 `Cmd-}` 在
+// 该形态下永不命中。本组断言把「同一物理键 → 同一 token」钉死：两种事件形态与表内写法三者相等。
+test("normalizeKey：Shift + 未 Shift 符号归一成 Shift 后的符号（WKWebView 事件与 [keys] 同一口径）", () => {
+  const pairs: ReadonlyArray<readonly [string, string]> = [
+    ["[", "{"], ["]", "}"], [",", "<"], [".", ">"], ["=", "+"], ["-", "_"], [";", ":"],
+    ["'", '"'], ["\\", "|"], ["/", "?"], ["`", "~"], ["1", "!"], ["0", ")"],
+  ];
+  for (const [plain, shifted] of pairs) {
+    assert.equal(
+      normalizeKey(`Ctrl-Shift-${plain}`),
+      normalizeKey(`Ctrl-${shifted}`),
+      `⇧${plain} 与 ${shifted} 是同一个物理键（US 布局），token MUST 相等`,
+    );
+    assert.equal(
+      normalizeKey(`Cmd-Shift-${plain}`),
+      normalizeKey(`Cmd-${shifted}`),
+      `⌘⇧${plain} 与 ⌘${shifted} 是同一个物理键（US 布局），token MUST 相等`,
+    );
+  }
+  // 表内写法（Shift 已隐含的字符）不因归一化改变
+  assert.equal(normalizeKey("Cmd-}"), "Cmd-}");
+  assert.equal(normalizeKey("Cmd-Shift-}"), "Cmd-}");
+  // 字母不受影响：⌘⇧S 与 ⌘S 是两个不同键位
+  assert.notEqual(normalizeKey("Cmd-Shift-S"), normalizeKey("Cmd-S"));
 });
 
 test("normalizeKey：缺键名直接抛错（不静默产出错 token）", () => {
@@ -176,26 +207,30 @@ test("KEY_BINDINGS：⌘1–9 与 TAB_GOTO_IDS 按序号逐一对应，标签族
   }
 });
 
-// M242（change tab-cycle-keys）：⌘} / ⌘{ 的 token 形态是本 change 最大的静默失配风险——写
-// `Cmd-Shift-]` / `Cmd-Shift-[` 不报错、只是永远不命中。仿 M195 的减号 / 加号专测写反向断言：
-// 真机事件 token MUST 等于表内写法，且与错误形态 MUST 不等（改了 keyToken 或写错表都会立刻红）。
-test("⌘} / ⌘{ 的 token 形态：真机事件与表内写法同 token，写 Cmd-Shift-[ 永不命中", () => {
-  // 真机 ⌘⇧] / ⌘⇧[：US 布局上必须按 Shift，WKWebView 给的是 Shift 后的字符 + shiftKey。
-  const nextEvent = { key: "}", code: "BracketRight", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true };
-  const prevEvent = { key: "{", code: "BracketLeft", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true };
-  assert.equal(keyToken(nextEvent), "Cmd-}", "⌘} 的事件 token 是 `Cmd-}`（Shift 隐含在字符里）");
-  assert.equal(keyToken(prevEvent), "Cmd-{", "⌘{ 的事件 token 是 `Cmd-{`");
-  // 反向断言（REVIEW.md 「断言等价于子串」条）：错误形态与真机 token **必须不等**，否则这条判据没有区分度。
-  assert.notEqual(keyToken(nextEvent), "Cmd-Shift-]", "写 `Cmd-Shift-]` 的绑定永远不命中");
-  assert.notEqual(keyToken(prevEvent), "Cmd-Shift-[", "写 `Cmd-Shift-[` 的绑定永远不命中");
-  // 合成事件（Playwright 的 Meta+Shift+BracketRight 给 key=\"]\" + shiftKey）归一成另一形态，
-  // 那张形态**不在表内**——与 M195 的 ⌘⇧= 同款机制差异，写进注释而不是放宽断言掩盖。
-  assert.equal(keyToken({ ...nextEvent, key: "]" }), "Cmd-Shift-]");
-  assert.equal(keyToken({ ...prevEvent, key: "[" }), "Cmd-Shift-[");
-  assert.equal(KEY_BINDINGS.find((item) => normalizeKey(item.key) === "Cmd-Shift-]"), undefined);
-  assert.equal(KEY_BINDINGS.find((item) => normalizeKey(item.key) === "Cmd-Shift-["), undefined);
-  // 两条绑定与 ⌃⇥ / ⌃⇧⇥ 指向同一命令（零新命令 id）：命令层实现是同一个，行为不可能分叉。
-  assert.equal(KEY_BINDINGS.find((item) => normalizeKey(item.key) === "Cmd-}")?.command, "tab.next");
+// M242（change tab-cycle-keys）：⌘} / ⌘{ 的 token 形态。
+// change fix-tab-cycle-shift-symbols-nov27 推翻旧口径（旧测试断言「`Cmd-Shift-]` 永不命中」，
+// 理由是「真机给 key="}"」——该前提没有硬件证据，而 WKWebView 的实际事件（合成注入通道）给的是
+// key="]"）。
+// 现行合同：两种形态是**同一个物理键**，MUST 归一到 `Cmd-}` / `Cmd-{`；表内仍然只写 Shift 后的
+// 字符（`Cmd-}`），不双写第二条绑定。
+test("⌘} / ⌘{ 的 token 形态：Shift 后的字符与「未 Shift 字符 + shiftKey」同 token", () => {
+  // 形态 ①：部分浏览器/合成器按 US 布局先算出 Shift 后的字符。
+  const shifted = { key: "}", code: "BracketRight", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true };
+  // 形态 ②：WKWebView 的实测形态（`keyForKeyEvent` 取 `[event characters]`，Command+Shift 下是
+  // 未 Shift 的字符 + shiftKey）——签名里的 `]` / `[` 就是 WKWebView 实测事件值（合成注入通道；
+  // 物理键盘形态未验）。
+  const webkit = { key: "]", code: "BracketRight", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true };
+  const webkitPrev = { key: "[", code: "BracketLeft", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true };
+  assert.equal(keyToken(shifted), "Cmd-}", "Shift 后的形态是 `Cmd-}`（Shift 隐含在字符里）");
+  assert.equal(keyToken(webkit), "Cmd-}", "WKWebView 的未 Shift 字符形态也 MUST 归一到 `Cmd-}`");
+  assert.equal(keyToken(webkitPrev), "Cmd-{", "WKWebView 的未 Shift 字符形态也 MUST 归一到 `Cmd-{`");
+  // 配置文本两侧同一口径：用户写哪种形态都绑到同一个物理键。
+  assert.equal(normalizeKey("Cmd-Shift-]"), "Cmd-}");
+  assert.equal(normalizeKey("Cmd-Shift-["), "Cmd-{");
+  // 表内只有一条绑定（不双写）：按归一后的 token 找得到且只有它。
+  const matching = KEY_BINDINGS.filter((item) => normalizeKey(item.key) === "Cmd-}");
+  assert.equal(matching.length, 1, "「同一物理键两条绑定」会被 Keymap 构造期拒绝，表内 MUST 只留一条");
+  assert.equal(matching[0]?.command, "tab.next");
   assert.equal(KEY_BINDINGS.find((item) => normalizeKey(item.key) === "Cmd-{")?.command, "tab.prev");
   for (const key of ["Cmd-}", "Cmd-{"]) {
     const binding = KEY_BINDINGS.find((item) => normalizeKey(item.key) === key);
@@ -207,20 +242,22 @@ test("⌘} / ⌘{ 的 token 形态：真机事件与表内写法同 token，写 
   }
 });
 
-// M627：⌘⇧, / ⌘⇧. 切标签（Alex 2026-10-23「三键组合无法切换 TAB」）。与 M242 同一条
-// 静默失配风险：⌘⇧, 在 US 布局上打出的是 `<`，事件 token 是 `Cmd-<`；把表写成
-// `Cmd-Shift-,` 不报错、只是永远不命中。方向映射是 tower 拟定的假设（, 在 . 左侧）。
-test("⌘⇧, / ⌘⇧. 的 token 形态：真机事件是 Cmd-< / Cmd->，写 Cmd-Shift-, 永不命中", () => {
-  // 真机 ⌘⇧, / ⌘⇧.：US 布局上必须按 Shift，WKWebView 给的是 Shift 后的字符 + shiftKey。
-  const prevEvent = { key: "<", code: "Comma", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true };
-  const nextEvent = { key: ">", code: "Period", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true };
-  assert.equal(keyToken(prevEvent), "Cmd-<", "⌘⇧, 的事件 token 是 `Cmd-<`（Shift 隐含在字符里）");
-  assert.equal(keyToken(nextEvent), "Cmd->", "⌘⇧. 的事件 token 是 `Cmd->`");
-  // 反向断言（REVIEW.md 「断言等价于子串」条）：错误形态与真机 token 必须不等。
-  assert.notEqual(keyToken(prevEvent), "Cmd-Shift-,", "写 `Cmd-Shift-,` 的绑定永远不命中");
-  assert.notEqual(keyToken(nextEvent), "Cmd-Shift-.", "写 `Cmd-Shift-.` 的绑定永远不命中");
-  assert.equal(KEY_BINDINGS.find((item) => normalizeKey(item.key) === "Cmd-Shift-,"), undefined);
-  assert.equal(KEY_BINDINGS.find((item) => normalizeKey(item.key) === "Cmd-Shift-."), undefined);
+// M627：⌘⇧, / ⌘⇧. 切标签（Alex 2026-10-23「三键组合无法切换 TAB」）。这两个键与 M242 同族：
+// 表内只写 Shift 后的字符（`Cmd-<` / `Cmd->`），未 Shift 字符 + shiftKey 的形态（WKWebView 实测值
+// `,` / `.`）由 normalizeKey 归一成同一 token——change fix-tab-cycle-shift-symbols-nov27。
+// 方向映射是 tower 拟定的假设（, 在 . 左侧）。
+test("⌘⇧, / ⌘⇧. 的 token 形态：两种事件形态同 token（Cmd-< / Cmd->）", () => {
+  const prevShifted = { key: "<", code: "Comma", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true };
+  const nextShifted = { key: ">", code: "Period", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true };
+  // WKWebView 实测形态：`characters` 是未 Shift 的字符 `,` / `.`
+  const prevWebkit = { ...prevShifted, key: "," };
+  const nextWebkit = { ...nextShifted, key: "." };
+  assert.equal(keyToken(prevShifted), "Cmd-<", "⌘⇧, 的 Shift 后形态是 `Cmd-<`");
+  assert.equal(keyToken(nextShifted), "Cmd->", "⌘⇧. 的 Shift 后形态是 `Cmd->`");
+  assert.equal(keyToken(prevWebkit), "Cmd-<", "WKWebView 的未 Shift 字符形态也 MUST 归一到 `Cmd-<`");
+  assert.equal(keyToken(nextWebkit), "Cmd->", "WKWebView 的未 Shift 字符形态也 MUST 归一到 `Cmd->`");
+  assert.equal(normalizeKey("Cmd-Shift-,"), "Cmd-<");
+  assert.equal(normalizeKey("Cmd-Shift-."), "Cmd->");
   // 两条绑定与 ⌃⇥ / ⌃⇧⇥ / ⌘} / ⌘{ 指向同一命令（零新命令 id）：命令层实现是同一个。
   const prev = KEY_BINDINGS.find((item) => normalizeKey(item.key) === "Cmd-<");
   const next = KEY_BINDINGS.find((item) => normalizeKey(item.key) === "Cmd->");
@@ -639,27 +676,29 @@ test("减号键的 token 形态：表内必须写 Cmd--，写 Cmd-Minus 永远�
   assert.equal(keyToken({ ...event, altKey: true }), "Cmd-Alt-Minus");
 });
 
-test("放大键的两种字符形态：⌘= 与 ⌘⇧=（真机的 `Cmd-+`）都进同一命令", () => {
+test("放大键的两种字符形态：⌘= 与 ⌘⇧= 的两种事件形态都进同一命令", () => {
   const equals = { key: "=", code: "Equal", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false };
   const plus = { ...equals, key: "+", shiftKey: true };
   assert.equal(keyToken(equals), "Cmd-=");
   assert.equal(
     keyToken(plus),
     "Cmd-+",
-    "真机 ⌘⇧= 给的是 key=\"+\"（Shift 隐含在字符里），归一到 `Cmd-+`",
+    "Shift 后字符形态给的是 key=\"+\"（Shift 隐含在字符里），归一到 `Cmd-+`",
   );
   for (const token of [keyToken(equals), keyToken(plus)]) {
     const binding = KEY_BINDINGS.find((item) => normalizeKey(item.key) === token);
     assert.equal(binding?.command, "view.text-scale-up", `${token} 应指向放大命令`);
   }
   assert.equal(keyToken({ key: "0", code: "Digit0", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false }), "Cmd-0");
-  // 合成事件（Playwright 的 Meta+Shift+Equal 可能给 key="=" + shiftKey）归一成另一个 token，
-  // 那张形态**不命中**——这条差异写进 typography 场景的注释，不靠放宽断言掩盖。
-  assert.equal(keyToken({ ...equals, shiftKey: true }), "Cmd-Shift-=");
+  // 来自 Chromium / Playwright 与显式 unicode 串的未 Shift 字符形态（key="=" + shiftKey）与上一种
+  // 同键：US 布局上 ⇧= 打出的就是 `+`，归一后 MUST 也命中同一条 `Cmd-+`（change
+  // fix-tab-cycle-shift-symbols-nov27 之前这里断言「不命中」——那条边界是通道形态差异，不是
+  // 产品应有行为）。物理键盘给哪一种形态未验。
+  assert.equal(keyToken({ ...equals, shiftKey: true }), "Cmd-+");
   assert.equal(
-    KEY_BINDINGS.find((item) => normalizeKey(item.key) === "Cmd-Shift-="),
-    undefined,
-    "`Cmd-Shift-=` 不在表内（合成事件的形态差异，不是漏实现）",
+    KEY_BINDINGS.find((item) => normalizeKey(item.key) === keyToken({ ...equals, shiftKey: true }))?.command,
+    "view.text-scale-up",
+    "未 Shift 字符 + shiftKey 的形态与 Shift 后字符形态同键，必须进入同一命令",
   );
 });
 
