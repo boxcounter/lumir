@@ -78,3 +78,26 @@ MODIFIED 块不允许改 scenario 名，先例 `vault-and-session-removal`），
   真机场景 `43-list-tab-indent`（有序列表期望改为不重排）与新增 `888-list-line-indent`。
 - 关联约束：ADR 0003 §3（装饰 / 编辑 MUST NOT 越出用户动作所指的最小范围）；REVIEW.md「同一语义
   两处真源」条（步长与归属判定只留在 `src/list-indent.ts` 一处）。
+
+## 节点 2：归档放行记录
+
+机器 + 独立评审放行（`docs/process/openspec-workflow.md` 的五要件）；逐条读数如下：
+
+1. **方案已批准**：节点 1 Alex 2026-11-27「我希望改为『行』的操作对象模式」；实现期无静默
+   扩 scope——首项 TAB 无操作、非列表行不写、有序编号不改写三条已批口径全程保持。
+2. **独立 reviewer clean / merge**：K3 独立终审 clean/merge，绑定 tip `66d06006`
+   （P1 / P2 / P3 = 0；评审文 `.local/reviews/rework-list-tab-line-model-nov27/k3-verdict.md`）。
+3. **tasks 完成**：`tasks.md` 的 4 组任务全部勾选；4.6 记录真机 PASS 与 merge / push / 基线边界，
+   无放弃项。
+4. **门禁与真机证据**：
+   - `scripts/gate.sh quick`：`GATE RESULT: 13/13 PASS（SKIP 0）`。
+   - 单测专项 `tests/unit/list-indent.test.ts` 21/21；chromium
+     `tests/visual/scenes/m239-list-tab-indent.spec.ts` 15/15（含真实键位后的选区 anchor / head
+     映射与方向断言）；三份 tsc（根 / 单测 / 视觉）全过。
+   - 真机：43 `PASS / 76 断言`（`.local/acceptance/2026-11-27-list-line-indent/`）、
+     888 `PASS / 51 断言`（`.local/acceptance/2026-11-27-list-line-indent-final/`）。
+5. **规格对账无丢段**：归档前 `node scripts/openspec-archive-check.mjs` 门禁模式 PASS
+   （1 条 MODIFIED 轨道 D，13 段，无静默丢段）；`validate --all --strict` 39 passed / 0 failed；
+   `docs/backlog.md` 归档队列有且仅有一条本 change 条目。
+
+**归档后记录（待实跑归档后追加）**
