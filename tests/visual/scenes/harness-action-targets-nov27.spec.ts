@@ -10,6 +10,7 @@ import {
   lastUserMessage,
   openActionPanel,
   quoteCard,
+  readActionInk,
   readComposerState,
   readCopied,
   readHits,
@@ -193,6 +194,60 @@ test("动作命中区：小图标 / 可见底板 / 可访问名保持分层", as
   expect(await quoteRemove.evaluate((el) => parseFloat(getComputedStyle(el).fontSize))).toBeCloseTo(14, 1);
   expect(await quoteRemove.evaluate((el) => getComputedStyle(el, "::before").pointerEvents)).toBe("none");
 });
+
+async function expectActionVisual(button: Locator, label: string, opacity = "1"): Promise<void> {
+  await expect(button).toHaveCSS("opacity", opacity);
+  const reading = await readActionInk(button);
+  console.log("ACTION_ICON_INK " + JSON.stringify({ label, ...reading }));
+  if (reading.content === null || reading.centerOffset === null) {
+    throw new Error(`${label}：未读到实际 SVG / success 文案或非空参照墨迹`);
+  }
+  const { content, plate } = reading;
+  expect.soft({
+    left: content.x >= plate.x,
+    top: content.y >= plate.y,
+    right: content.right <= plate.right,
+    bottom: content.bottom <= plate.bottom,
+  }, `${label}：SVG / 文案盒完整落在可见底板内`).toEqual({ left: true, top: true, right: true, bottom: true });
+  expect.soft(reading.missingInk, `${label}：底板不得遮住任何 glyph / 文案像素`).toBe(0);
+  expect.soft(Math.abs(reading.centerOffset.x), `${label}：可见墨迹水平居中`).toBeLessThanOrEqual(1);
+  expect.soft(Math.abs(reading.centerOffset.y), `${label}：可见墨迹垂直居中`).toBeLessThanOrEqual(1);
+}
+
+const ICON_CASES = ["light", "dark", "eink"].flatMap((theme) => [
+  { name: `${theme}-wide`, opts: { theme: theme as "light" | "dark" | "eink" } },
+  { name: `${theme}-narrow`, opts: { theme: theme as "light" | "dark" | "eink" }, narrow: true },
+  { name: `${theme}-font32`, opts: { theme: theme as "light" | "dark" | "eink", fontSize: 32 } },
+]);
+
+for (const item of ICON_CASES) {
+  test(`动作图标：真实墨迹完整且在可见底板内居中（${item.name}）`, async ({ page }) => {
+    await openActionPanel(page, item.opts);
+    if (item.narrow) await page.setViewportSize({ width: 760, height: 800 });
+    const user = lastUserMessage(page);
+    const copy = user.locator(".lumir-hp-copy");
+    const withdraw = user.locator(".lumir-hp-withdraw");
+    await user.hover({ position: { x: 20, y: 12 } });
+    await expectActionVisual(copy, `${item.name} copy rest`);
+    await expectActionVisual(withdraw, `${item.name} withdraw rest`);
+    await copy.hover();
+    await expectActionVisual(copy, `${item.name} copy hover`);
+    await copy.focus();
+    await expectActionVisual(copy, `${item.name} copy focus`);
+    await withdraw.hover();
+    await expectActionVisual(withdraw, `${item.name} withdraw hover`);
+    await withdraw.focus();
+    await expectActionVisual(withdraw, `${item.name} withdraw focus`);
+    await copy.click();
+    await expect(copy).toHaveClass(/is-copied/);
+    await expectActionVisual(copy, `${item.name} copy success`);
+    await expect(copy).not.toHaveClass(/is-copied/, { timeout: 3000 });
+    await fireHarnessEvent(page, { type: "auto_turn_started" });
+    await expect(withdraw).toBeDisabled();
+    await user.hover({ position: { x: 20, y: 12 } });
+    await expectActionVisual(withdraw, `${item.name} withdraw disabled`);
+  });
+}
 
 for (const language of ["zh", "en"] as const) {
   test(`动作命中区：复制 success 时撤回让位、超时恢复与布局稳定（${language}）`, async ({ page }) => {

@@ -11,7 +11,8 @@
 # 3. 上下文面：撤回后改发另一句，盘上最新会话文件里**没有**被撤回的文本、且带
 #    `opened_from":"withdraw"`；会话目录里只剩一份 JSONL（A 已物理删除）。
 # 撤回钮 hover 才显形（读屏名 D1052「撤回这一轮」，悬停提示 D1089 说明完整后果；本场景走套件
-# 的 AXPress 点击通道，hover 的视觉形态不在判据内——预览另留一张截图，形态归 Alex）。
+# 的 AXPress 点击通道）。rest / hover / focus / success / disabled / 预览均留真机截图；实际墨迹完整性与
+# 相对底板居中由 visual 场景逐像素判定，真机截图供 Alex 复核 WKWebView 表现，不用 AX 冒充像素断言。
 id: "882-harness-withdraw-message"
 item: 882
 tier: full
@@ -108,6 +109,12 @@ steps:
     ms: 2000
     expect:
       - shot: 02c-复制反馈恢复
+
+  - name: 从复制入口按 Tab 聚焦撤回入口（focus 显现与 glyph 居中截图）
+    do: key
+    key: tab
+    expect:
+      - shot: 02d-撤回focus
 
   # 悬停入口 = 预览：本条消息 + 它的回答应被共同高亮（截图证据；像素形态归 Alex，套件不判）。
   - name: 悬停撤回入口（预览将被移除的那一段）

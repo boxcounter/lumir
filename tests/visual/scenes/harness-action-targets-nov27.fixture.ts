@@ -1,5 +1,6 @@
-import { expect, type Locator, type Page } from "@playwright/test";
+import { expect, type ElementHandle, type Locator, type Page } from "@playwright/test";
 import { standardProviders } from "./provider-config";
+import { decodePng } from "./selection-pixel";
 import { SYNTHETIC_PNG_BASE64, stubTauri, type VaultFixture } from "./tauri-stub";
 
 export const ACTION_ROOT = "/tmp/lumir-action-targets";
@@ -239,4 +240,124 @@ export async function readCopied(page: Page): Promise<string[]> {
 
 export async function readWithdrawCalls(page: Page): Promise<Array<{ confirm: boolean }>> {
   return page.evaluate(() => (window as unknown as { __withdrawCalls: Array<{ confirm: boolean }> }).__withdrawCalls);
+}
+
+interface InkMask {
+  pixels: number[];
+  count: number;
+  bounds: { x: number; y: number; right: number; bottom: number } | null;
+}
+
+export interface ActionInkReading {
+  plate: RectReading;
+  svg: RectReading | null;
+  content: RectReading | null;
+  missingInk: number;
+  centerOffset: { x: number; y: number } | null;
+}
+
+function readRedInk(buffer: Buffer, clip: RectReading): InkMask {
+  const image = decodePng(buffer);
+  const scale = image.width / clip.width;
+  const pixels: number[] = [];
+  let minX = image.width;
+  let minY = image.height;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < image.height; y += 1) {
+    for (let x = 0; x < image.width; x += 1) {
+      const offset = (y * image.width + x) * 4;
+      if (image.data[offset] - image.data[offset + 1] <= 24 || image.data[offset] - image.data[offset + 2] <= 24 || image.data[offset] <= 100) continue;
+      pixels.push(y * image.width + x);
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+  return {
+    pixels,
+    count: pixels.length,
+    bounds: pixels.length === 0 ? null : {
+      x: clip.x + minX / scale,
+      y: clip.y + minY / scale,
+      right: clip.x + (maxX + 1) / scale,
+      bottom: clip.y + (maxY + 1) / scale,
+    },
+  };
+}
+
+export async function readActionInk(button: Locator): Promise<ActionInkReading> {
+  const page = button.page();
+  const geometry = await button.evaluate((el) => {
+    const rect = (node: Element | null): RectReading | null => {
+      if (node === null) return null;
+      const r = node.getBoundingClientRect();
+      return { x: r.x, y: r.y, width: r.width, height: r.height, right: r.right, bottom: r.bottom };
+    };
+    const r = el.getBoundingClientRect();
+    const before = getComputedStyle(el, "::before");
+    const left = parseFloat(before.left);
+    const right = parseFloat(before.right);
+    const bottom = parseFloat(before.bottom);
+    const width = parseFloat(before.width);
+    const height = parseFloat(before.height);
+    const plateWidth = Number.isFinite(width) ? width : r.width - left - right;
+    const plateX = before.left === "auto" ? r.right - right - plateWidth : r.left + left;
+    const plateY = r.bottom - bottom - height;
+    const plate = { x: plateX, y: plateY, width: plateWidth, height, right: plateX + plateWidth, bottom: plateY + height };
+    const svg = el.querySelector("svg");
+    let content: RectReading | null = rect(svg);
+    if (svg === null) {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      const text = walker.nextNode();
+      if (text !== null && (text.textContent ?? "").trim() !== "") {
+        const range = document.createRange();
+        range.selectNodeContents(text);
+        const textRect = range.getBoundingClientRect();
+        content = { x: textRect.x, y: textRect.y, width: textRect.width, height: textRect.height, right: textRect.right, bottom: textRect.bottom };
+      }
+    }
+    return { plate, svg: rect(svg), content };
+  });
+  const clip = {
+    x: Math.floor(geometry.plate.x) - 1,
+    y: Math.floor(geometry.plate.y) - 1,
+    width: 0,
+    height: 0,
+    right: Math.ceil(geometry.plate.right) + 1,
+    bottom: Math.ceil(geometry.plate.bottom) + 1,
+  };
+  clip.width = clip.right - clip.x;
+  clip.height = clip.bottom - clip.y;
+  const probe = await page.addStyleTag({ content: `
+    .lumir-hp-copy, .lumir-hp-withdraw {
+      color: #ff0000 !important;
+      opacity: 1 !important;
+      transition: none !important;
+      background: #ffffff !important;
+    }
+    .lumir-hp-copy::before, .lumir-hp-withdraw::before { background: #ffffff !important; }
+  ` });
+  let referenceStyle: ElementHandle<Node> | undefined;
+  try {
+    const actual = readRedInk(await page.screenshot({ clip, animations: "disabled" }), clip);
+    referenceStyle = await page.addStyleTag({ content: `
+      .lumir-hp-copy::before, .lumir-hp-withdraw::before { visibility: hidden !important; }
+    ` });
+    const reference = readRedInk(await page.screenshot({ clip, animations: "disabled" }), clip);
+    const actualPixels = new Set(actual.pixels);
+    const centerOffset = reference.bounds === null ? null : {
+      x: (reference.bounds.x + reference.bounds.right - geometry.plate.x - geometry.plate.right) / 2,
+      y: (reference.bounds.y + reference.bounds.bottom - geometry.plate.y - geometry.plate.bottom) / 2,
+    };
+    return {
+      ...geometry,
+      missingInk: reference.pixels.filter((pixel) => !actualPixels.has(pixel)).length,
+      centerOffset,
+    };
+  } finally {
+    if (referenceStyle !== undefined) await referenceStyle.evaluate((el) => el.parentNode?.removeChild(el));
+    await probe.evaluate((el) => el.parentNode?.removeChild(el));
+  }
 }

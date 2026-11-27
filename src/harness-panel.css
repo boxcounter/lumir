@@ -1942,7 +1942,8 @@
 
 /* ── 消息复制钮（M347）：hover 浮现在消息右上角与 who 行同高（键盘可达：focus 也显形）。
    复制源 = Markdown 源文本 / 发送前原始输入，非渲染后 HTML（源经 copySources 单挂）。
-   三层尺寸：14px 图标 / 24×20 可见底板 / 28×28 真实命中盒；命中盒向既有消息留白扩展。 ── */
+   三层尺寸：14px 图标 / 24×20 可见底板 / 28×28 真实命中盒；透明扩展在命中盒上侧与左侧，
+   让 flex 内容盒与右下底板重合。底板位于图标 / success 文案之后，不得遮住实际墨迹。 ── */
 .lumir-hp-msg {
   position: relative;
 }
@@ -1957,7 +1958,8 @@
   width: 28px;
   min-width: 28px;
   height: 28px;
-  padding: 0 4px 8px 0;
+  padding: 8px 0 0 4px;
+  isolation: isolate;
   border: none;
   background: none;
   color: var(--text-3);
@@ -1970,6 +1972,7 @@
 .lumir-hp-copy::before {
   content: "";
   position: absolute;
+  z-index: -1;
   right: 0;
   bottom: 0;
   width: 24px;
@@ -1995,7 +1998,7 @@
 }
 .lumir-hp-copy.is-copied {
   width: auto;
-  padding: 0 var(--sp-1) 8px;
+  padding: 8px var(--sp-1) 0;
   color: var(--ok);
   opacity: 1;
   white-space: nowrap;
@@ -2006,8 +2009,9 @@
 }
 
 /* ── 撤回钮：保留 12px 撤销图标与 20×20 可见底板，真实命中盒独立扩为 28×28。
-   只在最后一条用户消息 hover / 入口 focus 才显形；复制 success 变宽时经 --lumir-hp-copy-hit-w
-   向左让位。双激活源预览、tail notice 不预览与在途 disabled 语义不变。 */
+   透明扩展同样在上 / 左侧，底板在图标之后。只在最后一条用户消息 hover / 入口 focus 才显形；
+   复制 success 变宽时经 --lumir-hp-copy-hit-w 向左让位。双激活源预览、tail notice 不预览与
+   在途 disabled 语义不变。 */
 .lumir-hp-withdraw {
   position: absolute;
   top: -8px;
@@ -2018,7 +2022,8 @@
   justify-content: center;
   width: 28px;
   height: 28px;
-  padding: 0 8px 8px 0;
+  padding: 8px 0 0 8px;
+  isolation: isolate;
   border: none;
   background: none;
   color: var(--text-3);
@@ -2030,6 +2035,7 @@
 .lumir-hp-withdraw::before {
   content: "";
   position: absolute;
+  z-index: -1;
   right: 0;
   bottom: 0;
   width: 20px;
