@@ -107,7 +107,7 @@ Alex 已采纳统一：**所有已完成布局的 md 文档都显示 END**；视
 
 ### 归档前后
 
-- **归档前**：四张基线已按上述 SHA 写入；完整 visual 已过；`validate` / `archive-check` / `docs-check` PASS；队列唯一条目。
+- **归档前**：四张基线已按上述 SHA 写入；完整 visual 1936 passed / 2 failed / 13 skipped，2 failed 为既有 webkit IME flake（隔离 2/2×2 PASS），`GATE RESULT: 14/15 PASS（SKIP 0）` exit 1；`validate` / `archive-check` / `docs-check` PASS；队列唯一条目。
 - **归档提交**：`bc597b3c`（含归档目录、living spec、4 张基线、`tasks` / `proposal` / `backlog`）。
-- **包装器**：`node scripts/openspec-archive.mjs show-document-end-marker-all-docs-nov27` 输出 ``openspec-archive`: `+1 added / ~1 modified / -1 removed`；归档为 `2026-11-27-show-document-end-marker-all-docs-nov27`；`openspec-links` PASS（713 条可达）`；修链 `0 处（扫过 4 篇 Markdown / 2 条相对链接）`。
+- **包装器**：`node scripts/openspec-archive.mjs show-document-end-marker-all-docs-nov27` 输出 `openspec-archive: +1 added / ~1 modified / -1 removed`，归档为 `2026-11-27-show-document-end-marker-all-docs-nov27`；`openspec-links` PASS（713 条可达）；修链 `0 处（扫过 4 篇 Markdown / 2 条相对链接）`。
 - **归档后审计**：`node scripts/openspec-archive-check.mjs --archived show-document-end-marker-all-docs-nov27` → `PASS（1 条 MODIFIED，对比 10 段；人工恢复 0，声明认领 0）`。
