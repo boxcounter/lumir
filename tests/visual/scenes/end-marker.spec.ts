@@ -427,7 +427,7 @@ test("判据不随滚动位置变化，滚动高度在所有滚动位置恒定",
   expect(new Set(readings.map((r) => r.clientHeight)).size).toBe(1);
   // 标记随内容滚动：滚动到底时它的视口纵坐标比在顶时更小
   expect(bottom.markerTop ?? Number.NaN).toBeLessThan(top1.markerTop ?? Number.NaN);
-  // 但内容坐标里的落点恒定（定位不读滚动位置、也不随滚动重算）
+  // 但内容坐标里的落点恒定（滚动偏移只做坐标换算，不把滚动位置当落点输入）
   expect(new Set(readings.map((r) => r.markerContentTop)).size).toBe(1);
 });
 
@@ -617,10 +617,10 @@ test("标记字号跟随内容字号（基准 = --editor-font-size，不再是�
 //      patch 推迟到测量周期之外落地（`src/preview/endMarker.ts` 的**单帧**——一帧即离开测量周期；
 //      双帧实测会把阅读位置恢复推离 13px，源码注释里已写「别改回双帧」）。
 //
-// **change show-document-end-marker-all-docs-nov27（2026-11-27）**：END 对所有已完成布局的 md
-// 文档显示后，1fr 上界会把短文档的标记推到视口底（合同禁止），正文行因此再收成 `max-content`、
-// `.cm-content` 的 min-height 在 md 内解除。标记位置不变量（恒贴内容盒底边）与单帧落地不变；
-// 「点正文下方空白」的代价记在 change design §3 A。
+// **change show-document-end-marker-all-docs-nov27（2026-11-27）**：正文行保持
+// `minmax(max-content, 1fr)` + CM 基础主题的 `min-height: 100%`（CM 指针命中面），END 改为绝对定位
+// 在正文自然末尾（`pointer-events: none`），不再占独立行。标记位置不变量（顶边 = 正文自然末尾）
+// 与单帧落地不变；正文盒铺满视口，因此不能用 `content.bottom` 当自然末尾。
 //
 // 断言一律落几何读数（正文盒 / 子节点 / 标记矩形的相对关系），不读 class、不读 grid 声明
 //（REVIEW.md 「断言等价于子串」条）。

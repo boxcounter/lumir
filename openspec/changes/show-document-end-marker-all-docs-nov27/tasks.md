@@ -25,25 +25,26 @@
 - [x] 2.3 `empty-line-height-stability-nov27.spec.ts` 一字不改，在终态下原样绿（END 位置稳定性 + 普通行 padding 恒 0 的合同不覆盖）。
 - [x] 2.4 `scripts/acceptance/scenarios/27-document-end-marker.md`：短文侧改为 END 节点在场；新增短文翻页后仍在场；标题 / 说明 / 覆盖边界同步；`node scripts/acceptance/run.mjs --check` 通过。
 - [x] 2.5 反向必红：构造违反不变量的输入（短文侧按 master 判据不显示 / 把 END 钉到窗口底 / 视口 0 仍显示），确认对应用例判红后恢复；读数记进证据。
-- [x] 2.6 邻接测试的 oracle 修正：`m399-empty-lines.spec.ts` 的 P2 原用 `.cm-content` 中心点击来「落到文档末」，短文正文盒回到自然高度后中心落在中间行——改为点最后一行 + End（同一意图的显式写法），产品断言不变。
+- [x] 2.6 邻接测试保持原始落点：最终方案正文盒铺满视口（CM 命中面），`m399` 的 `.cm-content` 中心点击与 `m631` 的 y=300 hover 落点仍然成立；已从 master 恢复两处原始测试、撤销自然高度方案时期的改动，复跑 22/22 绿（`m399-m631-restored.log`）。
 - [x] 2.7 `no-tab-empty-state-nov27.spec.ts`：S4 分栏空 pane 无 END、打开 b.md 后 END 出现；S3 首启 tips 无 END（结构性空态与空态无行号 / 无光标同格）。
 - [x] 2.9 真机 27 的 oracle 修正：四处 `editor.not` 由裸子串 `"END"` 收紧为 `/^END$/`（只判独立一行）；新增场景说明分类为「测试 oracle 缺陷」。反向：给合成 fixture 临时加独立一行 `END` → 27 FAIL（`02-reverse-red/`），fixture 逐字恢复（sha256 `5550ce7bcada…`）→ 27 PASS（`03-final-pass/`，23 断言）。首轮误报不作反向证据。
 - [x] 2.8 指针行为反向必红：在「正文自然流」回归实现（提交 `2abc3a3d`）上，主指针用例单击空白后 `activeElement=.cm-scroller` 判红（`pointer-red-regression.log`）；另以三条独立用例逐条判红——点 END 自身 / 双击空白 / 空白区按下均不落在 `.cm-content`，**3 failed**（`pointer-late-red-regression.log`，临时 detached worktree 跑完即移除）。改回「正文盒铺满 + END 绝对定位」后主用例 13/13 绿（`end-marker-final-hitarea.log`），全目标 120/120（`target-final-committed.log`）。
 
 ## 3. 视觉材料（候选，不更新正式基线）
 
-- [x] 3.1 短文 fixture 的 before（master）/ after（候选）截图与 DOM 读数（content / last line / marker / viewport 四组矩形），落 `.local/reviews/end-marker-all-docs-nov27/shots/`、`readings.json`。
+- [x] 3.1 短文 fixture 的真实 master before（`9f872e8f` 源码构建，非 CSS 隐藏）/ 候选 after 截图与 DOM 读数（content / last line / marker / viewport 四组矩形），落 `.local/reviews/end-marker-all-docs-nov27/short/`、`readings.json`；来源见 `short/SOURCES.md`、`evidence/master-before.log`。
 - [x] 3.2 全量视觉跑一次（非 `LUMIR_VISUAL_STRUCTURAL`），逐条收集因 END 新出现而变化的整页基线；候选 actual 复制到 `.local/reviews/end-marker-all-docs-nov27/candidates/`，生成待 Alex 审阅的基线清单（不执行 `--update`）。
 - [x] 3.3 审阅页 `.local/reviews/end-marker-all-docs-nov27/index.html`：内置可点击控制面板（短文前后 / 长文对照 / 并排 / 单张），query 深链保留。
 
 ## 4. 验证
 
 - [x] 4.1 目标视觉：`end-marker.spec.ts` 13/13 + `empty-line-height-stability-nov27.spec.ts` 17/17 + 结构空态 / m399 / m631 / m281 / m647 / reading-position 邻域共 **120/120**（`target-final-committed.log`）。
-- [x] 4.2 `scripts/gate.sh quick`：`GATE RESULT: 13/13 PASS（SKIP 0）`（`gate-quick-final-hitarea.log`，exit 0；此前一次 12/13 仅为既有 link-suggest 16ms 预算在机器高负载下超时，隔离 `pnpm test` 2192/2192 绿）。
+- [x] 4.2 `scripts/gate.sh quick`：`GATE RESULT: 13/13 PASS（SKIP 0）`（`gate-quick-review-clean.log`，exit 0；此前一次 12/13 仅为既有 link-suggest 16ms 预算在机器高负载下超时，隔离 `pnpm test` 2192/2192 绿）。
 - [x] 4.3 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`：PASS。
 - [x] 4.4 `node scripts/openspec-archive-check.mjs` 门禁模式：PASS（MODIFIED 无静默丢段；必要的「归档对账声明」已写）。
 - [x] 4.5 `node scripts/acceptance/run.mjs --check`：PASS（场景 27 的静态校验与覆盖表）。
 - [x] 4.6 完工报告：commit hash、测试计数、候选截图路径、待 Alex 基线清单、主会话真机项（场景 27）。
+- [x] 4.8 K3 P2/P3 收口：`short/before.png` 改为真实 master `9f872e8f` 构建的干净截图（无 END / 选区 / 浮钮，`master-before.log`）；`m399` / `m631` 从 master 恢复原始落点（与 master 0 diff，22/22 绿，`m399-m631-restored.log`）；proposal / tasks / 测试注释 / endMarker / theme 的弃用自然流与 `offset*` 表述改为 rect + scrollTop/Left 换算，并写明绝对定位仍计入 scrollable overflow。
 - [x] 4.7 真机场景 27：首轮 FAIL 分类为测试 oracle 缺陷（旧 `not: "END"` 误命中短文说明句）；修正后最终 **PASS 23 断言**，证据 `.local/acceptance/2026-11-27-end-marker-all-docs/03-final-pass/`；反向 FAIL 在 `02-reverse-red/`，三类不混算（`README.md`）。
 
 ## 5. 证据（绝对路径）
@@ -54,7 +55,8 @@
   `pointer-late-red-regression.log`（点 END 自身 / 双击空白 / 空白区按下三条独立用例 **3 failed**）；
   `pointer-regression-probe.log`（倒退布局的读数复核）。
 - 绿：`end-marker-final-hitarea.log`（end-marker 13/13，含指针四条）、
-  `target-final-committed.log`（end-marker + 行高 + 结构性空态 + m399 / m631 / m281 / m647 + reading-position 共 120/120；含逐条指针手势）、
+  `target-final-review-clean.log`（end-marker + 行高 + 结构性空态 + m399 / m631 原始落点 + m281 / m647 + reading-position 共 120/120；含逐条指针手势）、
+  `m399-m631-restored.log`（恢复 master 原始落点后 22/22）、
   `lineheight-green.log`（17/17）、`pointer-evidence-probe.log`（短文几何 + 四条手势读数）。
 - 门禁：`gate-quick-final-hitarea.log` 的 `GATE RESULT: 13/13 PASS（SKIP 0）`；`docs-check-final.log` PASS；`openspec validate --all --strict` 39/39。
 - 全量视觉：`full-visual.log`（1934 passed / 2 failed / 13 skipped；两项失败处置见 BASELINES.md）；

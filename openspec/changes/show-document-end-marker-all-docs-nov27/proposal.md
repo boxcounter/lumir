@@ -13,17 +13,19 @@
 Alex 已采纳统一：**所有已完成布局的 md 文档都显示 END**；视口为 0 / 尚未布局时才不显示。
 这条口径推翻了 `document-end-marker`（M189）裁决点 3 的「只在装不下时显示」。
 
-只改判据不够：现行 md 布局把正文行钉成 `minmax(max-content, 1fr)`，`.cm-content` 又带 CM 基础
-主题的 `min-height: 100%`（`src/preview/theme.ts:593`、`src/editor.ts:2182`）。一屏装得下时正文
-盒被拉到视口高度，END 作为下一行只能落在**视口底部之外**，正是合同禁止的「被 min-height 推到
-一屏底」。因此本 change 必须同时把正文行改回自然高度（见 design.md §2 的实测读数）。
+只改判据不够：现行 md 布局把正文行钉成 `minmax(max-content, 1fr)`、`.cm-content` 带 CM 基础主题的
+`min-height: 100%`。一屏装得下时正文盒被拉到视口高度，END 若仍作为下一行只能落在**视口底部之外**，
+正是合同禁止的「被 min-height 推到一屏底」。本 change 保留这条铺满视口的正文行（它同时是 CodeMirror
+的原生指针命中面），把 END 改为**绝对定位在正文自然末尾**；「只改判据、保留 in-flow END」的反例实测
+见 design.md §2。
 
 ## What Changes
 
 1. **出现判据：只判布局完成，不判内容高度**
    - 可用视口高度 > 0 ⇒ md 文档的 END 在场；视口为 0（尚未布局 / 被完全遮挡）⇒ 不在场。
    - MUST NOT 再比较内容高度与视口高度；MUST NOT 依赖滚动位置、光标位置或文档长度。
-   - 纯函数 `endMarkerVisible(viewportHeight)` 是唯一判据点；视口 ResizeObserver 是唯一重算触发点。
+   - 纯函数 `endMarkerVisible(viewportHeight)` 是唯一判据点；视口变化由 ResizeObserver、文档 / 几何
+     变化由 `ViewUpdate` 触发重算。
 2. **纵向位置：自然正文末尾之下，不贴窗口底；正文盒保留指针命中面**
    - md 正文行仍为 `minmax(max-content, 1fr)`、`.cm-content` 仍取 CM 基础主题的
      `min-height: 100%`：短文正文盒继续铺满可用高度，正文下方空白仍是 CodeMirror 的原生命中面。

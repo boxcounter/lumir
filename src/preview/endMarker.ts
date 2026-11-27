@@ -21,9 +21,11 @@
 // `minmax(max-content, 1fr)` 行 + CM 基础主题的 `min-height: 100%`——它是 CM 的原生命中面，
 // 正文下方空白处的单击 / 双击 / 拖选仍走 CM 自己的手势路径。END 是这个命中面之上绝对定位的
 // chrome（`position: absolute` + `pointer-events: none`），`top` = 正文自然末尾、`left/width`
-// = 正文盒的水平区间，全部由 `read` 里的 O(1) 布局读数给出（`contentHeight` + `offset*`，不读
-// 滚动位置）。因此短文档的 END 钉在自然末尾而不是窗口底，而点它自身也穿透到正文盒——不是
-// 「只给单击打补丁」的分叉。正文行的尺寸与标记在场无关，绝对定位的盒子不参与内容布局 / heightmap。
+// = 正文盒的水平区间。落点由 O(1) 布局读数给出：`contentHeight` + 正文盒 / scroller 的矩形 +
+// `scrollTop/Left`（滚动偏移只把视口矩形换算成**内容坐标**，不参与在场判据）。因此短文档的 END
+// 钉在自然末尾而不是窗口底，而点它自身也穿透到正文盒——不是「只给单击打补丁」的分叉。正文行的
+// 尺寸与标记在场无关；绝对定位的盒子不参与内容布局 / heightmap，但作为绝对定位后代仍会计入
+// scroller 的 scrollable overflow（END 自身高度：长文四态恒定，短文可装下时 scrollHeight == clientHeight）。
 //
 // **元素生命周期 ⊆ 插件实例生命周期（M251 的结构性修复）**：元素可以晚于 `destroy` 被挂回来。
 // 现场（Alex 2026-09-27 真机报告：`— End —` 出现在非 markdown 文件的正文右侧空白区）与实测
@@ -165,7 +167,8 @@ class EndMarkerView {
 
   update(update: ViewUpdate): void {
     // END 的纵坐标由 contentHeight 派生：装载 / 键入 / 异步图片 / 缩放都会改它。这里只排队一次
-    // 测量（CM 每次重绘本来就排了自己那一趟），读的是 `contentHeight` 与 offset* 两个既有布局数。
+    // 测量（CM 每次重绘本来就排了自己那一趟），读的是 `contentHeight`、正文盒 / scroller 矩形与
+    // 滚动偏移三个既有布局数。
     if (update.docChanged || update.geometryChanged) update.view.requestMeasure(this.request);
   }
 

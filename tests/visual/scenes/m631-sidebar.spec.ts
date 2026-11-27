@@ -132,9 +132,7 @@ test("hover / 拖拽中显现视觉线，移开恢复", async ({ page }) => {
   const opacity = () => page.evaluate(() => getComputedStyle(document.querySelector(".sidebar-divider")!, "::before").opacity);
   await page.locator(".sidebar-divider").hover();
   expect(await opacity()).toBe("1");
-  // 落点取正文盒内靠上的位置：change show-document-end-marker-all-docs-nov27 起短文正文盒回到
-  // 自然高度，y=300 可能落在盒外（hover 的 actionability 会等到超时）。意图只是「移开分隔条」。
-  await page.locator(".cm-content").hover({ position: { x: 400, y: 10 } });
+  await page.locator(".cm-content").hover({ position: { x: 400, y: 300 } });
   expect(await opacity()).toBe("0");
 });
 

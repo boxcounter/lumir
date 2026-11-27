@@ -130,10 +130,7 @@ test("P1：有内容行的行首 Enter——新空行以正常行高插入在该
 
 test("P2：空列表项 Enter（三 item 的空第三项）——行保留且可见，光标在该行", async ({ page }) => {
   await openDoc(page, "- a\n- b\n- ");
-  // 点最后一行（不是 `.cm-content` 的中心）：change show-document-end-marker-all-docs-nov27 起
-  // 短文档的正文盒回到自然高度，`.cm-content` 的中心不再落在「所有行之下」——点中心会把光标
-  // 放进中间行，本用例的 End / Enter 语义随之改变。点最后一行 + End 是同一意图的显式写法。
-  await page.locator(".cm-line").last().click();
+  await page.locator(".cm-content").click();
   await page.keyboard.press("End");
   await page.keyboard.press("Enter");
   await page.waitForTimeout(150);

@@ -103,7 +103,10 @@
 - 触发：ResizeObserver 观察 `.cm-scroller`；`update` 在 `docChanged || geometryChanged` 时排队测量。
 - 落地仍走**单帧**延迟（M238 实测：双帧会把阅读位置恢复推离 13px）；DOM / 样式改动不得在 CM
   测量周期内发生。
-- 绝对定位的 chrome 盒子不改变正文档高 / heightmap / 滚动锚点；`top` 写入后不补排测量。
+- 绝对定位的 chrome 盒子不改变正文档高 / heightmap / 滚动锚点；`top` 写入后不补排测量。但它是
+  scroller 的绝对定位后代，**仍会计入 scrollable overflow**（END 自身高度）：长文四滚动位置
+  `scrollHeight` 恒定，短文「内容 + END 装得下」时 `scrollHeight == clientHeight`；这条不是
+  「绝对定位天然不影响滚动高度」。
 - 生命周期（M251）：`destroyed` 闸门、构造时清理残留、`destroy` 摘元素与 observer 原样保留。
 - 索引类读数（`contentHeight`、矩形）在切换文档后可能落后一帧：测试在切换后等 `settleFrames`
   再读几何；产品侧只影响一帧内的视觉落点，不改变布局或手势。

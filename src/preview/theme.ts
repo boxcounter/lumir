@@ -579,9 +579,11 @@ export const livePreviewTheme = EditorView.theme({
   // 「点正文下方空白落到文档末尾」这条既有 CodeMirror 行为一并删掉（change design §3）。
   //
   // **END 的定位**：元素 `position: absolute`、脱离 grid 流，top / left / width 由 endMarker.ts
-  // 在测量周期之外写入——top = `.cm-content` 的 offsetTop + CM 的 `view.contentHeight`（正文自然
-  // 末尾，含正文下内边距；O(1) 既有读数，不读滚动位置），width = 正文盒宽（水平居中因此与正文
-  // 同列）。绝对定位的 chrome 盒子不参与内容布局，与正文行尺寸、heightmap、滚动锚点都无关。
+  // 在测量周期之外写入——top = 正文盒矩形相对 scroller 的偏移 + `scrollTop` + CM 的
+  // `view.contentHeight`（正文自然末尾，含正文下内边距），left 用同样方式换算，width = 正文盒宽
+  // （水平居中因此与正文同列）。`scrollTop/Left` 只做内容坐标换算，不参与显隐判据。绝对定位的
+  // chrome 盒子不参与正文布局、heightmap 与滚动锚点，但作为绝对定位后代仍会计入 scroller 的
+  // scrollable overflow（END 自身高度；长文四态恒定，短文可装下时 scrollHeight == clientHeight）。
   // `pointer-events: none` 是合同的一部分：点在 END 自身上也穿透到 `.cm-content`，仍然走 CM
   // 自己的指针路径（不是只处理单击的补丁）。短文档 END 因此钉在自然末尾而不是窗口底。
   //
