@@ -1,5 +1,7 @@
 // 原生菜单点击通道（change add-acceptance-installed-app-pause 的 880/880b 修复）：
 // 按 **pid** 找到目标 app 的 AXMenuBar，按标题打开菜单并按下菜单项。
+// 两个消费者共用本 helper：场景动作 `clickMenuItem`（880/880b）与安装版暂停的保存屏障
+// `triggerSaveAllMenuItem`（File → Save All）；JS 侧入口是 lib/native-menu.mjs。
 //
 // 为什么需要它：KimiCU 的 AX 文本把整条菜单栏渲染成**一个** `AXMenuBar` 节点，子项以
 // `[2] Apple; [4] Lumir; [6] File; …` 的内联形式附在行尾——`parseNodes` 不会为它们生成

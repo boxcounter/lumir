@@ -34,6 +34,8 @@ import {
   quitInstalledByCmdQ,
   readSaveAllLog,
   saveAllBaseline,
+  SAVE_ALL_ITEM,
+  SAVE_ALL_MENU,
   registerActiveRunner,
   releasePauseLock,
   runInstalledPause,
@@ -583,39 +585,94 @@ test("基线：取最后一条记录；running 判为「已有保存在跑」；
 });
 
 // ---------------------------------------------------------------------------
-// 菜单触发：File → Save All 两步 AXPress
+// 菜单触发：按 pid 走 ax-menu.swift 原生 helper（File → Save All）
 // ---------------------------------------------------------------------------
 
-test("菜单触发：先点 AXMenuBarItem File，再点 AXMenuItem Save All", async () => {
+test("菜单触发：按 pid 走 ax-menu.swift，File / Save All 是独立 argv（不拼脚本源码）", async () => {
+  const calls = [];
+  const result = await triggerSaveAllMenuItem({
+    pid: PID,
+    execFile: (command, args, options) => {
+      calls.push({ command, args, options });
+      return "pressed File → Save All\n";
+    },
+  });
+  assert.equal(calls.length, 1, "只执行一次 helper，不轮询 KimiCU 的 AX 菜单节点");
+  const [{ command, args, options }] = calls;
+  assert.equal(command, "/usr/bin/swift");
+  assert.equal(args.length, 4, "pid / menu / item 是三个独立 argv，不拼进脚本");
+  assert.ok(args[0].endsWith("scripts/acceptance/lib/ax-menu.swift"));
+  assert.deepEqual(args.slice(1), [String(PID), "File", "Save All"]);
+  assert.equal(options.encoding, "utf8");
+  // 独立 argv 的区分度：若标题被拼进 Swift / AppleScript 源码，这两项就不会原样等于标题。
+  assert.equal(args[2], SAVE_ALL_MENU);
+  assert.equal(args[3], SAVE_ALL_ITEM);
+  assert.equal(result.out, "pressed File → Save All");
+});
+
+test("菜单触发：KimiCU AX 里有完美菜单节点也不走节点点击（旧写法必红）", async () => {
+  // 旧实现注入 readState + click 就能成功：这里给一份「AXMenuBarItem File + AXMenuItem
+  // Save All」的完美现场，并让 helper 失败。若实现退回旧通道，它会成功并点两次菜单——
+  // assert.rejects 与 clicks 两条判据同时变红。
   const reads = [
     axWith("- [10] AXMenuBarItem (File) @0,0 30×20 actions=[AXPress]"),
     axWith("- [20] AXMenuItem (Save All) @12,40 80×20 actions=[AXPress]"),
   ];
   const clicks = [];
-  const result = await triggerSaveAllMenuItem({
-    pid: PID,
-    readState: async () => reads[Math.min(clicks.length, reads.length - 1)],
-    click: async (pid, index) => void clicks.push({ pid, index }),
-  });
-  assert.deepEqual(clicks, [
-    { pid: PID, index: 10 },
-    { pid: PID, index: 20 },
-  ]);
-  assert.ok(result.reads >= 2);
-});
-
-test("菜单触发：菜单栏里没有 File → PauseFailed（不退回快捷键，也不伪造已保存）", async () => {
+  let readCount = 0;
   await assert.rejects(
     () =>
       triggerSaveAllMenuItem({
         pid: PID,
-        timeoutMs: 20,
-        everyMs: 5,
-        readState: async () => axWith("- [1] AXStaticText = hello"),
-        click: async () => assert.fail("不得点击"),
+        readState: async () => reads[Math.min(readCount++, reads.length - 1)],
+        click: async (pid, index) => void clicks.push({ pid, index }),
+        execFile: () => {
+          throw Object.assign(new Error("boom"), {
+            stderr: "ax-menu: 菜单栏没有「File」（现有：Lumir / Edit）\n",
+            status: 1,
+          });
+        },
       }),
-    /等不到 AXMenuBarItem/,
+    PauseFailed,
   );
+  assert.deepEqual(clicks, [], "MUST NOT 退回 KimiCU 的 AXMenuBarItem / AXMenuItem 节点点击");
+  assert.equal(readCount, 0, "MUST NOT 读 KimiCU 的 AX 菜单树");
+});
+
+test("菜单触发：helper 找不到菜单项 → PauseFailed，带现有标题，不退回快捷键", async () => {
+  await assert.rejects(
+    () =>
+      triggerSaveAllMenuItem({
+        pid: PID,
+        execFile: () => {
+          throw Object.assign(new Error("helper failed"), {
+            stderr: "ax-menu: 「File」菜单里没有「Save All」（现有：Save / Save As）\n",
+            status: 1,
+          });
+        },
+      }),
+    (error) =>
+      error instanceof PauseFailed &&
+      /原生菜单触发保存全部失败/.test(error.message) &&
+      /没有「Save All」/.test(error.message) &&
+      /不⌘Q、不跑批/.test(error.message),
+  );
+});
+
+test("菜单触发：pid 不可读 → PauseFailed，不执行任何 helper", async () => {
+  let called = false;
+  await assert.rejects(
+    () =>
+      triggerSaveAllMenuItem({
+        pid: "abc",
+        execFile: () => {
+          called = true;
+          return "";
+        },
+      }),
+    PauseFailed,
+  );
+  assert.equal(called, false);
 });
 
 // ---------------------------------------------------------------------------

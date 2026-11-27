@@ -514,7 +514,7 @@ LaunchServices 复原 / `--recover-installed` 之类出口；崩溃 / 断电同�
 | 默认行为不变 | 没有 `--pause-installed` 时 `lib/installed-app.mjs` 一行都不执行；`--check` / `--list` 不会碰安装版 |
 | 只认唯一、canonical 的 `/Applications/Lumir.app` | `discoverInstalledApp`：dev 实例 / 验收 bundle / 别的 `.app` 副本 / 多实例 / pid 或 startedAt 读不到 / bundle id ≠ 产品 id ⇒ **退出码 2、零副作用**（不激活、不点菜单、不 ⌘Q） |
 | 保存前与 ⌘Q 前复核身份 | `verifyInstalledTarget`：pid + startedAt（±2s，抗 pid 复用）+ app 根 + bundle id；任一变化即停手 |
-| 保存屏障 | 经原生 **File → Save All** 触发产品侧 `document.save-all`。产品维护**追加式**状态日志 `save-all-log s<seq>:g<代次>:<状态> …`（视觉隐藏、AX 可达）。触发前读基线（最后一条的 seq / 代次）；触发后**第一条新记录必须是 running**，锁定它的代次 G，随后只接受 **G 的 ok**。直接出现更高代 ok、同一代次旧 ok、`busy`（并发被单飞拒绝，即使之后有别代 ok）、`failed`、缺日志 / 空树 / 读失败 / 超时 ⇒ 不 ⌘Q、不跑批。屏障本身含 saveAllDirty → 标签会话真实 flush → 阅读位置真实 flush → 后端 dirty 镜像同步；两个 flush 的 `false` 来自后端的**真实磁盘写结果**（不是「resolved 即成功」） |
+| 保存屏障 | 经原生 **File → Save All**（按 pid 走 Swift Accessibility helper `lib/ax-menu.swift`，与场景 880/880b 的 `clickMenuItem` 同一实现）触发产品侧 `document.save-all`。产品维护**追加式**状态日志 `save-all-log s<seq>:g<代次>:<状态> …`（视觉隐藏、AX 可达）。触发前读基线（最后一条的 seq / 代次）；触发后**第一条新记录必须是 running**，锁定它的代次 G，随后只接受 **G 的 ok**。直接出现更高代 ok、同一代次旧 ok、`busy`（并发被单飞拒绝，即使之后有别代 ok）、`failed`、缺日志 / 空树 / 读失败 / 超时 ⇒ 不 ⌘Q、不跑批。屏障本身含 saveAllDirty → 标签会话真实 flush → 阅读位置真实 flush → 后端 dirty 镜像同步；两个 flush 的 `false` 来自后端的**真实磁盘写结果**（不是「resolved 即成功」） |
 | 只用按 pid 激活 + 正常 ⌘Q | System Events 按 `unix id` 置前（MUST NOT 按名字）；`press_key` 发真实 `cmd+q`（走菜单守卫）；等**原 pid** 消失。**禁止** Apple Event quit / SIGTERM / SIGKILL / pkill，禁止绕过 dirty 守卫 |
 | 保存或退出受阻 | 退出码 2、**现场原样保留**（不代点「放弃修改」、不补刀）；安装版仍开着，由用户处置 |
 | 暂停后仍是原样的 preflight | 暂停结束（安装版退出）后 `preflight()` / `assertNoForeignLumir` **原样执行**；验收仍隔离 XDG / 合成 vault / 独立端口 |
@@ -526,15 +526,19 @@ LaunchServices 复原 / `--recover-installed` 之类出口；崩溃 / 断电同�
 **边界（如实登记）**
 
 - 安装版必须是**含 `document.save-all` 的构建**（本 change 起）。旧构建没有 File → Save All，
-  暂停会在「等不到菜单项」处退出码 2（不碰文档、不 ⌘Q）——重新安装当前构建后再用。
+  暂停会在 helper 找不到菜单项处退出码 2（不碰文档、不 ⌘Q）——重新安装当前构建后再用。
 - 完成信号是**归属日志**（`save-all-log … g<代次>:ok`），不是 toast 文案：安装版可能来自另一个
   文案版本，文本判据会失效或误判；日志由产品 `src/save-all.ts` 追加维护，旧信号 / 跨代信号 /
   busy 被别代 ok 覆盖在结构上无法冒充。安装版必须包含该日志的构建（本 change 起）；旧构建会在
   「找不到状态日志」处退出码 2（零副作用）。
-- 菜单可达性依赖 KimiCU 的 AX 树暴露菜单栏（`AXMenuBarItem` / `AXMenuItem`）。读不到即
-  退出码 2，**不退回快捷键**（该命令按设计没有默认键位）。
-- **真实安装版的整链路（发现 → 菜单 → 完成信号 → ⌘Q）尚未在真机上跑过**（本轮 mission
-  明确不执行真机）；机器判据在 `lib/installed-app.test.mjs`，真机验收登记为待办。
+- 菜单可达性走**按 pid 的 Swift Accessibility helper**（`lib/ax-menu.swift`，与场景 880/880b 的
+  `clickMenuItem` 同一实现）：KimiCU 的 AX 文本把整条菜单栏折叠成一个 `AXMenuBar` 节点，
+  `AXMenuBarItem` / `AXMenuItem` 不是可点节点，按节点轮询永远等不到。helper 找不到菜单 / 菜单项
+  即退出码 2（错误带现有标题），**不退回快捷键**（该命令按设计没有默认键位）。需要辅助功能权限
+  （与 `resizeWindow` 同一前提）。
+- **真实安装版的整链路（发现 → 菜单 → 完成信号 → ⌘Q）尚未在真机上跑过**。菜单通道已换成与
+  880/880b 真机 PASS 相同的 helper，但整链路仍需真机窗口验证；机器判据在
+  `lib/installed-app.test.mjs` / `lib/native-menu.test.mjs`，真机验收登记为待办。
 - 与旧口径的分工：ad-hoc 的「代为退出安装版」仍按上一节的授权边界执行；本通道只服务
   `--pause-installed` 的跑批前置。
 
@@ -772,7 +776,7 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 | `openNotificationCenter` / `closeNotificationCenter` | 无参数（`expect` 可用） | **切换通知中心面板**（M620）：点菜单栏时钟（Control Center 的 `AXMenuBarItem (Clock)`），幂等——目标态已成立时不点；点完 5s 内验证 NC 的 AX 树里出现 / 消失 `AXWindow`，等不到判 INVALID（环境项）。**开关态竞态（M622）**：面板的开态可能在「读状态」与「点击」之间被别的动作改掉（前一场景的 `clickNotification` 会把面板留在打开态，随后前台切换又可能把它收掉），那一次点击恰好在相反方向上生效——因此最多点两次（每次后 5s 验证、重读状态），收起方向再以 **Escape** 兜底（面板的默认收起键，2026-10-21 实测有效）；两条兜底都写进证据。**为什么需要它**：`NotificationCenter.app` 的 AX 树只在面板打开时才有条目（面板关着只剩菜单栏）。冷启动投递的条目早就在通知中心里、但场景开始时读不到，必须先打开面板再 `waitForNotification`；读完收起，避免遮住后续场景的前台 / 横幅判定 |
 | `open` | `file`、`marker` | 点左栏文件名打开，等编辑器出现 marker |
 | `click` | `target: {role,name\|help\|any,nth,count,modifiers}` 或 `{x,y,count}`，两者都可带 `button`（`left`（默认）/`right`/`middle`）与 `dx`/`dy` | 节点按 AX 索引点（走 AXPress）；`{x,y}` 走真实鼠标坐标。`count` 原样透传给 KimiCU，那四条通道**产生不出 DOM 的 `dblclick`**（判据与修正见「已知边界」）——要双击类交互请用 `doubleClick`。**`button` 给非左键时改走坐标路径**（M244）：AX 索引路径发的是 AXPress（「按下这个元素」），产不出鼠标右键，而 DOM 的 `contextmenu` 靠真实指针事件；此时套件取该节点 bbox 的中心（`dx`/`dy` 按宽高比例偏移，默认 0.5）注入真实鼠标事件（**cursor-safe，不移动用户指针**）。因此**目标行必须落在窗口可视区内**——树/列表里靠下的条目 AX 报的是内容坐标（实测 40 个 fixture 时 y≈1300 而窗口高 800），出视口时套件按错因报错（「右键目标不在可视区内…请先用 open / 滚动把它带进视口」），不静默；另外该路径要求快照带截图，取不到时同样报错不静默。**`modifiers`（M379）**：给 `["meta"]`（或 `cmd`/`control`/`ctrl`/`shift`/`alt`/`option`）时改走 swift + CGEvent 通道投递**带修饰键 flags 的鼠标点击**（DOM 侧 `metaKey` 等为真，⌘-Click 跟随链接这类路径因此可在真机验）——KimiCU 的 click 没有修饰键参数。该路径与 `doubleClick` 同代价：**会移动真实光标、要求目标窗口在前台**，坐标用 `target` 的**窗口局部点**（`{x,y}` 也按这个空间给），并支持 `settleMs`（缺省 600）。**节点在窗口外时先自动滚入视口**（节点形态；最多 6 次 CGEvent 滚轮，见「已知边界」的「滚入视口」条）。**该通道恒为左键**（swift 侧的点击事件写死 `.left`）：`modifiers` 与 `button` **不能同写**，`--check` 会挡；要右键就单独写 `button: right` |
-| `clickMenuItem` | `menu`、`item`、`settleMs` | **原生菜单点击**（880 / 880b）：KimiCU 的 AX 文本把整条菜单栏折叠成一个 `AXMenuBar` 节点（子项只以 `[6] File` 这类内联索引出现），`AXMenuBarItem` 不是可点节点——按 role/name 点菜单项结构性做不到。本动作按 **pid** 走 Swift Accessibility helper（`lib/ax-menu.swift`）读真实菜单层级、打开 `menu` 并按下 `item`；找不到菜单 / 项即非零退出，把现有标题带进 FAIL。需要辅助功能权限（与 `resizeWindow` 同一前提）。菜单项在场与否由**动作成功**证明，MUST NOT 用一个结构性读不到的 AX 节点断言代替。 |
+| `clickMenuItem` | `menu`、`item`、`settleMs` | **原生菜单点击**（880 / 880b）：KimiCU 的 AX 文本把整条菜单栏折叠成一个 `AXMenuBar` 节点（子项只以 `[6] File` 这类内联索引出现），`AXMenuBarItem` 不是可点节点——按 role/name 点菜单项结构性做不到。本动作按 **pid** 走 Swift Accessibility helper（`lib/ax-menu.swift`）读真实菜单层级、打开 `menu` 并按下 `item`；找不到菜单 / 项即非零退出，把现有标题带进 FAIL。需要辅助功能权限（与 `resizeWindow` 同一前提）。菜单项在场与否由**动作成功**证明，MUST NOT 用一个结构性读不到的 AX 节点断言代替。安装版暂停的保存屏障（`triggerSaveAllMenuItem`，File → Save All）复用同一 helper，两处不各写一套。 |
 | `clickNodeText` | `text` | 点 value/title **逐字等于** `text` 的节点（比 `name` 的正则更死板） |
 | `clickInNode` | `target`、`dx`、`dy`、`count` | 点「某个有 bbox 的节点内部」的相对位置（如 `AXTable`）；`count` 同上，未观察到 `dblclick`（判据限制见「已知边界」） |
 | `clickEditor` | `dx`（默认 40）、`dy`（默认 6）、`real`、`retries`、`settleMs` | 点编辑器顶部建立渲染层焦点（编辑器内元素无 AX bbox，只能按坐标）。`dx` / `dy` 都是**窗口局部点**偏移（M762 起；与 `drag {x,y}` / `textareaEdge` / mode=ax 的 bbox 同一空间，**不是**截图像素）：落点 = AXTextArea bbox 左上角（先折成窗口点）+ `dx`/`dy`。**单位是点是为了密度无关**——截图像素随上游截图长边变（KimiCU 0.6.8：1152 → 2048），同一份标定会换落点（M761 现场：53 的 `dx=110` 从 114.6pt 缩到 64.4pt，落点左移 50.2pt）；两条通道（KimiCU 坐标点击 / `real: true` 的 swift+CGEvent）都在同一处折算。默认 `(40,6)` 只落在编辑器顶部留白（光标归到正文首行），**要落在某个渲染块上必须按现场标定两个轴**——场景 228 的属性盒是 `(dx=120, dy=60)`、大标题是 `(dx=120, dy=170)`（M669 真机探针，当时按 0.96 密度写成，换算到点后物理落点不变或右移 ≤4%）。`dx=40` 尤其容易踩：它落在 CM 块 widget 的**外层留白**里（`replace` widget 的 outer 不是渲染面本体），mousedown 会走「合成面」分支、看起来像「点了但没反应」。坐标随行高 / 间距 / 栏宽 / 字号漂（**不再**随窗口缩放与截图密度漂），改 fixture 后按截图重取、再折成点。**`real: true`（M669）**改走 swift + CGEvent 真实左键单击（与 `doubleClick` / `drag` 同一通道，要前台、会移动真实光标）；M678 起它与 `focusWindow click: true` **共用同一份落点换算与注入实现**（`realContentClick`），但**不做焦点校验**——它承载的是「点到某个渲染块」的语义（落点可能正是会撤下渲染态的块）。要「key window + webview/编辑器焦点」用 `focusWindow click: true` |

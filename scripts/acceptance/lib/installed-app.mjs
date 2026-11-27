@@ -8,7 +8,8 @@
 //   1. 默认行为完全不变：没有 `--pause-installed` 时本模块一行都不执行；
 //   2. 目标只认唯一、canonical 的 `/Applications/Lumir.app` + 产品 bundle id + 可读 pid /
 //      startedAt；dev 实例、验收 bundle、多实例、归属不明一律拒绝（退出码 2、零副作用）；
-//   3. 暂停前必须拿到**保存屏障的正向完成信号**（产品侧 `document.save-all` 的 D1049 toast）；
+//   3. 暂停前必须拿到**保存屏障的正向完成信号**（产品侧 `document.save-all` 的追加式状态日志
+//      `save-all-log …`）；
 //      任一步失败 / 超时 / 新 dirty / AX 不可读都**不 ⌘Q、不跑批**——不得以「没有错误提示 /
 //      AX 空树 / dirty 点消失」冒充成功；
 //   4. 只用按 pid 激活 + 正常 ⌘Q，等**原 pid 消失**；禁止 Apple Event quit、SIGTERM / SIGKILL /
@@ -26,6 +27,7 @@ import { mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSy
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { findNode, parseNodes } from "./ax.mjs";
+import { clickNativeMenuItem } from "./native-menu.mjs";
 
 /** 安装版的 canonical 位置：只认这一份（其他 `.app` 副本一律视为「归属不明」）。 */
 export const INSTALLED_APP_PATH = "/Applications/Lumir.app";
@@ -567,74 +569,45 @@ function axNodesOrFail(text, phase) {
   return nodes;
 }
 
-async function pollNode({
-  readState,
-  pid,
-  phase,
-  role,
-  name,
-  timeoutMs,
-  everyMs,
-  sleepFn,
-  now,
-}) {
-  const deadline = now() + timeoutMs;
-  let reads = 0;
-  for (;;) {
-    const text = await readAxOrFail(readState, pid, phase);
-    reads += 1;
-    const nodes = axNodesOrFail(text, phase);
-    const node = findNode(nodes, { role, name });
-    if (node) return { node, reads };
-    if (now() >= deadline) {
-      throw new PauseFailed(`安装版 AX 里等不到 ${role} ${name}（${phase}，${reads} 次读取，${timeoutMs}ms）`);
-    }
-    await sleepFn(everyMs);
-  }
-}
+/** 安装版暂停触发的菜单与菜单项（唯一一份字面量，测试与文档都引用它）。 */
+export const SAVE_ALL_MENU = "File";
+export const SAVE_ALL_ITEM = "Save All";
 
 /**
  * 经原生菜单触发保存全部：`File → Save All`。这是安装版**唯一**可由外部触发的保存屏障入口
- *  （菜单项不带 accelerator，见 lib.rs 的 add_save_all_item），因此必须真的走菜单。
+ * （菜单项不带 accelerator，见 lib.rs 的 add_save_all_item），因此必须真的走菜单。
  *
- * 判据全部是 AX 节点：`AXMenuBarItem` 名 `File`（裸正则源）、`AXMenuItem` 名 `Save All`；
- * 点击走 AXPress（KimiCU 的 index 通道）。任何一步读不到都抛 `PauseFailed`——不退回键盘
- * 快捷键（那条不存在）、不把「菜单没找到」当成「已经保存」。
+ * 通道与场景 880/880b 的 `clickMenuItem` 是**同一个实现**（`clickNativeMenuItem` →
+ * `lib/ax-menu.swift`，按 pid 读真实 `AXMenuBar` 层级并 AXPress）。KimiCU 的 AX 文本把整条
+ * 菜单栏折叠成一个 `AXMenuBar` 节点，`AXMenuBarItem` / `AXMenuItem` 不是可点节点——此前按
+ * 节点轮询的写法在真实安装版上永远等不到（REVIEW.md「断言等价于子串」条同族的假判据：
+ * 读不到菜单 ≠ 菜单不存在）。helper 找不到菜单 / 菜单项即非零退出；本函数把它一律映射成
+ * `PauseFailed`——不退回快捷键（该命令没有默认键位）、不把「菜单没找到」当成「已经保存」，
+ * 不 ⌘Q、不跑批。
+ *
+ * `execFile` 只为单测注入；默认 `execFileSync`，pid / menu / item 以独立 argv 传给 Swift helper，
+ * 不拼进脚本源码。
  */
-export async function triggerSaveAllMenuItem({
-  pid,
-  readState,
-  click,
-  timeoutMs = 8_000,
-  everyMs = 250,
-  sleepFn = (ms) => new Promise((r) => setTimeout(r, ms)),
-  now = Date.now,
-} = {}) {
-  const menuBar = await pollNode({
-    readState,
-    pid,
-    phase: "menu-bar",
-    role: "AXMenuBarItem",
-    name: "^File$",
-    timeoutMs,
-    everyMs,
-    sleepFn,
-    now,
-  });
-  await click(pid, menuBar.node.index);
-  const item = await pollNode({
-    readState,
-    pid,
-    phase: "save-all-item",
-    role: "AXMenuItem",
-    name: "^Save All$",
-    timeoutMs,
-    everyMs,
-    sleepFn,
-    now,
-  });
-  await click(pid, item.node.index);
-  return { reads: menuBar.reads + item.reads };
+export async function triggerSaveAllMenuItem({ pid, execFile } = {}) {
+  const numericPid = Number(pid);
+  if (!Number.isInteger(numericPid) || numericPid <= 0) {
+    throw new PauseFailed(`触发保存全部需要有效的 pid（收到 ${JSON.stringify(pid)}）——不猜目标进程，不⌘Q、不跑批`);
+  }
+  try {
+    const out = clickNativeMenuItem({
+      pid: numericPid,
+      menu: SAVE_ALL_MENU,
+      item: SAVE_ALL_ITEM,
+      execFile,
+    });
+    return { menu: SAVE_ALL_MENU, item: SAVE_ALL_ITEM, out };
+  } catch (e) {
+    throw new PauseFailed(
+      `原生菜单触发保存全部失败（${SAVE_ALL_MENU} → ${SAVE_ALL_ITEM}，pid ${numericPid}）：` +
+        `${e?.message ?? String(e)}——不退回快捷键（该命令没有默认键位），` +
+        "不把「菜单没按到」当成「已经保存」，不⌘Q、不跑批",
+    );
+  }
 }
 
 /** 从 AX 节点里取状态日志：标记是视觉隐藏 span，WKWebView 可能暴露成 AXStaticText 或 AXGroup

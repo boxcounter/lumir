@@ -589,14 +589,9 @@ async function runPausePhase() {
     readBundleId: (appPath) => readBundleId(appPath),
     activate: (pid) => activateByPid({ pid }).then(() => undefined),
     readLog: (pid) => readSaveAllLog({ pid, readState }),
-    triggerSaveAll: async (pid) => {
-      const client = await ensureCu();
-      await triggerSaveAllMenuItem({
-        pid,
-        readState,
-        click: (targetPid, index) => client.click(targetPid, { index }),
-      });
-    },
+    // 保存全部走与场景 880/880b 相同的按 pid 原生菜单 helper（File → Save All），不读 KimiCU
+    // 的折叠菜单栏——真实安装版的 `AXMenuBarItem` 在 KimiCU 文本里不是可点节点。
+    triggerSaveAll: (pid) => triggerSaveAllMenuItem({ pid }),
     waitSaveAll: (pid, baseline) =>
       waitSaveAllCompletion({
         pid,

@@ -11,6 +11,7 @@ import os, { tmpdir } from "node:os";
 import path from "node:path";
 import yaml from "js-yaml";
 import { coordsSpace, findNode, hasEditorAncestor, nextSiblingNode, nodeName, parseNodes, windowBounds } from "./ax.mjs";
+import { clickNativeMenuItem } from "./native-menu.mjs";
 import {
   attachRelaunchedBundle,
   bundleBinary,
@@ -3628,22 +3629,6 @@ function notificationSpec(step, action) {
   };
 }
 
-/**
- * 原生菜单点击的调用构造（纯函数，可单测）：菜单 / 菜单项以**独立 argv** 传给 Swift helper，
- * 不拼进脚本字符串——标题里出现引号 / 反斜杠也不会变成 AppleScript / Swift 源码。
- *
- * 为什么走这条通道（880/880b 真机取证）：KimiCU 的 AX 文本把整条菜单栏折叠成一个 `AXMenuBar`
- * 节点，子项只以 `[6] File` 这样的内联索引出现，`parseNodes` 不生成 `AXMenuBarItem` 节点；
- * 按 role/name 找菜单项永远找不到（产品菜单本身在场）。Swift helper 直接读 Accessibility API
- * 的真实菜单栏层级，按 pid 定位，不依赖 KimiCU 的文本渲染。
- */
-export function menuClickInvocation(pid, menu, item) {
-  return {
-    command: "/usr/bin/swift",
-    args: [path.join(repoRoot(), "scripts/acceptance/lib/ax-menu.swift"), String(pid), menu, item],
-  };
-}
-
 async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
   const p = pid();
   switch (step.do) {
@@ -4280,7 +4265,8 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     case "clickMenuItem": {
       // 原生菜单点击（880/880b）：KimiCU 的 AX 文本不暴露 AXMenuBarItem 节点（菜单栏被折叠成
       // 一行），按节点点菜单项结构性做不到。这里按 pid 走 Swift AX helper，直接读真实菜单层级、
-      // 按标题打开并按下菜单项；helper 失败会带回「现有菜单 / 项标题」，不静默。
+      // 按标题打开并按下菜单项；helper 失败会带回「现有菜单 / 项标题」，不静默。安装版暂停的
+      // 保存屏障（`triggerSaveAllMenuItem`）与本动作共用 `native-menu.mjs` 的同一份实现。
       if (
         typeof step.menu !== "string" ||
         step.menu.trim() === "" ||
@@ -4289,14 +4275,12 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       ) {
         throw new Error("do=clickMenuItem 需要非空 menu / item（运行期复核，不只依赖 --check）");
       }
-      const invocation = menuClickInvocation(p, step.menu, step.item);
       let out = "";
       try {
-        out = execFileSync(invocation.command, invocation.args, { encoding: "utf8", timeout: 30_000 }).trim();
+        out = clickNativeMenuItem({ pid: p, menu: step.menu, item: step.item });
       } catch (e) {
-        const stderr = e?.stderr ? String(e.stderr).trim() : "";
         throw new Error(
-          `do=clickMenuItem 失败（${step.menu} → ${step.item}，pid ${p}）：${stderr || e.message}`,
+          `do=clickMenuItem 失败（${step.menu} → ${step.item}，pid ${p}）：${e?.message ?? String(e)}`,
         );
       }
       evidence.record({

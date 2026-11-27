@@ -20,7 +20,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, geomBaselineProblem, isStaleIndexError, KEY_CHANNELS, keyChannel, keysTarget, loadScenario, matcher, notificationBaseline, notificationMatches, pickFreshNotification, planNodeIntoView, menuClickInvocation, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, resolveKeysTarget, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, scopedAxOrder, screenshotSize, settleEditorless } from "./execute.mjs";
+import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, geomBaselineProblem, isStaleIndexError, KEY_CHANNELS, keyChannel, keysTarget, loadScenario, matcher, notificationBaseline, notificationMatches, pickFreshNotification, planNodeIntoView, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, resolveKeysTarget, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, scopedAxOrder, screenshotSize, settleEditorless } from "./execute.mjs";
+import { menuClickInvocation } from "./native-menu.mjs";
 import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
 import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, SETTLE_SAMPLE_MS, settle, StepError } from "./drive.mjs";
 import { InfraError, repoRoot, secondVaultDir } from "./util.mjs";
