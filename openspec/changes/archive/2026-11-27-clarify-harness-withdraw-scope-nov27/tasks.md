@@ -42,7 +42,9 @@
       证据 `.local/acceptance/2026-11-27-withdraw-scope-feedback-r2/`（`summary.md` 与各场景
       `status.txt`）。
 - [x] 3.7 **最终完整视觉**：`bash scripts/gate.sh visual` → `GATE RESULT: 15/15 PASS（SKIP 0）`，
-      exit 0；`visual-regression` 1375s，无像素差异，未更新基线。
+      exit 0；`visual-regression` 1375s，无像素差异，未更新基线。汇总与原始日志分别为
+      `.local/reviews/withdraw-scope-feedback-nov27/gate-visual-final-summary.log` 与
+      `.local/reviews/withdraw-scope-feedback-nov27/gate-visual-final.log`。
 
 ## 4. r2：独立终审 P2 修复
 

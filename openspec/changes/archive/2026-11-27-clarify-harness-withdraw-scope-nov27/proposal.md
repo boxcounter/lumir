@@ -105,13 +105,16 @@
 2. **独立 reviewer clean / merge**：K3 r2 verdict `clean/merge`，绑定
    **`a62b7df178e53cb698826b4ea9d03de9e3d95bb9`**
    （`.local/reviews/withdraw-scope-feedback-nov27/independent-review-r2.md`）；r1 两项 P2 均复核
-   修复，P1 / P2 / P3 无新增；四份反向必红日志与目标 spec 13/13 经 reviewer 独立复跑。
+   修复，P1 / P2 / P3 无新增；四份反向必红日志经 reviewer 核验，目标 spec 13/13 与只读探针
+   6/6 则由 reviewer 独立复跑（`independent-review-r2.md`）。
 3. **tasks 完成**：全部勾选（1.1–4.6），无放弃项。
 4. **要求的门禁与真机证据**：
    - `bash scripts/gate.sh quick` → `GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0
      （`.local/reviews/withdraw-scope-feedback-nov27/quick-r2.log`）；
    - **最终完整视觉** `bash scripts/gate.sh visual` → `GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0；
-     `visual-regression` 1375s，无像素差异，未更新任何基线；
+     `visual-regression` 1375s，无像素差异，未更新任何基线；汇总 / 原始日志分别为
+     `.local/reviews/withdraw-scope-feedback-nov27/gate-visual-final-summary.log` 与
+     `.local/reviews/withdraw-scope-feedback-nov27/gate-visual-final.log`；
    - 目标视觉 13/13（`target-visual-r2-green.log`）；`pnpm test` 2195 passed / 0 failed
      （`unit-r2.log`）；`acceptance --check` 312 场景（`acceptance-check-r2.log`）；
    - 真机（新 tip `a62b7df1`）：882 PASS 15 断言 / 887 PASS 17 断言，2/2 PASS
