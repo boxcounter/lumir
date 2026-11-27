@@ -219,8 +219,8 @@ test("禁区优先于列表归属：列表项内的表格行 / 缩进代码块�
   const code = "- a\n- b\n\n      code line\n";
   moved(caret(code, 4, 7), "indent", null, "缩进代码块行单独");
   moved(selection(code, 2, 0, 4, 7), "indent", "- a\n  - b\n\n      code line\n", "选区含代码块行：只缩 b");
-  // HTML 形态：当前 markdown 配置把块级 HTML 解析成 Document 级 Element / Comment（不是 HTMLBlock），
-  // 因此它同样不属于任何 ListItem ⇒ 不写；HTMLBlock 仍留在禁区集合里，与 lists.ts / block-geometry.ts 同口径。
+  // 块级 HTML 在树里是 CommentBlock / HTMLBlock，内容再包一层内嵌 Document；
+  // listItemForLine 向上遍历先停在内嵌 Document ⇒ 不写。HTMLBlock 仍与 lists.ts / block-geometry.ts 同口径。
   const html = "- a\n- b\n  <!-- c -->\n";
   moved(caret(html, 3, 4), "indent", null, "列表项内的 HTML 注释行");
 });
