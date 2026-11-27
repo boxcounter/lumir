@@ -85,24 +85,61 @@ CI 的 received string 是**整篇 2000 段 + 末尾 BulletList**，说明 state
 - 影响的代码/系统：`tests/visual/scenes/editing-oracle.spec.ts` 的两条 oracle 用例。
 - 关联约束：REVIEW.md「断言等价于子串，没有区分度」「假绿」「重试」条；新断言反向必红实测。
 
-## 节点 2：归档记录（实现完成后填写）
+## 节点 2：归档记录
+
+**放行方式**：机器 + 独立评审放行（`docs/process/openspec-workflow.md`「节点 2」五要件）。
+
+### 五要件（归档前）
+
+1. **方案已批准**：Alex 2026-11-27 要求处理「Tab 修复被既有 IME 门禁阻塞」；2026-11-28 要求处理
+   code 满 pane 合并后的 358 visual 红。实现期无 scope 扩张：只改
+   `tests/visual/scenes/editing-oracle.spec.ts`，`src/**` 相对基线零 diff。
+2. **独立 reviewer clean / merge**：K3 终审 **clean/merge**，绑定
+   `aa36bc272b1825943741c21530ab7be1bfb66aba`，P1 / P2 / P3 均为 0；评审文件
+   `.local/reviews/ime-oracle-stability-nov27/independent-review.md`。评审独立复验了双引擎
+   目标用例各 5 次、Chromium 与 WebKit 产品变异体、`tests/visual` tsc 与 change validate。
+3. **tasks 完成 / 放弃理由**：20/21 勾选；唯一未勾的 4.1「merge / push」按本批禁令留主会话
+   串行执行，tasks 已就地注明（这是执行分工，不是实现缺口）。实现、双引擎复跑、反向必红、
+   完整 visual、quick、validate 各项均已完成。
+4. **要求的门禁与真机证据**：
+   - **machine PASS**：exact tip `aa36bc27` 的最终完整 `scripts/gate.sh visual` 原文
+     **`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0**；visual-regression 1382s /
+     1984 passed / 0 failed / 13 skipped；358 在 chromium #73、webkit-realua #1765，
+     1143（358 改写后行号移至 1197）在 chromium #94、webkit-realua #1786 均绿
+     （`.local/reviews/ime-oracle-stability-nov27/37-gate-visual-final.log`、
+     `38-gate-visual-regression-final.log`）。
+   - rebase 后整份 `editing-oracle.spec.ts`：chromium 66 passed、webkit-realua 56 passed /
+     10 skipped（`27`/`28`）；`scripts/gate.sh quick` `GATE RESULT: 13/13 PASS（SKIP 0）`、
+     退出码 0（`29`）。
+   - **native PASS**：不适用——本 change 只改 Playwright 测试 oracle，无新增真机判定面。
+5. **规格对账无丢段**：`.openspec.yaml` 为 `skip_specs: true`，无 specs delta；归档前
+   `node scripts/openspec-archive-check.mjs` 门禁模式 PASS，`validate --all --strict`
+   39 passed / 0 failed；归档跟踪队列有且仅有一条条目（`docs/backlog.md`）。
+
+### 五态
 
 | 状态 | 值 | 证据指针 |
 |---|---|---|
-| implemented | 是 | 本 worktree 分支提交（2026-11-27 的 1143 修复 + 2026-11-28 的 358 修复；merge / push 按本批禁令留 tower） |
+| implemented | 是 | `aa36bc27`（实现两个提交：`2734ad01` 1143、`aa36bc27` 358；基于 `d356a0f78`） |
 | released | 不适用 | 测试基础设施，不随版本发布 |
-| machine PASS | 是（visual-regression） | visual-regression `GATE PASS` 1429s / 1984 passed / 0 failed / 13 skipped；358 在 chromium #73、webkit-realua #1765，1143（现第 1197 行）在 chromium #94、webkit-realua #1786 均绿。完整 `scripts/gate.sh visual` 为 `GATE RESULT: 14/15 PASS（SKIP 0）`、退出码 1；唯一 FAIL 是 master `2de2f4ef` 既有的 `docs-check`（`docs/backlog.md` 81 行超 80，code pane 合并净 +1，见 `.local/reviews/code-pane-workspace-nov27/ci-final.md`），与本 change 无关，未在本分支修（防与 docs 工作流冲突）。日志 `.local/reviews/ime-oracle-stability-nov27/25-gate-visual-full-358.log`、`26-gate-visual-regression-full-358.log` |
-| native PASS | 不适用 | 无真机判定面（visual oracle 单测） |
-| archived | 否 | 待归档 |
+| machine PASS | 是 | `GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0；visual-regression 1382s / 1984 passed / 0 failed / 13 skipped（`37`/`38`）；quick 13/13 exit 0（`29`） |
+| native PASS | 不适用 | 无真机判定面（纯测试 oracle） |
+| archived | 否：待归档 | 归档后回填归档提交与 `--archived` 读数 |
 
-1143 的反向必红与恢复绿读数（同一证据目录）：全局「4s 后 cancel」产品变异体 5/5 红
+反向必红与恢复绿读数（同一证据目录）：1143 的全局「4s 后 cancel」产品变异体 5/5 红
 （`06-webkit-mutant-global-cancel-at-4s.log`，`Received array: [0]`）；回退并重建后
 webkit 20/20、chromium 20/20 绿（`07`/`08`）；旧 20ms 窗口 oracle 4/20 红
-（`01-webkit-repeat20.log`）。
-
-358 的反向必红与恢复绿读数：产品变异体（available 分支用 `syntaxTree(view.state)` 替代
-`ensureSyntaxTree`）3/3 红在「settle 首拍 build 必须用已到行末的 context 树」
+（`01-webkit-repeat20.log`）。358 的产品变异体（available 分支用 `syntaxTree(view.state)`
+替代 `ensureSyntaxTree`）3/3 红在「settle 首拍 build 必须用已到行末的 context 树」
 （`17-chromium-358-product-mutant.log`）；oracle 变异体 A（不安装 hook）红在
 `__forcedStale.done`（`18`），B（不置旧树）红在「settle 首拍前 state 树 MUST 陈旧」（`19`）；
-候选双引擎各 20/20 绿（`20`/`21`），整份 spec chromium 66 passed、webkit 56 passed / 10 skipped
-（`23`/`24`）。
+候选双引擎各 20/20 绿（`20`/`21`）。
+
+### 归档后追加
+
+- 归档目录：`openspec/changes/archive/2026-11-28-fix-ime-settle-oracle-nov27/`
+- 归档提交：待回填
+- 包装器输出：`Change 'fix-ime-settle-oracle-nov27' archived as '2026-11-28-fix-ime-settle-oracle-nov27'.`；
+  归档后修链 0 处（扫过 3 篇 Markdown / 0 条相对链接）；`openspec-links: PASS`（716 条相对链接全部可达）。
+  归档时 tasks 18/19（4.1 merge / push 留主会话），CLI 以 `--yes` 继续。
+- `--archived` 审计读数：待回填
