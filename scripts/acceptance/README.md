@@ -536,9 +536,12 @@ LaunchServices 复原 / `--recover-installed` 之类出口；崩溃 / 断电同�
   `AXMenuBarItem` / `AXMenuItem` 不是可点节点，按节点轮询永远等不到。helper 找不到菜单 / 菜单项
   即退出码 2（错误带现有标题），**不退回快捷键**（该命令按设计没有默认键位）。需要辅助功能权限
   （与 `resizeWindow` 同一前提）。
-- **真实安装版的整链路（发现 → 菜单 → 完成信号 → ⌘Q）尚未在真机上跑过**。菜单通道已换成与
-  880/880b 真机 PASS 相同的 helper，但整链路仍需真机窗口验证；机器判据在
-  `lib/installed-app.test.mjs` / `lib/native-menu.test.mjs`，真机验收登记为待办。
+- **真实安装版整链路已于 2026-11-27 用 0.20.0 验过**：隔离 XDG + 合成 vault 中，脏文档经
+  File → Save All 落盘，状态日志完成同代 `running → ok`，原 pid 正常退出，随后 47b PASS 且安装版保持关闭；
+  证据 `.local/acceptance/2026-11-27-installed-pause-positive/`。另把隔离 `vault-sessions/` 收紧到 0500，
+  真实会话写入失败使 `g1 failed`、runner 退出码 2、原 pid 保持运行且不跑场景；恢复权限后用应用自身
+  Quit 菜单正常退出，证据 `.local/acceptance/2026-11-27-installed-pause-flush-failure/`。0.19.0 缺状态日志的
+  零退出反例在 `.local/acceptance/2026-11-27-installed-pause-legacy/`。
 - 与旧口径的分工：ad-hoc 的「代为退出安装版」仍按上一节的授权边界执行；本通道只服务
   `--pause-installed` 的跑批前置。
 
