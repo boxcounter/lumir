@@ -1637,10 +1637,41 @@ test("Ask 预览（selected_chunks）显示完整 URL、选取 query 与外发�
     /选取查询会与 URL 一起发往 DeepSeek/,
     "预览说明 query 随 URL 外发",
   );
-  const row = toolsBlock(mount).querySelector(".lumir-hp-tool-row");
-  assert.ok(row !== null);
-  assert.match(row.textContent, /https:\/\/example\.com\/a\?x=1/, "默认行仍显示原始 URL");
-  assertNoMatch(row.textContent, /synthetic selection/, "选取 query 不得顶掉默认行 URL");
+  // 批准后走真实终态路径（同 641-680 手法）：点击采纳 → done 用同一 call_id 带回
+  // selected_chunks 审计，再读终态默认行——started 行不足以证明批准后的行为。
+  const approve = mount.querySelector("button[data-act=approve]");
+  assert.ok(approve !== null, "批准卡应有采纳钮");
+  approve.fire("click");
+  await flush();
+  emit({
+    type: "tool_call",
+    name: "web_fetch",
+    status: "done",
+    summary: "已完成",
+    call_id: "call-ask-chunks",
+    web: fetchAudit({
+      query: "synthetic selection",
+      mode: "selected_chunks",
+      content_scope: "selected_chunks",
+      coverage: "bounded",
+    }),
+    vault: VAULT,
+  });
+  await flush();
+  // done 确实落到本行：证据徽标出现（防止终态断言空转）。
+  assertHealth(mount, "相关段落 · 完整性受限");
+  const terminalRow = toolsBlock(mount).querySelector(".lumir-hp-tool-row");
+  assert.ok(terminalRow !== null, "终态工具行应在场");
+  assert.match(
+    terminalRow.textContent,
+    /https:\/\/example\.com\/a\?x=1/,
+    "批准后的终态默认行仍显示完整原始 URL",
+  );
+  assertNoMatch(
+    terminalRow.textContent,
+    /synthetic selection/,
+    "选取 query 不得顶掉终态默认行 URL",
+  );
 });
 
 
