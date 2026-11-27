@@ -1195,6 +1195,18 @@ export function checkScenario(scenario) {
             push(`${at} expect[${j}] geom.${k} 需要非空字符串基线名`);
         if (spec.record !== undefined && spec.unchangedSince !== undefined)
           push(`${at} expect[${j}] geom.record 与 unchangedSince 互斥（记录与比较分两步写）`);
+        if (spec.allowOutside !== undefined && typeof spec.allowOutside !== "boolean")
+          push(`${at} expect[${j}] geom.allowOutside 需要布尔`);
+        if (spec.allowOutside === true && spec.painted !== undefined)
+          push(`${at} expect[${j}] geom.allowOutside 与 painted 互斥（越界盒的绘制段没有完整采样面）`);
+        if (spec.compare !== undefined) {
+          if (!Array.isArray(spec.compare) || spec.compare.length === 0)
+            push(`${at} expect[${j}] geom.compare 需要非空数组（x/y/w/h 的子集）`);
+          else if (spec.compare.some((key) => !["x", "y", "w", "h"].includes(key)))
+            push(`${at} expect[${j}] geom.compare 只接受 x/y/w/h，实际 ${JSON.stringify(spec.compare)}`);
+          else if (new Set(spec.compare).size !== spec.compare.length)
+            push(`${at} expect[${j}] geom.compare 有重复维度 ${JSON.stringify(spec.compare)}`);
+        }
         if (spec.painted !== undefined) {
           if (!isPlainTable(spec.painted)) push(`${at} expect[${j}] geom.painted 需要对象`);
           else {
@@ -1204,7 +1216,7 @@ export function checkScenario(scenario) {
           }
         }
         for (const k of Object.keys(spec)) {
-          if (!["target", "minWidth", "minHeight", "painted", "record", "unchangedSince"].includes(k))
+          if (!["target", "minWidth", "minHeight", "painted", "record", "unchangedSince", "allowOutside", "compare"].includes(k))
             push(`${at} expect[${j}] geom 未知键 ${k}（拼错即静默不判）`);
         }
       }
@@ -2368,10 +2380,13 @@ export async function readStableEditor(readOnce, { attempts = 6, gapMs = 200 } =
   };
 }
 
-export function geomBaselineProblem(baseline, current) {
+/** bbox 基线比较。`compare` 是参与比较的维度子集（缺省 x/y/w/h 全比）——
+ *  超视口元素（编辑器 AXTextArea，高度 = 文档总高）的位置随滚动变化，只有宽高是稳定量；
+ *  这类消费者用 `compare: ["w","h"]`，避免把「滚动」误判成「几何变化」。 */
+export function geomBaselineProblem(baseline, current, compare = ["x", "y", "w", "h"]) {
   if (!baseline) return "缺已记录的 bbox 基线";
   if (!current) return "当前目标缺 bbox";
-  const changes = ["x", "y", "w", "h"]
+  const changes = compare
     .filter((key) => baseline[key] !== current[key])
     .map((key) => `${key}: ${baseline[key]} → ${current[key]}`);
   return changes.length === 0 ? null : `bbox 逐值变化（${changes.join("，")}）`;
@@ -2657,7 +2672,7 @@ export async function runScenario(ctx, scenario) {
       vars.geomBaselines ??= {};
       if (spec.record !== undefined) vars.geomBaselines[spec.record] = { x, y, w, h };
       if (spec.unchangedSince !== undefined) {
-        const problem = geomBaselineProblem(vars.geomBaselines[spec.unchangedSince], node.bbox);
+        const problem = geomBaselineProblem(vars.geomBaselines[spec.unchangedSince], node.bbox, spec.compare);
         if (problem !== null) {
           return fail(`${label}（${spec.unchangedSince}：${problem}）`, `当前包围盒 @${x},${y} ${w}×${h}`, ax);
         }
@@ -2667,7 +2682,9 @@ export async function runScenario(ctx, scenario) {
       const problems = [];
       if (!(w >= minW)) problems.push(`宽 ${w} < 下限 ${minW}`);
       if (!(h >= minH)) problems.push(`高 ${h} < 下限 ${minH}`);
-      if (x < 0 || y < 0 || x + w > shot.w || y + h > shot.h)
+      // `allowOutside`：元素盒大于视口（编辑器 AXTextArea 的 bbox 高度 = 文档总高）时跳过
+      // 「完整落在视口内」那一段——那一段只服务浮层可见性；消费方用 compare 子集守住宽高。
+      if (!spec.allowOutside && (x < 0 || y < 0 || x + w > shot.w || y + h > shot.h))
         problems.push(`包围盒 @${x},${y} ${w}×${h} 越出视口 ${shot.w}×${shot.h}`);
       let painted = null;
       let paintedPatch = null;

@@ -54,6 +54,9 @@ interface LineSnap {
 interface Snapshot {
   lines: LineSnap[];
   contentHeight: number;
+  /** `.cm-content` 元素的盒高——真机 AXTextArea 的 bbox 高度读的就是这个量（内容总高），
+   *  是「文档总高不夹带 8px」在 DOM 层的对应判据。 */
+  contentBoxHeight: number;
   endTop: number | null;
   endBottom: number | null;
   activeGutter: { text: string; height: number } | null;
@@ -139,6 +142,7 @@ async function snapshot(page: Page): Promise<Snapshot> {
     return {
       lines,
       contentHeight: view.contentHeight,
+      contentBoxHeight: Math.round(content.getBoundingClientRect().height * 100) / 100,
       endTop: endRect ? endRect.top - contentTop : null,
       endBottom: endRect ? endRect.bottom - contentTop : null,
       activeGutter: gutter ? { text: gutter.textContent ?? "", height: gutter.getBoundingClientRect().height } : null,
@@ -159,6 +163,10 @@ function expectStable(before: Snapshot, after: Snapshot, label: string): void {
     expect(Math.abs(a.top - b.top), `${label}：第 ${i + 1} 行 top ${b.top} → ${a.top}`).toBeLessThanOrEqual(1);
   }
   expect(Math.abs(after.contentHeight - before.contentHeight), `${label}：文档总高 ${before.contentHeight} → ${after.contentHeight}`).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(after.contentBoxHeight - before.contentBoxHeight),
+    `${label}：.cm-content 盒高（= 真机 AXTextArea bbox 高度）${before.contentBoxHeight} → ${after.contentBoxHeight}`,
+  ).toBeLessThanOrEqual(1);
   if (before.endTop !== null || after.endTop !== null) {
     expect(before.endTop, `${label}：END 标记必须在两态都在场（读不到 ≠ 通过）`).not.toBeNull();
     expect(after.endTop, `${label}：END 标记必须在两态都在场（读不到 ≠ 通过）`).not.toBeNull();

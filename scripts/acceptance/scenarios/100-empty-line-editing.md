@@ -168,25 +168,31 @@ steps:
     expect:
       - label: END 标记在场（长文超过一屏；正观测，下一条 geom 才有读数对象）
         ax: { count: { pattern: "AXStaticText = \"END\"", exact: 1 } }
-  - name: 记录 END 标记几何与磁盘基线（落字前）
+  - name: 记录编辑器几何与磁盘基线（落字前）
     do: record
     file: empty-line-long-2nl.md
     as: 末行落字前
     expect:
-      - label: END 标记包围盒基线（`geom` 的 record / unchangedSince 是逐值判据）
+      - label: 编辑器 AXTextArea 的宽高基线（bbox 高度 = 文档总高；真机 END 节点没有 bbox，改判这里）
         geom:
-          target: { role: AXStaticText, name: "^END$" }
-          record: END落字前
+          target: { role: AXTextArea, name: "末行稳定探针第 30 段" }
+          record: 编辑器落字前
+          allowOutside: true
+          compare: ["w", "h"]
   - name: 在末尾空行输入首字
     do: type
     text: "ELH5-STABLE"
     expect:
       - label: 字符真的落进文档（区分度：没落字时下一条在其上恒真）
         editor: { has: "ELH5-STABLE" }
-      - label: END 标记包围盒逐值不变（旧模型末行 +8px 会把 END 推下 8px）
+      - label: 编辑器 AXTextArea 的宽高逐值不变（旧模型末行 +8px 会让 bbox 高度整除增加，1px 即红）
         geom:
-          target: { role: AXStaticText, name: "^END$" }
-          unchangedSince: END落字前
+          target: { role: AXTextArea, name: "末行稳定探针第 30 段" }
+          unchangedSince: 编辑器落字前
+          allowOutside: true
+          compare: ["w", "h"]
+      - label: END 标记仍在场（截图留证；真机 END 节点无 bbox，不作几何判据）
+        ax: { count: { pattern: "AXStaticText = \"END\"", exact: 1 } }
       - label: 没有隐式落盘（正文与磁盘都保持原有内容）
         file: { path: empty-line-long-2nl.md, unchangedSince: 末行落字前 }
       - shot: 末尾空行输入首字后（END 应在原位、行盒不夹带 8px）
@@ -240,8 +246,22 @@ Alex 报告的三个缺陷（行首 Enter 看似无效 / 空列表项 Enter 后�
 （AX 拿不到行级几何，见套件已知边界）。
 
 change `fix-empty-line-height-stability-nov27` 追加用例 5 / 6：普通正文与空行的 8px 段末下距归零后，
-文档末尾空行落字 MUST NOT 改变文档总高。用例 5 用 **END 标记的 `geom` record / unchangedSince**
-（逐值比较包围盒）做严格机器判据——旧模型下末行获得 8px 会把 END 推下 8px；用例 6 是 END 不动、
-只有光标行盒 / active gutter 变高的形态，真机以落字前后截图留证（gutter 已置 `on`，active 行灰底
-即行盒高度显示器），行盒 / gutter 的逐像素判据在 chromium 场景 `empty-line-height-stability-nov27`
-（DOM 精确读数，真机 AX 无行盒通道）。
+文档末尾空行落字 MUST NOT 改变文档总高。
+
+**几何判据的落点（首轮真机修正）**：首轮用 END 标记的 `AXStaticText` 取 bbox，真机实测该节点
+**没有 bbox**（证据 `.local/acceptance/2026-11-27-empty-line-height/`：`节点 {"role":"AXStaticText",
+"name":"^END$"} 没有 bbox——AX 量不到几何`）。改判**编辑器 `AXTextArea`**：真机 dump 证实其 bbox
+高度就是**文档内容总高**（fixture 2nl 为 2689、1nl 为 2646，恰好差一行 43px），且落字前后高度不变、
+只有 y 随滚动变化——因此判据是 `geom` 的 `record` / `unchangedSince` 配
+`compare: ["w","h"]`（只比宽高，不把滚动当几何变化）与 `allowOutside: true`（元素盒高于视口，
+「完整落在视口内」那一段只服务浮层）。`target` 用 `role: AXTextArea` + fixture 文本限定**编辑器**
+（composer 是另一个 AXTextArea，用 fixture 文本排除）。
+
+**旧模型红 / 候选绿**：同一量（内容盒高度）在浏览器层有逐像素读数——用例「文档末尾空行输入首字」
+与「`a\n` → `a\nx`」在旧模型上输入首字后内容盒 +8px、候选 0（`tests/visual/scenes/
+empty-line-height-stability-nov27.spec.ts` 用 `.cm-content` 盒高断言）；真机 `AXTextArea` 的 bbox 高度
+按同一定义读数，故旧模型会让 `unchangedSince` 判红、候选绿。END 标记只保留截图与在场性判据。
+
+用例 6 是 END 不动、只有光标行盒 / active gutter 变高的形态——该形态**总高不变**，`AXTextArea`
+高度没有区分度，机器判据仍由浏览器层承担；真机以落字前后截图留证（gutter 已置 `on`，active 行
+灰底即行盒高度显示器）。

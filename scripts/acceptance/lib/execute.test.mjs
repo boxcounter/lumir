@@ -3792,6 +3792,17 @@ test("geom bbox 基线：缺基线/缺 bbox 必须 FAIL，逐值相同才通过�
   }
 });
 
+test("geom bbox 基线的 compare 子集：只比给定维度（超视口编辑器 bbox 的位置随滚动变化）", () => {
+  const baseline = { x: 10, y: 20, w: 300, h: 2650 };
+  // 位置变化（滚动）在 ["w","h"] 下不判红——编辑器的 y 随滚动走，高度才是文档总高。
+  assert.equal(geomBaselineProblem(baseline, { ...baseline, x: 1, y: 400 }, ["w", "h"]), null);
+  // 宽/高任一变化都红（严格几何判据）。
+  assert.match(geomBaselineProblem(baseline, { ...baseline, h: 2663 }, ["w", "h"]), /h: 2650 → 2663/);
+  assert.match(geomBaselineProblem(baseline, { ...baseline, w: 301 }, ["w", "h"]), /w: 300 → 301/);
+  // x/y 单独作为 compare 时照旧可判。
+  assert.match(geomBaselineProblem(baseline, { ...baseline, y: 21 }, ["y"]), /y: 20 → 21/);
+});
+
 test("geom record/unchangedSince 静态校验：合法形态通过，空名/互斥/未知键报 problem", () => {
   const scenario = (geom) => ({ id: "geom-bbox-check", item: 0, steps: [{ name: "g", expect: [{ geom }] }] });
   const target = { role: "AXComboBox", name: "按路径快速打开文件" };
@@ -3800,6 +3811,20 @@ test("geom record/unchangedSince 静态校验：合法形态通过，空名/互�
   assert.ok(checkScenario(scenario({ target, record: "" })).some((p) => p.includes("geom.record")));
   assert.ok(checkScenario(scenario({ target, record: "a", unchangedSince: "a" })).some((p) => p.includes("互斥")));
   assert.ok(checkScenario(scenario({ target, unchangedSince: "a", bogus: true })).some((p) => p.includes("未知键 bogus")));
+  // 超视口元素（编辑器 AXTextArea）的合法形态：allowOutside + compare 子集。
+  assert.deepEqual(checkScenario(scenario({ target, record: "editor", allowOutside: true, compare: ["w", "h"] })), []);
+  assert.ok(checkScenario(scenario({ target, record: "editor", allowOutside: "yes" })).some((p) => p.includes("allowOutside")));
+  assert.ok(
+    checkScenario(scenario({ target, record: "editor", allowOutside: true, painted: { min: 10 } })).some((p) => p.includes("painted 互斥")),
+  );
+  for (const [compare, needle] of [
+    [["w", "z"], "只接受 x/y/w/h"],
+    [["w", "w"], "重复维度"],
+    [[], "非空数组"],
+    ["wh", "非空数组"],
+  ]) {
+    assert.ok(checkScenario(scenario({ target, record: "editor", compare })).some((p) => p.includes(needle)), JSON.stringify(compare));
+  }
 });
 
 test("vaultWrite 第二合成 vault 只接受 second，其它取值静态报 problem", () => {
