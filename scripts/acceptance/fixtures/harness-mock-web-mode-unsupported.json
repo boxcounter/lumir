@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "用相关段落模式抓一下这个网页。",
+      "chunks": ["用相关段落模式抓一下这个网页。"],
+      "tool_calls": [
+        {
+          "id": "call_web_mode",
+          "name": "web_fetch",
+          "arguments": "{\"url\":\"https://example.com/a\",\"mode\":\"selected_chunks\",\"query\":\"synthetic selection\"}"
+        }
+      ]
+    },
+    {
+      "text": "WEB-MODE-DONE"
+    }
+  ]
+}

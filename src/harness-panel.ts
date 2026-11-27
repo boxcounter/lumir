@@ -991,11 +991,14 @@ export function parseWebApprovalPreview(value: unknown): WebApprovalPayload | un
   if (raw.trust !== "untrusted") return undefined;
   if (typeof raw.local_precheck !== "boolean" || typeof raw.provider_fetch !== "boolean") return undefined;
   if (raw.cost_per_1000_success_cny !== 5) return undefined;
+  const mode =
+    raw.mode === "full" || raw.mode === "selected_chunks" ? raw.mode : undefined;
   return {
     operation,
-    query: operation === "search" ? (raw.query as string) : undefined,
+    query: typeof raw.query === "string" ? raw.query : undefined,
     url: operation === "fetch" ? (raw.url as string) : undefined,
     origin: operation === "fetch" ? (raw.origin as string) : undefined,
+    mode,
     provider: raw.provider === null ? null : (raw.provider as string),
     provider_id: raw.provider_id === null ? null : (raw.provider_id as string),
     provider_status: raw.provider_status as WebProviderStatus,
@@ -1022,6 +1025,9 @@ function renderWebApprovalBlock(el: HTMLElement, preview: WebApprovalPayload): v
     addRow("D1016", preview.query ?? null);
   } else {
     addRow("D1018", preview.origin ?? null);
+    if (preview.mode === "selected_chunks") {
+      addRow("D1016", preview.query ?? null);
+    }
   }
   addRow("D1019", preview.provider_id ?? t("D1020"));
   el.append(kv);
@@ -1039,7 +1045,12 @@ function renderWebApprovalBlock(el: HTMLElement, preview: WebApprovalPayload): v
   }
   const egress = document.createElement("p");
   egress.className = "lumir-hp-approval-note";
-  egress.textContent = t(preview.operation === "search" ? "D1021" : "D1022");
+  egress.textContent =
+    preview.operation === "search"
+      ? t("D1021")
+      : preview.mode === "selected_chunks"
+        ? `${t("D1022")} ${t("D1087")}`
+        : t("D1022");
   const trust = document.createElement("p");
   trust.className = "lumir-hp-approval-note";
   trust.textContent = t("D1023");
@@ -1063,6 +1074,22 @@ function createWebAuditBlock(metadata: WebAuditMetadata): HTMLElement {
   addRow("D1019", metadata.provider_id ?? t("D1020"));
   addRow("D1024", String(metadata.attempts));
   if (metadata.truncated) addRow("D1025", metadata.truncated_fields.join(", "));
+  if (metadata.operation === "fetch" && metadata.mode !== null) {
+    addRow("D1085", metadata.mode);
+  }
+  if (
+    metadata.operation === "fetch" &&
+    metadata.mode === "selected_chunks" &&
+    metadata.query !== null &&
+    metadata.query !== ""
+  ) {
+    addRow("D1086", metadata.query);
+  }
+  if (metadata.content_scope !== null) addRow("D1080", metadata.content_scope);
+  if (metadata.coverage !== null) addRow("D1081", metadata.coverage);
+  if (metadata.fetched_by !== null) addRow("D1082", metadata.fetched_by);
+  if (metadata.binding !== null) addRow("D1083", metadata.binding);
+  if (metadata.final_url !== null) addRow("D1084", metadata.final_url);
   el.append(kv);
   const input = metadata.operation === "search" ? metadata.query : metadata.url;
   if (input !== null && input !== "") {
@@ -1082,7 +1109,7 @@ function createWebAuditBlock(metadata: WebAuditMetadata): HTMLElement {
       ? metadata.provider_fetch
         ? ("D1021" as const)
         : null
-      : metadata.local_precheck && metadata.provider_fetch
+      : metadata.fetched_by === "provider"
         ? ("D1022" as const)
         : null;
   const trust = document.createElement("p");
@@ -1104,6 +1131,15 @@ function createWebAuditBlock(metadata: WebAuditMetadata): HTMLElement {
  *  四种形态：正常 / 字段截断 / 结果裁剪 / 真正成功的空结果。失败、非 Search、缺读数 → null，
  *  MUST NOT 用 `0 条结果` / `0 B` 冒充（旧留存缺键即走这条降级）。 */
 function webHealthText(metadata: WebAuditMetadata): string | null {
+  if (metadata.operation === "fetch") {
+    // 失败或没有正文形态时不显示徽标；MUST NOT 由 local_precheck / attempts 反推。
+    if (metadata.code !== null || metadata.content_scope === null) return null;
+    let text =
+      metadata.content_scope === "full" ? t("D1076") : t("D1077");
+    if (metadata.coverage === "bounded") text += ` · ${t("D1078")}`;
+    if (metadata.truncated_fields.includes("content")) text += ` · ${t("D1079")}`;
+    return text;
+  }
   if (metadata.operation !== "search" || metadata.code !== null) return null;
   if (metadata.result_count === null || metadata.result_text_bytes === null) return null;
   const count = metadata.result_count;

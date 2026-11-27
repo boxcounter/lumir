@@ -1,4 +1,5 @@
 use super::executor::WebExecutor;
+use super::output::{WebBinding, WebContentScope, WebCoverage, WebFetchMode, WebFetchedBy};
 use super::output::{WebErrorCode, WebOperation};
 use super::preflight::{
     PreflightError, ReqwestWebTransport, TransportMethod, TransportResponse, WebDnsResolver,
@@ -266,6 +267,8 @@ fn response_size_content_type_json_shape_and_empty_content_do_not_retry() {
         &provider,
         WebProviderRequest::Fetch {
             url: "https://example.com".to_string(),
+            mode: WebFetchMode::Full,
+            query: None,
         },
         RecordingBackoff::default(),
     );
@@ -275,6 +278,8 @@ fn response_size_content_type_json_shape_and_empty_content_do_not_retry() {
         &provider,
         WebProviderRequest::Fetch {
             url: "https://example.com".to_string(),
+            mode: WebFetchMode::Full,
+            query: None,
         },
         RecordingBackoff::default(),
     );
@@ -291,6 +296,8 @@ fn response_size_content_type_json_shape_and_empty_content_do_not_retry() {
         &provider,
         WebProviderRequest::Fetch {
             url: "https://example.com".to_string(),
+            mode: WebFetchMode::Full,
+            query: None,
         },
         RecordingBackoff::default(),
     );
@@ -300,6 +307,8 @@ fn response_size_content_type_json_shape_and_empty_content_do_not_retry() {
         &provider,
         WebProviderRequest::Fetch {
             url: "https://example.com".to_string(),
+            mode: WebFetchMode::Full,
+            query: None,
         },
         RecordingBackoff::default(),
     );
@@ -702,6 +711,14 @@ fn executor_preflights_redirect_and_submits_only_b_url_without_permission_change
     assert_eq!(body, serde_json::json!({"url": expected}));
     assert!(!a.records()[0].authorization_matches);
     assert!(!b.records()[0].authorization_matches);
+    assert_provenance(
+        &envelope,
+        Some(WebContentScope::Full),
+        Some(WebCoverage::Unknown),
+        Some(WebFetchedBy::Provider),
+        Some(WebBinding::UrlSubmitted),
+        None,
+    );
     let value = serde_json::to_value(&envelope).unwrap();
     assert_eq!(value["local_precheck"], serde_json::json!(true));
     let audit = super::output::audit_metadata(
@@ -730,6 +747,8 @@ fn executor_preflight_failure_has_null_provider_zero_attempts_and_no_deepseek_re
     let envelope = executor.execute(
         WebProviderRequest::Fetch {
             url: original.clone(),
+            mode: WebFetchMode::Full,
+            query: None,
         },
         Arc::new(|| false),
     );
@@ -772,6 +791,8 @@ fn executor_preflight_failure_message_is_budgeted_and_marked() {
     let envelope = executor.execute(
         WebProviderRequest::Fetch {
             url: long_url.clone(),
+            mode: WebFetchMode::Full,
+            query: None,
         },
         Arc::new(|| false),
     );
@@ -818,7 +839,14 @@ fn executor_total_deadline_includes_preflight_and_never_reaches_provider_after_e
     );
     let url = format!("{}/slow", target.endpoint()).replace("127.0.0.1", "target.test");
     let started = Instant::now();
-    let envelope = executor.execute(WebProviderRequest::Fetch { url }, Arc::new(|| false));
+    let envelope = executor.execute(
+        WebProviderRequest::Fetch {
+            url,
+            mode: WebFetchMode::Full,
+            query: None,
+        },
+        Arc::new(|| false),
+    );
     let elapsed = started.elapsed();
     assert_eq!(
         envelope.code,
@@ -865,6 +893,8 @@ fn fetch_response_limit_is_four_mib_while_search_stays_two_mib() {
         &provider,
         WebProviderRequest::Fetch {
             url: "https://example.com/large".to_string(),
+            mode: WebFetchMode::Full,
+            query: None,
         },
         RecordingBackoff::default(),
     );
@@ -879,6 +909,8 @@ fn fetch_response_limit_is_four_mib_while_search_stays_two_mib() {
         &provider,
         WebProviderRequest::Fetch {
             url: "https://example.com/too-large".to_string(),
+            mode: WebFetchMode::Full,
+            query: None,
         },
         RecordingBackoff::default(),
     );
@@ -1177,6 +1209,8 @@ fn search_then_fetch_second_hop_uses_the_result_url_and_markdown() {
     let fetched = executor.execute(
         WebProviderRequest::Fetch {
             url: cited.url.clone(),
+            mode: WebFetchMode::Full,
+            query: None,
         },
         Arc::new(|| false),
     );
@@ -1456,4 +1490,244 @@ impl Drop for ProxyEnv {
             }
         }
     }
+}
+
+fn fetch_full(url: &str) -> WebProviderRequest {
+    WebProviderRequest::Fetch {
+        url: url.to_string(),
+        mode: WebFetchMode::Full,
+        query: None,
+    }
+}
+
+fn assert_provenance(
+    envelope: &super::output::WebEnvelope,
+    scope: Option<WebContentScope>,
+    coverage: Option<WebCoverage>,
+    fetched_by: Option<WebFetchedBy>,
+    binding: Option<WebBinding>,
+    final_url: Option<&str>,
+) {
+    assert_eq!(envelope.content_scope, scope);
+    assert_eq!(envelope.coverage, coverage);
+    assert_eq!(envelope.fetched_by, fetched_by);
+    assert_eq!(envelope.binding, binding);
+    assert_eq!(envelope.final_url.as_deref(), final_url);
+}
+
+#[test]
+fn fetch_success_records_provider_full_provenance() {
+    let server = TestServer::start(vec![TestResponse::json(
+        200,
+        serde_json::json!({"title": "Synthetic", "content": "# Body"}).to_string(),
+    )]);
+    let envelope = execute(
+        &provider(&server),
+        fetch_full("https://example.com/a"),
+        RecordingBackoff::default(),
+    );
+    assert!(envelope.ok);
+    assert_eq!(envelope.attempts, 1);
+    assert_provenance(
+        &envelope,
+        Some(WebContentScope::Full),
+        Some(WebCoverage::Unknown),
+        Some(WebFetchedBy::Provider),
+        Some(WebBinding::UrlSubmitted),
+        None,
+    );
+}
+
+#[test]
+fn scripted_provenance_is_not_overwritten_by_the_success_funnel() {
+    let server = TestServer::start(vec![TestResponse::json(
+        200,
+        serde_json::json!({"title": "", "content": "chunk one\n[...]\nchunk two"}).to_string(),
+    )]);
+    let provider = Arc::new(
+        DeepSeekWebProvider::with_endpoint_for_test(&server.endpoint(), "deepseek-test", CANARY)
+            .with_modes_and_scripted_for_test(
+                vec![WebFetchMode::Full, WebFetchMode::SelectedChunks],
+                Some((WebContentScope::SelectedChunks, WebCoverage::Bounded)),
+            ),
+    );
+    let envelope = execute(
+        &provider,
+        WebProviderRequest::Fetch {
+            url: "https://example.com/a".to_string(),
+            mode: WebFetchMode::SelectedChunks,
+            query: Some("synthetic selection".to_string()),
+        },
+        RecordingBackoff::default(),
+    );
+    assert!(envelope.ok);
+    assert_provenance(
+        &envelope,
+        Some(WebContentScope::SelectedChunks),
+        Some(WebCoverage::Bounded),
+        Some(WebFetchedBy::Provider),
+        Some(WebBinding::UrlSubmitted),
+        None,
+    );
+}
+
+#[test]
+fn attempts_after_failure_carry_provider_attempted_provenance() {
+    let server = TestServer::start(vec![
+        TestResponse::json(500, "{}"),
+        TestResponse::json(500, "{}"),
+        TestResponse::json(500, "{}"),
+    ]);
+    let envelope = execute(
+        &provider(&server),
+        fetch_full("https://example.com/a"),
+        SleepingBackoff,
+    );
+    assert_eq!(envelope.code, Some(WebErrorCode::WebHttpError));
+    assert_eq!(envelope.attempts, 3);
+    assert_provenance(
+        &envelope,
+        None,
+        None,
+        Some(WebFetchedBy::Provider),
+        Some(WebBinding::UrlSubmitted),
+        None,
+    );
+}
+
+#[test]
+fn cancel_after_the_first_attempt_keeps_provider_attempted_provenance() {
+    let server = TestServer::start(vec![TestResponse::json(429, "{}")]);
+    let abort = Arc::new(AtomicBool::new(false));
+    let provider = provider(&server);
+    let abort_flag = abort.clone();
+    let envelope = provider.execute(
+        fetch_full("https://example.com/a"),
+        Arc::new(move || abort_flag.load(Ordering::SeqCst)),
+        Arc::new(RecordingBackoff::with_abort(abort)),
+    );
+    assert_eq!(envelope.code, Some(WebErrorCode::WebCancelled));
+    assert_eq!(envelope.attempts, 1);
+    assert_provenance(
+        &envelope,
+        None,
+        None,
+        Some(WebFetchedBy::Provider),
+        Some(WebBinding::UrlSubmitted),
+        None,
+    );
+}
+
+#[test]
+fn search_never_carries_fetch_provenance() {
+    let server = TestServer::start(vec![
+        TestResponse::json(200, serde_json::json!({"results": []}).to_string()),
+        TestResponse::json(400, "{}"),
+    ]);
+    let ok = execute(
+        &provider(&server),
+        search("synthetic"),
+        RecordingBackoff::default(),
+    );
+    assert!(ok.ok);
+    assert_provenance(&ok, None, None, None, None, None);
+
+    let failed = execute(
+        &provider(&server),
+        search("synthetic"),
+        RecordingBackoff::default(),
+    );
+    assert_eq!(failed.code, Some(WebErrorCode::WebHttpError));
+    assert_provenance(&failed, None, None, None, None, None);
+}
+
+#[test]
+fn production_fetch_request_body_contains_only_url() {
+    let server = TestServer::start(vec![TestResponse::json(
+        200,
+        serde_json::json!({"title": "", "content": "body"}).to_string(),
+    )]);
+    let envelope = execute(
+        &provider(&server),
+        fetch_full("https://example.com/a"),
+        RecordingBackoff::default(),
+    );
+    assert!(envelope.ok);
+    let records = server.records();
+    assert_eq!(records.len(), 1);
+    let body: serde_json::Value = serde_json::from_str(&records[0].body).unwrap();
+    let keys: Vec<&str> = body
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        ["url"],
+        "生产 DeepSeek 请求体 MUST NOT 因 mode / query 扩字段"
+    );
+}
+
+#[test]
+fn truncation_does_not_rewrite_coverage_or_scope() {
+    let server = TestServer::start(vec![TestResponse::json(
+        200,
+        serde_json::json!({"title": "", "content": "x".repeat(30_000)}).to_string(),
+    )]);
+    let envelope = execute(
+        &provider(&server),
+        fetch_full("https://example.com/a"),
+        RecordingBackoff::default(),
+    );
+    assert!(envelope.ok);
+    assert!(envelope.truncated);
+    assert_eq!(envelope.truncated_fields, vec!["content".to_string()]);
+    assert_provenance(
+        &envelope,
+        Some(WebContentScope::Full),
+        Some(WebCoverage::Unknown),
+        Some(WebFetchedBy::Provider),
+        Some(WebBinding::UrlSubmitted),
+        None,
+    );
+}
+
+#[test]
+fn deadline_before_the_first_attempt_keeps_null_provenance() {
+    let provider = provider(&TestServer::start(Vec::new()));
+    let envelope = provider.execute_until(
+        fetch_full("https://example.com/a"),
+        Arc::new(|| false),
+        Arc::new(RecordingBackoff::default()),
+        Instant::now() - Duration::from_secs(1),
+    );
+    assert_eq!(envelope.code, Some(WebErrorCode::WebTimeout));
+    assert_eq!(envelope.attempts, 0);
+    assert_provenance(&envelope, None, None, None, None, None);
+}
+
+#[test]
+fn executor_preflight_failure_has_local_precheck_and_null_provenance() {
+    let api = TestServer::start(Vec::new());
+    let executor = WebExecutor::with_dependencies_for_test(
+        provider(&api),
+        HarnessPermissions::default(),
+        Arc::new(ExecutorDns::new([])),
+        Arc::new(ReqwestWebTransport::with_test_mapping(|addr| {
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), addr.port())
+        })),
+        Arc::new(RecordingBackoff::default()),
+    );
+    let port = ConfiguredWebToolPort::with_executor_for_test(&HarnessConfig::default(), executor);
+    let envelope = port.execute(
+        WebOperation::Fetch,
+        &serde_json::json!({"url": "https://target.test/a"}),
+        Arc::new(|| false),
+    );
+    assert_eq!(envelope.code, Some(WebErrorCode::WebDnsFailed));
+    assert!(envelope.local_precheck);
+    assert_eq!(envelope.attempts, 0);
+    assert_provenance(&envelope, None, None, None, None, None);
+    assert!(api.records().is_empty(), "预检失败不得请求 provider");
 }

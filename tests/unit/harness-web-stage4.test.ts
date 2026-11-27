@@ -242,10 +242,12 @@ test("面板 Web 输入：完整 query / URL 的宽容解析与审计补全", ()
   assert.deepEqual(parseWebPanelInput({ query: "synthetic query" }), {
     query: "synthetic query",
     url: null,
+    mode: null,
   });
   assert.deepEqual(parseWebPanelInput({ url: "https://example.com/a" }), {
     query: null,
     url: "https://example.com/a",
+    mode: null,
   });
   assert.deepEqual(parseWebPanelInput({ query: "", url: "" }), undefined);
   for (const malformed of [null, undefined, {}, "synthetic", 42]) {
@@ -269,10 +271,19 @@ test("面板 Web 输入：完整 query / URL 的宽容解析与审计补全", ()
     input_url: null,
     result_count: null,
     result_text_bytes: null,
+    mode: null,
+    content_scope: null,
+    coverage: null,
+    fetched_by: null,
+    binding: null,
+    final_url: null,
   };
-  const filled = withWebPanelInput(base, { query: "synthetic query", url: null });
+  const filled = withWebPanelInput(base, { query: "synthetic query", url: null, mode: null });
   assert.equal(filled?.query, "synthetic query");
-  assert.equal(webInputText({ query: "synthetic query", url: null }, base), "synthetic query");
+  assert.equal(
+    webInputText({ query: "synthetic query", url: null, mode: null }, base),
+    "synthetic query",
+  );
   assert.equal(webInputText(undefined, filled), "synthetic query");
   assert.equal(webInputText(undefined, base), "", "旧记录无输入 / 审计无 query 时为空");
 
@@ -283,7 +294,228 @@ test("面板 Web 输入：完整 query / URL 的宽容解析与审计补全", ()
     code: null,
     url: "https://final.example/b",
   };
-  const merged = withWebPanelInput(fetch, { query: null, url: "https://input.example/a" });
+  const merged = withWebPanelInput(fetch, { query: null, url: "https://input.example/a", mode: null });
   assert.equal(merged?.url, "https://final.example/b");
-  assert.equal(webInputText({ query: null, url: "https://input.example/a" }, fetch), "https://input.example/a");
+  assert.equal(webInputText({ query: null, url: "https://input.example/a", mode: null }, fetch), "https://input.example/a");
+});
+
+
+test("Web 抓取读数的闭集合解析：未知取值归 null，不推导", () => {
+  const base = {
+    operation: "fetch",
+    query: null,
+    url: "https://example.com/a",
+    input_url: "https://example.com/a",
+    provider: "deepseek",
+    provider_id: "deepseek-work",
+    attempts: 1,
+    cost_per_1000_success_cny: 5,
+    local_precheck: true,
+    provider_fetch: true,
+    trust: "untrusted",
+    truncated: false,
+    truncated_fields: [],
+    code: null,
+    result_count: null,
+    result_text_bytes: null,
+  };
+  const audit = parseWebAudit({
+    ...base,
+    mode: "selected_chunks",
+    content_scope: "selected_chunks",
+    coverage: "bounded",
+    fetched_by: "provider",
+    binding: "url_submitted",
+    final_url: null,
+  });
+  assert.equal(audit?.mode, "selected_chunks");
+  assert.equal(audit?.content_scope, "selected_chunks");
+  assert.equal(audit?.coverage, "bounded");
+  assert.equal(audit?.fetched_by, "provider");
+  assert.equal(audit?.binding, "url_submitted");
+  assert.equal(audit?.final_url, null);
+
+  const unknown = parseWebAudit({
+    ...base,
+    mode: "document",
+    content_scope: "answer",
+    coverage: "verified",
+    fetched_by: "third_party",
+    binding: "guess",
+    final_url: "https://final.example/b",
+  });
+  assert.equal(unknown?.mode, null, "未知 mode 归 null");
+  assert.equal(unknown?.content_scope, null, "未知 content_scope 归 null");
+  assert.equal(unknown?.coverage, null, "verified 不是合法值");
+  assert.equal(unknown?.fetched_by, null, "未知 fetched_by 归 null");
+  assert.equal(unknown?.binding, null, "未知 binding 归 null");
+  assert.equal(unknown?.final_url, "https://final.example/b", "final_url 是字符串读数");
+
+  // 失败记录不得由 local_precheck / attempts 反推抓取归属。
+  const failed = parseWebAudit({ ...base, code: "web_mode_unsupported" });
+  assert.equal(failed?.fetched_by, null);
+  assert.equal(failed?.binding, null);
+});
+
+test("恢复路径从 PanelWebInput 补齐 mode 与选取 query，且只补空缺", () => {
+  const envelope = {
+    ok: true,
+    operation: "fetch",
+    provider: "deepseek",
+    provider_id: "deepseek-work",
+    attempts: 1,
+    trust: "untrusted",
+    truncated: false,
+    truncated_fields: [],
+    content_scope: "selected_chunks",
+    coverage: "bounded",
+    fetched_by: "provider",
+    binding: "url_submitted",
+    final_url: null,
+  };
+  const input = {
+    query: "synthetic selection",
+    url: "https://example.com/a",
+    mode: "selected_chunks" as const,
+  };
+  const restored = withWebPanelInput(webAuditFromEnvelope(envelope), input);
+  assert.equal(restored?.mode, "selected_chunks");
+  assert.equal(restored?.query, "synthetic selection");
+  assert.equal(restored?.content_scope, "selected_chunks");
+  assert.equal(restored?.coverage, "bounded");
+
+  // live 已有审计事实不被输入覆盖。
+  const live = parseWebAudit({
+    operation: "fetch",
+    query: "live query",
+    url: "https://example.com/a",
+    input_url: "https://example.com/a",
+    provider: "deepseek",
+    provider_id: "deepseek-work",
+    attempts: 1,
+    cost_per_1000_success_cny: 5,
+    local_precheck: true,
+    provider_fetch: true,
+    trust: "untrusted",
+    truncated: false,
+    truncated_fields: [],
+    code: null,
+    result_count: null,
+    result_text_bytes: null,
+    mode: "selected_chunks",
+    content_scope: "selected_chunks",
+    coverage: "bounded",
+    fetched_by: "provider",
+    binding: "url_submitted",
+    final_url: null,
+  });
+  const merged = withWebPanelInput(live, { ...input, query: "different" });
+  assert.equal(merged?.query, "live query", "MUST NOT 用输入覆盖审计事实");
+});
+
+test("Fetch 默认行恒为原始 URL：选取 query 不顶默认行", () => {
+  const audit = parseWebAudit({
+    operation: "fetch",
+    query: "synthetic selection",
+    url: "https://example.com/final",
+    input_url: "https://example.com/a",
+    provider: "deepseek",
+    provider_id: "deepseek-work",
+    attempts: 1,
+    cost_per_1000_success_cny: 5,
+    local_precheck: true,
+    provider_fetch: true,
+    trust: "untrusted",
+    truncated: false,
+    truncated_fields: [],
+    code: null,
+    result_count: null,
+    result_text_bytes: null,
+    mode: "selected_chunks",
+    content_scope: "selected_chunks",
+    coverage: "bounded",
+    fetched_by: "provider",
+    binding: "url_submitted",
+    final_url: null,
+  });
+  assert.equal(
+    webInputText(
+      { query: "synthetic selection", url: "https://example.com/a", mode: "selected_chunks" },
+      audit,
+    ),
+    "https://example.com/a",
+  );
+  assert.equal(
+    webInputText({ query: "synthetic selection", url: null, mode: null }, audit),
+    "https://example.com/a",
+    "缺输入 URL 时回落到审计的 input_url，而不是 query",
+  );
+});
+
+test("同一 selected_chunks 记录：live / 信封投影 / 面板文本投影逐字段同形", () => {
+  const live = {
+    operation: "fetch",
+    query: "synthetic selection",
+    url: "https://example.com/final",
+    input_url: "https://example.com/a",
+    provider: "deepseek",
+    provider_id: "deepseek-work",
+    attempts: 2,
+    cost_per_1000_success_cny: 5,
+    local_precheck: true,
+    provider_fetch: true,
+    trust: "untrusted",
+    truncated: false,
+    truncated_fields: [],
+    code: null,
+    result_count: null,
+    result_text_bytes: null,
+    mode: "selected_chunks",
+    content_scope: "selected_chunks",
+    coverage: "bounded",
+    fetched_by: "provider",
+    binding: "url_submitted",
+    final_url: null,
+  };
+  const envelope = {
+    ok: true,
+    operation: "fetch",
+    provider: "deepseek",
+    provider_id: "deepseek-work",
+    attempts: 2,
+    trust: "untrusted",
+    truncated: false,
+    truncated_fields: [],
+    content_scope: "selected_chunks",
+    coverage: "bounded",
+    fetched_by: "provider",
+    binding: "url_submitted",
+    final_url: null,
+  };
+  const input = {
+    query: "synthetic selection",
+    url: "https://example.com/a",
+    mode: "selected_chunks" as const,
+  };
+  const fromLive = parseWebAudit(live);
+  const fromEnvelope = withWebPanelInput(webAuditFromEnvelope(envelope), input);
+  const fromPanel = withWebPanelInput(
+    webAuditFromPanelText(JSON.stringify(envelope)),
+    input,
+  );
+  const fields = [
+    "mode",
+    "content_scope",
+    "coverage",
+    "fetched_by",
+    "binding",
+    "final_url",
+    "attempts",
+    "input_url",
+    "provider_id",
+  ] as const;
+  for (const field of fields) {
+    assert.deepEqual(fromLive?.[field], fromEnvelope?.[field], `live vs envelope: ${field}`);
+    assert.deepEqual(fromPanel?.[field], fromEnvelope?.[field], `panel vs envelope: ${field}`);
+  }
 });

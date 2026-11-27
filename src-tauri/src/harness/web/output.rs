@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
@@ -13,6 +13,102 @@ pub enum WebContentFormat {
 #[ts(export, export_to = "../../src/bindings/")]
 pub enum WebTrust {
     Untrusted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub enum WebFetchMode {
+    Full,
+    SelectedChunks,
+}
+
+impl WebFetchMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::SelectedChunks => "selected_chunks",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub enum WebContentScope {
+    Full,
+    SelectedChunks,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub enum WebCoverage {
+    Unknown,
+    Bounded,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub enum WebFetchedBy {
+    Provider,
+    Local,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub enum WebBinding {
+    UrlSubmitted,
+    AddressPinned,
+}
+
+/// 一次 Fetch 的证据形态与抓取归属（change web-evidence-provenance-nov26）。
+///
+/// 只有 `provider_full()`（生产成功）、`provider_attempted()`（`attempts>0` 的失败，含取消覆盖）
+/// 与验收装配的 `scripted(...)` 能构造它；`local` / `address_pinned` / 非空 `final_url` 在阶段 1
+/// 没有构造入口。五字段的写入只经 `WebEnvelope::apply_provenance`。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchProvenance {
+    pub content_scope: Option<WebContentScope>,
+    pub coverage: Option<WebCoverage>,
+    pub fetched_by: Option<WebFetchedBy>,
+    pub binding: Option<WebBinding>,
+    pub final_url: Option<String>,
+}
+
+impl FetchProvenance {
+    pub fn provider_full() -> Self {
+        Self {
+            content_scope: Some(WebContentScope::Full),
+            coverage: Some(WebCoverage::Unknown),
+            fetched_by: Some(WebFetchedBy::Provider),
+            binding: Some(WebBinding::UrlSubmitted),
+            final_url: None,
+        }
+    }
+
+    pub fn provider_attempted() -> Self {
+        Self {
+            content_scope: None,
+            coverage: None,
+            fetched_by: Some(WebFetchedBy::Provider),
+            binding: Some(WebBinding::UrlSubmitted),
+            final_url: None,
+        }
+    }
+
+    #[cfg(any(test, feature = "acceptance-web"))]
+    pub fn scripted(scope: WebContentScope, coverage: WebCoverage) -> Self {
+        Self {
+            content_scope: Some(scope),
+            coverage: Some(coverage),
+            fetched_by: Some(WebFetchedBy::Provider),
+            binding: Some(WebBinding::UrlSubmitted),
+            final_url: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
@@ -45,6 +141,7 @@ pub enum WebErrorCode {
     WebArgsInvalid,
     WebAccessConfigInvalid,
     WebProviderUnconfigured,
+    WebModeUnsupported,
     WebUrlBlocked,
     WebDnsFailed,
     WebDnsBlocked,
@@ -82,6 +179,11 @@ pub struct PanelWebInput {
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Fetch 请求的 `mode`（change web-evidence-provenance-nov26）：快照 / JSONL 恢复时
+    /// 「查看详情」的 `模式` 行与 Ask 后的同形展示从这份持久化输入取，旧记录缺键即 None。
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<WebFetchMode>,
 }
 
 impl PanelWebInput {
@@ -97,16 +199,32 @@ impl PanelWebInput {
                 .map(|query| Self {
                     query: Some(query.to_string()),
                     url: None,
+                    mode: None,
                 }),
             WebOperation::Fetch => parsed
                 .get("url")
                 .and_then(serde_json::Value::as_str)
                 .filter(|url| !url.is_empty())
                 .map(|url| Self {
-                    query: None,
+                    // 选取 query 与 URL 同一份 arguments、同一项持久化：快照 / JSONL 恢复
+                    // 只凭它显示「查看详情」的 mode / 选取查询。
+                    query: parsed
+                        .get("query")
+                        .and_then(serde_json::Value::as_str)
+                        .filter(|query| !query.is_empty())
+                        .map(str::to_string),
                     url: Some(url.to_string()),
+                    mode: parsed.get("mode").and_then(parse_fetch_mode),
                 }),
         }
+    }
+}
+
+fn parse_fetch_mode(value: &serde_json::Value) -> Option<WebFetchMode> {
+    match value.as_str()? {
+        "full" => Some(WebFetchMode::Full),
+        "selected_chunks" => Some(WebFetchMode::SelectedChunks),
+        _ => None,
     }
 }
 
@@ -123,6 +241,10 @@ pub struct WebApprovalPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub origin: Option<String>,
+    /// 仅 Fetch：请求的抓取模式；Search 为 None。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub mode: Option<WebFetchMode>,
     pub provider: Option<String>,
     pub provider_id: Option<String>,
     pub provider_status: super::config::WebProviderStatus,
@@ -172,9 +294,34 @@ pub struct WebEnvelope {
     // JSON 是 number（字节数远低于 2^53）；ts-rs 的 u64 默认导出 bigint 与本载荷不符。
     #[ts(type = "number | null")]
     pub result_text_bytes: Option<u64>,
+    // 抓取证据形态与归属（change web-evidence-provenance-nov26）：键恒在场、无信息为 null。
+    // 取值与置空规则见 living spec「Web 抓取证据形态与归属」条；Search 侧五者恒 null。
+    pub content_scope: Option<WebContentScope>,
+    pub coverage: Option<WebCoverage>,
+    pub fetched_by: Option<WebFetchedBy>,
+    pub binding: Option<WebBinding>,
+    pub final_url: Option<String>,
 }
 
 impl WebEnvelope {
+    /// 五个抓取读数是否已由适配器产出（成功路径的 `scripted` 靠它不被收口覆盖）。
+    pub fn has_provenance(&self) -> bool {
+        self.content_scope.is_some()
+            || self.coverage.is_some()
+            || self.fetched_by.is_some()
+            || self.binding.is_some()
+            || self.final_url.is_some()
+    }
+
+    /// 五字段的**唯一**写入点：由 `provider::execute_until` 的收口调用。
+    pub fn apply_provenance(&mut self, provenance: FetchProvenance) {
+        self.content_scope = provenance.content_scope;
+        self.coverage = provenance.coverage;
+        self.fetched_by = provenance.fetched_by;
+        self.binding = provenance.binding;
+        self.final_url = provenance.final_url;
+    }
+
     pub fn search_success(
         identity: Option<WebProviderIdentity>,
         attempts: u32,
@@ -240,6 +387,11 @@ impl WebEnvelope {
             source: None,
             result_count: None,
             result_text_bytes: None,
+            content_scope: None,
+            coverage: None,
+            fetched_by: None,
+            binding: None,
+            final_url: None,
         }
     }
 }
@@ -280,6 +432,11 @@ pub fn audit_metadata(
         .get("local_precheck")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
+    // 请求模式是**调用事实**，只从 arguments 投影；结果五字段只从信封透传（MUST NOT 互推）。
+    let mode = input
+        .get("mode")
+        .and_then(parse_fetch_mode)
+        .map(|mode| serde_json::json!(mode));
     serde_json::json!({
         "operation": operation,
         "query": query,
@@ -298,6 +455,13 @@ pub fn audit_metadata(
         // 结果读数只透传信封（预算路径的单一计算点），审计不重算。
         "result_count": output.get("result_count").cloned().unwrap_or(serde_json::Value::Null),
         "result_text_bytes": output.get("result_text_bytes").cloned().unwrap_or(serde_json::Value::Null),
+        "mode": mode.unwrap_or(serde_json::Value::Null),
+        // 五个抓取读数同样只透传信封：审计 MUST NOT 由 local_precheck / attempts 推导。
+        "content_scope": output.get("content_scope").cloned().unwrap_or(serde_json::Value::Null),
+        "coverage": output.get("coverage").cloned().unwrap_or(serde_json::Value::Null),
+        "fetched_by": output.get("fetched_by").cloned().unwrap_or(serde_json::Value::Null),
+        "binding": output.get("binding").cloned().unwrap_or(serde_json::Value::Null),
+        "final_url": output.get("final_url").cloned().unwrap_or(serde_json::Value::Null),
     })
 }
 
@@ -478,6 +642,7 @@ mod tests {
             Some(PanelWebInput {
                 query: Some("synthetic query".to_string()),
                 url: None,
+                mode: None,
             })
         );
         assert_eq!(
@@ -485,6 +650,7 @@ mod tests {
             Some(PanelWebInput {
                 query: None,
                 url: Some("https://example.com/a".to_string()),
+                mode: None,
             })
         );
         assert_eq!(
@@ -502,6 +668,7 @@ mod tests {
         let value = serde_json::to_value(PanelWebInput {
             query: Some("synthetic query".to_string()),
             url: None,
+            mode: None,
         })
         .unwrap();
         assert_eq!(value, serde_json::json!({"query": "synthetic query"}));
@@ -540,5 +707,148 @@ mod tests {
         assert_eq!(audit["result_count"], serde_json::Value::Null);
         assert_eq!(audit["result_text_bytes"], serde_json::Value::Null);
         assert!(audit.get("result_count").is_some(), "键必须在场，值为 null");
+    }
+
+    #[test]
+    fn fetch_provenance_keys_are_always_present_and_search_stays_null() {
+        let mut fetch = WebEnvelope::fetch_success(Some(identity()), 1, source());
+        fetch.apply_provenance(FetchProvenance::provider_full());
+        let value = serde_json::to_value(&fetch).unwrap();
+        for field in [
+            "content_scope",
+            "coverage",
+            "fetched_by",
+            "binding",
+            "final_url",
+        ] {
+            assert!(value.get(field).is_some(), "{field} 键必须恒在场");
+        }
+        assert_eq!(value["content_scope"], serde_json::json!("full"));
+        assert_eq!(value["coverage"], serde_json::json!("unknown"));
+        assert_eq!(value["fetched_by"], serde_json::json!("provider"));
+        assert_eq!(value["binding"], serde_json::json!("url_submitted"));
+        assert_eq!(value["final_url"], serde_json::Value::Null);
+
+        let search = serde_json::to_value(WebEnvelope::search_success(
+            Some(identity()),
+            1,
+            "synthetic".to_string(),
+            Vec::new(),
+        ))
+        .unwrap();
+        for field in [
+            "content_scope",
+            "coverage",
+            "fetched_by",
+            "binding",
+            "final_url",
+        ] {
+            assert_eq!(
+                search[field],
+                serde_json::Value::Null,
+                "Search 的 {field} 必须为 null"
+            );
+        }
+
+        let failure = serde_json::to_value(WebEnvelope::failure(
+            WebOperation::Fetch,
+            WebErrorCode::WebModeUnsupported,
+            "synthetic",
+            Some(identity()),
+            0,
+        ))
+        .unwrap();
+        assert_eq!(failure["code"], serde_json::json!("web_mode_unsupported"));
+        for field in [
+            "content_scope",
+            "coverage",
+            "fetched_by",
+            "binding",
+            "final_url",
+        ] {
+            assert_eq!(failure[field], serde_json::Value::Null, "{field}");
+        }
+    }
+
+    #[test]
+    fn audit_metadata_passes_provenance_and_mode_through_without_deriving() {
+        let output = serde_json::json!({
+            "operation": "fetch",
+            "provider": "deepseek",
+            "provider_id": "deepseek-work",
+            "attempts": 1,
+            "local_precheck": true,
+            "truncated": false,
+            "truncated_fields": [],
+            "content_scope": "selected_chunks",
+            "coverage": "bounded",
+            "fetched_by": "provider",
+            "binding": "url_submitted",
+            "final_url": null,
+        });
+        let input = serde_json::json!({
+            "url": "https://example.com/a",
+            "mode": "selected_chunks",
+            "query": "synthetic selection",
+        });
+        let audit = audit_metadata(WebOperation::Fetch, &output, &input);
+        assert_eq!(audit["mode"], serde_json::json!("selected_chunks"));
+        assert_eq!(audit["content_scope"], serde_json::json!("selected_chunks"));
+        assert_eq!(audit["coverage"], serde_json::json!("bounded"));
+        assert_eq!(audit["binding"], serde_json::json!("url_submitted"));
+        assert_eq!(audit["fetched_by"], serde_json::json!("provider"));
+        assert_eq!(audit["final_url"], serde_json::Value::Null);
+
+        // 缺失时只归 null，MUST NOT 由 local_precheck / attempts 反推。
+        let bare = serde_json::json!({
+            "operation": "fetch",
+            "attempts": 2,
+            "local_precheck": true,
+            "truncated": false,
+            "truncated_fields": [],
+        });
+        let audit = audit_metadata(WebOperation::Fetch, &bare, &serde_json::json!({}));
+        assert_eq!(audit["mode"], serde_json::Value::Null);
+        for field in [
+            "content_scope",
+            "coverage",
+            "fetched_by",
+            "binding",
+            "final_url",
+        ] {
+            assert_eq!(audit[field], serde_json::Value::Null, "{field} 不得推导");
+        }
+    }
+
+    #[test]
+    fn panel_web_input_captures_mode_and_selection_query() {
+        let input = PanelWebInput::from_arguments(
+            "web_fetch",
+            r#"{"url":"https://example.com/a","mode":"selected_chunks","query":"synthetic"}"#,
+        )
+        .unwrap();
+        assert_eq!(input.url.as_deref(), Some("https://example.com/a"));
+        assert_eq!(input.mode, Some(WebFetchMode::SelectedChunks));
+        assert_eq!(input.query.as_deref(), Some("synthetic"));
+        let value = serde_json::to_value(&input).unwrap();
+        assert_eq!(value["mode"], serde_json::json!("selected_chunks"));
+        assert_eq!(value["query"], serde_json::json!("synthetic"));
+
+        // 缺省 mode 的旧调用：query 不伪造、mode 为 None（序列化省略）。
+        let legacy =
+            PanelWebInput::from_arguments("web_fetch", r#"{"url":"https://example.com/a"}"#)
+                .unwrap();
+        assert_eq!(legacy.mode, None);
+        assert_eq!(legacy.query, None);
+        let value = serde_json::to_value(&legacy).unwrap();
+        assert!(value.get("mode").is_none());
+
+        // 未知 mode 归 None，不猜映射。
+        let unknown = PanelWebInput::from_arguments(
+            "web_fetch",
+            r#"{"url":"https://example.com/a","mode":"document"}"#,
+        )
+        .unwrap();
+        assert_eq!(unknown.mode, None);
     }
 }

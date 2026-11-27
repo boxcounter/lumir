@@ -7,8 +7,11 @@ use reqwest::{StatusCode, Url};
 
 use super::budget;
 use super::output::{
-    WebContentFormat, WebEnvelope, WebErrorCode, WebOperation, WebProviderIdentity, WebSource,
+    FetchProvenance, WebContentFormat, WebEnvelope, WebErrorCode, WebFetchMode, WebOperation,
+    WebProviderIdentity, WebSource,
 };
+#[cfg(any(test, feature = "acceptance-web"))]
+use super::output::{WebContentScope, WebCoverage};
 use super::preflight::{run_bounded, PreflightError};
 
 const OFFICIAL_ENDPOINT: &str = "https://api.deepseek.com";
@@ -21,6 +24,9 @@ const FETCH_TOTAL_TIMEOUT: Duration = Duration::from_secs(150);
 const SEARCH_RESPONSE_LIMIT: usize = 2 * 1024 * 1024;
 const FETCH_RESPONSE_LIMIT: usize = 4 * 1024 * 1024;
 const CANCEL_POLL: Duration = Duration::from_millis(25);
+
+/// 生产 DeepSeek 的 Fetch 能力：只有文档提取，没有查询选段参数。
+pub const DEEPSEEK_FETCH_MODES: &[WebFetchMode] = &[WebFetchMode::Full];
 
 pub trait WebBackoff: Send + Sync {
     fn wait(&self, duration: Duration, aborted: Arc<dyn Fn() -> bool + Send + Sync>);
@@ -51,6 +57,9 @@ pub enum WebProviderRequest {
     },
     Fetch {
         url: String,
+        mode: WebFetchMode,
+        /// 仅 `selected_chunks` 在场；内部字段，MUST NOT 进入 DeepSeek 请求 JSON。
+        query: Option<String>,
     },
 }
 
@@ -71,6 +80,12 @@ pub struct DeepSeekWebProvider {
     timings: Option<TestTimings>,
     #[cfg(any(test, feature = "acceptance-web"))]
     resolve: Option<(String, std::net::SocketAddr)>,
+    /// 验收装配的能力覆盖（`[full, selected_chunks]`）；生产恒 None → `DEEPSEEK_FETCH_MODES`。
+    #[cfg(any(test, feature = "acceptance-web"))]
+    modes: Option<Vec<WebFetchMode>>,
+    /// 验收装配的脚本化成功形态；生产恒 None。
+    #[cfg(any(test, feature = "acceptance-web"))]
+    scripted: Option<(WebContentScope, WebCoverage)>,
 }
 
 #[cfg(any(test, feature = "acceptance-web"))]
@@ -90,6 +105,10 @@ impl DeepSeekWebProvider {
             timings: None,
             #[cfg(any(test, feature = "acceptance-web"))]
             resolve: None,
+            #[cfg(any(test, feature = "acceptance-web"))]
+            modes: None,
+            #[cfg(any(test, feature = "acceptance-web"))]
+            scripted: None,
         }
     }
 
@@ -101,6 +120,8 @@ impl DeepSeekWebProvider {
             endpoint: endpoint.trim_end_matches('/').to_string(),
             timings: None,
             resolve: None,
+            modes: None,
+            scripted: None,
         }
     }
 
@@ -118,6 +139,8 @@ impl DeepSeekWebProvider {
             endpoint: endpoint.trim_end_matches('/').to_string(),
             timings: Some(TestTimings { attempt, total }),
             resolve: None,
+            modes: None,
+            scripted: None,
         }
     }
 
@@ -135,6 +158,8 @@ impl DeepSeekWebProvider {
             endpoint: endpoint.trim_end_matches('/').to_string(),
             timings: None,
             resolve: Some((host.to_string(), addr)),
+            modes: None,
+            scripted: None,
         }
     }
 
@@ -147,6 +172,27 @@ impl DeepSeekWebProvider {
             provider: "deepseek".to_string(),
             provider_id: self.provider_id.clone(),
         }
+    }
+
+    /// 当前活跃适配器的 Fetch 能力声明。生产恒 `[full]`；验收装配可覆盖（仅测试）。
+    pub fn fetch_modes(&self) -> &[WebFetchMode] {
+        #[cfg(any(test, feature = "acceptance-web"))]
+        if let Some(modes) = &self.modes {
+            return modes;
+        }
+        DEEPSEEK_FETCH_MODES
+    }
+
+    /// 验收装配：覆盖能力声明并脚本化成功形态。生产构造路径没有这个入口。
+    #[cfg(any(test, feature = "acceptance-web"))]
+    pub fn with_modes_and_scripted_for_test(
+        mut self,
+        modes: Vec<WebFetchMode>,
+        scripted: Option<(WebContentScope, WebCoverage)>,
+    ) -> Self {
+        self.modes = Some(modes);
+        self.scripted = scripted;
+        self
     }
 
     pub fn execute(
@@ -183,7 +229,7 @@ impl DeepSeekWebProvider {
         let operation = request.operation();
         let (query, submitted_url) = match &request {
             WebProviderRequest::Search { query, .. } => (Some(query.clone()), None),
-            WebProviderRequest::Fetch { url } => (None, Some(url.clone())),
+            WebProviderRequest::Fetch { url, .. } => (None, Some(url.clone())),
         };
         let mut envelope = self.execute_inner(request, aborted.clone(), backoff, total_deadline);
         if aborted() {
@@ -200,6 +246,18 @@ impl DeepSeekWebProvider {
         if let Some(url) = submitted_url {
             if envelope.source.is_none() {
                 envelope.source = Some(fetch_source(&url, String::new(), None));
+            }
+        }
+        // provenance 的唯一收口（change web-evidence-provenance-nov26）：成功保留适配器已产出的
+        // 成功形态（验收装配的 scripted），缺失才补生产形态；attempts>0 的失败（含取消覆盖）
+        // 统一写 provider_attempted；其余与 Search 保持五字段 null。
+        if operation == WebOperation::Fetch {
+            if envelope.ok {
+                if !envelope.has_provenance() {
+                    envelope.apply_provenance(FetchProvenance::provider_full());
+                }
+            } else if envelope.attempts > 0 {
+                envelope.apply_provenance(FetchProvenance::provider_attempted());
             }
         }
         if !envelope.ok {
@@ -357,12 +415,25 @@ impl DeepSeekWebProvider {
                         attempts,
                     ),
                 },
-                WebProviderRequest::Fetch { url } => match parse_fetch(value) {
-                    Ok((title, content)) => budget::fetch_success(
-                        Some(self.identity()),
-                        attempts,
-                        fetch_source(&url, title, Some(content)),
-                    ),
+                WebProviderRequest::Fetch { url, .. } => match parse_fetch(value) {
+                    Ok((title, content)) => {
+                        let envelope = budget::fetch_success(
+                            Some(self.identity()),
+                            attempts,
+                            fetch_source(&url, title, Some(content)),
+                        );
+                        // 验收测试 provider 的脚本化成功形态：收口 MUST NOT 覆盖它。
+                        #[cfg(any(test, feature = "acceptance-web"))]
+                        let envelope = {
+                            let mut envelope = envelope;
+                            if let Some((scope, coverage)) = self.scripted {
+                                envelope
+                                    .apply_provenance(FetchProvenance::scripted(scope, coverage));
+                            }
+                            envelope
+                        };
+                        envelope
+                    }
                     Err(ParseFetchError::Empty) => self.failure_with_status(
                         operation,
                         WebErrorCode::WebEmptyContent,
@@ -404,7 +475,9 @@ impl DeepSeekWebProvider {
                 "count": count,
                 "need_content": need_content,
             }),
-            WebProviderRequest::Fetch { url } => serde_json::json!({"url": url}),
+            // 生产 DeepSeek 只收到 url：mode / query 是本地能力检查与验收 provider 的输入，
+            // MUST NOT 进入 wire（tasks 2.3 / 6.7）。
+            WebProviderRequest::Fetch { url, .. } => serde_json::json!({"url": url}),
         };
         let builder = reqwest::blocking::Client::builder()
             .no_proxy()

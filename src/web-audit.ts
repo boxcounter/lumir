@@ -1,3 +1,8 @@
+import type { WebBinding } from "./bindings/WebBinding";
+import type { WebContentScope } from "./bindings/WebContentScope";
+import type { WebCoverage } from "./bindings/WebCoverage";
+import type { WebFetchedBy } from "./bindings/WebFetchedBy";
+import type { WebFetchMode } from "./bindings/WebFetchMode";
 import type { WebOperation } from "./bindings/WebOperation";
 
 export interface WebAuditMetadata {
@@ -22,6 +27,14 @@ export interface WebAuditMetadata {
   result_count: number | null;
   /** 最终保留结果 title/snippet/summary/content 的 UTF-8 字节和；口径同 `result_count`。 */
   result_text_bytes: number | null;
+  /** Fetch 请求模式（调用事实，来自 arguments）；Search / 旧记录 → null。 */
+  mode: WebFetchMode | null;
+  /** 抓取证据形态与归属（change web-evidence-provenance-nov26）：只透传，不推导。 */
+  content_scope: WebContentScope | null;
+  coverage: WebCoverage | null;
+  fetched_by: WebFetchedBy | null;
+  binding: WebBinding | null;
+  final_url: string | null;
 }
 
 export function parseWebAudit(value: unknown): WebAuditMetadata | undefined {
@@ -62,6 +75,12 @@ export function parseWebAudit(value: unknown): WebAuditMetadata | undefined {
     // 两个读数各自独立降级：一个非法不连带丢掉另一个合法值；缺键同样归 null。
     result_count: failed ? null : nonNegativeInteger(raw.result_count),
     result_text_bytes: failed ? null : nonNegativeInteger(raw.result_text_bytes),
+    mode: closedEnum(raw.mode, WEB_FETCH_MODES),
+    content_scope: closedEnum(raw.content_scope, WEB_CONTENT_SCOPES),
+    coverage: closedEnum(raw.coverage, WEB_COVERAGES),
+    fetched_by: closedEnum(raw.fetched_by, WEB_FETCHED_BY),
+    binding: closedEnum(raw.binding, WEB_BINDINGS),
+    final_url: typeof raw.final_url === "string" && raw.final_url !== "" ? raw.final_url : null,
   };
 }
 
@@ -94,8 +113,14 @@ export function webAuditFromEnvelope(value: unknown): WebAuditMetadata | undefin
     truncated_fields: raw.truncated_fields,
     code: (raw.code as string | null | undefined) ?? null,
     input_url: raw.input_url,
+    mode: raw.mode,
     result_count: raw.result_count,
     result_text_bytes: raw.result_text_bytes,
+    content_scope: raw.content_scope,
+    coverage: raw.coverage,
+    fetched_by: raw.fetched_by,
+    binding: raw.binding,
+    final_url: raw.final_url,
   });
 }
 
@@ -106,6 +131,19 @@ export function webAuditFromPanelText(text: unknown): WebAuditMetadata | undefin
   } catch {
     return undefined;
   }
+}
+
+const WEB_FETCH_MODES = ["full", "selected_chunks"] as const;
+const WEB_CONTENT_SCOPES = ["full", "selected_chunks"] as const;
+const WEB_COVERAGES = ["unknown", "bounded"] as const;
+const WEB_FETCHED_BY = ["provider", "local"] as const;
+const WEB_BINDINGS = ["url_submitted", "address_pinned"] as const;
+
+/** 闭集合取值：不在集合内（含缺键 / null / 类型不对）一律 null——不渲染、不猜映射。 */
+function closedEnum<T extends string>(value: unknown, allowed: readonly T[]): T | null {
+  return typeof value === "string" && (allowed as readonly string[]).includes(value)
+    ? (value as T)
+    : null;
 }
 
 function nullableString(value: unknown): boolean {
@@ -122,6 +160,7 @@ function nonNegativeInteger(value: unknown): number | null {
 export interface WebPanelInput {
   query: string | null;
   url: string | null;
+  mode: WebFetchMode | null;
 }
 
 /** 宽容解析 `PanelMessage.web_input`：非对象 / 空值 → undefined；空串按缺席处理。 */
@@ -130,8 +169,9 @@ export function parseWebPanelInput(value: unknown): WebPanelInput | undefined {
   const raw = value as Record<string, unknown>;
   const query = typeof raw.query === "string" && raw.query !== "" ? raw.query : null;
   const url = typeof raw.url === "string" && raw.url !== "" ? raw.url : null;
+  const mode = closedEnum(raw.mode, WEB_FETCH_MODES);
   if (query === null && url === null) return undefined;
-  return { query, url };
+  return { query, url, mode };
 }
 
 /** 用持久化输入补全审计投影的 query / url（信封里的失败记录可能没有这两个值）。
@@ -145,7 +185,8 @@ export function withWebPanelInput(
   const url = audit.url !== null && audit.url !== "" ? audit.url : input.url;
   const inputUrl =
     audit.input_url !== null && audit.input_url !== "" ? audit.input_url : input.url;
-  return { ...audit, query, url, input_url: inputUrl };
+  const mode = audit.mode ?? input.mode;
+  return { ...audit, query, url, input_url: inputUrl, mode };
 }
 
 /** 默认行应显示的 Web 输入：持久化完整输入 → 审计投影 → 空串（旧记录安全降级）。
@@ -154,10 +195,16 @@ export function webInputText(
   input: WebPanelInput | undefined,
   audit: WebAuditMetadata | undefined,
 ): string {
+  // Fetch 默认行恒为原始输入 URL：选取 query 与 URL 同一份 arguments，若按搜到的顺序取
+  // query，`selected_chunks` 的 query 会顶掉 URL（change web-evidence-provenance-nov26）。
+  if (audit?.operation === "fetch") {
+    if (input?.url !== null && input?.url !== undefined) return input.url;
+    if (audit.input_url !== null) return audit.input_url;
+    return "";
+  }
   if (input?.query !== null && input?.query !== undefined) return input.query;
   if (input?.url !== null && input?.url !== undefined) return input.url;
   if (audit?.operation === "search" && audit.query !== null) return audit.query;
-  if (audit?.operation === "fetch" && audit.input_url !== null) return audit.input_url;
   // 不回落到 `audit.url`：Fetch 的 url 是实际提交 / 最终 source.url，重定向后是 B；
   // 默认行 MUST 显示原始输入 A（评审 P1-2），最终 URL 只进默认关闭的详情。
   return "";
