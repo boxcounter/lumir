@@ -156,7 +156,11 @@
       详情行的期望，逐条改准——本次把能力检查前移到批准与预检之前，旧期望不得残留
 - [x] 8.5 `node scripts/acceptance/coverage.mjs` 重生成 `COVERAGE.md`（新 item 一行）；更新
       `scripts/acceptance/scenarios` 对应 fixture（`selected_chunks` 调用与假 key 配置）
-- [ ] 8.6（本批不执行：任务禁止真机）真机执行 886 / 886b 与回扫后的 869–873、876，证据落 `.local/acceptance/`（不落 worktree）
+- [x] 8.6 真机执行 886 / 886b 与回扫后的 869–873、876：r1 8 场景 7 PASS / 1 FAIL（886 因 mock 文案
+      「用相关段落模式」误命中负断言 `not: "相关段落"`；886b PASS），收窄为实际徽标 `相关段落 ·`
+      后 r2 复跑 **886 PASS 14 断言**。证据 `.local/acceptance/2026-11-27-web-evidence-provenance/`
+      （r1，含 869/870/871/872/873/876 与 886b）与 `.local/acceptance/2026-11-27-web-evidence-provenance-r2/`
+      （886 复跑）。覆盖边界：成功 Fetch 形态仍由 `web_acceptance` + TS DOM 承担，MUST NOT 记成真机已验
 
 ## 9. 门禁与归档
 
@@ -165,11 +169,12 @@
       验收场景契约与 backlog 判据）
 - [x] 9.3 `bash scripts/gate.sh quick` 全绿（13/13 PASS）；已跑目标视觉场景
       `m384-harness-approval-decided`（18/18），未更新任何基线
-- [ ] 9.3b（主会话执行）完整 `bash scripts/gate.sh visual` 终态证据；像素基线变更交 Alex 裁决后
-      更新（`tests/visual/README.md`）——旧 tip 的 visual 已在途并被停止，本批不虚勾
+- [x] 9.3b 完整 `bash scripts/gate.sh visual` 终态证据：`bcc0faa2` 上
+      `GATE RESULT: 15/15 PASS（SKIP 0）` exit 0（主会话读数）；其后仅 Ask 单测与 886 断言两处
+      test-only 变化，无产品代码与视觉基线改动
 - [x] 9.4 `node scripts/acceptance/run.mjs --check` 通过
-- [ ] 9.5（待批次收尾）`docs/backlog.md` 归档跟踪队列落一条本 change 条目（tasks 全勾后由 docs-check 判据强制）
-- [ ] 9.6（待评审）节点 2 五要件逐条核对并写进 `proposal.md` 的节点 2 块；独立 reviewer 结论绑定实现 tip
+- [x] 9.5 `docs/backlog.md` 归档跟踪队列落一条本 change 条目（同批压缩一个多余空行以守住 80 行硬上限）
+- [x] 9.6 节点 2 五要件逐条核对并写进 `proposal.md` 的节点 2 块；独立 reviewer 结论绑定实现 tip `21b6da72`（rebase 后同内容 `9cb6200a`）
 - [ ] 9.7（禁止本批归档）`node scripts/openspec-archive.mjs web-evidence-provenance-nov26` 归档；
       提交归档结果（归档目录 + living spec + 修链改动）
 - [ ] 9.8（禁止本批归档）`node scripts/openspec-archive-check.mjs --archived web-evidence-provenance-nov26` 输出

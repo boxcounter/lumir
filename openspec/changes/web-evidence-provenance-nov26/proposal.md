@@ -26,9 +26,26 @@
 > 评审修订（r1 / r2，2026-11-27）：按 needs-changes 的 P1 / P2 逐项收口，行为边界不变；r2 只修
 > 「成功收口保留测试 provider 的 scripted provenance」与「Ask 预览 DOM 断言」两处。
 
-> 节点 2（归档放行）：**未开始**。实现已完成（本分支实现提交），实现期门禁与定向视觉证据已在
-> tasks 勾选；独立 reviewer 结论、完整 visual 终态与归档审计待批次收尾，按
-> `docs/process/openspec-workflow.md` 的五要件在此追加记录，不提前书写。
+> 节点 2（归档放行，2026-11-27）：**五要件齐，机器 + 独立评审放行**（`docs/process/openspec-workflow.md`）。
+> 1. **方案已批准**：节点 1 依据 Alex 推进指令与 D1=`full` / D2=现在暴露的明确选择；实现期无静默
+>    扩 scope（r3 后仅一处 test-only 收窄：886 的负断言 `相关段落` → `相关段落 ·`）。
+> 2. **独立 reviewer clean / merge**：K3 结论 clean/merge，绑 `21b6da72`（rebase 前 tip；rebase 到
+>    `2e6d5e17` 后同内容为 `9cb6200a`）。其后的 `a3f49ad2`（rebase 后 `d065e6d8`）只改 886 场景的
+>    负断言（test-only，无产品代码）；按主会话归档指令接受为最终 tip，本节不声称重新评审。
+> 3. **tasks 完成**：56/58 已勾；剩余 9.7 / 9.8 即本次归档与归档后审计动作，完成后在归档目录勾选。
+> 4. **门禁与真机证据**（证据落 `.local/`，不落 worktree）：
+>    - `scripts/gate.sh quick`：`GATE RESULT: 13/13 PASS（SKIP 0）` exit 0（当前 tip `d065e6d8`；
+>      期间 `link-suggest` 的 16ms 性能断言在宿主负载下偶发，三次单跑与最终 quick 均全绿）。
+>    - 完整 visual：`bcc0faa2` 上 `GATE RESULT: 15/15 PASS（SKIP 0）` exit 0（主会话读数）；其后仅
+>      两处 test-only 变化，无产品代码与视觉基线改动。
+>    - 真机：r1 8 场景 7 PASS / 1 FAIL（886 因 mock 文案「用相关段落模式」误命中负断言，886b PASS），
+>      收窄为实际徽标 `相关段落 ·` 后 r2 **886 PASS 14 断言**；
+>      `.local/acceptance/2026-11-27-web-evidence-provenance/`（r1）、`…-r2/`（886 复跑）。
+>    - Rust 单测 1296 / `web_acceptance` 16（含测试专用 header 的真实 socket 证据）/ TS 2156 /
+>      `web-production-check.sh` 3 项 PASS。
+> 5. **规格对账（归档前读数）**：`openspec-archive-check.mjs` 门禁模式 PASS（9 份 delta / 11 条
+>    MODIFIED / 171 段 / 无静默丢段）；`validate --all --strict` 39 passed / 0 failed；归档跟踪
+>    队列有且仅有一条本 change 条目。
 
 ## Why
 
