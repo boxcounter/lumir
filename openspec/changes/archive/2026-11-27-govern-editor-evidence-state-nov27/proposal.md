@@ -53,7 +53,7 @@
 - **不改写历史**：既有归档记录、旧批次报告与已失效的 `.local` 指针保留原样；引用时加限定语，
   不追溯重算历史失败轮数或复发率。
 - 不新增独立流程文档或第二套术语表——四节全部并入现有 canonical 文档。
-- 不做真机、不发布、不归档（本 change 为纯文档治理）。
+- 不做真机、不发布；归档按 tower 指令在本 mission 执行（纯文档，`skip_specs` 零 delta）。
 
 ## Impact
 
@@ -75,12 +75,38 @@
   - 老证据目录清理后只能称归档记录报告 PASS，不能称当前可复核。
 - 本 change 按合同落地，未扩 scope。
 
-## 节点 2：实现记录（待归档）
+## 节点 2：归档记录
+
+### 五态
 
 | 状态 | 值 | 证据 |
 |---|---|---|
-| implemented | 是 | `d5ac91e4bc387edef80e88a65035fa99f0adf403` |
+| implemented | 是 | `ff288793`（rebase 后分支 tip；评审绑定 pre-rebase `b4d6a145`，rebase 无冲突、内容未变） |
 | released | 否 | 本批不打包；纯文档治理 |
 | machine PASS | 是 | `GATE RESULT: 12/12 PASS（SKIP 1）` exit 0（`scripts/gate.sh quick`，日志 `.local/missions/govern-editor-evidence-state-nov27/gate-quick.log`）；`docs-check: PASS`；`validate --all --strict` 39/39 |
 | native PASS | 不适用 | 纯文档，无真机项 |
-| archived | 否 | 本 mission 按指令不归档；待评审后由 tower 归档 |
+| archived | 否 | 待本 mission 归档；归档提交与 `--archived` 读数见「归档后」 |
+
+### 归档前（五要件）
+
+1. **方案已批准**：节点 1 Alex 2026-11-27 采纳四项合同（五态 / 四类 / 反向必红 / 老证据限定）；
+   实现与复核未扩 scope。
+2. **独立 reviewer clean / merge**：verdict `clean / merge` 绑 `b4d6a145`
+   （`.local/reviews/govern-editor-evidence-state-nov27/verdict.md`）；按 tower 指令 rebase 到
+   `28c97a67` 后 tip `ff288793`，无冲突、本 change 的 diff 未变。
+3. **tasks 完成或有放弃理由**：1.x–3.x 全部勾选；4.1 归档步骤勾选；4.2 merge / push 留 tower
+   （未勾，理由见 tasks）。
+4. **门禁与真机证据**：`validate --all --strict` 39/39；`docs-check: PASS`；quick
+   `GATE RESULT: 12/12 PASS（SKIP 1）` exit 0（日志见上）；native PASS 不适用（纯文档，无真机项）；
+   未动视觉代码。
+5. **规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS
+   （`扫过 8 份 delta，7 条 MODIFIED，对比 109 段，无静默丢段；归档队列 0 项已完成 change 均有唯一条目`）；
+   `validate --all --strict` PASS；`docs/backlog.md` 归档队列有且仅有一条本 change 条目。
+   `skip_specs: true` 零 delta：无 `specs/`、归档为纯目录移动，不伪造规格。
+
+### 归档后（强制完成）
+
+- 归档提交：待本 mission 归档后回填。
+- 包装器（`node scripts/openspec-archive.mjs govern-editor-evidence-state-nov27`）输出：待回填。
+- 修链与链接门禁：待回填。
+- `node scripts/openspec-archive-check.mjs --archived govern-editor-evidence-state-nov27`：待回填。

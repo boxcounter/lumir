@@ -35,9 +35,11 @@
 - [x] 3.4 反重复核对：五态 / 四类只在 `openspec-workflow.md` 定义一次，其余文件为指针或
       执行面说明；`git diff` 逐文件过一遍，不新增第二套术语表。
 - [x] 3.5 临时副本验证 `.openspec.yaml` 的 `skip_specs` 归档路径：`openspec archive` 退出码 0、
-      目录移入 `archive/`（不在本仓执行归档）。
+      目录移入 `archive/`；本 change 的实际归档在 4.1 执行。
 
-## 4. 交接
+## 4. 归档交接
 
-- [ ] 4.1 合并 / push / 归档由 tower 在评审后执行：合并后按 workflow 在 `docs/backlog.md` 的
-      归档跟踪队列落一条唯一本 change 条目，再归档（本 mission 按指令不执行）。
+- [x] 4.1 `docs/backlog.md` 归档跟踪队列落唯一本 change 条目；执行
+      `node scripts/openspec-archive.mjs govern-editor-evidence-state-nov27` 与 `--archived` 审计，
+      读数记进 proposal 节点 2。
+- [ ] 4.2 merge / push 由 tower 在评审后执行（本 mission 按指令不执行；不计入本 change 的归档判据）。
