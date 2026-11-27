@@ -124,24 +124,26 @@ r2 另独立复跑目标 33/33，并审核代码、反向证据与视觉材料�
 | released | 否：本批不打包 | 不适用：无发布产物 |
 | machine PASS | 是：目标 33/33（27.4s）、相关既有 49/49（28.3s）；quick `GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0；完整 visual `GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0 | `logs/target-review-final-green.log`、`logs/related-review-final.log`、`logs/quick-review-final.log`、`logs/gate-visual-final.log`；原始 visual-regression 为 1975 passed / 13 skipped（`logs/gate-visual-regression-final.log`），均位于 `.local/reviews/harness-action-targets-nov27/` |
 | native PASS | 是：81 / 148 / 882 串行 3/3 PASS；882 success 截图另复跑 PASS | `.local/acceptance/2026-11-27-harness-action-targets-final/`（19 / 33 / 22 断言；各 status.txt=PASS）与 `.local/acceptance/2026-11-27-harness-action-targets-882-shot-final-r2/` |
-| archived | 否：待归档 | 未 archive；无 `--archived` 读数 |
+| archived | 是：归档提交 `0c5dc639a2b36af57bfae3b5b1fe785cb60a47c8`，修正后首次 `--archived` PASS | `logs/archive-check-archived-pass-r1.log`：0 条 MODIFIED / 对比 0 段 / 人工恢复 0 / 声明认领 0；日志位于 `.local/reviews/harness-action-targets-nov27/` |
 
 未发生项已写明原因，不留空；后续失败项按产品缺陷 / 测试 oracle 缺陷 / 环境 INVALID / 需求或视觉迭代四类归因。
 
 - **归档前五要件**：机器 + 独立评审放行。
   1. 节点 1 已由 Alex「好，采纳」批准，实现期未扩 scope。
   2. 独立 K3 r2 clean/merge，P1 / P2 为 0，评审 tip `89a521b8`；rebase 后 `83f545f2` 与其逐提交同 patch，P3 文档计数已修。
-  3. 实施与验证 tasks 已完成；7.2 / 7.3 是归档执行及归档后审计，按流程在实际发生后回填；7.4 因本任务不 merge / push 而不适用。
+  3. tasks 已逐项完成；7.2 / 7.3 已在归档执行及审计后回填，7.4 因本任务不 merge / push 而明确标为不适用。
   4. quick 与完整 visual 的 `GATE RESULT` 原文、退出码及 native 3/3 证据见状态表，完整视觉日志已落 `.local/reviews/harness-action-targets-nov27/logs/`。
   5. 归档前 archive-check 门禁模式 PASS：扫过 9 份 delta、7 条 MODIFIED、对比 109 段、无静默丢段；
      strict validate 为 `Totals: 39 passed, 0 failed (39 items)`；docs-check PASS，backlog 为 80 行且本 change
      在归档跟踪队列恰好一条。原始日志为 `logs/archive-check-pre-final.log`、`logs/validate-archive-final.log`、
      `logs/docs-check-archive-final.log`。
-- **归档后（包装器已执行，审计待提交）**：包装器实际输出 `harness: update`、`+ 1 added`、
-  `Totals: + 1, ~ 0, - 0, → 0`，归档目录为 `openspec/changes/archive/2026-11-27-improve-harness-action-targets-nov27/`；
-  自动修链 4 处（扫过 4 篇 Markdown / 4 条相对链接）。包装器随后发现 living spec 的一条 delta 深度链接不可达并 exit 1；
-  首次 `--archived` 又判出归档 delta 与 living 的相对链接深度不同会造成段落原文不一致。为同时满足 links 与归档审计，
+- **归档后**：归档提交为 `0c5dc639a2b36af57bfae3b5b1fe785cb60a47c8`。包装器实际输出
+  `harness: update`、`+ 1 added`、`Totals: + 1, ~ 0, - 0, → 0`，归档目录为
+  `openspec/changes/archive/2026-11-27-improve-harness-action-targets-nov27/`；自动修链 4 处
+  （扫过 4 篇 Markdown / 4 条相对链接）。包装器随后发现 living spec 的一条 delta 深度链接不可达并 exit 1；
+  初次 `--archived` 又判出归档 delta 与 living 的相对链接深度不同会造成段落原文不一致。为同时满足 links 与归档审计，
   两侧同一 requirement 的合同引用已统一为仓内路径文本 `docs/specs/pointer-targets.md`，规格语义不变；
-  复跑 `openspec-links: PASS（校验 716 条相对链接，全部可达）`。原始输出见
-  `.local/reviews/harness-action-targets-nov27/logs/archive-wrapper-final.log`、`archive-check-archived-first.log`
-  与 `openspec-links-archive-final.log`；归档提交 hash 与最终 `--archived` 读数待修正后的归档提交回填，当前不预写通过。
+  复跑 `openspec-links: PASS（校验 716 条相对链接，全部可达）`。修正后首次 `--archived` 于 2026-11-27 PASS：
+  0 条 MODIFIED / 对比 0 段 / 人工恢复 0 / 声明认领 0。原始输出见
+  `.local/reviews/harness-action-targets-nov27/logs/archive-wrapper-final.log`、`archive-check-archived-first.log`、
+  `archive-check-archived-pass-r1.log` 与 `openspec-links-archive-final.log`；本次记录回填后再跑最终审计。

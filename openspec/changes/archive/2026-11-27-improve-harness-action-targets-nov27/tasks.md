@@ -105,7 +105,9 @@
       并复跑 `openspec-links: PASS（校验 716 条相对链接，全部可达）`。归档目录、living spec 与修链结果随归档提交落库；
       原始日志 `.local/reviews/harness-action-targets-nov27/logs/archive-wrapper-final.log`、
       `archive-check-archived-first.log` 与 `openspec-links-archive-final.log`
-- [ ] 7.3 归档提交后运行
-      `node scripts/openspec-archive-check.mjs --archived improve-harness-action-targets-nov27`，
-      取得 PASS 并记录归档提交 hash；未 PASS 不算归档完成
+- [x] 7.3 归档提交 `0c5dc639a2b36af57bfae3b5b1fe785cb60a47c8` 后已运行
+      `node scripts/openspec-archive-check.mjs --archived improve-harness-action-targets-nov27`，修正后首次取得
+      `PASS`：0 条 MODIFIED / 对比 0 段 / 人工恢复 0 / 声明认领 0；日志
+      `.local/reviews/harness-action-targets-nov27/logs/archive-check-archived-pass-r1.log`。
+      初次 FAIL 的链接深度原文冲突及修正见 7.2，最终回填后另跑一次审计
 - [x] 7.4 不适用：本任务明确不 merge / push，无本次 push 触发的 workflow 需要跟进
