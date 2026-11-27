@@ -175,7 +175,7 @@
 - [x] 9.4 `node scripts/acceptance/run.mjs --check` 通过
 - [x] 9.5 `docs/backlog.md` 归档跟踪队列落一条本 change 条目（同批压缩一个多余空行以守住 80 行硬上限）
 - [x] 9.6 节点 2 五要件逐条核对并写进 `proposal.md` 的节点 2 块；独立 reviewer 结论绑定实现 tip `21b6da72`（rebase 后同内容 `9cb6200a`）
-- [ ] 9.7（禁止本批归档）`node scripts/openspec-archive.mjs web-evidence-provenance-nov26` 归档；
+- [x] 9.7 `node scripts/openspec-archive.mjs web-evidence-provenance-nov26` 归档；
       提交归档结果（归档目录 + living spec + 修链改动）
-- [ ] 9.8（禁止本批归档）`node scripts/openspec-archive-check.mjs --archived web-evidence-provenance-nov26` 输出
+- [x] 9.8 `node scripts/openspec-archive-check.mjs --archived web-evidence-provenance-nov26` 输出
       `PASS`；读数（归档提交 hash、包装器输出、修链处数、审计 PASS 时间）记进节点 2 块

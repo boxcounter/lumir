@@ -46,6 +46,11 @@
 > 5. **规格对账（归档前读数）**：`openspec-archive-check.mjs` 门禁模式 PASS（9 份 delta / 11 条
 >    MODIFIED / 171 段 / 无静默丢段）；`validate --all --strict` 39 passed / 0 failed；归档跟踪
 >    队列有且仅有一条本 change 条目。
+>
+> **归档完成（2026-11-27）**：包装器 `openspec archive` 输出 `Totals: + 1, ~ 4, - 0, → 0`（harness
+> +1 ADDED / 4 MODIFIED）；归档后修链 **0 处**（扫过 4 篇 Markdown / 0 条相对链接），
+> `openspec-links: PASS（710 条相对链接全部可达）`。归档提交 hash、`--archived` 审计原文与时间见
+> 紧随其后的记录（本文件在归档提交后追加）。
 
 ## Why
 
