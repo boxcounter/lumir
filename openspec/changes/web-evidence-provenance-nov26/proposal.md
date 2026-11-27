@@ -26,8 +26,9 @@
 > 评审修订（r1 / r2，2026-11-27）：按 needs-changes 的 P1 / P2 逐项收口，行为边界不变；r2 只修
 > 「成功收口保留测试 provider 的 scripted provenance」与「Ask 预览 DOM 断言」两处。
 
-> 节点 2（归档放行）：**未开始**。本 change 目前只有提案制品，没有实现、没有实现期证据；
-> 归档前按 `docs/process/openspec-workflow.md` 的五要件在此追加记录，不提前书写。
+> 节点 2（归档放行）：**未开始**。实现已完成（本分支实现提交），实现期门禁与定向视觉证据已在
+> tasks 勾选；独立 reviewer 结论、完整 visual 终态与归档审计待批次收尾，按
+> `docs/process/openspec-workflow.md` 的五要件在此追加记录，不提前书写。
 
 ## Why
 

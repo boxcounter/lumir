@@ -159,7 +159,7 @@ provenance，收口只在缺失时补 `provider_full()`**——否则测试 prov
 `scripted(selected_chunks, bounded)` 会被覆盖成 `full` / `unknown`（复核 P1）：
 
 ```rust
-pub struct FetchProvenance { /* 五个字段 */ }
+pub struct FetchProvenance { /* 五字段私有：模块外只能经构造器产出 */ }
 impl FetchProvenance {
     pub fn provider_full() -> Self;       // 生产成功：full / unknown / provider / url_submitted / null
     pub fn provider_attempted() -> Self;  // attempts>0 的失败：null / null / provider / url_submitted / null
@@ -229,7 +229,7 @@ provenance。
   默认行 URL，必须同批修正并加「Fetch + query 的默认行仍是 URL」单测（评审 P1-1 的连带面）。
 - 外发文案：Fetch 分支由 `fetched_by === "provider"` 决定，替换现有
   `local_precheck && provider_fetch`（`harness-panel.ts:1080-1087`）。
-- 文案键：新增 `D1076`–`D1086`（徽标 2 + 后缀 2 + 行标签 5 + 模式 / 选取查询标签 2），
+- 文案键：新增 `D1076`–`D1087`（徽标 2 + 后缀 2 + 行标签 7 + 选取查询外发说明 1），
   `src/copy-data.ts` 与 `文案-Copy.md` 同步——`tests/unit/copy.test.ts` 的全量漂移门禁会判红。
 
 ### 6.3 审计
@@ -280,12 +280,12 @@ D1 / D2 已裁决，不再是阻塞项，也不再提供「推迟到阶段 3」�
    - 闭集合外的取值 → 归 null、不渲染、不猜映射；
    - `coverage=bounded` → 徽标出现 ` · 完整性受限`。
    这些是 DOM / 投影层断言，仅声明枚举、增加构造函数或做序列化断言不算。
-3. **单一构造漏斗 + 文本级兜底**：五个值只能经 §5 的 `FetchProvenance` 写入；生产构造器只有
-   `provider_full()` / `provider_attempted()`，`local` / `address_pinned` / 非空 `final_url` 在
-   Rust 侧不是可构造状态。`scripts/acceptance/web-production-check.sh` 增加文本级兜底：
-   `fetched_by` / `binding` / `final_url` 的赋值点只允许出现在白名单文件（`output.rs` 字段声明、
-   `provider.rs` 构造漏斗），白名单外出现即红。这是文本级判据，判的是「有人绕过漏斗手写取值」，
-   不声称能证明语义正确。
+3. **单一构造漏斗 + 文本级兜底**：五个值只能经 §5 的 `FetchProvenance` 写入；`FetchProvenance`
+   的字段是**模块私有**，模块外无法构造字面量，只能走 `provider_full()` /
+   `provider_attempted()` / cfg 门控的 `scripted()`。`scripts/acceptance/web-production-check.sh`
+   另加文本级兜底：五字段赋值点与 `FetchProvenance {` 字面量只允许出现在白名单文件
+   （`output.rs` 字段声明与构造器、`provider.rs` 构造漏斗），白名单外出现即红。这是文本级判据，
+   判的是「有人绕过漏斗手写取值」，不声称能证明语义正确。
 4. **不裁剪**：保留五个值（阶段 2 / 3 复用同一词汇）。REVIEW.md 条已由第 1–3 点满足；若评审仍
    认为不足，再改为只声明有生产生产者的四个值——但那要多改一次 schema，不是本提案的默认。
 
@@ -364,3 +364,10 @@ D1 / D2 已裁决，不再是阻塞项，也不再提供「推迟到阶段 3」�
 | P2-4 | D1/D2 应按最新授权收口 | §8 已裁决表；proposal 节点 1 |
 | r2-P1 | 成功收口把 `scripted(selected_chunks, bounded)` 覆盖成 `full/unknown` | §5 收口改为「成功保留已有 provenance，缺失才补 `provider_full()`」；tasks 3.1 / 3.3 |
 | r2-P2 | Ask 预览缺实际渲染断言 | tasks 7.3（完整 URL + query + 外发说明；批准后默认行仍 URL） |
+| r3-P1 | `selected_chunks` 的 query 无 socket 证据 | §3 内部请求 + 验收装配测试专用 header（`acceptance-web` 门控）；`web_acceptance` TestServer 记录并断言；spec / tasks 同步 |
+| r3-P2 | 886 无 Ask 分支、attempts 未断言 | 886 改 `approval=ask`（done 标记语言无关证明无卡）+ JSONL `attempts=0`；spec 尾部截断补全 |
+| r3-P3 | 恢复 / 详情 DOM 证据偏弱 | 集成测试真 `resume_session` 断言 `web_input.mode/query`；DOM 补 selected_chunks 详情行与旧成功记录无徽标 |
+| r3-P3 | 编号 / 文档状态 / mode 行口径 | 文案 D1076–D1087；mode 行仅 `selected_chunks`；proposal 节点 2 与 tasks 头部更新 |
+| r3-P3 | `FetchProvenance` 字段可构造 | 字段模块私有 + `FetchProvenance {` 字面量白名单 |
+| r3-P3 | 参数与 URL 校验次序 | `mode`/`query` 校验前移到 URL 解析之前 + 双非法用例 |
+| r3-P3 | 9.3 visual 虚勾 | 拆为 9.3（quick，已验）/ 9.3b（完整 visual，主会话） |

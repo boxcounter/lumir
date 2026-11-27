@@ -1,8 +1,9 @@
 # Tasks: web-evidence-provenance-nov26
 
-> 提案阶段只起草制品，本文件全部任务未勾选。实现期按序勾选；发现 proposal 意图需要变更时停下、
-> 更新 proposal 并重走节点 1，不静默扩 scope。
-> r1（2026-11-27）：按独立评审 needs-changes 的 P1 / P2 逐项修订，行为边界不变。
+> 实现已完成，本文件按实际证据勾选；未勾项（真机、归档）就地注明未执行原因。发现 proposal 意图
+> 需要变更时停下、更新 proposal 并重走节点 1，不静默扩 scope。
+> r1 / r2：提案期按 needs-changes 收口；r3：机械核验（P1 socket 证据、P2 场景与 spec 截断、
+> P3 文档与静态防线）逐项修复。
 
 ## 1. 合同与数据形状
 
@@ -125,25 +126,27 @@
       选取 `query` 与「query 随 URL 一起发往 provider」的外发说明；同一调用批准后，默认工具行仍只
       显示原始 URL（query 不顶默认行）
 - [x] 7.4 `tests/unit` + `web_acceptance.rs`：同一 `selected_chunks` 记录的 live / 快照 / JSONL
-      三路径逐字段同形（徽标、五字段、mode/query、详情行）
+      三路径逐字段同形——集成测试**真 resume** 后断言 `web_input.mode` / 选取 `query`；DOM 断言
+      详情行的模式 / 选取查询，并断言旧成功记录（缺五字段）无徽标、无证据行
 - [x] 7.5 `src-tauri/tests/web_acceptance.rs`（`--features acceptance-web`）：`selected_chunks` +
       `bounded` 成功端到端——测试 provider 声明 `[full, selected_chunks]` 并脚本化返回；真实 socket
-      记录证明 URL 与 query 都到达；覆盖 `allow_all` 与 `ask` → 批准 → 执行两条路径；断言五字段与
-      恢复同形
-- [x] 7.6 `web_acceptance.rs`：生产 DeepSeek 请求体没有 `mode` / `query` 字段（与 7.5 的测试 provider
-      记录对照）
+      记录断言**测试专用请求头**（`X-Lumir-Test-Fetch-Mode` / `-Query`）携带 mode 与选取 query，
+      body 仍只有 `url`；覆盖 `allow_all` 与 `ask` → 批准 → 执行两条路径
+- [x] 7.6 `web_acceptance.rs` / 生产反向断言：生产 wire 不含测试头、body 没有 `mode` / `query`
+      字段（与 7.5 的 header 记录对照；测试头字符串不进生产 rlib）
 - [x] 7.7 `web/acceptance.rs`：合成 provider 经 `LUMIR_ACCEPTANCE_WEB_ENDPOINTS` 显式字段激活
       （`#[cfg(feature = "acceptance-web")]`），能力覆盖 `[full, selected_chunks]`；不改 URL / DNS /
       redirect / 内容类型校验
 - [x] 7.8 `scripts/acceptance/web-production-check.sh`：源码层与产物层判据覆盖新注入面；新增
-      `fetched_by` / `binding` / `final_url` 赋值点白名单判据（`output.rs` 字段声明、`provider.rs`
-      构造漏斗；白名单外出现即红）
+      五字段赋值点白名单判据（`output.rs` 字段声明、`provider.rs` 构造漏斗）与
+      `FetchProvenance {` 结构体字面量白名单；白名单外出现即红
 
 ## 8. 真机验收场景
 
 - [x] 8.1 新增 `scripts/acceptance/scenarios/886-harness-web-mode-unsupported.md`（item 886）：
-      验收 vault 配置假 key 的 DeepSeek 条目 + `mode=selected_chunks` → 解析成功、能力检查在任何
-      网络动作前失败 → `web_mode_unsupported`、无批准卡（Ask 下亦无）、无徽标、无条数读数
+      验收 vault 配置假 key 的 DeepSeek 条目 + `approval=ask` + `mode=selected_chunks` → 解析成功、
+      能力检查在任何网络动作前失败 → `web_mode_unsupported`；「无批准卡」由 Ask 下 done 标记仍能
+      到达语言无关地证明；JSONL 断言 `attempts=0` / `local_precheck=false`；无徽标、无条数读数
 - [x] 8.2 新增 `scripts/acceptance/scenarios/886b-harness-web-no-fabricated-evidence.md`（item 886）：
       未配置 provider + `mode=full` → 错误、无证据徽标、五个字段不伪造
 - [x] 8.3 覆盖边界写进证据：GUI 生产装配无法产出成功 Fetch，`selected_chunks+bounded` 成功链与
@@ -160,8 +163,10 @@
 - [x] 9.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [x] 9.2 `bash scripts/docs-check.sh` 通过（含 `openspec-archive-check` 门禁模式、链接、归档队列、
       验收场景契约与 backlog 判据）
-- [x] 9.3 `bash scripts/gate.sh quick` 全绿；改过面板后本地跑 `bash scripts/gate.sh visual`，
-      像素基线变更交 Alex 裁决后更新（`tests/visual/README.md`）
+- [x] 9.3 `bash scripts/gate.sh quick` 全绿（13/13 PASS）；已跑目标视觉场景
+      `m384-harness-approval-decided`（18/18），未更新任何基线
+- [ ] 9.3b（主会话执行）完整 `bash scripts/gate.sh visual` 终态证据；像素基线变更交 Alex 裁决后
+      更新（`tests/visual/README.md`）——旧 tip 的 visual 已在途并被停止，本批不虚勾
 - [x] 9.4 `node scripts/acceptance/run.mjs --check` 通过
 - [ ] 9.5（待批次收尾）`docs/backlog.md` 归档跟踪队列落一条本 change 条目（tasks 全勾后由 docs-check 判据强制）
 - [ ] 9.6（待评审）节点 2 五要件逐条核对并写进 `proposal.md` 的节点 2 块；独立 reviewer 结论绑定实现 tip

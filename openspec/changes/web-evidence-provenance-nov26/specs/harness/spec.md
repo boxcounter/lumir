@@ -349,8 +349,10 @@ SHALL 声明 `[full, selected_chunks]`，覆盖只存在于隔离验收装配，
 测试 provider SHALL 能按脚本返回 `content_scope` / `coverage`，至少覆盖 `full` + `unknown` 与
 `selected_chunks` + `bounded` 两种形态。
 
-真实 HTTP 记录 SHALL 证明 Fetch 请求把 URL 与（`selected_chunks` 时的）query 都交给了测试 provider，
-并 SHALL 同时证明生产 DeepSeek 的请求体仍只有 `url`（MUST NOT 因 `mode` 扩字段）。新增注入面与
+隔离验收装配 SHALL 以**测试专用请求头**（仅 `acceptance-web` 构建编译，如
+`X-Lumir-Test-Fetch-Mode` / `X-Lumir-Test-Fetch-Query`）把 `mode` 与选取 `query` 交给测试 provider；
+真实 socket 记录 SHALL 断言这些请求头与 body，并证明生产 DeepSeek 的请求体仍只有 `url`、wire 上
+MUST NOT 出现任何测试头或新的 body 字段。新增注入面与
 `fetched_by` / `binding` / `final_url` 的赋值点 MUST 被 `web-production-check.sh` 的源码层与产物层
 判据覆盖：赋值点仅允许出现在白名单文件（`output.rs` 字段声明、`provider.rs` 构造漏斗），白名单外
 出现即红。
@@ -376,7 +378,8 @@ SHALL 声明 `[full, selected_chunks]`，覆盖只存在于隔离验收装配，
 #### Scenario: 多模式测试 provider 的请求与结果记录
 
 - **WHEN** 隔离验收以测试 provider 分别执行 `full` 与 `selected_chunks`（后者带 query）的 Fetch
-- **THEN** 真实 socket 记录显示两次请求都到达测试 provider，`selected_chunks` 的 query 随请求送达；
+- **THEN** 真实 socket 记录显示两次请求都到达测试 provider；`selected_chunks` 的请求带
+  `X-Lumir-Test-Fetch-Mode: selected_chunks` 与携带选取 query 的测试头，body 仍只有 `url`；
   前者产出 `full` + `unknown`，后者产出 `selected_chunks` + `bounded`，两者 `fetched_by=provider` /
   `binding=url_submitted`；记录不是仅断言 mock fixture 被调用
 
@@ -542,3 +545,5 @@ MUST NOT 伪造 provider，MUST NOT 声称验证了 provider 内部 DNS / redire
 
 - **WHEN** 以生产装配（无验收注入）执行任意 Fetch
 - **THEN** `fetched_by` 只会是 `provider` 或 null，`binding` 只会是 `url_submitted` 或 null，
+  `final_url` 恒为 null；生产路径 MUST NOT 存在 `local` / `address_pinned` / 非空 `final_url`
+  的赋值入口。

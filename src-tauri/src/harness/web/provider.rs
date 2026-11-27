@@ -465,6 +465,13 @@ impl DeepSeekWebProvider {
             WebOperation::Fetch => "fetch",
         };
         let url = format!("{}/v1/tools/{path}", self.endpoint.trim_end_matches('/'));
+        // 隔离验收装配的请求头证据（change web-evidence-provenance-nov26，核验 P1-1）：只有
+        // `acceptance-web` 构建编译本段；生产 wire 不含任何测试头，body 也不扩字段。
+        #[cfg(feature = "acceptance-web")]
+        let test_fetch = match &request {
+            WebProviderRequest::Fetch { mode, query, .. } => Some((*mode, query.clone())),
+            WebProviderRequest::Search { .. } => None,
+        };
         let body = match request {
             WebProviderRequest::Search {
                 query,
@@ -494,21 +501,31 @@ impl DeepSeekWebProvider {
         let client = builder
             .build()
             .map_err(|error| self.network_error(error.to_string()))?;
-        let mut response = client
+        let request_builder = client
             .post(url)
             .header(AUTHORIZATION, format!("Bearer {}", self.api_key))
-            .header(CONTENT_TYPE, "application/json")
-            .json(&body)
-            .send()
-            .map_err(|error| {
-                if aborted() {
-                    PreflightError::new(WebErrorCode::WebCancelled, "DeepSeek 请求已取消")
-                } else if error.is_timeout() {
-                    PreflightError::new(WebErrorCode::WebTimeout, "DeepSeek 请求超时")
-                } else {
-                    self.network_error(error.to_string())
+            .header(CONTENT_TYPE, "application/json");
+        #[cfg(feature = "acceptance-web")]
+        let request_builder = {
+            let mut request_builder = request_builder;
+            if let Some((mode, query)) = test_fetch {
+                request_builder = request_builder.header("X-Lumir-Test-Fetch-Mode", mode.as_str());
+                if let Some(query) = query {
+                    // 验收 fixture 的 query 为 ASCII；非 ASCII 会让 reqwest 拒绝该 header（响亮失败）。
+                    request_builder = request_builder.header("X-Lumir-Test-Fetch-Query", query);
                 }
-            })?;
+            }
+            request_builder
+        };
+        let mut response = request_builder.json(&body).send().map_err(|error| {
+            if aborted() {
+                PreflightError::new(WebErrorCode::WebCancelled, "DeepSeek 请求已取消")
+            } else if error.is_timeout() {
+                PreflightError::new(WebErrorCode::WebTimeout, "DeepSeek 请求超时")
+            } else {
+                self.network_error(error.to_string())
+            }
+        })?;
         let status = response.status();
         let content_type = response
             .headers()

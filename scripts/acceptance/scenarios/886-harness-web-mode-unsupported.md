@@ -17,6 +17,10 @@ config:
       deepseek-work:
         preset: deepseek
         api_key: "acceptance-dummy"
+    # 能力检查必须前移到批准预览之前：Ask 下若产生卡片，本轮会挂起、`WEB-MODE-DONE` 永不出现。
+    # 「无批准卡」因此由「Ask + done 标记到达」语言无关地证明，不靠匹配中文卡标题。
+    web_access:
+      approval: ask
 steps:
   - name: ⌘⇧A 打开 harness pane
     do: keys
@@ -40,7 +44,7 @@ steps:
       has: ["WEB-MODE-DONE"]
     timeoutMs: 30000
     expect:
-      - label: 不产生批准卡
+      - label: 不产生批准卡（Ask 下 done 标记能到达即证明本轮未被卡住）
         ax: { not: "要抓取这个网页吗？" }
   - name: 工具行显示稳定错误码且不伪造证据
     expect:
@@ -63,12 +67,24 @@ steps:
     do: click
     target: { role: AXButton, name: "^查看详情$" }
     expect:
-      - label: 尝试次数为 0
+      - label: 尝试次数行在场
         ax: { has: "尝试次数" }
       - label: 抓取方为空（无本地抓取值）
         ax: { not: "抓取方" }
       - label: 证据形态为空
         ax: { not: "证据形态" }
+  - name: JSONL 精确断言零 attempts 与失败关闭
+    expect:
+      - label: attempts=0、local_precheck=false、code=web_mode_unsupported 同一条
+        file:
+          path: "env:harness/sessions/*/*.jsonl"
+          jsonlOutput:
+            tool: web_fetch
+            has:
+              ok: false
+              code: web_mode_unsupported
+              attempts: 0
+              local_precheck: false
 
 ---
 

@@ -71,11 +71,11 @@ pub enum WebBinding {
 /// 没有构造入口。五字段的写入只经 `WebEnvelope::apply_provenance`。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FetchProvenance {
-    pub content_scope: Option<WebContentScope>,
-    pub coverage: Option<WebCoverage>,
-    pub fetched_by: Option<WebFetchedBy>,
-    pub binding: Option<WebBinding>,
-    pub final_url: Option<String>,
+    content_scope: Option<WebContentScope>,
+    coverage: Option<WebCoverage>,
+    fetched_by: Option<WebFetchedBy>,
+    binding: Option<WebBinding>,
+    final_url: Option<String>,
 }
 
 impl FetchProvenance {

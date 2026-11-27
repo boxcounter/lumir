@@ -467,31 +467,6 @@ fn basic_args(operation: WebOperation, args: &Value) -> Result<BasicWebArgs, Too
             })
         }
         WebOperation::Fetch => {
-            let Some(url) = object
-                .get("url")
-                .and_then(Value::as_str)
-                .filter(|url| (1..=8192).contains(&url.chars().count()))
-            else {
-                return Err(args_error(
-                    operation,
-                    WebErrorCode::WebArgsInvalid,
-                    "Web Fetch url 必须是 1–8192 字符的字符串",
-                ));
-            };
-            let origin = url::Origin::from_url(url).map_err(|reason| {
-                args_error(
-                    operation,
-                    WebErrorCode::WebUrlBlocked,
-                    format!("Web Fetch URL 不合法：{reason}"),
-                )
-            })?;
-            // 主机类拒绝（localhost / .local / 非全局单播 IP 字面量）只靠 URL 里写死的字面量就能
-            // 判定，与 provider 配置、DNS、网络都无关，因此必须在这一层拦下：`basic_args` 先于
-            // `precheck`、批准预览与 provider 解析，任何 provider 配置状态都不得把它掩盖成
-            // `web_provider_unconfigured`，也不得为它生成批准卡。preflight 的逐跳复查仍保留。
-            if let Some(reason) = url::blocked_host(&origin.host) {
-                return Err(blocked_fetch_output(operation, url, reason));
-            }
             let mode = match object.get("mode") {
                 None => WebFetchMode::Full,
                 Some(Value::String(mode)) if mode == "full" => WebFetchMode::Full,
@@ -538,6 +513,31 @@ fn basic_args(operation: WebOperation, args: &Value) -> Result<BasicWebArgs, Too
                     Some(query.to_string())
                 }
             };
+            let Some(url) = object
+                .get("url")
+                .and_then(Value::as_str)
+                .filter(|url| (1..=8192).contains(&url.chars().count()))
+            else {
+                return Err(args_error(
+                    operation,
+                    WebErrorCode::WebArgsInvalid,
+                    "Web Fetch url 必须是 1–8192 字符的字符串",
+                ));
+            };
+            let origin = url::Origin::from_url(url).map_err(|reason| {
+                args_error(
+                    operation,
+                    WebErrorCode::WebUrlBlocked,
+                    format!("Web Fetch URL 不合法：{reason}"),
+                )
+            })?;
+            // 主机类拒绝（localhost / .local / 非全局单播 IP 字面量）只靠 URL 里写死的字面量就能
+            // 判定，与 provider 配置、DNS、网络都无关，因此必须在这一层拦下：`basic_args` 先于
+            // `precheck`、批准预览与 provider 解析，任何 provider 配置状态都不得把它掩盖成
+            // `web_provider_unconfigured`，也不得为它生成批准卡。preflight 的逐跳复查仍保留。
+            if let Some(reason) = url::blocked_host(&origin.host) {
+                return Err(blocked_fetch_output(operation, url, reason));
+            }
             Ok(BasicWebArgs::Fetch {
                 url: url.to_string(),
                 origin,
@@ -1119,6 +1119,19 @@ mod tests {
                 assert_eq!(value[field], Value::Null, "{extra} {field}");
             }
         }
+        // 参数形状（mode / query）先于 URL 静态校验：两者都非法时报 web_args_invalid。
+        let both_invalid = execute(
+            "web_fetch",
+            &serde_json::json!({"url": "http://localhost/a", "mode": "selected_chunks"}),
+            WebAccessConfig::default(),
+            Some(&port),
+            Arc::new(|| false),
+        );
+        assert_eq!(
+            both_invalid.value["code"],
+            serde_json::json!("web_args_invalid"),
+            "参数形状先于 URL 静态校验（spec 解析顺序）"
+        );
         assert_eq!(port.0.load(Ordering::SeqCst), 0);
 
         // 合法形状进入 port（full 无 query / selected_chunks 带 query）。

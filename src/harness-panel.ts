@@ -1074,7 +1074,7 @@ function createWebAuditBlock(metadata: WebAuditMetadata): HTMLElement {
   addRow("D1019", metadata.provider_id ?? t("D1020"));
   addRow("D1024", String(metadata.attempts));
   if (metadata.truncated) addRow("D1025", metadata.truncated_fields.join(", "));
-  if (metadata.operation === "fetch" && metadata.mode !== null) {
+  if (metadata.operation === "fetch" && metadata.mode === "selected_chunks") {
     addRow("D1085", metadata.mode);
   }
   if (

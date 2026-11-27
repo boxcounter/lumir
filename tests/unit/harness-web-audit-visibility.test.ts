@@ -1642,3 +1642,57 @@ test("Ask 预览（selected_chunks）显示完整 URL、选取 query 与外发�
   assert.match(row.textContent, /https:\/\/example\.com\/a\?x=1/, "默认行仍显示原始 URL");
   assertNoMatch(row.textContent, /synthetic selection/, "选取 query 不得顶掉默认行 URL");
 });
+
+
+test("selected_chunks 记录：详情显示模式与选取查询；旧成功记录无徽标与证据行", async () => {
+  const chunks = await mountDone(
+    "web_fetch",
+    "https://example.com/a",
+    fetchAudit({
+      query: "synthetic selection",
+      mode: "selected_chunks",
+      content_scope: "selected_chunks",
+      coverage: "bounded",
+    }),
+  );
+  assertHealth(chunks, "相关段落 · 完整性受限");
+  const toggle = chunks.querySelector(".lumir-hp-web-detail-toggle");
+  assert.ok(toggle !== null);
+  toggle.fire("click");
+  const audit = chunks.querySelector(".lumir-hp-web-audit");
+  assert.ok(audit !== null);
+  assert.match(audit.textContent, /模式/);
+  assert.match(audit.textContent, /selected_chunks/);
+  assert.match(audit.textContent, /选取查询/);
+  assert.match(audit.textContent, /synthetic selection/);
+
+  // 旧成功记录：缺 mode / 五字段 → 不显示徽标、不渲染证据行（不补默认值）。
+  const legacy = await mountDone("web_fetch", "https://example.com/a", {
+    operation: "fetch",
+    query: null,
+    url: "https://example.com/a",
+    provider: "deepseek",
+    provider_id: "deepseek-work",
+    attempts: 1,
+    cost_per_1000_success_cny: 5,
+    local_precheck: true,
+    provider_fetch: true,
+    trust: "untrusted",
+    truncated: false,
+    truncated_fields: [],
+    code: null,
+    result_count: null,
+    result_text_bytes: null,
+  });
+  assertHealth(legacy, null);
+  const legacyToggle = legacy.querySelector(".lumir-hp-web-detail-toggle");
+  assert.ok(legacyToggle !== null);
+  legacyToggle.fire("click");
+  const legacyAudit = legacy.querySelector(".lumir-hp-web-audit");
+  assert.ok(legacyAudit !== null);
+  assertNoMatch(
+    legacyAudit.textContent,
+    /证据形态|完整性|抓取方|绑定|最终 URL|模式|选取查询/,
+    "旧记录缺字段时不得渲染证据行",
+  );
+});
