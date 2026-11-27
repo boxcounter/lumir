@@ -45,6 +45,9 @@
 - [x] 4.5 `node scripts/acceptance/run.mjs --check`：PASS（场景 27 的静态校验与覆盖表）。
 - [x] 4.6 完工报告：commit hash、测试计数、候选截图路径、待 Alex 基线清单、主会话真机项（场景 27）。
 - [x] 4.8 K3 P2/P3 收口：`short/before.png` 改为真实 master `9f872e8f` 构建的干净截图（无 END / 选区 / 浮钮，`master-before.log`）；`m399` / `m631` 从 master 恢复原始落点（与 master 0 diff，22/22 绿，`m399-m631-restored.log`）；proposal / tasks / 测试注释 / endMarker / theme 的弃用自然流与 `offset*` 表述改为 rect + scrollTop/Left 换算，并写明绝对定位仍计入 scrollable overflow。
+- [x] 4.9 最终完整视觉：`scripts/gate.sh visual`（全量，含像素）——GATE RESULT: 14/15 PASS（SKIP 0），exit 1；visual-regression 1936 passed / 2 failed / 13 skipped，2 failed 为既有 webkit-realua editing-oracle IME 计时用例，隔离复跑 2/2×2 PASS（`evidence/gate-visual-final.log`）。
+- [x] 4.10 获批基线更新：Alex 原话「批准 END 的 4 张基线」与「批准 END 的第 4 张新基线」；只更新 4 张：combo1-3 沿用首次批准 SHA，combo4 用新 SHA `1b37b892…`（旧 `78b72663…` 作废）；未改容差、未更新第 5 张。
+- [x] 4.11 归档：`node scripts/openspec-archive.mjs show-document-end-marker-all-docs-nov27` → 归档提交 `[[ARCHIVE_COMMIT]]`；`node scripts/openspec-archive-check.mjs --archived show-document-end-marker-all-docs-nov27` [[ARCHIVED_AUDIT]]。
 - [x] 4.7 真机场景 27：首轮 FAIL 分类为测试 oracle 缺陷（旧 `not: "END"` 误命中短文说明句）；修正后最终 **PASS 23 断言**，证据 `.local/acceptance/2026-11-27-end-marker-all-docs/03-final-pass/`；反向 FAIL 在 `02-reverse-red/`，三类不混算（`README.md`）。
 
 ## 5. 证据（绝对路径）
@@ -59,9 +62,11 @@
   `m399-m631-restored.log`（恢复 master 原始落点后 22/22）、
   `lineheight-green.log`（17/17）、`pointer-evidence-probe.log`（短文几何 + 四条手势读数）。
 - 门禁：`gate-quick-final-hitarea.log` 的 `GATE RESULT: 13/13 PASS（SKIP 0）`；`docs-check-final.log` PASS；`openspec validate --all --strict` 39/39。
-- 全量视觉：`full-visual.log`（1934 passed / 2 failed / 13 skipped；两项失败处置见 BASELINES.md）；
-  `wrap-baseline-after-hitarea.log`（指针修复后重跑四种组合：仍 22724 px / 3.0%，候选截图不变）；
-  `wrap-candidates-2.log`（四种组合的 save-only 候选截图，未更新基线）。
+- 全量视觉：`full-visual.log`（首轮 1934 passed / 2 failed / 13 skipped，两项失败处置见 BASELINES.md）；
+  `wrap-baseline-after-hitarea.log`（指针修复后重跑四种组合）；
+  `gate-visual-final.log`（最终完整门禁：GATE RESULT: 14/15 PASS（SKIP 0），exit 1；visual-regression 1936 passed / 2 failed / 13 skipped，2 failed 为既有 webkit-realua editing-oracle IME 计时用例，隔离复跑 2/2×2 PASS）。
+- 基线：4 张获批快照 SHA 为 combo1 `0a8c48ad…` / combo2 `6059a2b3…` / combo3 `21007c46…` /
+  combo4 `1b37b892…`（旧 combo4 `78b72663…` 作废，`combo4-recheck.md`）。
 - 候选材料：`.local/reviews/end-marker-all-docs-nov27/index.html`（审阅页）、`BASELINES.md`、`short/{before,criterion-only,after,pointer-selection}.png`、
   `short/readings.json`、`candidates/`。
 - 真机 27：`.local/acceptance/2026-11-27-end-marker-all-docs/{00-oracle-fixed-pass,01-oracle-fail-repro,02-reverse-red,03-final-pass}/`

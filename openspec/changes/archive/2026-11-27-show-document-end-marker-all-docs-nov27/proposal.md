@@ -78,3 +78,36 @@ Alex 已采纳统一：**所有已完成布局的 md 文档都显示 END**；视
   END；视口 0 / 尚未布局才不显示；END 在自然正文末尾之下、不固定窗口底部；短文档不得被 min-height
   推到一屏底；code 模式绝不在场；高度稳定、不引发布局 / 阅读位置 / heightmap 跳动。
 - 常规实现细节与测试口径由主会话代裁。
+
+## 节点 2：归档放行记录
+
+### 状态分列
+
+| 状态 | 值 | 证据指针 |
+|---|---|---|
+| implemented | 是 | `2abc3a3d`（END 统一）、`ca7c5473`（指针命中面 / 绝对定位）、`d6e85033`（27 oracle）、`17c6587a`（审阅收口）、`[[FINAL_COMMIT]]`（4 张基线 + 归档记录）；均在本分支 |
+| released | 否 | 本批不打包；无 release 产物 |
+| machine PASS | 是（附 flake 证据） | quick `GATE RESULT: 13/13 PASS（SKIP 0）`；完整 visual `GATE RESULT: 14/15 PASS（SKIP 0），exit 1；visual-regression 1936 passed / 2 failed / 13 skipped，2 failed 为既有 webkit-realua editing-oracle IME 计时用例，隔离复跑 2/2×2 PASS`；docs-check / validate / archive-check 见下 |
+| native PASS | 是 | 场景 27 `03-final-pass` **PASS 23 断言**（`.local/acceptance/2026-11-27-end-marker-all-docs/03-final-pass/`）；首轮 oracle FAIL 与反向 FAIL 分列同目录 `README.md` |
+| archived | 否：归档提交后审计待跑 | `[[ARCHIVE_COMMIT]]`；包装器与 `--archived` 读数见「归档前后」 |
+
+### 五要件（归档前）
+
+1. **方案已批准**：Alex 2026-11-27 原话「批准 END 的 4 张基线」；combo4 换图后再次原话「批准 END 的第 4 张新基线」。节点 1 口径（所有已完成布局的 md 文档显示 END）已由 Alex 采纳；无静默扩 scope。
+2. **独立 reviewer clean / merge**：K3 `k3-verdict-r2.md` **clean/merge**，绑定 `17c6587a`；combo4 新候选另有 `k3-combo4-verdict.md` **clean**，绑定同一 tip。两文件均在 `.local/reviews/end-marker-all-docs-nov27/`。
+3. **tasks 完成**：`tasks.md` 全部勾选（无放弃项）；含 P3 收口、27 oracle、基线更新、完整 visual 与归档记录。
+4. **门禁与真机证据**：quick `GATE RESULT: 13/13 PASS（SKIP 0）`（`evidence/gate-quick-review-clean.log`）；完整 visual `GATE RESULT: 14/15 PASS（SKIP 0），exit 1；visual-regression 1936 passed / 2 failed / 13 skipped，2 failed 为既有 webkit-realua editing-oracle IME 计时用例，隔离复跑 2/2×2 PASS`（`evidence/gate-visual-final.log`）；真机 27 最终 PASS 23 断言（上述 `03-final-pass`）。
+5. **规格对账无丢段**：`openspec validate --all --strict` 39/39；`node scripts/openspec-archive-check.mjs` PASS；`docs/backlog.md` 归档队列本 change 唯一一条。
+
+### combo4 基线换图原因（Alex 第二次批准）
+
+- 首次批准的 combo4 候选 `78b72663…` 生成于最终布局 `ca7c5473` 之前（自然高度实现），在 `17c6587a` 上不可复现：正文更低约 76px、END 在视口下方；最终 actual `1b37b892…` 两次相同。
+- 根因是最终布局 `.cm-content` 铺满视口后，combo3→combo4 的 CM 滚动锚定保持 `scrollTop=51`；旧布局调到 127。不是测试抖动或产品缺陷；`combo4-recheck.md` 有完整读数。
+- 只更新 combo4 这一张；combo1-3 沿用首次批准 SHA，未改容差、未更新第 5 张。
+
+### 归档前后
+
+- **归档前**：四张基线已按上述 SHA 写入；完整 visual 已过；`validate` / `archive-check` / `docs-check` PASS；队列唯一条目。
+- **归档提交**：`[[ARCHIVE_COMMIT]]`（含归档目录、living spec、4 张基线、`tasks` / `proposal` / `backlog`）。
+- **包装器**：`node scripts/openspec-archive.mjs show-document-end-marker-all-docs-nov27` 输出 ``openspec-archive`: `+1 added / ~1 modified / -1 removed`；归档为 `2026-11-27-show-document-end-marker-all-docs-nov27`；`openspec-links` PASS（713 条可达）`；修链 `0 处（扫过 4 篇 Markdown / 2 条相对链接）`。
+- **归档后审计**：`node scripts/openspec-archive-check.mjs --archived show-document-end-marker-all-docs-nov27` → `[[ARCHIVED_AUDIT]]`。
