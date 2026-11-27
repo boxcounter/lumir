@@ -133,7 +133,8 @@ steps:
       - shot: 删marker后-该行应保留为可见空行且光标在场
 
   # ── 用例 5（change fix-empty-line-height-stability-nov27）：文档末尾空行输入首字——
-  # END 标记的包围盒 MUST 逐值不变（旧模型：末行获得 8px 下距，文档总高 +8，END 下移 8px）。
+  # 编辑器 AXTextArea 的宽高 MUST 逐值不变（旧模型：末行获得 8px 下距，文档总高 +8，
+  # bbox 高度按同一行高整除增加）；END 节点无 bbox，真机只保留「在场」与截图证据。
   # fixture 末尾**两个换行**（末行是空行），落字后该行才是「文档末文本行」，正是旧模型的付账点。
   - name: 打开长文 fixture（末尾两个换行）
     do: open

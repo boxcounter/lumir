@@ -38,5 +38,5 @@
 - [x] 5.2 **真机场景 100 扩展**：用例 5（末尾两个换行，**编辑器 AXTextArea 的 `geom` record / unchangedSince** + `allowOutside` + `compare: ["w","h"]`、落字正观测、未落盘）与用例 6（单尾随换行，落字前后截图留证）；fixtures `empty-line-long-2nl.md` / `empty-line-long-1nl.md`；`run.mjs --check` PASS、COVERAGE 已重生成。
 - [x] 5.2b **首轮真机失败修正（test-only）**：END 的 `AXStaticText` 无 bbox（证据 `.local/acceptance/2026-11-27-empty-line-height/`），不能作几何判据。改用编辑器 `AXTextArea`（role + fixture 文本限定）的 bbox 高度——真机读到它就是**文档内容总高**（2nl 2689 / 1nl 2646，一行差 43px），判据取 `compare: ["w","h"]`（位置随滚动，不掺入）与 `allowOutside`（盒高于视口）。`geom` 新增这两个选项（默认行为不变）+ 自测；浏览器层对同一量（`.cm-content` 盒高）有红绿读数：旧模型 1815.5→1823.5（+8），候选 1575.5→1575.5（0）。产品代码未动。
 - [ ] 5.3 **追认 4 张清单外基线**：Alex 对 3.5 的 4 张同源差异（候选图见审阅页「清单外同源差异」段）作一次性追认后更新；更新后全量视觉应为全绿（当前最终全量视觉 1933 passed / 2 failed，失败即这 4 张所在的 2 个测试）。
-- [ ] 5.4 **真机执行**：场景 100 的用例 5/6 由主会话在真机批次执行至 PASS（本 mission 不跑真机）；首轮在 END bbox 处失败（产品字符输入与其它断言正常），已按 5.2b 改判编辑器 AXTextArea，待复跑；证据落 `.local/acceptance/`。
+- [x] 5.4 **真机执行**：场景 100（含用例 5/6）真机复跑 **PASS：39 条断言 / 0 失败**，证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-27-empty-line-height-r2/`。首轮在 END bbox 处失败（产品字符输入与其它断言正常），按 5.2b 改判编辑器 AXTextArea 后 r2 通过。
 - [ ] 5.5 节点 2 归档记录（独立 reviewer clean/merge + 门禁与证据齐后由 tower 办理）。
