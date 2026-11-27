@@ -49,15 +49,15 @@ Alex 已明确选择内容呈现模型：**「我选择这种模型」**。其�
 | released | 否 | 本批不打包，无 release 产物 |
 | machine PASS | 是 | quick `GATE RESULT: 13/13 PASS（SKIP 0）` exit 0；完整 visual 最终 `GATE RESULT: 15/15 PASS（SKIP 0）` exit 0，1951 passed / 13 skipped；原始日志 `.local/reviews/code-pane-workspace-nov27/evidence/gate-visual-final.log` |
 | native PASS | 是 | 38/41 最终 2/2 PASS、exit 0；证据 `.local/acceptance/2026-11-27-code-pane-workspace-after-oracle-fix/` |
-| archived | 否：待执行归档 | 最终独立 K3 clean/merge 已绑定 `63b5ecbf`；归档包装器与 `--archived` 读数待实际执行后回填 |
+| archived | 是 | 归档提交 `6cb3441b34423fccd1de79390966f4cb9cdfe724`；`--archived` PASS：2 条 MODIFIED / 对比 23 段 / 人工恢复 0 段 / 声明认领 0 段 |
 
 ### 五要件核对
 
 1. **方案已批准**：内容模型由 Alex 原话「我选择这种模型」批准；单张基线另有 Alex 原话「批准代码满 pane 的这张基线」。授权仅限 `binding-highlight-chromium-darwin.png`，760×733→964×733，未改容差或其它基线。
 2. **独立 reviewer**：`.local/reviews/code-pane-workspace-nov27/independent-review-final.md` 为最终 K3 clean/merge，P1/P2/P3 均为 0，绑定 `63b5ecbf3e28465ddc27e73c7e1ac3fe427cd750`；旧 `a18b3a7b` 报告不再作为最终 tip 的复核证据。
-3. **tasks**：1.1–4.5 已完成；归档与 `--archived` 审计读数只在实际执行后回填。
+3. **tasks**：1.1–4.5 已完成；归档提交与 `--archived` 审计读数已按实际结果回填。
 4. **门禁与真机**：quick / 完整视觉 / native 读数如上。41 原失败为**测试时序/oracle 缺陷**：master 同败，AX 点击无 settle，强制覆盖两段 await 导致磁盘读取抢跑；只用 `waitForFile` 修场景，未改保存或布局生产代码。分类与三套证据见 `.local/reviews/code-pane-workspace-nov27/native-triage.md`。
-5. **规格对账**：归档前 validate `Totals: 39 passed, 0 failed (39 items)`、exit 0；docs-check PASS、exit 0，backlog 80/80 行；archive-check PASS：`扫过 9 份 delta，9 条 MODIFIED，对比 132 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目`、exit 0。五要件齐备，可以执行归档。
+5. **规格对账**：归档前 validate `Totals: 39 passed, 0 failed (39 items)`、exit 0；docs-check PASS、exit 0，backlog 80/80 行；archive-check PASS：`扫过 9 份 delta，9 条 MODIFIED，对比 132 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目`、exit 0。五要件齐备，归档与审计均已完成。
 
 ### 完整 visual 历史
 
@@ -66,6 +66,9 @@ Alex 已明确选择内容呈现模型：**「我选择这种模型」**。其�
 | 首次 | `GATE RESULT: 14/15 PASS（SKIP 0）` exit 1；1950 passed / 1 failed / 13 skipped | `evidence/gate-visual-summary.log`、`gate-visual-regression.log`；唯一差异为授权基线 760×733→964×733 |
 | 更新后最终 | **`GATE RESULT: 15/15 PASS（SKIP 0）` exit 0**；1951 passed / 13 skipped；visual-regression 1367s | `evidence/gate-visual-final.log`；原始套件日志路径也在其中，无额外差异 |
 
-### 归档前后
+### 归档执行与审计
 
-最终 tip 的独立复核缺口已闭合，归档前三项检查通过后执行包装器。当前尚未产生归档提交或 `--archived` 读数；本 change 不 merge、不 push，released 保持否。
+- 包装器 `node scripts/openspec-archive.mjs model-code-pane-workspace-nov27` exit 0：`content-width` 应用 `+2 added / ~2 modified / -0 / →0`；归档到 `openspec/changes/archive/2026-11-27-model-code-pane-workspace-nov27/`；修链 0 处（4 篇 Markdown / 0 条相对链接）；`openspec-links: PASS（校验 713 条相对链接，全部可达）`。
+- 归档提交：`6cb3441b34423fccd1de79390966f4cb9cdfe724`（`docs: archive code pane workspace change`）。
+- 审计 `node scripts/openspec-archive-check.mjs --archived model-code-pane-workspace-nov27` exit 0，原文：`openspec-archive-check: PASS（openspec/changes/archive/2026-11-27-model-code-pane-workspace-nov27：2 条 MODIFIED，对比 23 段；人工恢复 0 段，声明认领 0 段）`。
+- 原始日志：`.local/reviews/code-pane-workspace-nov27/evidence/archive-wrapper-final.log` 与 `archive-check-archived-final.log`。本 change 不 merge、不 push，released 保持否。

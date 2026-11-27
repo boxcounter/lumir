@@ -24,4 +24,4 @@
 - [x] 4.2 `scripts/gate.sh quick`、`scripts/docs-check.sh`、OpenSpec `validate --all --strict` 通过，报告照抄 `GATE RESULT` 与退出码。
 - [x] 4.3 完整 `gate.sh visual` 在单张授权基线更新后执行：`GATE RESULT: 15/15 PASS（SKIP 0）`、exit 0，1951 passed / 13 skipped；首轮 1950/1/13 历史已保留。
 - [x] 4.4 真机由主会话统一跑后，本 worktree 串行复核 38/41 最终 2/2 PASS；41 的 master 同败与时序/oracle 分类、修正和证据均已归档到 `.local` 报告。
-- [x] 4.5 最终独立 K3 clean/merge 绑定 `63b5ecbf3e28465ddc27e73c7e1ac3fe427cd750`，P1/P2/P3 均为 0，报告见 `.local/reviews/code-pane-workspace-nov27/independent-review-final.md`；Alex 已完成候选图/单张基线过目。不 merge、不 push，归档与审计读数按实际执行回填。
+- [x] 4.5 最终独立 K3 clean/merge 绑定 `63b5ecbf3e28465ddc27e73c7e1ac3fe427cd750`，P1/P2/P3 均为 0，报告见 `.local/reviews/code-pane-workspace-nov27/independent-review-final.md`；Alex 已完成候选图/单张基线过目。归档提交 `6cb3441b34423fccd1de79390966f4cb9cdfe724`，`--archived` PASS；不 merge、不 push。
