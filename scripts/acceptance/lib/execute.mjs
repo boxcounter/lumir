@@ -35,6 +35,7 @@ import {
   injectChordCGEvent,
   injectDrag,
   injectHover,
+  injectModifierCGEvent,
   injectWheel,
   isChordSpec,
   openFile,
@@ -152,7 +153,7 @@ async function otherVaultSessionId(current) {
 
 /** 动作与断言的白名单：`--check` 用它做静态校验，避免写错 key 要等一整轮真机才发现。 */
 export const ACTIONS = new Set([
-  "settle", "waitFor", "sleep", "key", "keys", "type", "typeInNode", "click", "clickNodeText", "clickInNode", "clickEditor",
+  "settle", "waitFor", "sleep", "key", "keys", "modifier", "type", "typeInNode", "click", "clickNodeText", "clickInNode", "clickEditor",
   "doubleClick", "drag", "hover", "scroll", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor",
   "vaultWrite", "vaultAppend", "vaultRm", "vaultSparse", "resizeWindow", "clipboardRead",
   "clipboardImage", "clipboardText", "note", "migrateHarnessSessions", "invalidate", "envWrite", "envChmod", "mockFill",
@@ -363,6 +364,26 @@ function barePatternEscape(value) {
   if (typeof value !== "string" || value.length <= 1) return null;
   if (value.startsWith("/") && value.endsWith("/")) return null;
   return REGEX_ESCAPE.exec(value)?.[0] ?? null;
+}
+
+export function modifierSpecProblem(step) {
+  if (step.side !== "left" && step.side !== "right") return `do=modifier 的 side 只支持 left / right，实际 ${JSON.stringify(step.side)}`;
+  if (step.phase !== "down" && step.phase !== "up") return `do=modifier 的 phase 只支持 down / up，实际 ${JSON.stringify(step.phase)}`;
+  return null;
+}
+
+export function modifierTransitionProblem(step, heldSide) {
+  if (step.phase === "down") return heldSide === null ? null : `Meta ${heldSide} 仍按住，不能再次 down；先同侧 up`;
+  return heldSide === null ? "Meta phase=up 没有配对的 down" : heldSide === step.side ? null : `按住的 Meta ${heldSide} 与松开的 ${step.side} 不同侧`;
+}
+
+/** 正常 up 与场景 finally 共用；失败时保留状态，让 finally 能再试一次。 */
+export function releaseModifier(vars, inject = injectModifierCGEvent) {
+  const side = vars.__heldMetaSide ?? null;
+  if (side === null) return null;
+  const out = inject(side, "up");
+  vars.__heldMetaSide = null;
+  return out;
 }
 
 /** 静态校验一个场景，返回问题列表（空 = 通过）。 */
@@ -675,10 +696,16 @@ export function checkScenario(scenario) {
     push(
       `config.harness.attachment_naming 需要对象（{ enabled, provider, model }），实际 ${JSON.stringify(scenario.config.harness.attachment_naming)}`,
     );
+  let heldModifier = null;
   for (const [i, step] of (scenario.steps ?? []).entries()) {
     const at = `steps[${i}]${step.name ? `(${step.name})` : ""}`;
     if (!step.name) push(`${at} 缺少 name`);
     if (step.do !== undefined && !ACTIONS.has(step.do)) push(`${at} 未知动作 do=${step.do}`);
+    if (step.do === "modifier") {
+      const problem = modifierSpecProblem(step) ?? modifierTransitionProblem(step, heldModifier);
+      if (problem) push(`${at} ${problem}`);
+      else heldModifier = step.phase === "down" ? step.side : null;
+    }
     if (step.do === "envChmod") {
       try {
         validateEnvChmod(step);
@@ -1238,6 +1265,7 @@ export function checkScenario(scenario) {
       }
     }
   }
+  if (heldModifier !== null) push(`steps 末尾仍按住 Meta ${heldModifier}：必须有同侧 phase=up，finally 只作异常兜底`);
   return problems;
 }
 
@@ -3225,6 +3253,16 @@ export async function runScenario(ctx, scenario) {
     const ax = await readAx(cu, ctx.pid).catch(() => null);
     await fail(`[场景异常] ${e.message}`, String(e.stack ?? "").split("\n").slice(1, 3).join(" | "), ax);
   } finally {
+    if (vars.__heldMetaSide) {
+      try {
+        const out = releaseModifier(vars);
+        evidence.record({ kind: "note", text: `场景收尾复位 Command（异常安全兜底）｜${out}` });
+      } catch (error) {
+        evidence.record({ kind: "assert", ok: false, label: "[运行环境无效] Command 复位", detail: error.message });
+        evidence.statusOverride = "INVALID";
+        throw new InfraError(`Command 在场景收尾仍未复位：${error.message}`);
+      }
+    }
     try {
       restoreEnvChmods();
     } catch (error) {
@@ -3878,6 +3916,18 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         return await scrollOrExplain({ x: shotTarget.x, y: shotTarget.y, page: step.page, dx: step.dx, dy: step.dy });
       }
       return await scrollOrExplain({ index, page: step.page, dx: step.dx, dy: step.dy });
+    }
+    case "modifier": {
+      const problem = modifierSpecProblem(step) ?? modifierTransitionProblem(step, vars.__heldMetaSide ?? null);
+      if (problem) throw new StepError(problem);
+      await noteIfFocusLost(ctx, p);
+      requireFrontmostForChords(p, [`meta-${step.side}-${step.phase}`]);
+      const out = step.phase === "down"
+        ? injectModifierCGEvent(step.side, "down")
+        : releaseModifier(vars);
+      if (step.phase === "down") vars.__heldMetaSide = step.side;
+      evidence.record({ kind: "note", text: `Meta ${step.side} ${step.phase}（cgevent flagsChanged）｜${out}` });
+      return out;
     }
     case "key": {
       // 通道路由（M768）：与 `do: keys` 同一份判据与翻译（`channelSpecProblem` / `keyChannel` /

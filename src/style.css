@@ -620,6 +620,28 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 按住 Command 的直达序号：只占既有 12px 左内边距，绝对定位因此不参与 flex 测量；
+   不覆盖文件名 / dirty 点 / 只读锁，也不替代右侧关闭钮。aria-hidden 与 pointer-events
+   在 DOM 与这里分别封住读屏和命中面；未按住时零像素、零布局影响。 */
+.tab-cmd-index {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 12px;
+  margin-top: -6px;
+  height: 12px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 12px;
+  text-align: center;
+  color: var(--text-2);
+  pointer-events: none;
+  user-select: none;
+}
+.tabstrip.is-cmd-held .tab-cmd-index {
+  display: block;
+}
 /* dirty 点：与 modeline 的「（未保存）」同源（同一 dirty 状态的两个可见面）。
    定稿 .tab .t-dot（index.html:165）：6×6 CSS 圆点，不再是 10px 文字字形 ●（字形偏大
    且有基线偏移风险）。元素常驻 DOM、clean 时 hidden 收起，占位不随保存状态跳动。 */

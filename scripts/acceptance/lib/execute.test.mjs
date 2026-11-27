@@ -20,7 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, geomBaselineProblem, isStaleIndexError, KEY_CHANNELS, keyChannel, keysTarget, loadScenario, matcher, notificationBaseline, notificationMatches, pickFreshNotification, planNodeIntoView, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, resolveKeysTarget, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, scopedAxOrder, screenshotSize, settleEditorless } from "./execute.mjs";
+import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, geomBaselineProblem, isStaleIndexError, KEY_CHANNELS, keyChannel, keysTarget, loadScenario, matcher, modifierSpecProblem, modifierTransitionProblem, notificationBaseline, notificationMatches, pickFreshNotification, planNodeIntoView, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, releaseModifier, resolveKeysTarget, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, scopedAxOrder, screenshotSize, settleEditorless } from "./execute.mjs";
 import { menuClickInvocation } from "./native-menu.mjs";
 import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
 import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, SETTLE_SAMPLE_MS, settle, StepError } from "./drive.mjs";
@@ -3345,6 +3345,37 @@ test("`do: key` + channel 的运行期守卫（M768）：写错的形态在真�
   });
   assert.equal(typo.status, "FAIL");
   assert.match(typo.records[0].detail ?? "", /只支持 "cgevent"/);
+});
+
+test("modifier：左右 Command 的 down/up 必须同侧成对，末尾不得按住", () => {
+  const errs = (steps) => checkScenario({ id: "modifier-check", item: 0, steps });
+  const down = (side = "left") => ({ name: "按下", do: "modifier", side, phase: "down" });
+  const up = (side = "left") => ({ name: "松开", do: "modifier", side, phase: "up" });
+  assert.deepEqual(errs([down("left"), up("left"), down("right"), up("right")]), []);
+  assert.match(errs([{ name: "侧错", do: "modifier", side: "middle", phase: "down" }]).join("\n"), /side 只支持/);
+  assert.match(errs([{ name: "相错", do: "modifier", side: "left", phase: "hold" }]).join("\n"), /phase 只支持/);
+  assert.match(errs([up()]).join("\n"), /没有配对的 down/);
+  assert.match(errs([down(), down()]).join("\n"), /不能再次 down/);
+  assert.match(errs([down("left"), up("right")]).join("\n"), /不同侧/);
+  assert.match(errs([down("right")]).join("\n"), /末尾仍按住 Meta right/);
+  assert.equal(modifierSpecProblem(down()), null);
+  assert.equal(modifierTransitionProblem(up("left"), "left"), null);
+});
+
+test("modifier：释放成功才清状态；失败保留侧别供 finally 重试，空调用零注入", () => {
+  const vars = {};
+  assert.equal(releaseModifier(vars, () => { throw new Error("不应调用"); }), null);
+  vars.__heldMetaSide = "right";
+  assert.throws(() => releaseModifier(vars, () => { throw new Error("swift down"); }), /swift down/);
+  assert.equal(vars.__heldMetaSide, "right", "失败时不能假装已松开");
+  const calls = [];
+  const out = releaseModifier(vars, (side, phase) => {
+    calls.push([side, phase]);
+    return "modifier keycode=54 phase=up";
+  });
+  assert.equal(out, "modifier keycode=54 phase=up");
+  assert.deepEqual(calls, [["right", "up"]]);
+  assert.equal(vars.__heldMetaSide, null);
 });
 
 // ── `$runTag`（M752）：跨运行唯一的占位符 ────────────────────────────────────

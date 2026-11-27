@@ -26,6 +26,7 @@ import { t } from "../../src/copy.ts";
 interface FakeEvent {
   target?: unknown;
   key?: string;
+  code?: string;
   metaKey?: boolean;
   ctrlKey?: boolean;
   altKey?: boolean;
@@ -82,6 +83,10 @@ class FakeEl {
     this.tagName = tagName;
   }
 
+  createElement(tagName: string): FakeEl {
+    return new FakeEl(tagName);
+  }
+
   append(...nodes: FakeEl[]): void {
     this.children.push(...nodes);
   }
@@ -106,6 +111,11 @@ class FakeEl {
     const list = this.listeners.get(type) ?? [];
     list.push(listener);
     this.listeners.set(type, list);
+  }
+
+  removeEventListener(type: string, listener: (event: FakeEvent) => void): void {
+    const list = this.listeners.get(type) ?? [];
+    this.listeners.set(type, list.filter((entry) => entry !== listener));
   }
 
   fire(type: string, event: FakeEvent = {}): void {
@@ -142,12 +152,20 @@ class FakeEl {
   }
 }
 
-function installFakeDocument(): void {
-  (globalThis as unknown as Record<string, unknown>).document = {
-    createElement: (tag: string) => new FakeEl(tag),
-    addEventListener: () => {},
+interface FakeEnv {
+  window: FakeEl;
+  document: FakeEl & { hidden: boolean };
+}
+
+function installFakeDocument(existing?: FakeEnv): FakeEnv {
+  const env: FakeEnv = existing ?? {
+    window: new FakeEl("window"),
+    document: Object.assign(new FakeEl("document"), { hidden: false }),
   };
+  (globalThis as unknown as Record<string, unknown>).window = env.window;
+  (globalThis as unknown as Record<string, unknown>).document = env.document;
   (globalThis as unknown as Record<string, unknown>).Node = FakeEl;
+  return env;
 }
 
 /** 会话替身：标签条只读 `path` / `dirty` / `kind` 与对象身份。`kind` 缺省 `"doc"`——
@@ -159,6 +177,7 @@ function session(path: string | undefined, over: Partial<EditorSession> = {}): E
 interface Rig {
   tabs: TabsHandle;
   mount: FakeEl;
+  env: FakeEnv;
   /** 菜单挂点（标签菜单挂在这里，项元素从这里找）。 */
   overlay: FakeEl;
   /** 调用序（只记本用例关心的那几条装配回调）。 */
@@ -188,8 +207,12 @@ interface Rig {
   menuItem(label: string): FakeEl;
 }
 
-function createRig(sessions: EditorSession[], active: EditorSession): Rig {
-  installFakeDocument();
+function createRig(
+  sessions: EditorSession[],
+  active: EditorSession,
+  options: { isActivePane?: () => boolean; env?: FakeEnv } = {},
+): Rig {
+  const env = installFakeDocument(options.env);
   const order: string[] = [];
   const toasts: Rig["toasts"] = [];
   const closed: string[] = [];
@@ -237,6 +260,7 @@ function createRig(sessions: EditorSession[], active: EditorSession): Rig {
     },
     revealInTree: () => {},
     activatePane: () => order.push("activatePane"),
+    isActivePane: options.isActivePane ?? (() => true),
   } as unknown as TabsDeps;
 
   const tabs = createTabs(strip);
@@ -250,6 +274,7 @@ function createRig(sessions: EditorSession[], active: EditorSession): Rig {
   return {
     tabs,
     mount,
+    env,
     overlay,
     order,
     toasts,
@@ -646,4 +671,135 @@ test("计时到点时标签槽已卸载：先清状态再返回，之后的 rend
   } finally {
     mock.timers.reset();
   }
+});
+
+
+// ---------------------------------------------------------------------------
+// 按住 Command 的动态序号（change add-tab-dynamic-numbering-nov27）
+// ---------------------------------------------------------------------------
+
+const commandIndexes = (rig: Rig): string[] =>
+  rig.mount.find("tab-cmd-index").map((el) => el.textContent);
+
+const metaEvent = (code: string): FakeEvent => ({ key: "Meta", code, metaKey: true });
+
+test("Command 序号：左右 Meta 均显示 1–9，重复事件幂等，第 10 个起无号且不消费事件", () => {
+  const sessions = Array.from({ length: 12 }, (_, index) => session(`tab-${index + 1}.md`));
+  const rig = createRig(sessions, sessions[0]);
+  let prevented = 0;
+  let stopped = 0;
+  const event = {
+    ...metaEvent("MetaLeft"),
+    preventDefault: () => prevented++,
+    stopPropagation: () => stopped++,
+  };
+
+  assert.deepEqual(commandIndexes(rig), ["1", "2", "3", "4", "5", "6", "7", "8", "9"]);
+  assert.equal(rig.mount.classes.has("is-cmd-held"), false, "空闲态序号被 CSS 隐藏");
+  rig.env.window.fire("keydown", event);
+  rig.env.window.fire("keydown", event);
+  assert.equal(rig.mount.classes.has("is-cmd-held"), true);
+  assert.deepEqual(commandIndexes(rig), ["1", "2", "3", "4", "5", "6", "7", "8", "9"]);
+  assert.equal(rig.mount.children[9].find("tab-cmd-index").length, 0, "第 10 个标签没有直达序号");
+  for (const index of rig.mount.find("tab-cmd-index")) {
+    assert.equal(index.getAttribute("aria-hidden"), "true");
+  }
+  assert.equal(prevented, 0, "纯展示监听不得 preventDefault");
+  assert.equal(stopped, 0, "纯展示监听不得 stopPropagation");
+
+  rig.env.window.fire("keyup", { key: "Meta", code: "MetaLeft", metaKey: false });
+  assert.equal(rig.mount.classes.has("is-cmd-held"), false);
+  rig.env.window.fire("keydown", metaEvent("MetaRight"));
+  assert.equal(rig.mount.classes.has("is-cmd-held"), true, "右侧 Meta 同样成立");
+  rig.env.window.fire("keyup", { key: "Meta", code: "MetaRight", metaKey: false });
+  assert.equal(rig.mount.classes.has("is-cmd-held"), false);
+});
+
+test("Command 序号：双 Meta 时抬起一侧不撤下，两侧都松开才清理", () => {
+  const a = session("a.md");
+  const rig = createRig([a], a);
+  rig.env.window.fire("keydown", metaEvent("MetaLeft"));
+  rig.env.window.fire("keydown", metaEvent("MetaRight"));
+  rig.env.window.fire("keyup", { key: "Meta", code: "MetaLeft", metaKey: true });
+  assert.equal(rig.mount.classes.has("is-cmd-held"), true);
+  rig.env.window.fire("keyup", { key: "Meta", code: "MetaRight", metaKey: false });
+  assert.equal(rig.mount.classes.has("is-cmd-held"), false);
+});
+
+test("Command 序号：blur、页面 hidden 与 dispose 都立即清理；销毁解绑后不复活", () => {
+  for (const path of ["blur", "visibility", "dispose"] as const) {
+    const a = session(`${path}.md`);
+    const rig = createRig([a], a);
+    rig.env.window.fire("keydown", metaEvent("MetaLeft"));
+    assert.equal(rig.mount.classes.has("is-cmd-held"), true, `${path} 前置：序号已显示`);
+
+    if (path === "blur") rig.env.window.fire("blur");
+    else if (path === "visibility") {
+      rig.env.document.hidden = true;
+      rig.env.document.fire("visibilitychange");
+    } else rig.tabs.dispose();
+
+    assert.equal(rig.mount.classes.has("is-cmd-held"), false, `${path} 后立即撤下`);
+    rig.env.window.fire("keydown", metaEvent("MetaRight"));
+    assert.equal(
+      rig.mount.classes.has("is-cmd-held"),
+      path !== "dispose",
+      path === "dispose" ? "销毁后的监听不得复活" : "blur/hidden 之后可开始一次新的按住",
+    );
+    if (path === "dispose") {
+      assert.equal(rig.env.window.listeners.get("keydown")?.length ?? 0, 0);
+      assert.equal(rig.env.window.listeners.get("keyup")?.length ?? 0, 0);
+      assert.equal(rig.env.window.listeners.get("blur")?.length ?? 0, 0);
+      assert.equal(rig.env.document.listeners.get("visibilitychange")?.length ?? 0, 0);
+    }
+  }
+});
+
+test("Command 序号：按住时重绘与增减标签仍按最新顺序；只读/dirty 的读屏名不含序号", () => {
+  const a = session("a.md", { dirty: true });
+  const b = session("/tmp/external.md", { external: true });
+  const rig = createRig([a, b], a);
+  const labels = rig.mount.children.map((tab) => tab.find("tab-open")[0].getAttribute("aria-label"));
+  rig.env.window.fire("keydown", metaEvent("MetaLeft"));
+  assert.deepEqual(commandIndexes(rig), ["1", "2"]);
+  assert.deepEqual(
+    rig.mount.children.map((tab) => tab.find("tab-open")[0].getAttribute("aria-label")),
+    labels,
+    "序号不改既有读屏名",
+  );
+
+  const c = session("c.md");
+  rig.editor.sessions = [c, a, b];
+  rig.tabs.renderTabs();
+  assert.deepEqual(commandIndexes(rig), ["1", "2", "3"], "全量重建后从最新会话表取序");
+  rig.editor.sessions = [a, b];
+  rig.tabs.renderTabs();
+  assert.deepEqual(commandIndexes(rig), ["1", "2"]);
+});
+
+test("Command 序号：多实例只显示活跃 pane；切换后两侧同步，不跨 pane", () => {
+  let activePane = 1;
+  const a = session("a.md");
+  const b = session("b.md");
+  const left = createRig([a], a, { isActivePane: () => activePane === 1 });
+  const right = createRig([b], b, { isActivePane: () => activePane === 2, env: left.env });
+  assert.equal(left.env.window.listeners.get("keydown")?.length, 1, "同 window 多实例只注册一套输入监听");
+
+  left.env.window.fire("keydown", metaEvent("MetaLeft"));
+  assert.equal(left.mount.classes.has("is-cmd-held"), true);
+  assert.equal(right.mount.classes.has("is-cmd-held"), false, "非活跃 pane 不得出号");
+
+  activePane = 2;
+  left.tabs.renderTabs();
+  right.tabs.renderTabs();
+  assert.equal(left.mount.classes.has("is-cmd-held"), false);
+  assert.equal(right.mount.classes.has("is-cmd-held"), true, "按住期间切换 pane 后只点亮新活跃实例");
+
+  right.tabs.dispose();
+  assert.equal(left.env.window.listeners.get("keydown")?.length, 1, "还有实例存活时保留共享输入");
+  left.env.window.fire("keyup", { key: "Meta", code: "MetaLeft", metaKey: false });
+  assert.equal(left.mount.classes.has("is-cmd-held"), false);
+  assert.equal(right.mount.classes.has("is-cmd-held"), false);
+  left.tabs.dispose();
+  assert.equal(left.env.window.listeners.get("keydown")?.length, 0, "最后一个实例销毁后解绑");
 });
