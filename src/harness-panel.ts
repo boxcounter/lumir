@@ -11665,6 +11665,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         hidePersistenceLine();
         fetchPersistenceSnapshot();
         renderSnapshotMessages(Array.isArray(info.messages) ? info.messages : []);
+        // 可撤回性随恢复回执落地（change withdraw-restored-user-message-nov27）：恢复流程不重取
+        // `harness_state`，不回填这一项的话钮要等下一次内容快照才出现。只做可见性，判定仍在
+        // 后端（来源闸 / 目标项 / 派生会话都在动作时点复跑）。
+        withdrawable = info.withdrawable === true;
+        syncWithdrawButton();
         firstUserText = entry.firstUserText;
         sessionTitle = entry.title;
         applySessionName();

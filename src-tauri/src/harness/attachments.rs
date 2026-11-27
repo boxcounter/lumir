@@ -287,11 +287,13 @@ fn expand_image_refs_from(
     let mut out = Vec::with_capacity(input.len());
     for item in input {
         // 本地字段只活在留存 / 装配面：显式 Skill 痕迹（`lumir_skill_trace`，change
-        // add-explicit-skill-trace-nov26）与 `lumir_skill` / `lumir_label` 同一纪律——
+        // add-explicit-skill-trace-nov26）、交互来源标记（`lumir_user_origin`，change
+        // withdraw-restored-user-message-nov27）与 `lumir_skill` / `lumir_label` 同一纪律——
         // provider 永不看见。剥离在 content 形态分支**之前**：无图片早退的路径同样要剥。
         let mut cleaned_item = item.clone();
         if let Some(object) = cleaned_item.as_object_mut() {
             object.remove(super::turn::SKILL_TRACE_FIELD);
+            object.remove(super::turn::USER_ORIGIN_FIELD);
         }
         let Some(parts) = item["content"].as_array() else {
             out.push(cleaned_item);
@@ -820,17 +822,23 @@ mod tests {
                 {"type": "input_text", "text": "question"},
                 {"type": "input_text", "text": "[已加载 Skill：demo]\nUNIQUE-SKILL-BODY", "lumir_skill": "demo"}
             ],
-            // 显式痕迹（change add-explicit-skill-trace-nov26）：本地字段，wire 前必须剥除
-            // （与 `lumir_skill` 同一剥离点，且发生在无图片早退之前）。
+            // 显式痕迹（change add-explicit-skill-trace-nov26）与交互来源标记（change
+            // withdraw-restored-user-message-nov27）：本地字段，wire 前必须剥除（与
+            // `lumir_skill` 同一剥离点，且发生在无图片早退之前）。
             "lumir_skill_trace": [
                 {"name": "demo", "status": "done", "ts": 7},
                 {"name": "ghost", "status": "error", "code": "skill_not_found", "message": "技能 ghost 不存在", "ts": 7}
-            ]
+            ],
+            "lumir_user_origin": "interactive"
         })];
         let expanded = expand_image_refs(&input, "vault-id-must-not-be-resolved").unwrap();
         let wire = serde_json::to_string(&expanded).unwrap();
         assert!(!wire.contains("lumir_skill"));
         assert!(!wire.contains("lumir_skill_trace"));
+        assert!(
+            !wire.contains("lumir_user_origin"),
+            "交互来源标记只活在留存面，provider 永不看见"
+        );
         assert!(!wire.contains("skill_not_found"));
         assert!(wire.contains("UNIQUE-SKILL-BODY"));
         assert!(expanded[0]["content"]

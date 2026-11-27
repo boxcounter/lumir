@@ -510,9 +510,9 @@ pub struct StateSnapshot {
     /// 重建的是尾部通用动作行，不复制 code / message / 半截正文。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry: Option<RetrySnapshot>,
-    /// 最近一轮能否撤回（change add-harness-message-withdraw-nov26）：仅本进程发起的交互
-    /// 发送 / 重试轮为 true；空会话、恢复出来的历史会话、cron / 自动唤醒轮为 false。面板据它
-    /// 决定最后一条用户消息是否挂撤回钮——**只做可见性**，真正的判定仍由撤回命令复跑
+    /// 最近一条用户消息能否撤回：仅本进程发起的交互发送 / 重试轮、或恢复出来且本进程尚未跑过
+    /// 任何轮时的恢复目标为 true；空会话、cron / 自动唤醒轮、没有来源标记的旧记录为 false。
+    /// 面板据它决定最后一条用户消息是否挂撤回钮——**只做可见性**，真正的判定仍由撤回命令复跑
     /// （busy / 目标项 / 派生会话都要在动作时点重新校验）。恒在场（空态同形 `false`）。
     pub withdrawable: bool,
 }
@@ -660,6 +660,11 @@ pub struct SessionResumeInfo {
     pub messages: Vec<PanelMessage>,
     /// 是否真正替换了当前会话；false 表示当前文件直切或同源 pending 复用。
     pub switched: bool,
+    /// 恢复出的会话是否可撤回最近一条用户消息（change withdraw-restored-user-message-nov27）。
+    /// 恢复流程不重取 `harness_state`，撤回钮的可见性因此要随回执一起回来——取值与快照
+    /// `withdrawable` 同一判据（`Session::withdrawable`）。恒在场；`switched=false` 时是当前
+    /// 会话的读数（前端不重放消息，但可见性仍以它为准）。
+    pub withdrawable: bool,
 }
 
 /// 被撤回的用户消息在 composer 侧的重建素材（change add-harness-message-withdraw-nov26）。
@@ -877,6 +882,26 @@ pub struct WithdrawTarget {
     pub panel: usize,
 }
 
+/// 撤回目标的来源（change withdraw-restored-user-message-nov27）。
+///
+/// 两个来源互斥且优先级固定：本进程跑过任何轮之后只看轮次来源（恢复目标 MUST NOT 复活）；
+/// 只有「恢复出来、本进程尚未跑过任何轮」时才用恢复期重建的目标。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WithdrawSource {
+    /// 本进程交互 / 重试轮入队时记录的下标（既有行为）。
+    Turn(WithdrawTarget),
+    /// 恢复时从留存重建的目标（最近一条带交互来源标记的用户消息）。
+    Restored(WithdrawTarget),
+}
+
+impl WithdrawSource {
+    pub fn target(self) -> WithdrawTarget {
+        match self {
+            WithdrawSource::Turn(target) | WithdrawSource::Restored(target) => target,
+        }
+    }
+}
+
 /// 一个 vault 的会话。
 pub struct Session {
     root: PathBuf,
@@ -950,6 +975,11 @@ pub struct Session {
     /// user 项、panel 里的 notice 行，反推会把通知当目标并错删真实用户轮次。
     /// `replace_input` / 压缩轮换会让下标失效，一并清零。
     withdraw_target: Option<WithdrawTarget>,
+    /// 恢复出来的会话的撤回目标（change withdraw-restored-user-message-nov27）：由
+    /// [`Self::restored_withdraw_target`] 的读者在 `resume_session` 里按灌回 input 的
+    /// **交互来源标记**重建。不是本进程发起的轮次，因此不写 `last_turn_origin`；本进程一旦
+    /// 跑过任何轮（含 cron / 自动唤醒），来源闸只看轮次来源，这个目标 MUST NOT 复活。
+    restored_withdraw_target: Option<WithdrawTarget>,
     /// 本会话是从哪一份源恢复出来的占用（`None` = 不是恢复出来的）。随会话丢弃释放。
     resume_claim: Option<ResumeClaim>,
     jsonl: JsonlWriter,
@@ -1014,6 +1044,7 @@ impl Session {
             subrun_runs: BTreeMap::new(),
             last_turn_origin: None,
             withdraw_target: None,
+            restored_withdraw_target: None,
             resume_claim: None,
             jsonl,
         }
@@ -1035,6 +1066,30 @@ impl Session {
         self.withdraw_target
     }
 
+    /// 接上恢复期重建的撤回目标（`resume_session` 成功换入时调用一次）。
+    pub fn set_restored_withdraw_target(&mut self, target: WithdrawTarget) {
+        self.restored_withdraw_target = Some(target);
+    }
+
+    /// 恢复期重建的撤回目标（命令层与快照共用 [`Self::withdraw_source`] 这一判据）。
+    pub fn restored_withdraw_target(&self) -> Option<WithdrawTarget> {
+        self.restored_withdraw_target
+    }
+
+    /// 释放本会话对 `source` 的恢复占用（恢复件撤回的删除目标是来源文件时调用）。
+    ///
+    /// 调用方 MUST 持有恢复栅栏：释放后到删除之间的窗口里，别的恢复 / 撤回插不进来。
+    /// 释放只取占用表锁、不取栅栏（`ResumeClaim::drop` 的既有约定，这里再取栅栏会自锁）。
+    pub(crate) fn release_resume_claim(&mut self, source: &str) {
+        if self
+            .resume_claim
+            .as_ref()
+            .is_some_and(|claim| claim.source == source)
+        {
+            self.resume_claim = None;
+        }
+    }
+
     /// 接上「从某源恢复」的占用（`resume_session` 成功换入时调用一次）。
     pub(crate) fn attach_resume_claim(&mut self, claim: ResumeClaim) {
         self.resume_claim = Some(claim);
@@ -1045,14 +1100,25 @@ impl Session {
         self.last_turn_origin
     }
 
-    /// 最近一轮是否可撤回：来源是交互发送 / 重试轮，**且**仍有可寻址的撤回目标（压缩轮换 /
-    /// 历史替换会让目标失效）。快照 `withdrawable` 读它——只做可见性；命令层仍分别校验
-    /// 来源与目标，好给出准确的拒绝原因。
+    /// 撤回的合法来源：本进程交互 / 重试轮，或「恢复出来且本进程尚未跑过任何轮」时的恢复目标。
+    ///
+    /// 优先级固定（change withdraw-restored-user-message-nov27）：跑过任何轮之后只看轮次
+    /// 来源——cron / 自动唤醒 / 子运行轮因此让会话不可撤回，恢复目标 MUST NOT 越过该闸复活。
+    pub fn withdraw_source(&self) -> Option<WithdrawSource> {
+        match self.last_turn_origin {
+            Some(origin) if origin.is_interactive() => {
+                self.withdraw_target.map(WithdrawSource::Turn)
+            }
+            Some(_) => None,
+            None => self.restored_withdraw_target.map(WithdrawSource::Restored),
+        }
+    }
+
+    /// 最近一条用户消息是否可撤回：有合法来源，**且**仍有可寻址的撤回目标（压缩轮换 /
+    /// 历史替换会让目标失效）。快照 `withdrawable` 与命令层来源闸读它——快照只做可见性，
+    /// 命令层仍分别校验来源与目标，好给出准确的拒绝原因。
     pub fn withdrawable(&self) -> bool {
-        matches!(
-            self.last_turn_origin,
-            Some(super::turn::TurnOrigin::Interactive | super::turn::TurnOrigin::Retry)
-        ) && self.withdraw_target.is_some()
+        self.withdraw_source().is_some()
     }
 
     /// 缓存计数累计的只读投影（撤回 fork 把它作为新文件的 `session_open` 种子）。
@@ -1288,6 +1354,7 @@ impl Session {
         self.input = items;
         // 历史被整体替换（压缩 / 恢复）：旧下标不再指向原项，撤回目标随之失效。
         self.withdraw_target = None;
+        self.restored_withdraw_target = None;
     }
 
     /// 面板消息入队（`ts` 由构造点用 [`super::jsonl::unix_secs_now`] 打戳——入会话时刻即构造时刻）。
@@ -1348,8 +1415,9 @@ impl Session {
         self.jsonl = jsonl;
         self.cache_totals = CacheTotals::default();
         self.title_schedule.reset();
-        // 压缩轮换：input 由调用侧整体替换，撤回目标的下标不再成立。
+        // 压缩轮换：input 由调用侧整体替换，撤回目标的下标不再成立（恢复目标同此）。
         self.withdraw_target = None;
+        self.restored_withdraw_target = None;
         self.title_cursor = 0;
     }
 

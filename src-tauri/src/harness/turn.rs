@@ -609,9 +609,18 @@ pub enum TurnOrigin {
 }
 
 impl TurnOrigin {
-    /// 只有交互用户轮与重试轮允许登记可重试失败。
-    pub fn allows_retry(self) -> bool {
+    /// 这是用户在本窗口发出的那一轮（交互发送 / 显式重试）。
+    ///
+    /// 单一判据（change withdraw-restored-user-message-nov27）：入队时给用户项打来源标记、
+    /// 快照的 `withdrawable`、撤回命令的来源闸都读它——cron / 自动唤醒 / 子运行的 user 项
+    /// 因此永远拿不到「用户发出去又后悔的那一句」的身份。
+    pub fn is_interactive(self) -> bool {
         matches!(self, TurnOrigin::Interactive | TurnOrigin::Retry)
+    }
+
+    /// 只有交互用户轮与重试轮允许登记可重试失败（= [`Self::is_interactive`] 的同一集合）。
+    pub fn allows_retry(self) -> bool {
+        self.is_interactive()
     }
 }
 
@@ -625,6 +634,24 @@ pub(crate) const EXPLICIT_SKILL_TRACE_TOOL: &str = "explicit_skill";
 /// [`super::attachments::expand_image_refs_from`]）。与 `lumir_skill`（part 级）同族：
 /// 只活在会话 input 与留存面，provider 永不看见。
 pub(crate) const SKILL_TRACE_FIELD: &str = "lumir_skill_trace";
+
+/// 交互用户消息项的来源标记字段（change withdraw-restored-user-message-nov27）。
+///
+/// 只由 [`run_turn_core_with_mode`] 的 `TurnInput::User` 入队点在
+/// [`TurnOrigin::is_interactive`] 为真时写入——**这是「这句是用户发出的」唯一的持久化证据**：
+/// 留存里的用户项与后台通知 / 压缩摘要同形，MUST NOT 用正文文本推断来源。字段随
+/// `llm_request.messages` 与 `withdraw_seed` 落盘，恢复期据此重建撤回目标；与
+/// [`SKILL_TRACE_FIELD`] 同一纪律，provider wire 前由 `attachments` 剥除。
+pub(crate) const USER_ORIGIN_FIELD: &str = "lumir_user_origin";
+
+/// [`USER_ORIGIN_FIELD`] 的唯一取值（只有交互发送 / 重试轮会写它）。
+pub(crate) const USER_ORIGIN_INTERACTIVE: &str = "interactive";
+
+/// 一条 input 项是否为交互用户消息（恢复期重建撤回目标的唯一判据）。
+pub(crate) fn is_interactive_user_item(item: &serde_json::Value) -> bool {
+    item["role"].as_str() == Some("user")
+        && item[USER_ORIGIN_FIELD].as_str() == Some(USER_ORIGIN_INTERACTIVE)
+}
 
 /// 一条显式 Skill 的痕迹（面板工具行的唯一数据源，live 与恢复共用）。
 ///
@@ -939,6 +966,13 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
             let parts =
                 super::attachments::apply_context_section(parts.0, context_section.as_deref());
             let mut item = super::attachments::user_item_of_parts(&parts);
+            // 来源标记（change withdraw-restored-user-message-nov27）：只有交互发送 / 重试轮的
+            // 用户项带它——cron（含交互槽）/ 自动唤醒 / 子运行走同一条入队路径但不打标，
+            // 恢复期据此区分「用户发出的那一句」与同形的后台通知。随 `llm_request.messages`
+            // 与 `withdraw_seed` 持久化，wire 前由 attachments 剥除。
+            if origin.is_interactive() {
+                item[USER_ORIGIN_FIELD] = serde_json::json!(USER_ORIGIN_INTERACTIVE);
+            }
             if let Some(content) = item["content"].as_array_mut() {
                 content.extend(explicit_parts);
             }
@@ -3582,6 +3616,61 @@ mod tests {
         fn on_round_usage(&mut self, usage: &UsageDelta) {
             self.rounds.push(*usage);
         }
+    }
+
+    /// change withdraw-restored-user-message-nov27：只有交互发送 / 重试轮给用户项打来源标记。
+    /// cron（含交互槽）走同一条入队路径但 origin 不是交互轮 ⇒ 不打标；恢复期据此区分「用户
+    /// 发出的那一句」与同形的后台通知（MUST NOT 用正文文本推断）。
+    #[test]
+    fn interactive_turn_marks_the_user_item_and_cron_turn_does_not() {
+        let script = r#"{"responses": [
+            {"text": "答复一", "usage": {"input_tokens": 10, "cached_tokens": 0, "output_tokens": 1}},
+            {"text": "答复二", "usage": {"input_tokens": 10, "cached_tokens": 0, "output_tokens": 1}}
+        ]}"#;
+        let bench = TurnBench::new("origin-mark", Some(script));
+        let sink = Collect::default();
+        bench.runtime.seed_permissions(&bench.config.permissions);
+        let mut client = llm::MockClient::from_str(script, "origin-mark").unwrap();
+        for (origin, text) in [
+            (TurnOrigin::Interactive, "USER-MARKED"),
+            (TurnOrigin::Cron, "CRON-UNMARKED"),
+        ] {
+            bench
+                .runtime
+                .acquire_turn(&bench.scope, &bench.config)
+                .unwrap();
+            let mut ctx = SessionContext::new(&sink, &bench.runtime, &bench.scope, &bench.config);
+            let _ = run_turn_core_with_mode(
+                &mut ctx,
+                &bench.config,
+                TurnInput::User {
+                    parts: text.to_string().into(),
+                    context_section: None,
+                    skill_names: Vec::new(),
+                },
+                origin,
+                &mut client,
+            );
+            bench.runtime.release_turn(&bench.scope);
+        }
+        let input = bench
+            .runtime
+            .with_session(&bench.scope, |s| s.input().to_vec())
+            .unwrap();
+        let users: Vec<&serde_json::Value> = input
+            .iter()
+            .filter(|item| item["role"].as_str() == Some("user"))
+            .collect();
+        assert_eq!(users.len(), 2, "两轮各入队一条 user 项：{input:?}");
+        assert_eq!(
+            users[0][USER_ORIGIN_FIELD].as_str(),
+            Some(USER_ORIGIN_INTERACTIVE),
+            "交互轮的用户项必须带来源标记"
+        );
+        assert!(
+            users[1].get(USER_ORIGIN_FIELD).is_none(),
+            "cron 轮的用户项 MUST NOT 带来源标记：{input:?}"
+        );
     }
 
     /// R11：空响应路径的 `on_round_usage` 仍被调用（钩子被删 / 挪到空响应判定之后就红），

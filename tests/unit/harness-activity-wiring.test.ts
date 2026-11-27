@@ -285,6 +285,19 @@ test("同源恢复 no-op 只关浮层，发生在任何视图复位与 token 更
   assert.match(RESUME.slice(noop, reset), /setSessPop\(false\);\s*return;/);
 });
 
+test("恢复回执落地可撤回性：消息重放之后写 withdrawable 并重施撤回钮", () => {
+  // change withdraw-restored-user-message-nov27：恢复流程不重取 `harness_state`，可撤回性必须
+  // 随回执一起落地，否则恢复出来的会话要等下一次内容快照才挂得上撤回钮。反例：删掉这一项
+  // （钮不出现）、或写死 `withdrawable = true`（后端拒绝时钮仍在）。
+  const render = RESUME.indexOf("renderSnapshotMessages(");
+  const assign = RESUME.search(/withdrawable = info\.withdrawable === true;/);
+  const sync = RESUME.indexOf("syncWithdrawButton();", assign);
+  assert.ok(render >= 0, "恢复回执必须重放消息");
+  assert.ok(assign > render, "可撤回性必须在消息重放之后落地（宿主行由重放产生）");
+  assert.ok(sync > assign, "落地后必须重施撤回钮");
+  assertNoMatch(RESUME, /withdrawable = true;/, "MUST NOT 把可撤回性写死为 true");
+});
+
 test("恢复会话也是进入时点：只读相位、不重放内容", () => {
   assert.match(RESUME, /fetchActivitySnapshot\(\)/, "恢复会话后必须按快照的 in_flight 回填相位");
   const phaseOnly = functionBodyOf(PANEL_SOURCE, "fetchActivitySnapshot");
