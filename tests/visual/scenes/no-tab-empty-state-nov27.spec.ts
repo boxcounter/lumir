@@ -141,6 +141,8 @@ test("S4 分栏空 pane：无 gutter / 无光标 / 键入无效，但点击可�
   // 左 pane 有文档 ⇒ gutter；右 pane 空 ⇒ 同一条 on 档判据下也没有 gutter。
   await expect.poll(() => gutterCountsPerPane(page)).toEqual([1, 0]);
   await expect(rightPane.locator(".pane-empty-guide")).toBeVisible();
+  // 结构性空态不是文档：不出现正文末尾的 END 标记（与「无行号 / 无插入光标」同一呈现口径）。
+  await expect(rightPane.locator(".cm-lp-end-marker"), "空 pane 不应有 END").toHaveCount(0);
 
   const presentation = await readOnlyPresentation(page, 1);
   expect(presentation.structural, "空 pane 前台应带结构只读标记").toBe(true);
@@ -164,10 +166,11 @@ test("S4 分栏空 pane：无 gutter / 无光标 / 键入无效，但点击可�
   await rightPane.locator(".pane-empty-guide").click();
   await expect(page.locator(".modeline-path")).toHaveText("无当前文件");
 
-  // 打开带路径文档后：gutter 回来、结构只读标记与光标隐藏同帧撤下、键入落地。
+  // 打开带路径文档后：gutter 回来、结构只读标记与光标隐藏同帧撤下、键入落地，END 也回到正文末尾。
   await page.locator('.ft-row[title="b.md"]').click();
   await expect(rightContent).toContainText("Beta 正文");
   await expect.poll(() => gutterCountsPerPane(page)).toEqual([1, 1]);
+  await expect(rightPane.locator(".cm-lp-end-marker"), "打开文档后 END 应出现").toHaveCount(1);
   const restored = await readOnlyPresentation(page, 1);
   expect(restored.structural).toBe(false);
   expect(restored.cursorLayerVisibility).toBe("visible");
@@ -213,6 +216,8 @@ test("S3 首启 tips：无 gutter / 无光标；tips 只覆盖 doc pane，不盖
   expect(presentation.cursorLayerVisibility).toBe("hidden");
   expect(presentation.contenteditable).toBe("false");
   expect(presentation.tabindex).toBe("0");
+  // 结构性空态不是文档：tips 前台不出现 END（与「无行号 / 无插入光标」同一口径）。
+  await expect(page.locator(".cm-lp-end-marker"), "首启 tips 不应有 END").toHaveCount(0);
 });
 
 test("S2 老用户空 vault：D107 覆盖层收窄在 doc pane，harness 与 composer 可见可输入", async ({ page }) => {

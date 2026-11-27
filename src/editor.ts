@@ -2292,7 +2292,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           ...highlight,
           baseTheme,
           livePreview(previewContext),
-          endMarker,
+          // 结构性空态（分栏空 pane / 首启 tips）不是文档：不装 END，与行号 / 光标的空态口径同源
+          // （change fix-no-tab-empty-state-nov27）。打开带路径文档后 `structuralReadOnly` 翻假，
+          // modeCompartment 重配时插件重新装上；插件销毁时的元素清理走 endMarker 的生命周期闸门。
+          ...(structuralReadOnly ? [] : [endMarker]),
           gutterCompartment.of(gutterExtensions()),
           markupKeymap,
           // M836 / M854 / M855：原生删除与键入的回读闸门（见函数组注释；只 md 有 replace 装饰）。
