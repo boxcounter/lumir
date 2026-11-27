@@ -36,7 +36,8 @@ steps:
 
   # ⌃⇥ / ⌃⇧⇥ 与 ⌘} / ⌘{ 指向的**同两条命令**（tab.next / tab.prev），实现在 src/tabs.ts 的
   # cycleTab 里只有一份（D3 裁决：复用、零新命令 id ⇒ 循环语义不可能因触发键不同而分叉）。
-  # ⌘} / ⌘{ 本身在真机通道上验不了，原因与证据见文末「⌘} / ⌘{ 在真机通道上验不了」一节。
+  # ⌘} / ⌘{ 的按键链路由本场景后面的 ⌘⇧] / ⌘⇧[ 两步验（change fix-tab-cycle-shift-symbols-nov27）；
+  # 物理键盘手感仍归 Alex dogfood（注入形态 ≠ 物理 HID，见文末一节）。
   - name: ⌃⇥ 第一次：第一个 → 第二个
     do: key
     key: "ctrl+tab"

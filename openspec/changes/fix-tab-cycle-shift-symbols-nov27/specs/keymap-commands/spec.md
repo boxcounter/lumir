@@ -16,7 +16,7 @@
 macOS 惯例：`}` 侧 = 下一个、`{` 侧 = 上一个），键位表内的 token 形态 SHALL 是
 `Cmd-}` / `Cmd-{`（`{` / `}` ∈ SHIFT_IMPLIED_KEYS，Shift 已隐含在字符里）。
 **同一物理键的两种事件形态 SHALL 归一到同一 token**（change fix-tab-cycle-shift-symbols-nov27）：
-WKWebView 实测给出 `key="]"` / `key="["` + `shiftKey`（NSEvent `characters` 是未 Shift 的字符；
+WKWebView 实测给出 `key="]"` / `key="["` + `shiftKey`（合成注入通道；NSEvent `characters` 是未 Shift 的字符；
 WebKit `keyForKeyEvent` 在无 Control 时取 `[event characters]`），归一层 SHALL 按 US 布局的
 「未 Shift 字符 → Shift 后字符」表（`SHIFTED_SYMBOLS`，与键位面板字形同一来源）把它折成
 `Cmd-}` / `Cmd-{`；表内 MUST 仍只写一条绑定，MUST NOT 为同一物理键再写

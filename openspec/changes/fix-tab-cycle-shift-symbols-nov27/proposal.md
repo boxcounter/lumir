@@ -5,14 +5,17 @@
 - 角色: Alex Lee（缺陷报告与验收），AI agent（诊断与实现）
 
 > 评审记录
-> 节点 1：待评审。Alex 2026-11-27 报告「Shift+Command+左右方括号（US 实体键盘）切标签完全无反应，
-> 同一问题反馈多次」；本提案依据独立 WKWebView 探针与 WebKit 源码给出根因与修复口径。
+> 节点 1：Alex 2026-11-27 报告「Shift+Command+左右方括号（US 实体键盘）切标签完全无反应，同一问题
+> 反馈多次」；本提案依据独立 WKWebView 探针与 WebKit 源码给出根因与修复口径。首轮独立审查
+> findings（P1=0 / P2=1 / P3=2，报告 `.local/reviews/tab-navigation-keys-nov27/final-judgment.md`）
+> 已按「措辞与证据归属」修准（P2-1 / P3-1 / P3-2），无行为改动；复核待下一轮。真机场景 45 已 PASS
+> （证据 `.local/acceptance/2026-11-27-tab-navigation-keys/`），物理键盘 dogfood 仍是待验项。
 
 ## Why
 
-`⌘⇧]` / `⌘⇧[` 在真机 WKWebView 上从来没有命中过表内的 `Cmd-}` / `Cmd-{`。旧口径假设
-「真机事件给 `key="}"`（Shift 隐含在字符里）」，这条假设**没有任何真机证据**，2026-11-27 的
-独立 WKWebView 探针实测为：
+`⌘⇧]` / `⌘⇧[` 在 WKWebView 的未 Shift 字符形态下从来没有命中过表内的 `Cmd-}` / `Cmd-{`
+（合成注入通道实测；物理键盘形态未验）。旧口径假设「事件给 `key="}"`（Shift 隐含在字符里）」，
+这条假设**没有硬件证据**，2026-11-27 的独立 WKWebView 探针（合成注入通道）实测为：
 
 | 层 | `⌘⇧]` 的实测值 |
 |---|---|
@@ -22,7 +25,8 @@
 
 来源核对：WebKit `keyForKeyEvent`（`Source/WebCore/platform/mac/PlatformEventFactoryMac.mm`）在
 **无 Control** 时取 `[event characters]`；Command+Shift 下该字符是未 Shift 的形态。同一机制使
-M627 的 `⌘⇧,` / `⌘⇧.`（表内 `Cmd-<` / `Cmd->`）和 M195 的 `⌘⇧=`（`Cmd-+`）在真机上同样不命中
+M627 的 `⌘⇧,` / `⌘⇧.`（表内 `Cmd-<` / `Cmd->`）和 M195 的 `⌘⇧=`（`Cmd-+`）在同一未 Shift
+字符形态下同样不命中
 ——这解释了「同一问题反复反馈」：每次修的是不同的键，坏的是同一层归一化。
 
 证据：`.local/probes/tab-navigation-keys-nov27/`（探针工程 + 两条独立注入通道的原始日志）。

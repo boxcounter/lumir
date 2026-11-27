@@ -24,7 +24,11 @@
 ## 3. 测试
 
 - [x] 红测试先行：`tests/unit/keys.test.ts` 新增「两种事件形态同 token」专测，并翻转 M242 /
-      M627 / M195 三处旧断言（旧实现下 4 条红，实现后全绿）。
+      M627 / M195 三处旧断言。旧实现下 **5 条红**：① `Ctrl-Shift-/ → Ctrl-?`；② 通用 Shift 符号
+      映射；③ 方括号两种形态；④ 逗号 / 句号两种形态；⑤ `Cmd-Shift-= → Cmd-+`。独立反向运行
+      （父提交算法的 `src/keys.ts` + 当前测试）：`tests 55 / pass 50 / fail 5`，退出码 1，
+      证据 `.local/reviews/tab-navigation-keys-nov27/evidence/unit-parent-reverse.log`；
+      实现后目标单测 `tests 58 / pass 58 / fail 0`（同目录 `unit-target.log`）。
 - [x] `tests/visual/scenes/m242-tab-cycle-key-tokens.spec.ts`：两条「边界固化（不命中）」翻转为
       「WKWebView 形态必须命中」，另保留 Shift 后形态的命中用例。
 - [x] 反向核对：临时回退 `normalizeKey` 的归一分支，新增断言逐条转红；恢复后绿。
@@ -35,7 +39,11 @@
       附事件矩阵、WebKit 来源与探针路径。
 - [x] `scripts/acceptance/README.md` 的「键盘注入通道的两类不可达」第 2 条改写：不再是不可达，
       注入形态命中表内绑定；残留边界（物理键 `characters`）如实登记。
-- [ ] 真机跑场景 45（`node scripts/acceptance/run.mjs 45`）——主会话统一执行，避免并行真机。
+- [x] 真机跑场景 45（主会话执行）：`status.txt` = PASS，`summary.md` 记 52 条断言 / 0 失败 /
+      47.7s；新增 `cmd+shift+rightbracket` / `cmd+shift+leftbracket` 两步均 PASS
+      （`tabs-a → tabs-b → tabs-a`，AX 选中态 + 前台正文双读数）。证据：
+      `.local/acceptance/2026-11-27-tab-navigation-keys/45-tab-cycle-keys/`。
+      该结果证明**注入通道**（KimiCU → DOM → 归一化 → 标签命令）的链路，不证明物理 HID / TSM 形态。
 - [ ] Alex dogfood：物理键盘按一次 `⌘⇧]` / `⌘⇧[`，确认标签切换（唯一能给出物理形态读数的通道）。
 
 ## 5. 门禁与收尾
@@ -47,4 +55,11 @@
 - [x] `scripts/gate.sh quick`：`GATE RESULT: 12/13 PASS（SKIP 0）`，唯一 FAIL 即上述单元测量；
       cargo-fmt / clippy / cargo-test / bindings / schemas / tsc×3 / perf 夹具 / acceptance 契约 /
       docs-check / openspec validate 全 PASS。
-- [ ] 节点 1 评审、归档（tower）
+- [x] 最终 `scripts/gate.sh quick`（独立审查在低负载下重跑）：`GATE RESULT: 13/13 PASS（SKIP 0）`，
+      退出码 0；前端单测 `tests 2193 / pass 2193 / fail 0`。证据
+      `.local/reviews/tab-navigation-keys-nov27/evidence/gate-quick-final.log`（作者先前的
+      12/13 是高负载下 `link-suggest` 单次预算测量的噪声，已被本轮取代）。
+- [x] 独立审查（节点 1）：findings P1=0 / P2=1 / P3=2，报告
+      `.local/reviews/tab-navigation-keys-nov27/final-judgment.md`；P2-1（把未验的物理键盘形态写成
+      「真机 / 硬件形态」）与 P3-1 / P3-2 已在后续 commit 修准（措辞与证据归属，无行为改动）。
+      复核结论与归档由 tower 走——本 tasks 不预写 clean。

@@ -2,7 +2,8 @@
 
 ## 1. 问题与证据
 
-`⌘⇧]` 在真机 WKWebView 上得到 `key="]"` + `shiftKey`，旧 `keyToken` 产出 `Cmd-Shift-]`，与表内
+`⌘⇧]` 在 WKWebView（合成注入通道，边界见 §5）上得到 `key="]"` + `shiftKey`，旧 `keyToken`
+产出 `Cmd-Shift-]`，与表内
 `Cmd-}` 不相等。证据三段：
 
 1. **WebKit 源码**：`Source/WebCore/platform/mac/PlatformEventFactoryMac.mm` 的 `keyForKeyEvent`
@@ -64,6 +65,10 @@ REVIEW.md「同一语义两处真源」条的形态。
   按一次 `⌘⇧]` 即可确认端到端。
 - **不做**：不以「注入过」冒充物理按键证据（REVIEW.md「覆盖声明超出真实验证」条）；场景 45 的
   新步骤在报告里按「注入通道 PASS」记，不写成「物理键已验」。
+- **注入通道的整链路已验**（2026-11-27，主会话执行）：场景 45 的 `⌘⇧]` / `⌘⇧[` 两步 PASS
+  （52 条断言 / 0 失败，`tabs-a → tabs-b → tabs-a`，AX 选中态 + 前台正文双读数），证据
+  `.local/acceptance/2026-11-27-tab-navigation-keys/45-tab-cycle-keys/`。这证明 KimiCU 注入 →
+  DOM → 归一化 → 标签命令的链路；物理键盘的 `characters` 取值仍是独立待验项（Alex dogfood）。
 
 ## 6. 影响面
 

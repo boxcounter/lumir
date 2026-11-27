@@ -853,10 +853,11 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   // token 形态是这块**最大的静默失配风险**（写错不会报错、只会永远不命中）：
   // - ⌘− 的事件 token 是 `Cmd--`（keyToken 拼 `[...mods, event.key].join("-")`，`event.key === "-"`），
   //   表内因此 MUST 写 `Cmd--`，MUST NOT 写 `Cmd-Minus`——含 Alt 的组合才按物理键 `code` 判定。
-  // - ⌘⇧=（放大）在真机 macOS 上 `event.key === "+"`，归一成 `Cmd-+`（`+` 在 SHIFT_IMPLIED_KEYS
-  //   里，Shift 已隐含在字符中）；合成事件（Playwright 的 Meta+Shift+Equal）可能给 `key === "="`
-  //   + shiftKey → 归一成 `Cmd-+`（`SHIFTED_SYMBOLS` 把未 Shift 字符与 Shift 后的字符归一到同一
-  //   物理键；change fix-tab-cycle-shift-symbols-nov27 之前这条形态不命中）。
+  // - ⌘⇧=（放大）有两种事件形态：Shift 后字符形态给 `event.key === "+"`（`+` 在 SHIFT_IMPLIED_KEYS
+  //   里，Shift 已隐含在字符中）；未 Shift 字符形态给 `key === "="` + shiftKey（Chromium /
+  //   Playwright 与显式 unicode 串的合成注入给这一种）→ 两者经 `SHIFTED_SYMBOLS` 归一成同一
+  //   `Cmd-+`（change fix-tab-cycle-shift-symbols-nov27 之前后者不命中）。**物理键盘给哪一种未验**
+  //   （TSM 的 `characters` 无自动化通道；见该 change 的 design §5 与探针 README）。
   // - 同一命令两条绑定是表内既有形态（撤销既有 `Ctrl-/` 与 `Ctrl-_` 两条），不构成冲突。
   { key: "Cmd-=", command: "view.text-scale-up", scope: "global", docKey: "D307" },
   { key: "Cmd-+", command: "view.text-scale-up", scope: "global", docKey: "D308" },
@@ -919,7 +920,7 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   // Alex 验收时若方向相反按同一对 token 对调即可。
   //   方向映射：⌘⇧, 在 US 布局上是 `⇧⌘<`（, 的 Shift 形态是 `<`）、⌘⇧. 是 `⇧⌘>`。
   // token 形态：表内写 `Cmd-<` / `Cmd->`（Shift 后的字符）。WKWebView 给的 `event.key` 是未 Shift
-  // 的 `,` / `.` + shiftKey（真机探针，见 change fix-tab-cycle-shift-symbols-nov27），由
+  // 的 `,` / `.` + shiftKey（WKWebView 探针，合成注入通道；见 change fix-tab-cycle-shift-symbols-nov27），由
   // `SHIFTED_SYMBOLS` 归一到同一 token——表内 MUST NOT 为同一物理键再写第二条绑定。
   // 零冲突核对（三条独立来源，M242 追加核对的同形口径）：
   //   ① 表内：本文件即真源，现表无 `Cmd-<` / `Cmd->` token（Shift 隐含后归一，与
