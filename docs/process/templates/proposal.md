@@ -24,7 +24,7 @@
 
 ## 节点 2：归档记录（实现完成后填写）
 
-口径见 [openspec-workflow.md](../openspec-workflow.md)「状态分列」与「失败与 finding 归类」；
+口径见 `docs/process/openspec-workflow.md`「状态分列」与「失败与 finding 归类」；
 五要件与归档后强制完成步骤照 workflow 正文逐条填写。
 
 | 状态 | 值 | 证据指针 |
@@ -36,3 +36,6 @@
 | archived | 是 / 否 | 〔归档提交 hash + --archived PASS 读数；归档前写「否：待归档」〕 |
 
 未发生项写「否」/「不适用」+ 原因，不留空；失败项按四类归因，不混算。
+
+本表只覆盖五态；workflow「归档记录要求」的两段仍须写进本节：归档前列五要件事实与指针，
+归档后列归档提交 hash、包装器输出、修链读数与 `--archived` 读数。只填表不等于完成归档记录。

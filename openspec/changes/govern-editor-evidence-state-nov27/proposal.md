@@ -59,14 +59,15 @@
 
 - 影响的 specs：无（`.openspec.yaml` 设 `skip_specs: true`；本 change 只改流程文档与模板，
   不改产品行为）。
-- 影响的文档：上述七个文件 + 本 change 的 `proposal.md` / `tasks.md`。
+- 影响的文档：上述七个文件 + 本 change 的 `proposal.md` / `tasks.md` / `.openspec.yaml`。
 - 影响的代码/系统：无。
 - 关联约束：ADR 0004（AI-only 开发，报告是裁决制品）；AGENTS.md「门禁结果的报告口径」；
   仓库信息卫生（示例只用仓内已有指针，不引入真实 vault 内容）。
 
 ## 节点 1：批准
 
-- Alex 2026-11-27 已采纳复盘建议（本 mission instructions：证据状态分列 + finding 类别）。
+- Alex 2026-11-27 已采纳复盘建议（本 mission instructions 明确包含：证据状态分列五态、finding 四类、
+  新断言反向必红、老证据只能称归档记录 PASS；本轮复核确认无扩 scope）。
 - 批准合同原文要点：
   - implemented / released / machine PASS / native PASS / archived 分列；
   - 产品 FAIL / 测试 oracle 缺陷 / 环境 INVALID / 需求或视觉迭代不混算；

@@ -12,5 +12,6 @@
 - [ ] 2.3 新增 / 修改的断言逐条做**反向必红**实测：构造必须让它 FAIL 的输入（标记挪到错误节点 /
       探测串放错位置 / 断开被测通道 / 改错目标值），实测判红；恢复输入后判绿。两次读数记进证据；
       无断言变化写「无新增断言」。
-- [ ] 2.4 节点 2 记录按 `proposal.md` 的「状态分列」表填写 implemented / released / machine PASS /
+- [ ] 2.4 节点 2 记录按 `proposal.md` 的「节点 2：归档记录」五态表填写（口径见
+      `docs/process/openspec-workflow.md`「状态分列」）implemented / released / machine PASS /
       native PASS / archived；失败项按「失败与 finding 归类」四类归因，不混算。

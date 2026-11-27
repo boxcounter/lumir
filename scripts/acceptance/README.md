@@ -75,7 +75,7 @@ item 13 与所有 13x 前缀场景——按「跑第 13 项」的读法把整个
 退出码变 1。审计建议的「证据档不卡门禁（跑完归档即可）」是目标态，落地要改退出码与 summary 的判据
 （FAIL 计数要不要排除证据档），属独立裁决，未随本次分层实现——需要它时按裁决另立 mission。
 
-退出码（三档，M379 起）：**0 = 全 PASS，1 = 有场景判红（产品面），2 = 运行失败 / 运行环境无效**。
+退出码（三档，M379 起）：**0 = 全 PASS，1 = 有场景判红（断言面；归因见「失败与 finding 归类」，不都是产品缺陷），2 = 运行失败 / 运行环境无效**。
 第 2 档的含义是「**本次运行的读数不算数**」，不是产品缺陷：基建错误（app 起不来、前端未就绪、
 窗口形态自检不过、KimiCU AX 服务退化、被跑批锁挡住、动作内部的重启起不来）一律把该场景标成
 `INVALID`（`status.txt` 同步写 INVALID）并让整轮退出码升到 2，同时按数量在结尾打印一行提醒复跑。
@@ -1059,7 +1059,7 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
 FAIL 24 / INVALID 7，finding `20261025-worker-archive-model-settings-improve-summary-md-invalid-fail-results-json-readme.md`）；
 INVALID 为 0 时该项省略。台账判据在 `lib/evidence.test.mjs`。
 
-**索引只记本次运行的断言结果**：`PASS / FAIL / INVALID` 描述该场景这一次跑得怎样，不表示 change 的
+**每行只记该场景最近一次运行的断言结果**：`PASS / FAIL / INVALID` 描述该场景最近一次跑得怎样，不表示 change 的
 implemented / released / machine PASS / native PASS / archived 收口状态——五态按
 [openspec-workflow.md](../../docs/process/openspec-workflow.md)「状态分列」另行记录，不得拿
 `summary.md` 的一行 PASS 代替归档记录。`status.txt = FAIL` 也不等于产品缺陷：归因按同文

@@ -11,7 +11,8 @@
       需求或视觉迭代），只有产品缺陷计入失败轮数；「待归因」不结案。
 - [x] 1.4 同文新增「新断言的反向必红」：任何新增 / 修改的断言逐条先造必须让它 FAIL 的输入并实测，
       恢复后判绿；未做反向实测不得写成「已验」。
-- [x] 1.5 节点 2 要件 4 与批次收尾 finding 对账项挂上述四节指针。
+- [x] 1.5 节点 2 要件 4 挂「状态分列」「证据可复核性」指针；批次收尾 finding 对账项挂
+      「失败与 finding 归类」；「新断言的反向必红」由 tasks 模板 2.3 与 acceptance README 承接。
 - [x] 1.6 `openspec/README.md` 与 workflow 制品清单标注零行为变更的 `.openspec.yaml`
       （`schema: spec-driven` + `skip_specs: true`）例外；本 change 首个消费者。
 
@@ -38,4 +39,5 @@
 
 ## 4. 交接
 
-- [ ] 4.1 合并 / push / 归档由 tower 在评审后执行（本 mission 按指令不执行）。
+- [ ] 4.1 合并 / push / 归档由 tower 在评审后执行：合并后按 workflow 在 `docs/backlog.md` 的
+      归档跟踪队列落一条唯一本 change 条目，再归档（本 mission 按指令不执行）。

@@ -91,8 +91,6 @@ scripts/openspec-archive.mjs <id>（并入 living spec + 修链） ◄───�
 
 只有「产品缺陷」进「失败轮数 / 复发率」统计；其余三类分列，不得并进产品 FAIL。归因未定时标「待归因」并给下一步定位，不得先记成产品缺陷或 oracle 缺陷结案。批次收尾的 finding 落账率对账按本表核对类别。
 
-**新断言的反向必红（2026-11-27 治理项）**：任何新增 / 修改的断言（单测、视觉、真机）MUST 在写完后先构造一个**必须让它 FAIL** 的输入并实测判红；恢复输入后再判绿。逐条，不是整批。反例按断言类型选：节点在场性——正向断言把标记挪走，负向断言把标记放进会被匹配到的普通节点（不是编辑器内部文本）；文本 / 文件——把目标串换成只差一字的值，或放到不该被匹配的位置；几何 / 绘制——把被测元素改回被祖先裁切的形态；通道——断开或回退被测通道。两次读数（红 / 绿）进该 change 的证据；没有反向实测的新断言不得在报告里写成「已验」。真机场景的具体做法见 [scripts/acceptance/README.md](../../scripts/acceptance/README.md)「新断言必须做反向必红实测」。
-
 **首批适用现场**：权限链 `harness-permission-rules-oct23` → `readonly-allowlist-tightening-oct23` → `rg-zip-flags-dangerous-oct24`（同一 `harness` 权限 requirement 的三段 delta，后一环以前一环归档后的 living 为基线），以及共用该段 requirement 的 `add-cron-conversational-registration`（排在 `harness-permission-rules-oct23` 之后）。这条链**不再逐个走人肉节点 2**：每环按五要件放行，链序与链内例外裁决一次完成（见下节）。
 
 **存量字样**：既有 change 的 tasks / proposal / backlog 里「人肉节点 2」「待节点 2」按本节口径执行，不必为改字样单独返工（下一批自然消失）；但其中列出的**待裁事项**（如「0.3 / 0.4 待 Alex 追认」）仍是价值 / 行为裁决，照旧送 Alex。
@@ -113,7 +111,7 @@ scripts/openspec-archive.mjs <id>（并入 living spec + 修链） ◄───�
 | `proposal.md` | 是 | 提案阶段 | [templates/proposal.md](templates/proposal.md) |
 | `tasks.md` | 是 | 提案阶段（可随实现细化） | [templates/tasks.md](templates/tasks.md)。改权限 / 闸语义时必含「回扫既有验收场景的闸期望」一项（见下） |
 | `design.md` | 技术复杂时；**有原型时必填**，且须含「视觉保真」一节（见下） | 提案阶段 | — |
-| `specs/<capability>/spec.md` | 是（纯文档 / 工具变更可省，见下） | 提案阶段起草，实现期可修订 | 见下方 spec 增量约定 |
+| `specs/<capability>/spec.md` | 是（零行为变更可省，见下） | 提案阶段起草，实现期可修订 | 见下方 spec 增量约定 |
 
 spec 增量（delta）约定：change 目录下的 `specs/<capability>/spec.md` 只写增量操作——`## ADDED Requirements` / `## MODIFIED Requirements` / `## REMOVED Requirements` / `## RENAMED Requirements`。每个 requirement 用 `### Requirement: <名称>` 起头，正文含 `SHALL`/`MUST`，且至少一个 `#### Scenario:`。archive 时这些增量并入 `openspec/specs/<capability>/spec.md` 成为 living spec。
 
@@ -168,6 +166,8 @@ node scripts/openspec-archive-check.mjs --archived <change-id>
 4. **实现**：按 `tasks.md` 逐项实现并勾选（`- [x]`）。发现 proposal 意图需要变更时，停下：更新 proposal 并重新走节点 1，不静默扩 scope。**修复类 PR（收掉某个既有 backlog 条目）MUST 同批删除 `docs/backlog.md` 对应条目，reviewer 合并前核对本批 diff 是否带删除**——不把删除留给下一批清理。
 5. **归档放行**：tasks 全部勾选（或标注放弃原因）后，同一 PR 在 `docs/backlog.md` 的归档跟踪队列落一条记录（判据见「批次收尾 checklist（归档跟踪）」下的「归档队列的机器判据」——缺条目 / 重复条目会让 docs-check 报红），逐条核对「节点 2 五要件」并把记录写进 proposal 的节点 2 块；五要件齐即由 tower 归档，命中「必须找 Alex 的例外类别」才送裁。
 6. **归档与归档后审计**：五要件齐（例外项另经 Alex 裁决）后执行 `node scripts/openspec-archive.mjs <change-id>`（包装器内调 `npx --yes @fission-ai/openspec@1.12.0 archive <change-id> --yes`，living spec 自动并入 `openspec/specs/`，随后修归档链接并自跑相对链接门禁——不要绕过包装器直接调 CLI）；**提交归档结果**（归档目录 + living spec + 修链改动），再按上文「归档后的强制完成步骤」跑 `node scripts/openspec-archive-check.mjs --archived <change-id>` 并取得 `PASS`、把归档提交 hash 与两次读数记进归档记录——**归档提交后审计不 PASS 不算归档完成**。
+
+**新断言的反向必红（2026-11-27 治理项）**：任何新增 / 修改的断言（单测、视觉、真机）MUST 在写完后先构造一个**必须让它 FAIL** 的输入并实测判红；恢复输入后再判绿。逐条，不是整批。反例按断言类型选：节点在场性——正向断言把标记挪走，负向断言把标记放进会被匹配到的普通节点（不是编辑器内部文本）；文本 / 文件——把目标串换成只差一字的值，或放到不该被匹配的位置；几何 / 绘制——把被测元素改回被祖先裁切的形态；通道——断开或回退被测通道。两次读数（红 / 绿）进该 change 的证据；没有反向实测的新断言不得在报告里写成「已验」。真机场景的具体做法见 [scripts/acceptance/README.md](../../scripts/acceptance/README.md)「新断言必须做反向必红实测」。
 
 ## 批次收尾 checklist（归档跟踪）
 
