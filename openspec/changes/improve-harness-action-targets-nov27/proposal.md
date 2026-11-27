@@ -81,7 +81,7 @@ pointer / focus 双激活源，tail notice 在场时整段不预览。本 change
 | 状态 | 值 | 证据指针 |
 |---|---|---|
 | 视觉候选 | 候选已产出并由 worker 实际查看；**待 Alex / 独立视觉终审，未更新基线** | `.local/reviews/harness-action-targets-nov27/`（before / after 各 24 张 + 三主题并排图） |
-| implemented | 否：实现已完成，待本分支提交 | 提交后回填 commit hash；未合并 |
+| implemented | 是：worker 分支实施提交 `4f75e6fedf1ad01205a84ee04b649330763f6a6a`；未合并 | 实现与目标证据见 `.local/reviews/harness-action-targets-nov27/` |
 | released | 否：本批不打包 | 不适用：无发布产物 |
 | machine PASS | **部分通过，完整项未齐**：目标 14/14、相关既有 49/49、quick PASS；完整 visual 待主会话 | `GATE RESULT: 13/13 PASS（SKIP 0）`，quick 退出码 0；`.local/reviews/harness-action-targets-nov27/logs/` |
 | native PASS | 否：真机由主会话统一执行，当前未跑 | 81 / 148 / 882 已更新且静态校验 312 场景通过；无 `status.txt`，不预写 PASS |
