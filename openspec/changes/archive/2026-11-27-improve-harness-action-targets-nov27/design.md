@@ -1,7 +1,7 @@
 # Design: Harness 次级动作的三层尺寸与真实命中
 
 > 本文件把 Alex 已批准的方向转成实施 / 评审合同。通用规则的唯一居所是
-> [docs/specs/pointer-targets.md](../../../docs/specs/pointer-targets.md)；这里只定义 Harness 首批消费者的具体取值、
+> [docs/specs/pointer-targets.md](../../../../docs/specs/pointer-targets.md)；这里只定义 Harness 首批消费者的具体取值、
 > 几何边界与证伪方式。提案阶段未做浏览器 / 真机技术验证；实施读数由本 change 的证据文件另行记录。
 
 ## 1. 范围与现状

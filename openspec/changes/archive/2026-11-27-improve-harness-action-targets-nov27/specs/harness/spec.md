@@ -2,7 +2,7 @@
 
 ### Requirement: Harness 次级动作的视觉与指针命中区
 
-Harness 的次级图标动作 SHALL 遵守 [次级图标动作的指针命中区合同](../../../../../docs/specs/pointer-targets.md)。
+Harness 的次级图标动作 SHALL 遵守 `docs/specs/pointer-targets.md` 的次级图标动作指针命中区合同。
 本条首批消费者是 transcript 的消息复制 / 撤回、composer 引用 / 消息摘录 / 图片卡片的移除 ×，以及图片卡片的 @。
 实现 MUST 分离图标视觉尺寸、可见按钮底板与实际指针命中区：实际命中区 SHALL 默认至少为 28×28 CSS px，
 受限候选的宽、高 MUST 各自不低于 24 CSS px；不得把图标或紧凑底板的尺寸当成命中尺寸，也不得把 28 写成 W3C 标准。

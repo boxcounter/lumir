@@ -61,8 +61,9 @@
 - [x] 4.2 候选材料落 `.local/reviews/harness-action-targets-nov27/`（before / after 各 24 张 + 三主题并排图，
       worker 已实际查看）；独立 reviewer 出 verdict 前
       必须实际查看并排图，审美 / 手感仍归 Alex，不用机器 PASS 代替
-- [ ] 4.3 正式视觉基线 `--update` 前把候选截图交 Alex 过目并取得明确批准；未批准不得更新。
-      获批后核对所有受影响整页基线的时间戳与变化面，无基线变化则记录「不更新 + 原因」
+- [x] 4.3 正式视觉基线 `--update` 前把候选截图交 Alex 过目并取得明确批准；未批准不得更新。
+      本次不更新：现有基线在完整 visual 下通过，无需 `--update`；视觉形态已由 K3 r2 审核，
+      不把机器 PASS 当作审美批准的替代品
 
 ## 5. 真机验收
 
@@ -82,22 +83,29 @@
       `Totals: 39 passed, 0 failed (39 items)`）；规格 delta 与实现逐项对账，
       活跃期未提前改写 living spec
 - [x] 6.2 `scripts/gate.sh quick` 通过：`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0；
-      原始日志 `.local/reviews/harness-action-targets-nov27/logs/quick-r1.log`
-- [ ] 6.3 完整 `scripts/gate.sh visual` 通过，报告照抄 `GATE RESULT` 原文行与退出码；CI 结构层不得替代本地像素层
-- [ ] 6.4 独立 K3 reviewer 对当前 tip 做代码与视觉终审，结论 clean / merge 并绑定最终 tip；核验真实几何 / 命中、
-      逐条反向证据及并排图。原 verdict 两项 P2 已处理并写入 proposal，最终复核待主会话 resume agent-538；
-      不预写 clean。tip 后续有改动则重新评审
+      原始日志 `.local/reviews/harness-action-targets-nov27/logs/quick-review-final.log`
+- [x] 6.3 完整 `scripts/gate.sh visual` 通过：`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0，
+      `visual-regression 1388s`，原始视觉套件 1975 passed / 13 skipped；日志
+      `.local/reviews/harness-action-targets-nov27/logs/gate-visual-final.log` 与
+      `gate-visual-regression-final.log`；CI 结构层未替代本地像素层
+- [x] 6.4 独立 K3 r2 对 `89a521b83b28972212ac1f6f16c144b9412a5f07` 给出 clean/merge，
+      P1 / P2 为 0，唯一 P3 为 proposal 旧目标 14/14，收口时已修为 33/33；真实几何 / 命中、逐条反向证据及
+      并排图均已核验。报告 `.local/reviews/harness-action-targets-nov27/independent-review-r2.md`；
+      rebase 后 tip `83f545f2` 与评审 tip 的五个提交逐一同 patch（`logs/range-diff-rebase-master.log`）
 - [x] 6.5 证据路径在写入报告时实际可 `ls`；报告与 proposal 节点 2 分列视觉候选、implemented、machine PASS、
       native PASS、released、archived，分别附证据或「否 / 不适用 + 原因」，失败按四类归因
 
 ## 7. 合并、归档与 CI 终态
 
-- [ ] 7.1 实现合并时在 `docs/backlog.md` 归档跟踪队列登记唯一条目；节点 2 五要件逐项记录，
-      命中审美 / 基线等例外时先经 Alex 裁决，不自行归档
-- [ ] 7.2 执行 `node scripts/openspec-archive.mjs improve-harness-action-targets-nov27`，提交归档目录、
-      living spec 与修链结果，记录包装器实际输出和修链读数
+- [x] 7.1 已在 `docs/backlog.md` 归档跟踪队列登记唯一条目（文件 80 行）；节点 2 五要件已逐项记录，
+      archive-check 门禁模式 PASS、strict validate 39/39、docs-check PASS；未命中需另行送裁的例外
+- [x] 7.2 已执行 `node scripts/openspec-archive.mjs improve-harness-action-targets-nov27`：harness `+1 added`，
+      归档目录内修链 4 处；包装器对 living spec 的一条 delta 深度死链 fail-closed，首次 `--archived` 亦判出
+      两侧相对链接原文不一致。归档 delta 与 living 的合同引用已统一为仓内路径文本 `docs/specs/pointer-targets.md`，
+      并复跑 `openspec-links: PASS（校验 716 条相对链接，全部可达）`。归档目录、living spec 与修链结果随归档提交落库；
+      原始日志 `.local/reviews/harness-action-targets-nov27/logs/archive-wrapper-final.log`、
+      `archive-check-archived-first.log` 与 `openspec-links-archive-final.log`
 - [ ] 7.3 归档提交后运行
       `node scripts/openspec-archive-check.mjs --archived improve-harness-action-targets-nov27`，
       取得 PASS 并记录归档提交 hash；未 PASS 不算归档完成
-- [ ] 7.4 merge / push 后用 `gh run list --branch master` 或等价渠道跟进本次 push 触发的每条 workflow 到
-      `success` / `failure` / `cancelled` / `timed_out` 终态；任一失败继续处理并附 run 链接与原因，未全绿不宣称批次完成
+- [x] 7.4 不适用：本任务明确不 merge / push，无本次 push 触发的 workflow 需要跟进
