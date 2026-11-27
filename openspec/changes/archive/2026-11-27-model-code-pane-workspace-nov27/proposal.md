@@ -45,19 +45,19 @@ Alex 已明确选择内容呈现模型：**「我选择这种模型」**。其�
 
 | 状态 | 值 | 证据指针 |
 |---|---|---|
-| implemented | 是 | 实现 `a18b3a7b9b5a26c956bb46436f0657d00f9c184f`；41 oracle 修正 `ae15f97c53dcf5e7ff38bfbfdb4b37dfe21e2d93`；单张授权基线随当前分支提交 |
+| implemented | 是 | 实现 `a18b3a7b9b5a26c956bb46436f0657d00f9c184f`；41 oracle 修正 `ae15f97c53dcf5e7ff38bfbfdb4b37dfe21e2d93`；单张授权基线与记录提交 `63b5ecbf3e28465ddc27e73c7e1ac3fe427cd750` |
 | released | 否 | 本批不打包，无 release 产物 |
 | machine PASS | 是 | quick `GATE RESULT: 13/13 PASS（SKIP 0）` exit 0；完整 visual 最终 `GATE RESULT: 15/15 PASS（SKIP 0）` exit 0，1951 passed / 13 skipped；原始日志 `.local/reviews/code-pane-workspace-nov27/evidence/gate-visual-final.log` |
 | native PASS | 是 | 38/41 最终 2/2 PASS、exit 0；证据 `.local/acceptance/2026-11-27-code-pane-workspace-after-oracle-fix/` |
-| archived | 否：待归档 | K3 clean 报告绑定 `a18b3a7b`；最终 oracle/基线提交仍须独立复核并绑定最终 tip，未满足前不归档 |
+| archived | 否：待执行归档 | 最终独立 K3 clean/merge 已绑定 `63b5ecbf`；归档包装器与 `--archived` 读数待实际执行后回填 |
 
 ### 五要件核对
 
 1. **方案已批准**：内容模型由 Alex 原话「我选择这种模型」批准；单张基线另有 Alex 原话「批准代码满 pane 的这张基线」。授权仅限 `binding-highlight-chromium-darwin.png`，760×733→964×733，未改容差或其它基线。
-2. **独立 reviewer**：`.local/reviews/code-pane-workspace-nov27/independent-review.md` 为 K3 clean/merge、无 P1/P2/P3，绑定 `a18b3a7b`；其后的 `ae15f97c` 为41场景时序修正，最终基线/记录提交不得沿用旧 tip 冒充已复核。
-3. **tasks**：1.1–4.4 已完成；4.5 的最终 tip 独立复核与归档保持未勾，直到证据真实存在。
+2. **独立 reviewer**：`.local/reviews/code-pane-workspace-nov27/independent-review-final.md` 为最终 K3 clean/merge，P1/P2/P3 均为 0，绑定 `63b5ecbf3e28465ddc27e73c7e1ac3fe427cd750`；旧 `a18b3a7b` 报告不再作为最终 tip 的复核证据。
+3. **tasks**：1.1–4.5 已完成；归档与 `--archived` 审计读数只在实际执行后回填。
 4. **门禁与真机**：quick / 完整视觉 / native 读数如上。41 原失败为**测试时序/oracle 缺陷**：master 同败，AX 点击无 settle，强制覆盖两段 await 导致磁盘读取抢跑；只用 `waitForFile` 修场景，未改保存或布局生产代码。分类与三套证据见 `.local/reviews/code-pane-workspace-nov27/native-triage.md`。
-5. **规格对账**：以归档前实际 validate / docs / archive-check 输出为准；backlog 队列本 change 恰一条。当前缺最终 tip 独立复核，故不声称五要件已齐。
+5. **规格对账**：归档前 validate `Totals: 39 passed, 0 failed (39 items)`、exit 0；docs-check PASS、exit 0，backlog 80/80 行；archive-check PASS：`扫过 9 份 delta，9 条 MODIFIED，对比 132 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目`、exit 0。五要件齐备，可以执行归档。
 
 ### 完整 visual 历史
 
@@ -68,4 +68,4 @@ Alex 已明确选择内容呈现模型：**「我选择这种模型」**。其�
 
 ### 归档前后
 
-尚未执行归档包装器，未产生归档提交或 `--archived` 读数。最终 tip 的独立复核是现存的唯一流程缺口；本 change 不 merge、不 push，released 保持否。
+最终 tip 的独立复核缺口已闭合，归档前三项检查通过后执行包装器。当前尚未产生归档提交或 `--archived` 读数；本 change 不 merge、不 push，released 保持否。
