@@ -60,11 +60,11 @@
 - **dogfood 性能专项（攒批）**：内存合同存量超标（218–222MB vs <200MB，门禁 250MB）、`open-1mb-file` 端点仍是占位口径、vault 打开 / 切换仍同步；下一动作：专项立项时拍板。
 
 ## 待真机验收（未收口；场景清单与 item 编号见 COVERAGE.md）
-
 - `02-math-click`（item 2）→ 下一动作：真机判定「公式后 ⌃B 是否 1–2 次」（AX 不暴露光标 / 选区）。
 - 左栏拖拽（场景 159）→ 下一动作：Alex 手拖复验根落点（M538）。
 - `M455 收尾复跑`（138/140/144/145 与 hover 族 76/87/131/132/133/134）→ 下一动作：真机复跑并登记读数（145 的 `mod+z` 同族观察留给 change 属主裁）。
 ## 归档跟踪队列（oct24 批剩余；口径见 `docs/process/openspec-workflow.md`）
+- **`web-evidence-provenance-nov26`**（已归档 2026-11-27，提交 `14c704ad`；`--archived` PASS：4 条 MODIFIED / 62 段 / 人工恢复 0 / 声明认领 0）：节点 1 Alex 推进指令 + D1/D2 明确；K3 clean/merge 绑 `21b6da72`（rebase 后同内容 `9cb6200a`；`a3f49ad2`/`d065e6d8` 为 test-only 886 断言收窄）；quick `GATE RESULT: 13/13 PASS（SKIP 0）`；完整 visual `bcc0faa2` 15/15 PASS；真机 r1 7/8（886 FAIL，mock 文案误命中）→ 收窄后 r2 886 PASS 14 断言，证据 `.local/acceptance/2026-11-27-web-evidence-provenance{,-r2}/`；delta = `harness` 4 条 MODIFIED + 1 条 ADDED。
 - **`add-first-run-onboarding-nov25`**（已归档 2026-11-27，提交 `955e74ab`；`--archived` PASS）：节点 1 Alex「采纳推荐的只读」；K3 clean/merge 绑 `c04a3abf`（`.local/reviews/first-run-onboarding-nov25/k3-verdict.md`，P1/P2/P3=0）；完整 gate visual `GATE RESULT: 15/15 PASS（SKIP 0）` exit 0（`.local/missions/first-run-onboarding-nov25/gate-logs/gate-visual-lowload-20261127-c04a3abf.log`）；真机 877/263/47c/220 PASS 39/36/43/55 断言（`.local/acceptance/2026-11-27-ux-goal/`）；merge 后前端 2144 / docs / acceptance --check / copy PASS；归档分支 tip `f1fe9c99`。
 - **`compact-web-search-result-summary-nov26`**（已归档 2026-11-26，提交 `b906cd26`）：节点 1「Web Search 按推荐」；K3 clean/merge 绑 `e1bbf58a`（`.local/reviews/compact-web-search-result-summary-nov26/k3-verdict.md`）；quick `GATE RESULT: 13/13 PASS（SKIP 0）`、最终完整 visual 14/15（唯一 FAIL 为既有 IME 低频用例，双 engine 复跑 2/2 PASS）、真机 869/870/871/872/873/876 全 PASS（14/13/9/9/10/7 断言）；delta = `harness` 5 条 MODIFIED（96 段 / 0 丢段）；包装器修链 0 处，`--archived` PASS。
 - **`improve-keybindings-lookup-oct24`**（M715）：delta = keymap-commands 1 条 MODIFIED（键位面板行模型）+ 3 条 ADDED（查找/捕获/详情、非自指入口、命令元数据与字形单一来源），节点 2 走人肉；实现批附带新增真机场景 235 / 236 / 237（查询 / 捕获 / 键盘）与 m133 视觉场景重写——**像素基线待 Alex 过目后重截**（未经过目不得 `--update`）；归档前后各跑 `node scripts/openspec-archive-check.mjs`。

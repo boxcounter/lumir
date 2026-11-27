@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use crate::config::HarnessPermissions;
 
 use super::budget;
-use super::output::{WebEnvelope, WebErrorCode, WebOperation};
+use super::output::{WebEnvelope, WebErrorCode, WebFetchMode, WebOperation, WebProviderIdentity};
 use super::preflight::{
     run_preflight, PreflightLimits, ReqwestWebTransport, SystemDnsResolver, WebDnsResolver,
     WebTransport,
@@ -51,6 +51,15 @@ impl WebExecutor {
         }
     }
 
+    /// 当前活跃适配器的能力声明与身份（能力检查读这一处，生产/验收同源）。
+    pub fn fetch_modes(&self) -> &[WebFetchMode] {
+        self.provider.fetch_modes()
+    }
+
+    pub fn identity(&self) -> WebProviderIdentity {
+        self.provider.identity()
+    }
+
     pub fn execute(
         &self,
         request: WebProviderRequest,
@@ -61,7 +70,7 @@ impl WebExecutor {
                 self.provider
                     .execute(request, aborted, self.backoff.clone())
             }
-            WebProviderRequest::Fetch { url } => {
+            WebProviderRequest::Fetch { url, mode, query } => {
                 // 整次工具调用一个 deadline：预检与 DeepSeek 阶段共享截止时刻，不是
                 // 「预检 30s + provider 150s」。预检用剩余时间；耗尽后不再发 provider 请求。
                 let deadline = Instant::now() + self.provider.total_timeout(WebOperation::Fetch);
@@ -96,6 +105,8 @@ impl WebExecutor {
                         let mut envelope = self.provider.execute_until(
                             WebProviderRequest::Fetch {
                                 url: success.submitted_url,
+                                mode,
+                                query,
                             },
                             aborted,
                             self.backoff.clone(),

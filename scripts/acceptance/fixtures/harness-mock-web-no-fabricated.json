@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "抓一下这个网页。",
+      "chunks": ["抓一下这个网页。"],
+      "tool_calls": [
+        {
+          "id": "call_web_fetch",
+          "name": "web_fetch",
+          "arguments": "{\"url\":\"https://example.com/a\"}"
+        }
+      ]
+    },
+    {
+      "text": "WEB-NO-FABRICATED-DONE"
+    }
+  ]
+}

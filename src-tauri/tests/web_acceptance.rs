@@ -22,11 +22,14 @@ use std::time::Duration;
 use lumir_lib::config::{self, HarnessConfig, PermissionMode, ProviderPreset};
 use lumir_lib::fs_io::IgnorePolicy;
 use lumir_lib::harness::events::EventSink;
+use lumir_lib::harness::jsonl::JsonlWriter;
 use lumir_lib::harness::llm::MockClient;
 use lumir_lib::harness::turn::{run_turn_for_with_web_port, run_turn_resume_for_with_web_port};
 use lumir_lib::harness::web::config::WebApproval;
 use lumir_lib::harness::web::executor::WebExecutor;
-use lumir_lib::harness::web::output::WebErrorCode;
+use lumir_lib::harness::web::output::{
+    WebContentScope, WebCoverage, WebErrorCode, WebFetchMode, WebOperation,
+};
 use lumir_lib::harness::web::preflight::{
     run_preflight, PreflightLimits, ReqwestWebTransport, WebDnsResolver,
 };
@@ -63,6 +66,9 @@ struct RequestRecord {
     authorization: String,
     content_type: String,
     range: String,
+    /// 验收装配的请求头证据（change web-evidence-provenance-nov26）：生产构建不编译这两个头。
+    test_fetch_mode: String,
+    test_fetch_query: String,
     body: String,
 }
 
@@ -196,6 +202,8 @@ fn serve(
     let mut authorization = String::new();
     let mut content_type = String::new();
     let mut range = String::new();
+    let mut test_fetch_mode = String::new();
+    let mut test_fetch_query = String::new();
     loop {
         let mut line = String::new();
         if reader.read_line(&mut line).is_err() || line == "\r\n" || line.is_empty() {
@@ -210,6 +218,10 @@ fn serve(
             content_type = value.trim().to_string();
         } else if let Some(value) = lower.strip_prefix("range:") {
             range = value.trim().to_string();
+        } else if let Some(value) = lower.strip_prefix("x-lumir-test-fetch-mode:") {
+            test_fetch_mode = value.trim().to_string();
+        } else if let Some(value) = lower.strip_prefix("x-lumir-test-fetch-query:") {
+            test_fetch_query = value.trim().to_string();
         }
     }
     let mut body = vec![0; content_length];
@@ -225,6 +237,8 @@ fn serve(
         authorization,
         content_type,
         range,
+        test_fetch_mode,
+        test_fetch_query,
         body: String::from_utf8_lossy(&body).to_string(),
     });
     thread::park_timeout(response.head_delay);
@@ -407,6 +421,44 @@ fn fetch(url: &str) -> String {
         }]
     })
     .to_string()
+}
+
+fn fetch_chunks(url: &str, query: &str) -> String {
+    serde_json::json!({
+        "tool_calls": [{
+            "id": "call_fetch",
+            "name": "web_fetch",
+            "arguments": serde_json::json!({
+                "url": url,
+                "mode": "selected_chunks",
+                "query": query,
+            })
+            .to_string(),
+        }]
+    })
+    .to_string()
+}
+
+fn assert_chunked_provenance(web: &serde_json::Value) {
+    assert_eq!(web["content_scope"], serde_json::json!("selected_chunks"));
+    assert_eq!(web["coverage"], serde_json::json!("bounded"));
+    assert_eq!(web["fetched_by"], serde_json::json!("provider"));
+    assert_eq!(web["binding"], serde_json::json!("url_submitted"));
+    assert_eq!(web["final_url"], serde_json::Value::Null);
+}
+
+fn chunked_provider(fixture: &Fixture) -> Arc<DeepSeekWebProvider> {
+    Arc::new(
+        DeepSeekWebProvider::with_endpoint_for_test(
+            &fixture.deepseek_endpoint,
+            "deepseek-acceptance",
+            CANARY,
+        )
+        .with_modes_and_scripted_for_test(
+            vec![WebFetchMode::Full, WebFetchMode::SelectedChunks],
+            Some((WebContentScope::SelectedChunks, WebCoverage::Bounded)),
+        ),
+    )
 }
 
 fn script_json(responses: &[String]) -> String {
@@ -1477,4 +1529,161 @@ fn canary_never_leaks_into_events_panel_jsonl_wire_or_error_envelope() {
         "Key 只允许出现在发往 DeepSeek 的 Authorization 头"
     );
     assert!(!api[0].body.contains(CANARY), "wire 请求体不得出现 Key");
+}
+
+#[test]
+fn selected_chunks_bounded_ask_end_to_end_keeps_wire_and_recovery_shape() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let deepseek = TestServer::start(vec![TestResponse::json(
+        200,
+        serde_json::json!({
+            "title": "Target",
+            "content": "chunk one\n[...]\nchunk two",
+        })
+        .to_string(),
+    )]);
+    let target = TestServer::start(vec![TestResponse::html(200, "")]);
+    let mut fixture = Fixture::new("chunks-ask", WebApproval::Ask);
+    fixture.set_deepseek(&deepseek.endpoint());
+    let port = fixture.port_with_provider(
+        chunked_provider(&fixture),
+        &[("target.test", target.port)],
+        None,
+    );
+    let script = script_json(&[
+        fetch_chunks(TARGET, "synthetic selection"),
+        serde_json::json!({"text": "CHUNKS-DONE"}).to_string(),
+    ]);
+    let sink = Collect::default();
+    let runtime = Runtime::default();
+    runtime
+        .acquire_turn(&fixture.scope, &fixture.config)
+        .unwrap();
+    let mut client = MockClient::from_str(&script, "stage5-chunks").unwrap();
+    let runtime_worker = runtime.clone();
+    let scope_worker = fixture.scope.clone();
+    let config_worker = fixture.config.clone();
+    let sink_worker = sink.clone();
+    let worker = thread::spawn(move || {
+        run_turn_for_with_web_port(
+            &sink_worker,
+            &runtime_worker,
+            &scope_worker,
+            &config_worker,
+            "stage5",
+            None,
+            &mut client,
+            Arc::new(port),
+        );
+    });
+    let pending = loop {
+        let snapshot = runtime.snapshot(&fixture.scope, &fixture.config);
+        if let Some(pending) = snapshot.pending_approvals.first() {
+            break pending.clone();
+        }
+        thread::park_timeout(Duration::from_millis(1));
+    };
+    let web = pending.web.as_ref().expect("Fetch Ask 预览应携带 web 载荷");
+    assert_eq!(web.operation, WebOperation::Fetch);
+    assert_eq!(web.mode, Some(WebFetchMode::SelectedChunks));
+    assert_eq!(web.query.as_deref(), Some("synthetic selection"));
+    assert_eq!(web.url.as_deref(), Some(TARGET));
+    runtime
+        .with_session(&fixture.scope, |session| {
+            session.resolve_approval(&pending.id, true, None, false, false)
+        })
+        .unwrap()
+        .unwrap();
+    worker.join().unwrap();
+    runtime.release_turn(&fixture.scope);
+
+    let events = sink.events();
+    let done = tool_done(&events, "web_fetch");
+    assert_eq!(done["web"]["attempts"], 1);
+    assert_eq!(done["web"]["local_precheck"], true);
+    assert_chunked_provenance(&done["web"]);
+
+    // 真实 socket 证据：query 经**验收专用请求头**到达测试 provider（生产 wire 不编译这两个头），
+    // body 仍只有 url——不拿内部 record 冒充 socket 证据。
+    let api = deepseek.records();
+    assert_eq!(api.len(), 1);
+    assert_eq!(api[0].path, "/v1/tools/fetch");
+    assert_eq!(
+        api[0].test_fetch_mode, "selected_chunks",
+        "测试 provider 必须收到 mode header"
+    );
+    assert_eq!(
+        api[0].test_fetch_query, "synthetic selection",
+        "测试 provider 必须收到选取 query header"
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&api[0].body).unwrap(),
+        serde_json::json!({"url": TARGET}),
+        "生产 DeepSeek 请求体仍只有 url"
+    );
+
+    // 会话内留存与 live 同形。
+    let output = output_of(&runtime, &fixture.scope, "call_fetch");
+    assert_chunked_provenance(&output);
+
+    // 真正从 JSONL resume：恢复出的面板消息必须带回 web_input.mode / 选取 query。
+    let files = session_files(&fixture.root.join("xdg"));
+    assert_eq!(files.len(), 1, "一轮只应有一个会话文件");
+    let source_id = JsonlWriter::session_id_from_path(&files[0]).unwrap();
+    runtime.new_session(&fixture.scope).unwrap();
+    let info = runtime
+        .resume_session(&fixture.scope, &fixture.config, &source_id)
+        .expect("从 JSONL 恢复会话");
+    assert!(info.restored_items > 0);
+    let snapshot = runtime.snapshot(&fixture.scope, &fixture.config);
+    let restored = snapshot
+        .messages
+        .iter()
+        .find_map(|message| message.web_input.as_ref())
+        .expect("恢复的 Web 工具消息应携带 web_input");
+    assert_eq!(
+        restored.mode,
+        Some(WebFetchMode::SelectedChunks),
+        "resume 必须恢复 mode"
+    );
+    assert_eq!(
+        restored.query.as_deref(),
+        Some("synthetic selection"),
+        "resume 必须恢复选取 query"
+    );
+    assert_eq!(restored.url.as_deref(), Some(TARGET));
+    let _ = target;
+}
+
+#[test]
+fn selected_chunks_bounded_allow_all_reaches_the_provider_with_query() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let deepseek = TestServer::start(vec![TestResponse::json(
+        200,
+        serde_json::json!({"title": "", "content": "chunk body"}).to_string(),
+    )]);
+    let target = TestServer::start(vec![TestResponse::html(200, "")]);
+    let mut fixture = Fixture::new("chunks-allow", WebApproval::AllowAll);
+    fixture.set_deepseek(&deepseek.endpoint());
+    let port = fixture.port_with_provider(
+        chunked_provider(&fixture),
+        &[("target.test", target.port)],
+        None,
+    );
+    let script = script_json(&[
+        fetch_chunks(TARGET, "allow selection"),
+        serde_json::json!({"text": "ALLOW-DONE"}).to_string(),
+    ]);
+    let turn = run_turn(&mut fixture, port, &script);
+    let done = tool_done(&turn.sink.events(), "web_fetch");
+    assert_chunked_provenance(&done["web"]);
+    assert_eq!(done["web"]["attempts"], 1);
+    let api = deepseek.records();
+    assert_eq!(api.len(), 1);
+    assert_eq!(api[0].test_fetch_mode, "selected_chunks");
+    assert_eq!(api[0].test_fetch_query, "allow selection");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&api[0].body).unwrap(),
+        serde_json::json!({"url": TARGET})
+    );
 }

@@ -3,6 +3,9 @@
 #
 # 1) 源码层：验收注入面只在 feature 门控的 acceptance.rs；生产装配仍只走 official endpoint；
 #    URL / DNS 拒绝规则（loopback / .local / 非全局单播 / 全地址校验）仍在生产代码里。
+#    change web-evidence-provenance-nov26：五字段（content_scope / coverage / fetched_by /
+#    binding / final_url）的赋值点只允许在 output.rs（字段声明 / FetchProvenance 构造 /
+#    apply_provenance）与 provider.rs（收口）；白名单外出现即红——防「绕过漏斗手写取值」。
 # 2) 产物层：普通 lib（debug）与 release lib 的 rlib 都不含验收端点字符串。产物由
 #    `cargo --message-format=json` 的 compiler-artifact 精确定位，不取「最新 rlib」——
 #    最新产物可能是 `--features acceptance-web` 的构建（方向安全但不是生产产物选择器）。
@@ -80,12 +83,36 @@ if ! rg -qF "url::blocked_host(&origin.host)" src-tauri/src/harness/web/mod.rs \
   echo "FAIL 主机类 URL 拒绝不再是「解析前 + 每跳」双层" >&2
   exit 1
 fi
-echo "PASS 源码：注入面只在 acceptance.rs；official 装配与 URL / DNS 拒绝规则在位（解析前 + 每跳双层）"
+# 抓取读写点的白名单（change web-evidence-provenance-nov26）：五字段只能由
+# `output.rs` 的 FetchProvenance / apply_provenance 与 `provider.rs` 的收口写入。
+# 文本级兜底，判的是「有人绕过漏斗在别处手写取值」；`*_tests.rs` 是测试代码，不在生产面。
+stray=$(rg -n '\.(content_scope|coverage|fetched_by|binding|final_url)\s*=|^\s*(content_scope|coverage|fetched_by|binding|final_url):\s' \
+  src-tauri/src --glob '*.rs' --glob '!**/*_tests.rs' \
+  | grep -v '^src-tauri/src/harness/web/output.rs:' \
+  | grep -v '^src-tauri/src/harness/web/provider.rs:' || true)
+if [ -n "$stray" ]; then
+  echo "FAIL 抓取五字段在漏斗之外被赋值：" >&2
+  printf '%s\n' "$stray" >&2
+  exit 1
+fi
+# 结构体字面量兜底：`FetchProvenance { ... }` 只允许出现在 output.rs（定义 / 构造器）。
+stray_literal=$(rg -n 'FetchProvenance\s*\{' src-tauri/src --glob '*.rs' \
+  | grep -v '^src-tauri/src/harness/web/output.rs:' || true)
+if [ -n "$stray_literal" ]; then
+  echo "FAIL FetchProvenance 构造被绕过单一漏斗：" >&2
+  printf '%s\n' "$stray_literal" >&2
+  exit 1
+fi
+echo "PASS 源码：注入面只在 acceptance.rs；official 装配与 URL / DNS 拒绝规则在位（解析前 + 每跳双层）；抓取五字段只经 output.rs / provider.rs 漏斗（含 FetchProvenance 字面量）"
 
 echo "== 产物层（debug） =="
 rlib=$(artifact_rlib "")
 if grep -a -q "LUMIR_ACCEPTANCE_WEB_ENDPOINTS" "$rlib"; then
   echo "FAIL 生产 debug rlib 含验收 Web 环境变量字符串：$rlib" >&2
+  exit 1
+fi
+if grep -a -q "X-Lumir-Test-Fetch" "$rlib"; then
+  echo "FAIL 生产 debug rlib 含验收测试专用请求头：$rlib" >&2
   exit 1
 fi
 echo "PASS 生产 debug rlib 不含验收注入面：$rlib"
@@ -94,6 +121,10 @@ echo "== 产物层（release） =="
 release_rlib=$(artifact_rlib "--release")
 if grep -a -q "LUMIR_ACCEPTANCE_WEB_ENDPOINTS" "$release_rlib"; then
   echo "FAIL 生产 release rlib 含验收 Web 环境变量字符串：$release_rlib" >&2
+  exit 1
+fi
+if grep -a -q "X-Lumir-Test-Fetch" "$release_rlib"; then
+  echo "FAIL 生产 release rlib 含验收测试专用请求头：$release_rlib" >&2
   exit 1
 fi
 echo "PASS 生产 release rlib 不含验收注入面：$release_rlib"

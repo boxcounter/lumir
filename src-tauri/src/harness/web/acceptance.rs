@@ -16,6 +16,7 @@ use std::sync::Arc;
 use crate::config::HarnessConfig;
 
 use super::executor::WebExecutor;
+use super::output::{WebContentScope, WebCoverage, WebFetchMode};
 use super::preflight::{ReqwestWebTransport, WebDnsResolver};
 use super::provider::{DeepSeekWebProvider, SystemWebBackoff};
 use super::ConfiguredWebToolPort;
@@ -31,6 +32,15 @@ struct Endpoints {
     targets: BTreeMap<String, u16>,
     #[serde(default)]
     ca_pem: Option<String>,
+    /// 能力覆盖（change web-evidence-provenance-nov26）：仅验收装配可把测试 provider 的
+    /// fetch_modes 设为 `[full, selected_chunks]`。生产构建没有本字段的读取代码。
+    #[serde(default)]
+    fetch_modes: Option<Vec<WebFetchMode>>,
+    /// 脚本化成功形态：与 `fetch_modes` 同批启用，用于证明两种证据形态可表达。
+    #[serde(default)]
+    scripted_scope: Option<WebContentScope>,
+    #[serde(default)]
+    scripted_coverage: Option<WebCoverage>,
 }
 
 fn default_provider_id() -> String {
@@ -75,11 +85,23 @@ pub fn from_env(config: &HarnessConfig) -> Option<ConfiguredWebToolPort> {
     if answers.is_empty() {
         panic!("LUMIR_ACCEPTANCE_WEB_ENDPOINTS.targets 不能为空");
     }
-    let provider = Arc::new(DeepSeekWebProvider::with_endpoint_for_test(
+    let scripted = match (endpoints.scripted_scope, endpoints.scripted_coverage) {
+        (Some(scope), Some(coverage)) => Some((scope, coverage)),
+        (None, None) => None,
+        _ => panic!("验收装配的 scripted_scope 与 scripted_coverage 必须同时给出"),
+    };
+    let mut provider = DeepSeekWebProvider::with_endpoint_for_test(
         &endpoints.deepseek,
         &endpoints.provider_id,
         &endpoints.api_key,
-    ));
+    );
+    if endpoints.fetch_modes.is_some() || scripted.is_some() {
+        let modes = endpoints
+            .fetch_modes
+            .unwrap_or_else(|| vec![WebFetchMode::Full]);
+        provider = provider.with_modes_and_scripted_for_test(modes, scripted);
+    }
+    let provider = Arc::new(provider);
     let transport = match endpoints.ca_pem {
         Some(path) => {
             let pem =

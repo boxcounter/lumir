@@ -523,6 +523,36 @@ function assertAuditUnitAfterRow(mount: FakeEl): {
   return { unit, audit, toggle };
 }
 
+
+/** Fetch 审计投影的合成块（change web-evidence-provenance-nov26）：默认是 full + unknown。 */
+function fetchAudit(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    operation: "fetch",
+    query: null,
+    url: "https://example.com/a",
+    input_url: "https://example.com/a",
+    provider: "deepseek",
+    provider_id: "deepseek-work",
+    attempts: 1,
+    cost_per_1000_success_cny: 5,
+    local_precheck: true,
+    provider_fetch: true,
+    trust: "untrusted",
+    truncated: false,
+    truncated_fields: [],
+    code: null,
+    result_count: null,
+    result_text_bytes: null,
+    mode: "full",
+    content_scope: "full",
+    coverage: "unknown",
+    fetched_by: "provider",
+    binding: "url_submitted",
+    final_url: null,
+    ...overrides,
+  };
+}
+
 /** 结果健康摘要的在场与逐字文本（`null` = 不应出现）。 */
 function assertHealth(mount: FakeEl, expected: string | null): void {
   const health = mount.querySelector(".lumir-hp-web-health");
@@ -1488,4 +1518,212 @@ test("Fetch 重定向失败：默认行仍是原始 A，详情保留最终 B", a
     toggle.fire("click");
     assert.match(audit.textContent, /https:\/\/final\.example\/b/, `${label} 详情必须保留最终 B`);
   }
+});
+
+
+test("Fetch 证据徽标：文档提取 / 相关段落 / 已截断，失败不显示，且无「全文」", async () => {
+  const full = await mountDone(
+    "web_fetch",
+    "https://example.com/a",
+    fetchAudit({ content_scope: "full", coverage: "unknown" }),
+  );
+  assertHealth(full, "文档提取 · 完整性未验证");
+
+  const chunks = await mountDone(
+    "web_fetch",
+    "https://example.com/a",
+    fetchAudit({ content_scope: "selected_chunks", coverage: "bounded" }),
+  );
+  assertHealth(chunks, "相关段落 · 完整性受限");
+
+  const truncated = await mountDone(
+    "web_fetch",
+    "https://example.com/a",
+    fetchAudit({
+      truncated: true,
+      truncated_fields: ["content"],
+    }),
+  );
+  assertHealth(truncated, "文档提取 · 完整性未验证 · 已截断");
+
+  const failed = await mountDone(
+    "web_fetch",
+    "https://example.com/a",
+    fetchAudit({
+      code: "web_mode_unsupported",
+      content_scope: null,
+      coverage: null,
+      fetched_by: null,
+      binding: null,
+      final_url: null,
+    }),
+  );
+  assertHealth(failed, null);
+
+  for (const mount of [full, chunks, truncated]) {
+    assertNoMatch(toolsBlock(mount).textContent, /全文/, "任何路径不得出现「全文」");
+  }
+});
+
+test("抓取归属与绑定的消费者功效：local 不显示外发，address_pinned / final_url 可见", async () => {
+  const local = await mountDone(
+    "web_fetch",
+    "https://example.com/a",
+    fetchAudit({
+      fetched_by: "local",
+      binding: "address_pinned",
+      final_url: "https://example.com/final",
+    }),
+  );
+  const toggle = local.querySelector(".lumir-hp-web-detail-toggle");
+  assert.ok(toggle !== null);
+  toggle.fire("click");
+  const audit = local.querySelector(".lumir-hp-web-audit");
+  assert.ok(audit !== null);
+  assert.match(audit.textContent, /最终 URL/);
+  assert.match(audit.textContent, /https:\/\/example\.com\/final/);
+  assert.match(audit.textContent, /address_pinned/);
+  assert.match(audit.textContent, /local/);
+  assertNoMatch(audit.textContent, /发往 DeepSeek/, "fetched_by=local 不得显示 provider 外发说明");
+
+  const unknown = await mountDone(
+    "web_fetch",
+    "https://example.com/a",
+    fetchAudit({
+      content_scope: "answer",
+      coverage: "verified",
+      fetched_by: "third_party",
+      binding: "guess",
+    }),
+  );
+  assertHealth(unknown, null);
+  const unknownAudit = unknown.querySelector(".lumir-hp-web-audit");
+  assert.ok(unknownAudit !== null);
+  assertNoMatch(unknownAudit.textContent, /证据形态/, "非法枚举不得渲染证据形态行");
+  assertNoMatch(unknownAudit.textContent, /完整性/, "非法 coverage 不得渲染完整性行");
+  assertNoMatch(unknownAudit.textContent, /抓取方/, "非法 fetched_by 不得渲染抓取方行");
+  assertNoMatch(unknownAudit.textContent, /绑定/, "非法 binding 不得渲染绑定行");
+});
+
+test("Ask 预览（selected_chunks）显示完整 URL、选取 query 与外发说明；默认行仍 URL", async () => {
+  const { mount, emit } = await mountPanel(() => EMPTY_SNAPSHOT);
+  emit({ type: "auto_turn_started", chain_index: 1, vault: VAULT });
+  emit({
+    type: "tool_call",
+    name: "web_fetch",
+    status: "started",
+    summary: "https://example.com/a?x=1",
+    call_id: "call-ask-chunks",
+    vault: VAULT,
+  });
+  emit({
+    type: "approval_request",
+    id: "ap-chunks",
+    tool: "web_fetch",
+    web: {
+      ...APPROVAL_PREVIEW,
+      url: "https://example.com/a?x=1",
+      mode: "selected_chunks",
+      query: "synthetic selection",
+    },
+    vault: VAULT,
+  });
+  const card = mount.querySelector(".lumir-hp-approval-web");
+  assert.ok(card !== null, "Ask 卡应在场");
+  assert.match(card.textContent, /https:\/\/example\.com\/a\?x=1/, "预览显示完整原始 URL");
+  assert.match(card.textContent, /synthetic selection/, "预览显示选取 query");
+  assert.match(
+    card.textContent,
+    /选取查询会与 URL 一起发往 DeepSeek/,
+    "预览说明 query 随 URL 外发",
+  );
+  // 批准后走真实终态路径（同 641-680 手法）：点击采纳 → done 用同一 call_id 带回
+  // selected_chunks 审计，再读终态默认行——started 行不足以证明批准后的行为。
+  const approve = mount.querySelector("button[data-act=approve]");
+  assert.ok(approve !== null, "批准卡应有采纳钮");
+  approve.fire("click");
+  await flush();
+  emit({
+    type: "tool_call",
+    name: "web_fetch",
+    status: "done",
+    summary: "已完成",
+    call_id: "call-ask-chunks",
+    web: fetchAudit({
+      query: "synthetic selection",
+      mode: "selected_chunks",
+      content_scope: "selected_chunks",
+      coverage: "bounded",
+    }),
+    vault: VAULT,
+  });
+  await flush();
+  // done 确实落到本行：证据徽标出现（防止终态断言空转）。
+  assertHealth(mount, "相关段落 · 完整性受限");
+  const terminalRow = toolsBlock(mount).querySelector(".lumir-hp-tool-row");
+  assert.ok(terminalRow !== null, "终态工具行应在场");
+  assert.match(
+    terminalRow.textContent,
+    /https:\/\/example\.com\/a\?x=1/,
+    "批准后的终态默认行仍显示完整原始 URL",
+  );
+  assertNoMatch(
+    terminalRow.textContent,
+    /synthetic selection/,
+    "选取 query 不得顶掉终态默认行 URL",
+  );
+});
+
+
+test("selected_chunks 记录：详情显示模式与选取查询；旧成功记录无徽标与证据行", async () => {
+  const chunks = await mountDone(
+    "web_fetch",
+    "https://example.com/a",
+    fetchAudit({
+      query: "synthetic selection",
+      mode: "selected_chunks",
+      content_scope: "selected_chunks",
+      coverage: "bounded",
+    }),
+  );
+  assertHealth(chunks, "相关段落 · 完整性受限");
+  const toggle = chunks.querySelector(".lumir-hp-web-detail-toggle");
+  assert.ok(toggle !== null);
+  toggle.fire("click");
+  const audit = chunks.querySelector(".lumir-hp-web-audit");
+  assert.ok(audit !== null);
+  assert.match(audit.textContent, /模式/);
+  assert.match(audit.textContent, /selected_chunks/);
+  assert.match(audit.textContent, /选取查询/);
+  assert.match(audit.textContent, /synthetic selection/);
+
+  // 旧成功记录：缺 mode / 五字段 → 不显示徽标、不渲染证据行（不补默认值）。
+  const legacy = await mountDone("web_fetch", "https://example.com/a", {
+    operation: "fetch",
+    query: null,
+    url: "https://example.com/a",
+    provider: "deepseek",
+    provider_id: "deepseek-work",
+    attempts: 1,
+    cost_per_1000_success_cny: 5,
+    local_precheck: true,
+    provider_fetch: true,
+    trust: "untrusted",
+    truncated: false,
+    truncated_fields: [],
+    code: null,
+    result_count: null,
+    result_text_bytes: null,
+  });
+  assertHealth(legacy, null);
+  const legacyToggle = legacy.querySelector(".lumir-hp-web-detail-toggle");
+  assert.ok(legacyToggle !== null);
+  legacyToggle.fire("click");
+  const legacyAudit = legacy.querySelector(".lumir-hp-web-audit");
+  assert.ok(legacyAudit !== null);
+  assertNoMatch(
+    legacyAudit.textContent,
+    /证据形态|完整性|抓取方|绑定|最终 URL|模式|选取查询/,
+    "旧记录缺字段时不得渲染证据行",
+  );
 });

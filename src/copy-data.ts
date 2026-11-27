@@ -3123,6 +3123,24 @@ const COPY_TABLE = {
     en: "The quit request wasn't accepted; Lumir is still open. Try again.",
   },
   D1075: { zh: "正在退出", en: "Quitting" },
+  D1076: {
+    zh: "文档提取 · 完整性未验证",
+    en: "Document extract · completeness unverified",
+  },
+  D1077: { zh: "相关段落", en: "Relevant passages" },
+  D1078: { zh: "完整性受限", en: "completeness limited" },
+  D1079: { zh: "已截断", en: "truncated" },
+  D1080: { zh: "证据形态", en: "Content scope" },
+  D1081: { zh: "完整性", en: "Completeness" },
+  D1082: { zh: "抓取方", en: "Fetched by" },
+  D1083: { zh: "绑定", en: "Binding" },
+  D1084: { zh: "最终 URL", en: "Final URL" },
+  D1085: { zh: "模式", en: "Mode" },
+  D1086: { zh: "选取查询", en: "Selection query" },
+  D1087: {
+    zh: "选取查询会与 URL 一起发往 DeepSeek。",
+    en: "The selection query is sent to DeepSeek together with the URL.",
+  },
 
 } satisfies Record<string, CopyEntry>;
 
