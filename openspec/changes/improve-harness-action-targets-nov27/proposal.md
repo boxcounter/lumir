@@ -1,0 +1,93 @@
+# Proposal: 放大 Harness 次级动作命中区而不放大轻量视觉
+
+- Change ID: `improve-harness-action-targets-nov27`
+- 日期: 2026-11-27
+- 角色: Alex Lee（评审/裁决），AI agent（起草）
+
+> **节点 1 意图输入（不是本提案的预写通过结论）**：Alex 于 2026-11-27 对七条设计方向回复原文
+> 「好，采纳」；对实施与治理沉淀回复原文「好，采纳。另外，这些是否需要沉淀成原则/规则/约定？」。
+> 七条方向是：不做 44px 触屏式桌面按钮；分离图标、可见底板与实际命中区；命中区最低 24、Lumir 默认 28；
+> 图标保持小巧且复制可用无依赖内联 SVG；透明扩展不改消息行高 / 文档内容且相邻命中区不重叠；
+> 保留状态、读屏名、复制反馈与 composer 键盘模型；重点验证 × 及其边缘不触发父卡跳转；现状 / 候选先同屏对比，
+> 正式视觉基线另等 Alex 过目。本提案把这些已批准方向转成合同；提案自身仍按流程接受节点 1 评审。
+
+## Why
+
+次级动作的可点击面积当前明显小于或贴近其紧凑视觉：
+
+- `.lumir-hp-copy`（`src/harness-panel.css:1948`）为 `min-width:24px; height:20px`，图标是 11.5px 档字符 `⧉`
+  （`src/harness-panel.ts:7004` 起）；`.lumir-hp-withdraw`（CSS:1981）同为 `min-width:24px; height:20px`。
+- composer 的 `.lumir-hp-qc-x`（CSS:2233）真实盒为 16×16px；图片卡的 `@` 也是 16×16px，两者在
+  `.lumir-hp-qc-actions` 内恒显（CSS:2255 起）。
+- composer 引用卡的父表面有点击跳回原文处理器（`src/harness-panel.ts:5517` 起）。× 虽已有事件隔离，
+  但扩大后若透明边缘落到父表面、被裁切或遮住正文，误触代价会直接变成意外跳转或错误移除。
+
+[W3C WCAG 2.2 Understanding SC 2.5.8](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html)
+以 24×24 CSS px 或 spacing 等例外作为最低目标，并明确鼠标 / 触控板同样受益；44×44 属于 Enhanced，
+不是本次桌面改造的强制目标。Lumir 选择更严格且明确的桌面默认值 28×28，同时保留小图标与轻量底板。
+
+本提案阶段只完成上述源码 / 规格的只读核对与文档起草；未运行浏览器几何、视觉或真机验证，不预写技术 PASS。
+
+## What Changes
+
+对应 spec delta：新增 harness requirement「Harness 次级动作的视觉与指针命中区」。
+
+1. **三层尺寸合同**：图标视觉、可见按钮底板与实际指针命中区分离。首批消费者是复制、撤回、composer 移除 ×、
+   图片 @；命中区默认 28×28 CSS px，任何受限候选均不得低于 24×24。
+2. **轻量视觉不变**：复制改为约 14×14px 的无依赖内联 SVG，× 采用约 14px 的紧凑 glyph；现有底板保持轻量。
+   复制 / 撤回仍只在 hover / focus-visible 等既有路径显现，Withdraw 不变为常驻大按钮；图片 @ / × 继续恒显。
+3. **几何与事件不变量**：命中区不得互相重叠、被祖先裁切、越过容器形成不可达区域或截获正文；
+   不改变消息行高、文档内容、卡片块序或 composer 键盘模型。× 的中心和透明边缘都必须只执行移除，不触发父卡跳转。
+4. **既有语义不变**：保留现有 accessible name、复制 Markdown 源文本与约 1.5s 成功反馈、撤回可用性 / disabled 语义、
+   图片 @ 插入行为及 composer 的 Tab / 选区 / history 模型。复制成功文案变宽时仍须与撤回命中区不重叠。
+5. **可复用治理**：新增 [次级图标动作的指针命中区合同](../../../docs/specs/pointer-targets.md)，约束今后新增或修改的
+   次级图标动作；不要求借本 change 回改全仓。
+6. **验收下沉**：真实几何与 `elementFromPoint` / 等效命中测试、真实指针事件、逐条反向必红、现状 / 候选视觉对比、
+   真机场景、quick + 完整 visual、独立 K3 代码与视觉终审均列入 tasks；CSS 声明本身不构成命中 PASS。
+
+## Non-goals
+
+- 不把全部按钮视觉放大，不采用触屏式 44×44 桌面按钮；不在本 change 做 coarse pointer / 触屏密度改造。
+- 不让复制或撤回常驻，不重新设计 Withdraw 的可见性、确认流程、适用范围或后端语义。
+- 不重设计 composer 键盘模型、Tab 序、读屏文案、复制源、撤回逻辑、@ 编号或投递协议。
+- 不回改全仓所有小按钮；其他表面仅在以后新增 / 修改对应次级动作时接入 canonical 合同。
+- 不把视觉机器 PASS 当作审美批准；未经 Alex 过目，不执行正式基线 `--update`。
+
+## Impact
+
+- 影响的 specs：`harness`（仅新增 delta；活跃期不改 living spec）。
+- 新增 canonical 文档：`docs/specs/pointer-targets.md`。
+- 实施期预计影响：`src/harness-panel.css`、`src/harness-panel.ts`，对应视觉结构 / 几何 / 命中场景与
+  `scripts/acceptance/` 场景；不引入运行时依赖。
+- 关联约束：composer 的零长度 widget、scoped AX、单一 history 与键盘合同；视觉基线人肉裁决；
+  新断言逐条反向必红；节点 2 的 implemented / released / machine PASS / native PASS / archived 状态分列。
+- **本轮交付边界**：仅提案、设计、规格增量与 canonical 规则文档；不改生产代码 / 测试 / 正式基线，不创建测试文件，
+  不跑完整视觉或真机，不 merge、不 push。
+
+## 实施依赖
+
+另一个 worktree 正在推进 `clarify-harness-withdraw-scope-nov27`。本提案与其不形成提案期阻塞，可以独立评审；
+**生产实施必须等该 change 合并后 rebase 到最新 master**，再核对其对撤回可见性、DOM / CSS 与验收场景的影响。
+高概率冲突面是 `src/harness-panel.ts` 的撤回按钮同步 / 事件代码、`src/harness-panel.css` 的 `.lumir-hp-withdraw`，
+以及双方新增或修改的 Harness 视觉 / 真机场景。若依赖 change 改了本提案已锁定的产品行为，先更新提案并重新送裁，
+不得静默合并语义。
+
+## 节点 2：归档记录（实现完成后填写）
+
+口径见 [OpenSpec 流程](../../../docs/process/openspec-workflow.md)「状态分列」与「失败与 finding 归类」；
+视觉候选按本 change 的 canonical 视觉轨单列，不替代五态。
+
+| 状态 | 值 | 证据指针 |
+|---|---|---|
+| 视觉候选 | 否：本轮未实现、未产出候选截图 | 实施期补现状 / 候选对比路径与 Alex 基线裁决原话 |
+| implemented | 否：待节点 1 与生产实施 | 〔commit hash；已合并写 merge hash〕 |
+| released | 否：尚未实现，本批不打包 | 〔若发布则补版本号 + release index〕 |
+| machine PASS | 否：实现门禁未运行；本轮只做文档校验 | 〔实施期补 GATE RESULT 原文行 + 退出码与日志指针〕 |
+| native PASS | 否：本轮未跑真机 | 〔实施期补场景 id + `.local/acceptance/.../status.txt`〕 |
+| archived | 否：待归档 | 〔归档提交 hash + `--archived` PASS 读数〕 |
+
+未发生项已写明原因，不留空；后续失败项按产品缺陷 / 测试 oracle 缺陷 / 环境 INVALID / 需求或视觉迭代四类归因。
+
+- **归档前五要件**：待实施完成后逐项填写节点 1 依据、独立 reviewer verdict 与绑定 tip、tasks 对账、门禁 / 真机证据、
+  规格对账三项读数；当前不预写通过。
+- **归档后**：待归档提交后补包装器实际输出、修链读数、归档提交 hash 与 `--archived` PASS；当前不预写通过。
