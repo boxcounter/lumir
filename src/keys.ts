@@ -106,8 +106,9 @@
 // 行为，`src/tabs.ts`）。`⌘}` / `⌘{` 物理上是 `⇧⌘]` / `⇧⌘[`（US 布局上这两个字符必须按 Shift），
 // 方向映射取 macOS 惯例（WebKit 快捷键文档的 Show next/previous tab = `⇧⌘}` / `⇧⌘{`）；
 // 键位占用按三条独立来源核实（见下方「零冲突核对」段的 M242 追加条）。token 形态是本 change
-// 最大的静默失配风险（写 `Cmd-Shift-]` 永不命中），与 M195 的 `Cmd-+` 同一机制，写在两条绑定的
-// doc 里防回潮。
+// token 归一（change fix-tab-cycle-shift-symbols-nov27）：表内只写 Shift 后的字符 `Cmd-}`；
+// WKWebView 实测给的是未 Shift 的字符 + shiftKey（`key="}"` vs `key="]"`），由 `SHIFTED_SYMBOLS`
+// 归一到同一 token，两条绑定仍各只一条、不双写。
 //
 // 零冲突核对（注册前实测，三条独立来源，逐条可复核）：
 //   - **表内**：本文件即真源，现表无 ⌘W / ⌘数字 / ⌃⇥ 系绑定（⌘W 系为空，⌘ 数字无，⌃Tab 无）。
@@ -169,7 +170,8 @@
 //      前端同一命令。⌘A 因此第一次真正经本表分发：编辑器 → CM 全选、composer → composer 全选。
 //   3. **新增 ⌘⇧, → tab.prev / ⌘⇧. → tab.next**（Alex「三键组合无法切换 TAB」；方向假设由
 //      tower 拟定、未经 Alex 确认）。token 形态：Shift 隐含在字符里，事件 key 是 `<` / `>`，
-//      表内写 `Cmd-<` / `Cmd->`（MUST NOT 写 `Cmd-Shift-,`）。零冲突核对三条独立来源见
+//      表内写 `Cmd-<` / `Cmd->`（未 Shift 字符 + shiftKey 的形态由 `SHIFTED_SYMBOLS` 归一，不双写）。
+//      零冲突核对三条独立来源见
 //      两条绑定的注释。零新命令 id——与 tab.next / tab.prev 逐字同语义（同命令多条绑定的
 //      既有形态）。
 //
@@ -853,8 +855,8 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   //   表内因此 MUST 写 `Cmd--`，MUST NOT 写 `Cmd-Minus`——含 Alt 的组合才按物理键 `code` 判定。
   // - ⌘⇧=（放大）在真机 macOS 上 `event.key === "+"`，归一成 `Cmd-+`（`+` 在 SHIFT_IMPLIED_KEYS
   //   里，Shift 已隐含在字符中）；合成事件（Playwright 的 Meta+Shift+Equal）可能给 `key === "="`
-  //   + shiftKey → 归一成 `Cmd-Shift-=`（不命中）。这条差异写在 typography 场景的注释里，
-  //   不用「注入过就算验过」当判据。
+  //   + shiftKey → 归一成 `Cmd-+`（`SHIFTED_SYMBOLS` 把未 Shift 字符与 Shift 后的字符归一到同一
+  //   物理键；change fix-tab-cycle-shift-symbols-nov27 之前这条形态不命中）。
   // - 同一命令两条绑定是表内既有形态（撤销既有 `Ctrl-/` 与 `Ctrl-_` 两条），不构成冲突。
   { key: "Cmd-=", command: "view.text-scale-up", scope: "global", docKey: "D307" },
   { key: "Cmd-+", command: "view.text-scale-up", scope: "global", docKey: "D308" },
@@ -916,10 +918,9 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   // tab.prev、⌘⇧. → tab.next。方向假设由 tower 拟定（, 在 . 左侧，同 < > 方向直觉），
   // Alex 验收时若方向相反按同一对 token 对调即可。
   //   方向映射：⌘⇧, 在 US 布局上是 `⇧⌘<`（, 的 Shift 形态是 `<`）、⌘⇧. 是 `⇧⌘>`。
-  // token 形态是这条最大的静默失配风险：Shift 已隐含在字符 `<` / `>` 里（两者都在
-  // SHIFT_IMPLIED_KEYS），事件 key 是 `<` / `>`、不带可判别的 `,` / `.`——表内 MUST 写
-  // `Cmd-<` / `Cmd->`，MUST NOT 写 `Cmd-Shift-,` / `Cmd-Shift-.`（永不命中，同 M195 的
-  // `Cmd-+`、M242 的 `Cmd-}` 同一机制）。
+  // token 形态：表内写 `Cmd-<` / `Cmd->`（Shift 后的字符）。WKWebView 给的 `event.key` 是未 Shift
+  // 的 `,` / `.` + shiftKey（真机探针，见 change fix-tab-cycle-shift-symbols-nov27），由
+  // `SHIFTED_SYMBOLS` 归一到同一 token——表内 MUST NOT 为同一物理键再写第二条绑定。
   // 零冲突核对（三条独立来源，M242 追加核对的同形口径）：
   //   ① 表内：本文件即真源，现表无 `Cmd-<` / `Cmd->` token（Shift 隐含后归一，与
   //      Cmd-} / Cmd-{ / Cmd-1..9 等互不相同）；⌘, 的「偏好设置」语义不在本仓（且那条是
@@ -1086,9 +1087,25 @@ const MODIFIER_ALIASES = new Map<string, string>([
 /** 表内修饰前缀的规范顺序。 */
 const MODIFIER_ORDER = ["Cmd", "Ctrl", "Alt", "Shift"] as const;
 
+/** US 布局上「物理键字符 → 按住 Shift 后的字符」：**单一来源**，MUST NOT 另抄一份。
+ *
+ *  两个同源消费者：
+ *  - `SHIFT_IMPLIED_KEYS`（下方）——Shift 后的字符本身已隐含 Shift，token 里不再重复；
+ *  - `normalizeKey`——把「未 Shift 字符 + shiftKey」与 Shift 后的字符归一到同一 token。两者是
+ *    **同一个物理键**，只是事件来源不同：WKWebView 在 Command+Shift 下给的 `event.key` 是未 Shift
+ *    的字符（`keyForKeyEvent` 取 `[event characters]`；实测 `⌘⇧]` → `key="]"` + `shiftKey`），
+ *    而 Playwright / 部分合成器按 US 布局先算出 `}`。表内只写 Shift 后的字符一条绑定，不双写。
+ *  `src/key-glyphs.ts` 反解物理键字形时也从这里派生（`Cmd-}` → `⇧⌘]`）。 */
+export const SHIFTED_SYMBOLS: ReadonlyMap<string, string> = new Map([
+  ["-", "_"], ["=", "+"], ["[", "{"], ["]", "}"], ["\\", "|"], [";", ":"], ["'", '"'],
+  [",", "<"], [".", ">"], ["/", "?"], ["`", "~"],
+  ["1", "!"], ["2", "@"], ["3", "#"], ["4", "$"], ["5", "%"], ["6", "^"], ["7", "&"], ["8", "*"],
+  ["9", "("], ["0", ")"],
+]);
+
 /** US 布局需 Shift 才能打出的符号：Shift 已隐含在字符本身，token 里不再重复。
  *  `src/key-glyphs.ts` 反解物理键时读同一份集合（单一来源，MUST NOT 另抄一份）。 */
-export const SHIFT_IMPLIED_KEYS = new Set([..."_+{}|:\"<>?~!@#$%^&*()"]);
+export const SHIFT_IMPLIED_KEYS = new Set(SHIFTED_SYMBOLS.values());
 
 /**
  * 规范化一个键位 token：修饰前缀按 Cmd/Ctrl/Alt/Shift 定序、键名单字符大写。
@@ -1105,7 +1122,15 @@ export function normalizeKey(raw: string): string {
   }
   const key = parts.slice(index).join("-");
   if (key === "") throw new Error(`键位 token 缺键名：${raw}`); // i18n-exempt: log
-  const named = key.length === 1 ? key.toUpperCase() : key;
+  let named = key.length === 1 ? key.toUpperCase() : key;
+  if (mods.has("Shift")) {
+    // 同一物理键的两种事件形态归一到 Shift 后的字符（见 SHIFTED_SYMBOLS 的说明）。
+    const shifted = SHIFTED_SYMBOLS.get(named);
+    if (shifted !== undefined) {
+      named = shifted;
+      mods.delete("Shift");
+    }
+  }
   if (SHIFT_IMPLIED_KEYS.has(named)) mods.delete("Shift");
   return [...MODIFIER_ORDER.filter((mod) => mods.has(mod)), named].join("-");
 }

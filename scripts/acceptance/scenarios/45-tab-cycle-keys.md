@@ -2,7 +2,7 @@
 id: "45-tab-cycle-keys"
 item: 45
 tier: full
-title: 标签循环键——⌃⇥ / ⌃⇧⇥ 的真机循环语义（末端 / 首端回卷、单标签无操作）＋ ⌘} / ⌘{ 的通道限制登记
+title: 标签循环键——⌃⇥ / ⌃⇧⇥ 与 ⌘⇧] / ⌘⇧[ 的真机循环语义（末端 / 首端回卷、单标签无操作）
 fixtures: [tabs-a.md, tabs-b.md, tabs-long.md]
 seed:
   registry:
@@ -103,6 +103,33 @@ steps:
       - label: tabs-a 的正文上屏
         editor: { has: "标签场景 A" }
 
+  # —— ⌘⇧] / ⌘⇧[：与 ⌃⇥ / ⌃⇧⇥ 同两条命令（tab.next / tab.prev），token 归一后本通道可达
+  # （change fix-tab-cycle-shift-symbols-nov27；形态证据见文末一节）。放在 ⌃⇧⇥ 闭环之后：
+  # 此时前台是 tabs-a，两条命令各自的第一步都有明确读数。
+  - name: ⌘⇧]（cmd+shift+rightbracket）：第一个 → 第二个
+    do: key
+    key: "cmd+shift+rightbracket"
+    expect:
+      - label: 激活标签切到 tabs-b（⌘⇧] 与 ⌃⇥ 同指 tab.next）
+        ax: { has: "/AXRadioButton \\(tabs-b\\.md\\) Value: true/" }
+      - label: 反向：tabs-a 不再是激活项
+        ax: { not: "/AXRadioButton \\(tabs-a\\.md\\) Value: true/" }
+      - label: tabs-b 的正文上屏（切标签必须真的换文档）
+        editor: { has: "标签场景 B" }
+      - shot: ⌘⇧] 切到第二个
+
+  - name: ⌘⇧[（cmd+shift+leftbracket）：第二个 → 第一个
+    do: key
+    key: "cmd+shift+leftbracket"
+    expect:
+      - label: 回到 tabs-a（⌘⇧[ 与 ⌃⇧⇥ 同指 tab.prev）
+        ax: { has: "/AXRadioButton \\(tabs-a\\.md\\) Value: true/" }
+      - label: tabs-a 的正文上屏
+        editor: { has: "标签场景 A" }
+      - label: 反向：tabs-b 不再是激活项
+        ax: { not: "/AXRadioButton \\(tabs-b\\.md\\) Value: true/" }
+      - shot: ⌘⇧[ 回到第一个
+
   # —— 单标签时的无操作。放在场景末尾，是为了让「这两条命令真的会切标签」这件事在前面几步
   # 已被同一对绑定的正向步骤证实（同一次运行、同一条注入通道）——否则负向断言在「键根本没
   # 落地」时会空转（REVIEW.md 「断言等价于子串」条）。三个标签都是 seed 恢复的干净标签，⌘W 直接关、不弹确认。
@@ -175,48 +202,45 @@ steps:
    （逐字节比较）。
 3. `⌘W` 关标签的右邻接管口径（作为把标签收窄到 1 个的顺带覆盖，不是本 change 的新行为）。
 
-**本场景不验**：`⌘}` / `⌘{` 自己的「按键 → 切标签」链路在**真机通道**上的落地。真机通道做不到，原因与实测证据见下一节
-——按 mission 纪律如实登记为**未验**，不写成已验（REVIEW.md 「覆盖声明超出真实验证」条）。
+**本场景也验**：`⌘⇧]` / `⌘⇧[` 自己的「按键 → 切标签」链路（change fix-tab-cycle-shift-symbols-nov27
+之后本通道可达；形态证据与边界见下一节）。仍未验的是**物理键盘**的 `characters` 取值——修复对两种形态
+都成立，这一差异不影响行为判据。
 
-## ⌘} / ⌘{ 在真机通道上验不了——原因与实测证据
+## ⌘} / ⌘{ 的真机通道：形态差异已由归一化收口（change fix-tab-cycle-shift-symbols-nov27）
 
-**结论**：验收套件的键盘通道（KimiCU `press_key`）产不出 `Cmd-}` / `Cmd-{` 这个 token，因此
-`⌘}` / `⌘{` 的按键链路在真机上**未验**。这不是产品缺陷，是通道能力边界。
+**结论**：本场景现在**验** `⌘⇧]` / `⌘⇧[` 的按键链路（见上方两步）。旧版这里登记的是「验不了」——
+原因是当时只收 `Cmd-}` 这一种 token，而注入通道给的是 `key="]" + shiftKey`（下表三条实测）。
 
-三条实测（2026-09-26，本机，日志在 `.local/missions/m232/`，git 外）：
+**旧口径的前提失效了**：M242 假设「真机给 `key="}"`（Shift 隐含在字符里）」，但这条**没有任何真机
+证据**；2026-11-27 的独立 WKWebView 探针（裸 WKWebView + 与 Tauri 同 accelerator 集合的菜单，
+经自建 CGEvent 与 System Events 两条通道注入 keycode + flags）实测：
 
-1. **键名形态**：KimiCU 的键名表用 `rightbracket` / `leftbracket`（`cmd+shift+rightbracket`），
-   xdotool 的拼法 `bracketright` / `bracketleft` 会被直接拒：
-   `error: unknown key \`bracketright\` in \`cmd+shift+bracketright\``（`acceptance-45-run1.log`）。
-   改键名后可注入。
-2. **注入的 event 形态不是硬件形态**：`cmd+shift+rightbracket` 落地后，应用算出的 token 是
-   `Cmd-Shift-]` 而不是 `Cmd-}`——即注入给的是 **key="]" + shiftKey**（Shift 标志在、字符没被
-   Shift 替换），而真实硬件 ⌘⇧] 给的是 `key="}"`（Shift 隐含在字符里，`}` ∈ `SHIFT_IMPLIED_KEYS`）。
-   判据：用 `[keys]` 覆盖把 `Cmd-Shift-]` → `tab.next`、`Cmd-Shift-[` → `tab.prev` 之后，**同一份**
-   注入序列由 FAIL 转 PASS（`acceptance-45-probe-unshifted.log`，1/1 PASS；对照 run2 无覆盖时
-   0/1 FAIL，激活标签全程停在 tabs-a）。
-3. **字面字符形态也不可用**：`cmd+}` 被解析器拒——`error: unknown key \`}\` in \`cmd+}\``
-   （`acceptance-45-probe-literalchar.log`）。
+| 层 | `⌘⇧]` 的实测值 |
+|---|---|
+| NSEvent | `characters="]"`、`charactersIgnoringModifiers="}"` |
+| DOM `KeyboardEvent` | `key="]"`、`code="BracketRight"`、`shiftKey=true`、`metaKey=true` |
+| 旧 token | `Cmd-Shift-]`（表内只有 `Cmd-}` ⇒ 永不命中） |
 
-**这是 M195 的 ⌘⇧= 同款边界**（`src/keys.ts` 的 M195 注释段记了同一机制：真机 `event.key === "+"`，
-合成事件给 `"="` + shiftKey ⇒ 归一成 `Cmd-Shift-=` 不命中）——凡 token 含 Shift 隐含符号
-（`{ } + = _ …`）的绑定，这条注入通道都验不到。
+来源核对：WebKit 的 `keyForKeyEvent`（`Source/WebCore/platform/mac/PlatformEventFactoryMac.mm`）
+在**无 Control** 时取 `[event characters]`，不是 `charactersIgnoringModifiers`——Command+Shift 下
+`characters` 是未 Shift 的字符。探针工程与原始事件日志见 `.local/probes/tab-navigation-keys-nov27/`
+（git 外）。
 
-**那么 `⌘}` / `⌘{` 的判据在哪**：
+**修复口径**：`normalizeKey` 把「Shift + 未 Shift 字符」与 Shift 后的字符归一到同一 token
+（`SHIFTED_SYMBOLS`，与 `key-glyphs.ts` 同一来源），事件与 `[keys]` 配置两侧一致；表内仍只写
+`Cmd-}` / `Cmd-{` 一条绑定，不双写。
 
-- **token 形态与表内登记**：`tests/unit/keys.test.ts`（本 change 新增专测）——硬件形态的事件
-  （`key="}"` + `metaKey` + `shiftKey`）归一成 `Cmd-}`，与表内写法**必须相等**；并反向断言
-  `Cmd-Shift-]` / `Cmd-Shift-[` **不在表内**（这两个形态永不命中，写错就是静默失配）。
-- **命令实现与环绕语义**：本场景上面那六步（同两条命令、同一份 `cycleTab`）。
-- **键位层那一环（M249 已补）**：chromium 通道
-  `tests/visual/scenes/m242-tab-cycle-key-tokens.spec.ts`——Playwright 按 US 布局自己算 Shift 后的
-  字符（`BracketRight` 的 shifted 形态 = `}`），产出的正是**硬件形态**事件（`key="}"` + `shiftKey`），
-  断言它命中 `⌘}` → tab.next / `⌘{` → tab.prev；并附一条边界固化用例：KimiCU 形态的事件
-  （`key="]"` + `shiftKey` ⇒ `Cmd-Shift-]`）**不**命中，表只收硬件形态 token（D2 裁决）。原 finding
-  `20260927-worker-tab-cycle-keys-bug-shift-token.md` 的「留给后续 mission」由此收口。
-- **仍未覆盖的那一环**：真实 WKWebView 对硬件 ⌘⇧] 是否给出 `key="}"`——chromium 的键盘布局模型与
-  WKWebView 是两套实现，这一步只有真机通道能证，而它正是通道产不出的事件。**所以本场景的 PASS 不
-  等于「⌘} / ⌘{ 在真机验过」**（REVIEW.md 「覆盖声明超出真实验证」条）。
+**本场景能验到哪、验不到哪**：
+- 能验：KimiCU 注入 → DOM keydown → token 归一 → `tab.next` / `tab.prev` → `cycleTab` 的整条链路
+  （注入形态恰是修复覆盖的形态）。
+- 验不到：**物理键盘**按下时 macOS 填进 `characters` 的到底是 `}` 还是 `]`——注入事件与物理事件
+  在 TSM 翻译层可能不同（本仓没有物理按键的自动化通道）。修复对两种形态都成立，因此这一差异
+  不影响行为判据；真机手感与物理键确认仍由 Alex 在 dogfood 时给一次读数（按 ⌘⇧] 看标签是否切换）。
+
+**旧实测三条**（2026-09-26，日志 `.local/missions/m232/`，git 外，保留作历史）：
+1. 键名形态：KimiCU 用 `rightbracket` / `leftbracket`；xdotool 的 `bracketright` 会被拒。
+2. 注入形态：`cmd+shift+rightbracket` 落地为 `key="]" + shiftKey`。
+3. 字面字符形态 `cmd+}` 被解析器拒（`unknown key`）。
 
 ## 断言口径
 
@@ -238,10 +262,10 @@ steps:
 
 ## 已知边界（如实登记，不读成「全量已验」）
 
-- **⌘} / ⌘{ 的按键链路未验**（见上节；原因 = 通道产不出该 token，非产品缺陷——键位层那一段已由
-  `tests/visual/scenes/m242-tab-cycle-key-tokens.spec.ts` 覆盖，真机通道这一环仍是缺口）。
-- **同类边界统一登记在** `scripts/acceptance/README.md` 的「键盘注入通道的两类不可达」（Tab / Shift-Tab
-  与 Shift 隐含符号 token），本节只留本场景相关的结论。
+- **⌘} / ⌘{ 的按键链路**：本场景已验（注入形态 `key="]" + shiftKey` 经 `SHIFTED_SYMBOLS` 归一到
+  `Cmd-}`）；**物理键盘**的 `characters` 取值仍未验（见上节），修复对两种形态都成立，不影响判据。
+- **Tab / Shift-Tab 的注入边界**仍登记在 `scripts/acceptance/README.md` 的「键盘注入通道的两类不可达」；
+  该节第 2 条（Shift 隐含符号）已由 change fix-tab-cycle-shift-symbols-nov27 收口，本节只留本场景结论。
 - **注入通道丢键**：`press_key` 对 WKWebView 间歇整批丢键（REVIEW.md 「键盘注入丢键」条，同机第二个实例
   显著加剧）。**红了先按丢键复跑一次再判产品缺陷**——丢键的表现就是激活标签读数没变。
 - **不做手感判定**：标签切换的动画 / 高亮观感归 Alex，本场景只留截图。

@@ -1,22 +1,23 @@
 import { expect, test, type Page } from "@playwright/test";
 import { stubTauri } from "./tauri-stub";
 
-// M242 标签循环键 `⌘}` / `⌘{` 的**按键链路**（change tab-cycle-keys 的 D1/D2/D3）。
+// M242 标签循环键 `⌘}` / `⌘{` 的**按键链路**（change tab-cycle-keys 的 D1/D2/D3），
+// 以及 change fix-tab-cycle-shift-symbols-nov27 对 token 形态的收口。
 //
-// 为什么这条判据落在这里：真机通道产不出 `Cmd-}` 这个 token——KimiCU 注入 `cmd+shift+rightbracket`
-// 落地的是 `key="]" + shiftKey`（Shift 标志在、字符没被替换），应用归一成 `Cmd-Shift-]`；字面量
-// `cmd+}` 又被 KimiCU 的键名表直接拒（M242 三条实测，见 `scripts/acceptance/README.md` 的
-// 「键盘注入通道的两类不可达」）。chromium 的 `keyboard.press` 按 US 布局**自己算 Shift 后的字符**
-// （`BracketRight` 的 shifted 形态 = `}`），产出的正是硬件形态事件 —— 这是唯一能验「硬件 ⌘⇧] →
-// `Cmd-}` → tab.next」这一步的通道。
+// 形态证据（2026-11-27，独立 WKWebView 探针 + WebKit 源码）：WKWebView 的 `KeyboardEvent.key`
+// 在无 Control 时取 `[event characters]`，而 ⌘⇧] 下这个值是**未按 Shift 的** `]` + `shiftKey`
+// （NSEvent 层 `characters="]"`、`charactersIgnoringModifiers="}"`；自建 CGEvent 与 System Events
+// 两条通道一致）。旧口径只收 `Cmd-}`，于是真机按键永不命中——本 change 起 `SHIFTED_SYMBOLS` 把
+// 「未 Shift 字符 + shiftKey」与 Shift 后的字符归一到同一 token，**两种事件形态都必须命中**。
 //
-// 表内 token 形态另由 `tests/unit/keys.test.ts` 专测（含「`Cmd-Shift-]` 不在表内」的反向断言）；
-// 真机场景 45 验的是同两条命令的循环语义（`⌃⇥` / `⌃⇧⇥`，同一份 `cycleTab`）。三层口径互补，别互相
-// 替代。
+// 两条通道各测一次形态：`page.keyboard.press`（chromium 按 US 布局算出 `}` / `{` / `<` / `>`）与
+// `page.evaluate` 手工派发（复刻 WKWebView 的 `]` / `[` / `,` / `.` + shiftKey）。
+// 表内 token 形态另由 `tests/unit/keys.test.ts` 专测；真机场景 45 验同两条命令的循环语义与
+// `⌘⇧]` / `⌘⇧[` 的真实注入链路。
 //
 // **M627 起**同一文件也守 `⌘⇧,` → tab.prev / `⌘⇧.` → tab.next（Alex「三键组合无法切换 TAB」）：
-// 与 M242 同一条静默失配风险——`⇧,` 的字符是 `<`、`⇧.` 的字符是 `>`，token 是 `Cmd-<` /
-// `Cmd->`，写成 `Cmd-Shift-,` 永不命中。方向映射是 tower 拟定的假设（, 在 . 左侧）。
+// 与 M242 同族，未 Shift 字符形态是 `,` / `.`，token 是 `Cmd-<` / `Cmd->`。方向映射是 tower
+// 拟定的假设（, 在 . 左侧）。
 
 const VAULT = {
   entries: [
@@ -95,33 +96,27 @@ test("⌘⇧.（硬件形态：key=`>` + shiftKey）命中 `Cmd->` → tab.next�
   await expect(page.locator(".cm-content")).toContainText("乙篇正文");
 });
 
-test("边界固化：KimiCU 形态的事件（`⌘⇧,` 给 key=`,` + shiftKey）不命中——表只收硬件形态的 token（M627）", async ({
+test("WKWebView 形态：`⌘⇧,` 的 key=`,` + shiftKey 命中 `Cmd-<` → tab.prev（M627 + nov27 收口）", async ({
   page,
 }) => {
   await twoTabs(page);
 
-  // 与 ⌘} 那条边界同形：真机注入给的是未按 Shift 的字符 + shiftKey，归一成 `Cmd-Shift-,`，
-  // 而表里只有 `Cmd-<`。合成事件复刻它，断言「切不动」——将来若有人把 `Cmd-Shift-,` 塞进表里
-  // 「修」真机通道，这条会红，逼出一次显式裁决。
+  // change fix-tab-cycle-shift-symbols-nov27 之前这里断言的是「切不动」（表只收硬件形态的 token）。
+  // 真机证据表明那条前提不成立：WKWebView 给的正是这种形态，归一后必须与 `Cmd-<` 同 token。
   await page.evaluate(() => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: ",", metaKey: true, shiftKey: true, bubbles: true }));
   });
-  await page.waitForTimeout(80);
-
-  await expect(activeTab(page)).toHaveText("beta.md");
+  await expect(activeTab(page)).toHaveText("alpha.md");
+  await expect(page.locator(".cm-content")).toContainText("甲篇正文");
 });
 
-test("边界固化：KimiCU 形态的事件（key=`]` + shiftKey）不命中——表只收硬件形态的 token", async ({ page }) => {
+test("WKWebView 形态：`⌘⇧]` 的 key=`]` + shiftKey 命中 `Cmd-}` → tab.next（nov27 收口）", async ({ page }) => {
   await twoTabs(page);
 
-  // 这条不是「产品应该支持」的断言，而是**把通道错配钉死**：真机注入恰恰给这种事件（key 是未按
-  // Shift 的字符、shiftKey 在场），归一成 `Cmd-Shift-]`，而表里只有 `Cmd-}`。合成事件复刻它，
-  // 断言「切不动」——将来若有人把 `Cmd-Shift-]` 也塞进表里「修」真机通道，这条会红，逼出一次
-  // 显式裁决（M242 的 D2 裁决是只收硬件形态）。
+  // 与上一条同形：真机给的是未按 Shift 的字符 + shiftKey（NSEvent `characters="]"`）。
   await page.evaluate(() => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "]", metaKey: true, shiftKey: true, bubbles: true }));
   });
-  await page.waitForTimeout(80);
-
-  await expect(activeTab(page)).toHaveText("beta.md");
+  await expect(activeTab(page)).toHaveText("alpha.md");
+  await expect(page.locator(".cm-content")).toContainText("甲篇正文");
 });
