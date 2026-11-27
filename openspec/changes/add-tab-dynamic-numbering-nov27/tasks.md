@@ -32,3 +32,8 @@
 - [x] 5.1 Harness 持焦改用 `activeDocPane()` 命令目标口径；真实装配用例覆盖先持焦后按住、按住后开关面板、⌘1 与焦点不变，旧红/新绿落 `review-fixes/`
 - [x] 5.2 CGEvent down 调用前登记侧别；执行器故障注入证明丢回执后 finally 仍发同侧 up，旧红/新绿落 `review-fixes/`
 - [x] 5.3 复跑相关单测、浏览器、验收执行器/驱动与 quick，更新 rebased-readiness 与最终 tip；独立 K3 复核、完整视觉与真机仍归后续
+
+## 6. 完整 visual 的既有键位合同返修
+
+- [x] 6.1 将 typography「键位通路唯一」升级为精确三条职责：统一分发、Escape 安全消费、Meta 瞬态视觉；保留 ⌘= 一档与 Escape 功能判据，新增 Meta 不消费/不分发/不改文档或焦点与最后实例解绑回归
+- [x] 6.2 对第四监听、Meta 消费/序号/副作用/粘住与解绑遗漏逐条反向必红并恢复绿；相关 spec、前端全量与 quick 通过，结果写入 rebased-readiness

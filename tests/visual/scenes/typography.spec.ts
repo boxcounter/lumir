@@ -469,20 +469,18 @@ test("焦点在左栏文件树上：⌘= 同样命中（作用域 global）", as
   expect(await contentFontSize(page)).toBe(BASE_FONT_SIZE);
 });
 
-test("键位通路唯一：一条分发器 + 一条 Escape 安全消费者（两者职责由功能判据分开）", async ({ page }) => {
+test("键位通路职责闭合：统一分发 + Escape 安全消费 + Meta 瞬态视觉状态（恰好三条）", async ({ page }) => {
   await countWindowKeydownListeners(page);
   await open(page);
   const listeners = await page.evaluate(() => [...((window as never as { __windowKeydownListeners: string[] }).__windowKeydownListeners ?? [])]);
   // Tauri 的 webview 缩放热键（zoom_hotkeys_enabled）正是 window 级 keydown 监听：启用它，
   // 这里是「同一物理键两条**分发**路径」。
   //
-  // 2026-10-25（change fix-escape-overlay-close-oct24，tower 批准 A）：Esc 合同要求在统一分发器
-  // **之后**再挂一条 window 冒泡监听作**安全消费者**（`src/escape-router.ts` 的
-  // `installEscapeRouter`：非 Escape 立刻返回；Escape 只在「没人消费」时 `preventDefault` + 关
-  // 最上层）。「必须最后装」只能靠第二条监听实现，因此条数由 1 变 2 是**合同要求**，不是新增
-  // 分发路径。旧判据（条数恒等于 1）因此过时——但不能只把 1 改成 2（那等于改测试就过关）：
-  // 下面两条功能判据分别钉住「分发仍唯一」与「第二条只做安全消费」。
-  expect(listeners.length, `窗口级 keydown 监听：${listeners.join(", ")}`).toBe(2);
+  // 三条职责互不替代：统一分发器、最后挂的 Escape 安全消费者、按住 Meta 的瞬态视觉状态。
+  // Escape 监听来自 `installEscapeRouter`（非 Escape 立刻返回；只在没人消费时关最上层）；
+  // Meta 监听来自 `subscribeCommandInput`，只更新 window 共享的物理修饰键集合。
+  // 精确等于 3 而非 ≥3：任何第四条监听都会在这里判红。下面的功能判据再逐条分开三者职责。
+  expect(listeners.length, `窗口级 keydown 监听：${listeners.join(", ")}`).toBe(3);
 
   // ① 分发仍唯一：⌘= 只放大一档（15 → 17）。若第二条监听也分发键位，这里会变成两档（19）。
   await page.locator(".cm-content").click();
@@ -498,6 +496,33 @@ test("键位通路唯一：一条分发器 + 一条 Escape 安全消费者（两
     "无层 Escape 不移动焦点（消费者只消费默认行为）",
   ).toBe(true);
   await expect(page.locator(".lumir-harness"), "无层 Escape 不打开任何层").toBeHidden();
+
+  // ③ Meta 监听只做瞬态视觉状态。一次性观测器装在全部产品监听之后：能读到事件证明没有
+  // stopImmediatePropagation；defaultPrevented=false 证明 Meta 没被消费。它只观测一次，随后自动解绑。
+  await page.evaluate(() => {
+    const w = window as never as { __metaKeyObservation?: { defaultPrevented: boolean } };
+    window.addEventListener("keydown", (event) => {
+      w.__metaKeyObservation = { defaultPrevented: event.defaultPrevented };
+    }, { once: true });
+  });
+  const documentBefore = await readDocument(page);
+  const focusBefore = await page.evaluate(() => (document.activeElement as HTMLElement | null)?.className ?? "");
+  const activeBefore = await page.locator(".tab.is-active .tab-name").textContent();
+  await page.keyboard.down("Meta");
+  await expect(page.locator(".tab-cmd-index:visible"), "Meta 的唯一可见结果是当前标签的瞬态序号").toHaveText(["1"]);
+  expect(
+    await page.evaluate(() => (window as never as { __metaKeyObservation?: { defaultPrevented: boolean } }).__metaKeyObservation),
+    "Meta 必须到达末端观测器且未被产品消费",
+  ).toEqual({ defaultPrevented: false });
+  expect(await contentFontSize(page), "Meta 不分发命令：字号保持 ⌘= 后的一档").toBe(17);
+  expect(await readDocument(page), "Meta 不改文档").toBe(documentBefore);
+  expect(
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.className ?? ""),
+    "Meta 不改焦点",
+  ).toBe(focusBefore);
+  expect(await page.locator(".tab.is-active .tab-name").textContent(), "Meta 不切换标签").toBe(activeBefore);
+  await page.keyboard.up("Meta");
+  await expect(page.locator(".tab-cmd-index:visible"), "松开后瞬态序号立即撤下").toHaveCount(0);
 });
 
 // ---------------------------------------------------------------------------

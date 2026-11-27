@@ -777,7 +777,7 @@ test("Command 序号：按住时重绘与增减标签仍按最新顺序；只读
   assert.deepEqual(commandIndexes(rig), ["1", "2"]);
 });
 
-test("Command 序号：多实例只显示活跃 pane；切换后两侧同步，不跨 pane", () => {
+test("Command 序号：多实例只显示活跃 pane；最后实例销毁解绑且后续 Meta 不复活", () => {
   let activePane = 1;
   const a = session("a.md");
   const b = session("b.md");
@@ -802,4 +802,8 @@ test("Command 序号：多实例只显示活跃 pane；切换后两侧同步，�
   assert.equal(right.mount.classes.has("is-cmd-held"), false);
   left.tabs.dispose();
   assert.equal(left.env.window.listeners.get("keydown")?.length, 0, "最后一个实例销毁后解绑");
+  left.env.window.fire("keydown", metaEvent("MetaRight"));
+  assert.equal(left.mount.classes.has("is-cmd-held"), false, "最后销毁后的 Meta 不得复活旧实例");
+  assert.equal(right.mount.classes.has("is-cmd-held"), false);
+  assert.equal(left.env.window.listeners.get("keydown")?.length ?? 0, 0, "销毁后的 Meta 不得重新注册监听");
 });
