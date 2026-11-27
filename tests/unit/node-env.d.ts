@@ -65,6 +65,7 @@ declare module "node:url" {
 
 declare var process: {
   version: string;
+  env: Record<string, string | undefined>;
   exitCode?: number;
   exit(code?: number): never;
 };

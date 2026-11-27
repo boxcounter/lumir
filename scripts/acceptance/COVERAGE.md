@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：312
-- 验收项（不同 item 编号）：279
-- 分档：core 32 / full 270 / bundle 5 / evidence 5（full 批 = 全部 312 个，含其余各档）
+- 场景：313
+- 验收项（不同 item 编号）：280
+- 分档：core 32 / full 271 / bundle 5 / evidence 5（full 批 = 全部 313 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -297,3 +297,4 @@
 | 886 | `886-harness-web-mode-unsupported`<br>`886b-harness-web-no-fabricated-evidence` | Web 不支持的模式失败关闭：web_mode_unsupported、无批准卡、无徽标、零读数<br>Web 失败不伪造证据读数：未配置 provider 无徽标、五字段不渲染 | full<br>full |
 | 887 | `887-harness-withdraw-restored-session` | 恢复旧会话后撤回最近一条用户消息：删的是恢复来源、再恢复不复活 | full |
 | 888 | `888-list-line-indent` | 列表行缩进的行模型——6 行多选 Shift+Tab 逐行凸排（正向 / 反向同一结果）、未选中的首行与子项逐字节不动、一次撤销还原 | full |
+| 889 | `889-markdown-visible-width` | Markdown 不折行可见窗口：正文横滚不越出阅读栏、行尾可达、全选复制不含 chrome、源文件零改写 | full |
