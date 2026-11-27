@@ -29,13 +29,20 @@
 ## 3. 验证
 
 - [x] 3.1 `bash scripts/gate.sh quick` → `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0。
-- [x] 3.2 目标视觉 + 全量视觉：结构 10/10；全量 `1937 passed / 13 skipped / 1 failed`（失败为
-      `markdown-editing-stability` 的 teardown flake，单跑 142/142 绿；无像素差异，未更新基线）。
-      读数与归因见 `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/withdraw-scope-feedback-nov27/visual-and-verification.md`。
-- [x] 3.3 `node scripts/docs-check.sh`（quick 内）。
-- [x] 3.4 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`（quick 内）。
+- [x] 3.2 目标视觉（结构层，r2 tip）：**13/13**（含双激活源两种退出顺序、尾部通知整段不预览、
+      预览期间到达通知立即撤下）；原始日志
+      `.local/reviews/withdraw-scope-feedback-nov27/target-visual-r2-green.log`。
+      r1 历史读数（仅归因，不构成当前状态）：全量 `1937 passed / 13 skipped / 1 failed`，唯一失败为
+      `markdown-editing-stability` 的 teardown flake（`Target page, context or browser has been
+      closed`），单跑该 spec 142/142 绿；r2 最终完整视觉见 3.7。
+- [x] 3.3 `bash scripts/docs-check.sh`（quick 内 + 归档前复跑）。
+- [x] 3.4 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`（quick 内 + 归档前复跑）。
 - [x] 3.5 `node scripts/acceptance/run.mjs --check` → 312 场景静态校验通过。
-- [ ] 3.6 真机执行 882 / 887（由主会话跑，本 mission 只交场景改动与自验证读数）。
+- [x] 3.6 真机（新 tip `a62b7df1`）：882 PASS 15 断言 / 887 PASS 17 断言，2/2 PASS；
+      证据 `.local/acceptance/2026-11-27-withdraw-scope-feedback-r2/`（`summary.md` 与各场景
+      `status.txt`）。
+- [x] 3.7 **最终完整视觉**：`bash scripts/gate.sh visual` → `GATE RESULT: 15/15 PASS（SKIP 0）`，
+      exit 0；`visual-regression` 1375s，无像素差异，未更新基线。
 
 ## 4. r2：独立终审 P2 修复
 
@@ -49,4 +56,5 @@
       通知未拦截、appendNotice 未撤预览；日志见 `.local/reviews/withdraw-scope-feedback-nov27/`）。
 - [x] 4.5 复跑目标视觉、`pnpm test`、quick，原始日志保存到
       `.local/reviews/withdraw-scope-feedback-nov27/`（不跑全量 visual / 真机，主会话在最终 tip 上跑）。
-- [ ] 4.6 主会话在新 tip 上复跑真机 882 / 887（旧证据不冒充新 tip）。
+- [x] 4.6 主会话在新 tip `a62b7df1` 复跑真机 882 / 887：2/2 PASS（882 15 断言、887 17 断言；
+      `.local/acceptance/2026-11-27-withdraw-scope-feedback-r2/`，summary.md 与各场景 status.txt）。

@@ -91,3 +91,51 @@
   `887-harness-withdraw-restored-session.md`（读屏名对账；882 加 hover 预览证据）。
 - **视觉基线**：预期不产生整页 / 元素像素差异（非 hover 帧零变化）；若产生，候选放
   `.local/reviews/withdraw-scope-feedback-nov27/`，不更新基线。
+
+## 节点 2：归档记录（2026-11-27）
+
+### 归档前（五要件）
+
+1. **方案已批准**：节点 1 Alex 2026-11-27 采纳「撤回可感知性改进」，批准边界为：不常驻、仍在
+   hover / focus 显示；按钮不放大、改小型撤销图标；读屏名「撤回这一轮」；提示完整后果且避免
+   「后续回答」；工具副作用不回撤与二次确认保留；hover / 键盘聚焦时对将被移除的消息、回答与
+   工具记录做零布局影响的共同预览；Esc / 移出 / 失焦 / 切换会话 / 在途变化清理；成功 toast 同
+   口径。r2 两项 P2（双激活源、尾部通知不预览）均在该边界内，无静默扩 scope；实现期未改后端
+   权限 / 通知语义，未改复制钮与 20×20 命中区（后者归后续 change）。
+2. **独立 reviewer clean / merge**：K3 r2 verdict `clean/merge`，绑定
+   **`a62b7df178e53cb698826b4ea9d03de9e3d95bb9`**
+   （`.local/reviews/withdraw-scope-feedback-nov27/independent-review-r2.md`）；r1 两项 P2 均复核
+   修复，P1 / P2 / P3 无新增；四份反向必红日志与目标 spec 13/13 经 reviewer 独立复跑。
+3. **tasks 完成**：全部勾选（1.1–4.6），无放弃项。
+4. **要求的门禁与真机证据**：
+   - `bash scripts/gate.sh quick` → `GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0
+     （`.local/reviews/withdraw-scope-feedback-nov27/quick-r2.log`）；
+   - **最终完整视觉** `bash scripts/gate.sh visual` → `GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0；
+     `visual-regression` 1375s，无像素差异，未更新任何基线；
+   - 目标视觉 13/13（`target-visual-r2-green.log`）；`pnpm test` 2195 passed / 0 failed
+     （`unit-r2.log`）；`acceptance --check` 312 场景（`acceptance-check-r2.log`）；
+   - 真机（新 tip `a62b7df1`）：882 PASS 15 断言 / 887 PASS 17 断言，2/2 PASS
+     （`.local/acceptance/2026-11-27-withdraw-scope-feedback-r2/`，summary.md 与各场景
+     `status.txt`）。
+5. **规格对账无丢段 + 队列唯一（归档前读数）**：`npx --yes @fission-ai/openspec@1.12.0
+   validate --all --strict` → 39 passed / 0 failed；`node scripts/openspec-archive-check.mjs` →
+   PASS（扫过 9 份 delta，8 条 MODIFIED，对比 172 段，无静默丢段；归档队列 1 项已完成 change
+   均有唯一条目）；`bash scripts/docs-check.sh` → PASS；`docs/backlog.md` 归档跟踪队列本 change
+   有且仅有一条。
+
+### 状态
+
+- **视觉候选**：无需新基线。原因：非 hover / focus 帧零像素变化；预览只加 `outline` + 背景，
+  不参与布局；最终完整视觉 15/15 PASS、无像素差异。
+- **implemented**：是（代码 tip `a62b7df1`）。
+- **released**：否——本批不打包 / 不发布。
+- **machine PASS**：是（quick 13/13、完整 visual 15/15、目标视觉 13/13、单测 2195、acceptance
+  312、validate 39/39、docs-check PASS）。
+- **native PASS**：是（882 PASS 15 断言 / 887 PASS 17 断言，新 tip）。
+- **archived**：待归档（归档后回填提交与审计读数）。
+
+### 归档后
+
+- 归档提交：`<待回填>`
+- 包装器输出：`<待回填>`
+- `--archived` 审计：`<待回填>`
