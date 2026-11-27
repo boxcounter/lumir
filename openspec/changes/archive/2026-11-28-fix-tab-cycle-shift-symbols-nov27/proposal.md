@@ -56,7 +56,16 @@
 | released | 否 | 本批不打包（无发布动作） |
 | machine PASS | 是 | 完整 visual `GATE RESULT: 15/15 PASS（SKIP 0）` exit 0（1993 passed / 13 skipped / 0 failed，1410s）；quick `13/13 PASS` exit 0（单测 2196/2196）；目标单测 84/84 |
 | native PASS | 是（注入通道） | 场景 45 PASS 27.4s / 52 断言（`.local/acceptance/2026-11-28-tab-navigation-keys-final/`）；物理键盘 dogfood 待 Alex（已知边界） |
-| archived | 否：待归档 | 归档提交 hash 与 `--archived` 读数在归档后追加 |
+| archived | 是 | 归档提交 `3d2bf0cc`；`--archived` PASS（1 条 MODIFIED / 13 段 / 人工恢复 0 / 声明认领 0） |
+
+### 归档后记录
+
+- 归档目录：`openspec/changes/archive/2026-11-28-fix-tab-cycle-shift-symbols-nov27/`。
+- 包装器 `node scripts/openspec-archive.mjs fix-tab-cycle-shift-symbols-nov27`：`keymap-commands: ~ 1 modified`
+  （Totals `+ 0, ~ 1, - 0`）；归档后修链 **0 处**（4 篇 Markdown / 0 条相对链接）；
+  `openspec-links` PASS（716 条相对链接全部可达）。
+- `node scripts/openspec-archive-check.mjs --archived fix-tab-cycle-shift-symbols-nov27`：**PASS**
+  （1 条 MODIFIED，对比 13 段；人工恢复 0 段，声明认领 0 段）。
 
 ## Why
 
