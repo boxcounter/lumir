@@ -87,3 +87,34 @@ selection / focus / IME 都不改变任何行的行盒；语义变化（标题 /
 - **文档**：`docs/specs/lists.md`、`docs/specs/design-tokens-v1.md`。
 - **视觉基线**：普通 Markdown 整页基线会出现 8px 级重排；候选截图与清单见审阅页与交付说明，待 Alex 过目后
   由基线更新流程处理。
+
+## 节点 2：归档记录（2026-11-27，独立评审 + 机器判据放行）
+
+### 归档前（五要件）
+
+1. **方案已批准**：节点 1 Alex 原话「采纳。请你安排。」（2026-11-27）；实现期两次视觉裁决同样有原话——
+   13 张基线「接受。可以安排。」、追加 4 张「批准追加的4张基线」。实现期无静默扩 scope：改动面 =
+   「What Changes」五条 + 上述获批准的基线更新 + 场景 100 判据修正（test-only）。
+2. **独立 reviewer clean / merge**：K3 终审 **clean/merge**，绑定 tip
+   `727810e057fe68e01e2a181d0bd1b43445571469`（评审输出见主会话任务 `agent-kki23yuu`）。评审要点：
+   17 张基线 SHA-256 **17/17** 与审阅候选一致；`visual-full-approved.log` = 1935 passed / 0 failed /
+   13 skipped；`gate-quick-approved.log` 的 `GATE RESULT: 13/13 PASS（SKIP 0）`；两项 P3 已修。
+3. **tasks 完成**：全部勾选（1.1–5.5），无放弃项。
+4. **要求的门禁与真机证据**：
+   - `scripts/gate.sh quick` → `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0
+     （`.local/reviews/empty-line-height-nov27/evidence/gate-quick-approved.log`）；
+   - 完整像素视觉（`bash scripts/visual/run.sh`，非 STRUCTURAL）→ **1935 passed / 0 failed /
+     13 skipped（22.4m）**，退出码 0（同目录 `visual-full-approved.log`）；
+   - `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → 39 passed / 0 failed；
+   - `bash scripts/docs-check.sh` → PASS；
+   - 真机场景 100（含用例 5/6）r2 → **PASS：39 条断言 / 0 失败**，
+     `.local/acceptance/2026-11-27-empty-line-height-r2/`（首轮 END 无 bbox 失败 → test-only 改判
+     编辑器 `AXTextArea` 后通过；产品代码未动）；
+   - 视觉基线：13 + 4 张均经 Alex 批准，逐张与审阅候选 SHA-256 一致（**17/17**）。
+5. **规格对账无丢段（归档前读数）**：`node scripts/openspec-archive-check.mjs` 门禁模式 **PASS**
+   （扫过 9 份 delta，8 条 MODIFIED，对比 117 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目）；
+   `validate --all --strict` 39/39；`docs/backlog.md` 归档跟踪队列本 change 唯一条目。
+
+### 归档后
+
+（归档执行后在本块追加：归档提交 hash、包装器输出、修链读数与 `--archived` PASS。）
