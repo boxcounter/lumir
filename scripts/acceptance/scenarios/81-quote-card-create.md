@@ -41,23 +41,69 @@ steps:
         ax: { has: "/AXButton \\(发送\\)/" }
       - label: composer 内的卡片带出处行（文档名 · 最近一级标题）
         ax: { has: "harness-quote.md · 摘录卡片验收" }
-      - label: 卡片摘录原文进了 composer（选区那几行的正文在卡片里）
-        ax: { has: "/AXTextArea = \"Q[A-Z]+ (甲|乙|丙)段/" }
       - label: chip 走「仅路径」形态（消息携带卡片时跳过视口注入）
         ax: { has: "上下文：harness-quote.md" }
       - label: 卡片带 × 移除钮（composer 形态；读屏名 D371）
         ax: { has: "/AXButton \\(移除摘录\\)/" }
       - shot: 02-卡片入composer
 
-  - name: 点 × 移除钮（卡片按整体作用移除）
-    do: click
+  - name: 把卡后文本 q81 置入剪贴板
+    do: clipboardText
+    text: "q81"
+  - name: ⌘V 贴入卡后文本（cgevent 真键盘事件；让 AXTextArea.value 可读且进入 composer 模型）
+    do: key
+    key: "cmd+v"
+    channel: cgevent
+    expect:
+      - label: 卡片摘录进了 composer 且位于文本前；编辑器原文不参与 scoped 判序，卡片文本不进 value
+        ax: { scope: { role: AXGroup, name: "问点什么" }, order: ["QALPHA 甲段", "q81"], notInValue: "QALPHA 甲段" }
+
+  - name: 记录编辑器原文基线（× 不得误触父卡跳转或编辑）
+    do: recordEditor
+    as: quote-before-remove
+
+  - name: × 的真实几何达到 28×28（change improve-harness-action-targets-nov27）
+    do: settle
+    expect:
+      - geom: { target: { role: AXButton, name: "移除摘录" }, minWidth: 28, minHeight: 28 }
+
+  - name: 真实指针点 × 中心（CGEvent mode=1，非 AXPress）
+    do: doubleClick
     target: { role: AXButton, name: "移除摘录" }
+    mode: 1
+    dx: 0.5
+    dy: 0.5
     expect:
       - label: 卡片被整体移除（出处行从 composer 消失）
         ax: { not: "harness-quote.md · 摘录卡片验收" }
       - label: 移除后 chip 回到「视口」形态（卡片没了 ⇒ 视口注入恢复，装配层读数）
         ax: { has: "/上下文：harness-quote\\.md · 视口 \\d+–\\d+ 行/" }
-      - shot: 03-移除后
+      - label: 编辑器原文未变（× 没有进入父卡编辑 / 跳转副作用）
+        editor: { unchangedSince: quote-before-remove }
+      - shot: 03-中心移除后
+
+  - name: ⌘Z 恢复卡片（composer 共享 history；cgevent 真键盘事件）
+    do: key
+    key: "cmd+z"
+    channel: cgevent
+  - name: 等卡片恢复
+    do: waitFor
+    waitFor:
+      has: ["harness-quote.md · 摘录卡片验收"]
+    timeoutMs: 10000
+
+  - name: 真实指针点 × 左缘透明区（bbox 左缘向内 4%，不是 AXPress）
+    do: doubleClick
+    target: { role: AXButton, name: "移除摘录" }
+    mode: 1
+    dx: 0.04
+    dy: 0.5
+    expect:
+      - label: 透明边缘也只移除卡片（出处行消失）
+        ax: { not: "harness-quote.md · 摘录卡片验收" }
+      - label: 边缘点击后编辑器原文仍未变
+        editor: { unchangedSince: quote-before-remove }
+      - shot: 04-边缘移除后
 ---
 
 # 摘录卡片 ① 选区 → 浮动钮 → 卡片入 composer

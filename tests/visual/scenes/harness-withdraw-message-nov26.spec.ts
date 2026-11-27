@@ -322,11 +322,16 @@ test("撤回入口：小型图标 + 读屏名「撤回这一轮」+ 悬停提示
   await expect(btn.locator("svg")).toHaveCount(1);
   await expect(btn).toHaveAttribute("aria-label", "撤回这一轮");
   await expect(btn).toHaveAttribute("title", "撤回这条消息和它引发的回答、工具记录；原文回到输入框");
-  // 不放大入口：维持原按钮高度，宽度不超过旧文字钮（24px）。
+  // 三层尺寸：实际命中盒 28×28；可见底板仍是 20×20，不恢复旧文字钮。
   const box = await btn.boundingBox();
   expect(box).not.toBeNull();
-  expect(box!.height).toBeLessThanOrEqual(20);
-  expect(box!.width).toBeLessThanOrEqual(24);
+  expect(box!.height).toBeCloseTo(28, 1);
+  expect(box!.width).toBeCloseTo(28, 1);
+  const plate = await btn.evaluate((el) => {
+    const style = getComputedStyle(el, "::before");
+    return { width: parseFloat(style.width), height: parseFloat(style.height) };
+  });
+  expect(plate).toEqual({ width: 20, height: 20 });
 });
 
 test("撤回预览：用户消息 + 回答 + 工具记录共同高亮，前缀不亮且不改变布局", async ({ page }) => {

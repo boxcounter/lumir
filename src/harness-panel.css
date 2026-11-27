@@ -1941,20 +1941,25 @@
 }
 
 /* ── 消息复制钮（M347）：hover 浮现在消息右上角与 who 行同高（键盘可达：focus 也显形）。
-   复制源 = Markdown 源文本 / 发送前原始输入，非渲染后 HTML（源经 copySources 单挂）。 ── */
+   复制源 = Markdown 源文本 / 发送前原始输入，非渲染后 HTML（源经 copySources 单挂）。
+   三层尺寸：14px 图标 / 24×20 可见底板 / 28×28 真实命中盒；命中盒向既有消息留白扩展。 ── */
 .lumir-hp-msg {
   position: relative;
 }
 .lumir-hp-copy {
   position: absolute;
-  top: 0;
+  top: -8px;
   right: 0;
-  min-width: 24px;
-  height: 20px;
-  padding: 0 var(--sp-1);
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 4px 8px 0;
   border: none;
-  border-radius: var(--r4);
-  background: var(--agent-bg);
+  background: none;
   color: var(--text-3);
   font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
   line-height: 1;
@@ -1962,41 +1967,80 @@
   opacity: 0;
   transition: opacity var(--dur-ui) var(--ease-standard);
 }
+.lumir-hp-copy::before {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 24px;
+  height: 20px;
+  border-radius: var(--r4);
+  background: var(--agent-bg);
+  pointer-events: none;
+}
+.lumir-hp-copy svg {
+  display: block;
+  flex: none;
+  pointer-events: none;
+}
 .lumir-hp-msg:hover .lumir-hp-copy,
 .lumir-hp-copy:focus-visible {
   opacity: 1;
 }
 .lumir-hp-copy:hover {
   color: var(--text);
+}
+.lumir-hp-copy:hover::before {
   background: var(--hover);
 }
 .lumir-hp-copy.is-copied {
+  width: auto;
+  padding: 0 var(--sp-1) 8px;
   color: var(--ok);
   opacity: 1;
+  white-space: nowrap;
+}
+.lumir-hp-copy.is-copied::before {
+  left: 0;
+  width: auto;
 }
 
-/* ── 撤回钮（change add-harness-message-withdraw-nov26；clarify-harness-withdraw-scope-nov27
-   收成小型撤销图标）：落在复制钮左侧，只在最后一条用户消息 hover / 入口 focus 才显形
-   （非 hover 帧零像素变化）。图标钮不放大（20×20，比旧文字钮更窄），在途置灰并提示「先停止
-   本轮」——停止与撤回是两个动作。 */
+/* ── 撤回钮：保留 12px 撤销图标与 20×20 可见底板，真实命中盒独立扩为 28×28。
+   只在最后一条用户消息 hover / 入口 focus 才显形；复制 success 变宽时经 --lumir-hp-copy-hit-w
+   向左让位。双激活源预览、tail notice 不预览与在途 disabled 语义不变。 */
 .lumir-hp-withdraw {
   position: absolute;
-  top: 0;
-  right: 30px;
+  top: -8px;
+  right: calc(var(--lumir-hp-copy-hit-w, 28px) + 2px);
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0 8px 8px 0;
   border: none;
-  border-radius: var(--r4);
-  background: var(--agent-bg);
+  background: none;
   color: var(--text-3);
   line-height: 1;
   cursor: pointer;
   opacity: 0;
   transition: opacity var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-withdraw::before {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r4);
+  background: var(--agent-bg);
+  pointer-events: none;
+}
+.lumir-hp-withdraw svg {
+  flex: none;
+  pointer-events: none;
 }
 .lumir-hp-msg:hover .lumir-hp-withdraw,
 .lumir-hp-withdraw:focus-visible {
@@ -2004,6 +2048,8 @@
 }
 .lumir-hp-withdraw:hover:not(:disabled) {
   color: var(--text);
+}
+.lumir-hp-withdraw:hover:not(:disabled)::before {
   background: var(--hover);
 }
 .lumir-hp-withdraw:disabled {
@@ -2246,49 +2292,72 @@
 }
 .lumir-hp-qc-x {
   position: absolute;
-  top: var(--sp-1);
-  right: var(--sp-1);
-  width: 16px;
-  height: 16px;
+  top: 0;
+  right: 0;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: none;
-  border-radius: var(--r4);
   display: flex;
   align-items: center;
   justify-content: center;
   background: none;
   color: var(--text-3);
-  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
+  font-size: calc(14px * var(--lumir-hp-scale, 1));
   line-height: 1;
   cursor: pointer;
 }
-.lumir-hp-qc-x:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-/* 图片卡片的动作区（change composer-image-mention design §8）：`@`（插入引用）在左、既有 `×`
-   （移除）在右，两钮恒显（裁决点 5 的 A）。容器承担绝对定位（右上角，与既有 `×` 同位）；容器
-   内的 `×` 回到静态排布——它是最右子元素，视觉位置与既有一致。既有引用卡片仍用裸
-   `.lumir-hp-qc-x`（不在此容器内），可见行为不变。 */
-.lumir-hp-qc-actions {
+/* 真实按钮是 28×28；::after 只画 16×16 可见底板，::before 继续承担既有 data-glyph。
+   glyph 与底板不吞指针，透明区也归按钮自身。 */
+.lumir-hp-qc-x::after,
+.lumir-hp-qc-at::after {
+  content: "";
   position: absolute;
-  top: var(--sp-1);
-  right: var(--sp-1);
-  display: flex;
-  align-items: center;
-  gap: var(--sp-1);
-}
-.lumir-hp-qc-actions .lumir-hp-qc-x {
-  position: static;
-}
-/* 「插入引用」钮（`@` 形态）：复用 `×` 的尺寸与 hover 样式族（design §8），不改既有 `×` 的可见
-   行为。 */
-.lumir-hp-qc-at {
+  top: 2px;
+  right: 2px;
   width: 16px;
   height: 16px;
+  border-radius: var(--r4);
+  background: none;
+  pointer-events: none;
+}
+.lumir-hp-cwidget .lumir-hp-qc-at::before,
+.lumir-hp-cwidget .lumir-hp-qc-x::before {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+}
+.lumir-hp-qc-x:hover {
+  color: var(--text);
+}
+.lumir-hp-qc-x:hover::after {
+  background: var(--hover);
+}
+/* 图片卡片的 @ 在左、× 在右，两钮恒显。28px 命中槽之间保留 2px；视觉 glyph 不随之放大。 */
+.lumir-hp-qc-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.lumir-hp-qc-actions .lumir-hp-qc-x {
+  position: relative;
+}
+.lumir-hp-qc-at {
+  position: relative;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: none;
-  border-radius: var(--r4);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2300,8 +2369,25 @@
   cursor: pointer;
 }
 .lumir-hp-qc-at:hover {
-  background: var(--hover);
   color: var(--text);
+}
+.lumir-hp-qc-at:hover::after {
+  background: var(--hover);
+}
+/* 命中槽占住自己的水平空间，不盖可见内容；transcript 无动作钮，保持原 padding。
+   CM 的 flex item 默认 min-width:auto，窄 pane 下必须由这条链路允许收缩，否则卡片会把动作送出视口。 */
+.lumir-hp-composer .cm-content,
+.lumir-hp-cwidget,
+.lumir-hp-cwidget > .lumir-hp-qcard {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+}
+.lumir-hp-cwidget > .lumir-hp-qcard {
+  padding-right: 28px;
+}
+.lumir-hp-cwidget > .lumir-hp-imgcard {
+  padding-right: 58px;
 }
 /* 编号徽标（design §8）：缩略图左上角的小圆角徽标，内容是裸编号 `1` / `2`。压在图上的纯读数，
    不参与指针（pointer-events: none）——点击穿透到缩略图。反色底（--text 底 + --content-bg 字）在任意
