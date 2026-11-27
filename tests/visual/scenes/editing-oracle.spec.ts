@@ -1142,36 +1142,42 @@ test("正文 IME 大文档：解析未完成时组合结束走有界恢复并最
 
 test("IME 组合结束越过 4s 截止后仍低频恢复 marker 且不重复（Chromium）", async ({ page }) => {
   await page.addInitScript(() => {
-    const real = window.setTimeout;
-    (window as unknown as { __timerDelays: number[] }).__timerDelays = [];
+    const realSetTimeout = window.setTimeout;
+    const realNow = performance.now.bind(performance);
+    let offset = 0;
+    let advanced = false;
+    (window as unknown as { __settleDelays: number[] }).__settleDelays = [];
+    Object.defineProperty(performance, "now", { configurable: true, value: () => realNow() + offset });
     window.setTimeout = ((callback: TimerHandler, delay?: number, ...args: unknown[]) => {
-      (window as unknown as { __timerDelays: number[] }).__timerDelays.push(delay ?? 0);
-      return real(callback, delay, ...args as []);
+      const source = typeof callback === "function" ? callback.toString() : "";
+      if (/settleStep/.test(source)) {
+        (window as unknown as { __settleDelays: number[] }).__settleDelays.push(delay ?? 0);
+        // beginSettle 先记 settleStarted、再排这一拍 0ms 首拍；把时钟推过 4s 必须在
+        // 首拍回调执行前。不能按「compositionend 后等 N ms 再推进」：WebKit 下
+        // beginSettle 晚于任何固定壁钟窗口都可能发生（scheduleCompositionSettle 要等
+        // pending MutationRecord 与 compositionStarted 归位，最长 25×8ms），此时
+        // settleStarted 已落在假时钟之后，elapsed 永远到不了 4000ms。
+        if ((delay ?? 0) === 0 && !advanced) {
+          advanced = true;
+          offset += 5000;
+        }
+      }
+      return realSetTimeout(callback, delay, ...args as []);
     }) as typeof window.setTimeout;
   });
   await openBody(page, "oracle.md", "- a");
   await expect(page.locator(".cm-lp-list-marker")).toHaveCount(1);
   await setBodyCaret(page, 3);
-  // 用可控时钟把 settle 的 elapsed 推过 4s，确定性进入低频分支（不真等 4s）。
-  await page.evaluate(() => {
-    const realNow = performance.now.bind(performance);
-    let offset = 0;
-    (window as unknown as { __advanceImeClock(ms: number): void }).__advanceImeClock = (ms: number) => { offset += ms; };
-    Object.defineProperty(performance, "now", { configurable: true, value: () => realNow() + offset });
-  });
-  const probe = await page.locator(".cm-content").evaluate(async (el, length) => {
+  const probe = await page.locator(".cm-content").evaluate((el, length) => {
     const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
-    // 2MB 文档：20ms 时解析一定还没覆盖末尾，保证下一拍进入 deadline 分支。
+    // 1.2MB 文档：首拍（0ms）时语法树一定还没覆盖末尾，保证 elapsed 已过 4s 的这一拍
+    // 必须转低频重试，而不是收束。
     const body = "\n" + "para\n\n".repeat(300000) + "- ";
     view.dispatch({ changes: { from: length, insert: body }, selection: { anchor: length + body.length } });
     el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
     const end = view.state.doc.length;
     view.dispatch({ changes: { from: end, insert: "s" }, selection: { anchor: end + 1 } });
     el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
-    // 等 deferred effect + beginSettle 捕获起点，再把时钟推过 4s：下一拍必须转低频，
-    // 而不是 cancelSettle 后停止。
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    (window as unknown as { __advanceImeClock(ms: number): void }).__advanceImeClock(5000);
     return { docLen: view.state.doc.length };
   }, 3);
   expect(probe.docLen).toBeGreaterThan(1_000_000);
@@ -1181,7 +1187,9 @@ test("IME 组合结束越过 4s 截止后仍低频恢复 marker 且不重复（C
   expect(rows.every((row) => row.markerCount <= 1), "低频恢复不得产生重复 marker").toBe(true);
   expect(rows.at(-1)?.markerText).toBe("–");
   // 低频分支确实被调度（250ms）；旧实现在 4s 后 cancel，不会出现这个延迟。
-  const delays = await page.evaluate(() => (window as unknown as { __timerDelays: number[] }).__timerDelays);
+  // 只取 settle 链自己排的定时器（回调含 settleStep），避免别处恰好出现的 250ms
+  // 定时器把断言带绿。
+  const delays = await page.evaluate(() => (window as unknown as { __settleDelays: number[] }).__settleDelays);
   expect(delays, "4s 后 MUST 转 250ms 低频恢复").toContain(250);
 });
 
