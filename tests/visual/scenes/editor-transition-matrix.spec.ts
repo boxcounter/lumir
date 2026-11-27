@@ -20,6 +20,14 @@
 // ——刚打开还没写过时桩里没有 `__fileText` 记录。
 //
 // 不可行组合（N/A）及理由在矩阵定义里，本文件不为它们写 skip：缺格由 Node 覆盖契约判红。
+//
+// 引擎：**只登记 chromium**。Playwright WebKit（真机同款 UA）下本文件的复位技术
+// （`view.setState(pristine)` 逐格复位）不可靠：同一文档、同一 caret，不做 setState 时 Enter
+// 的落点与模型一致；做了 setState 之后再按 Enter 会多出一个空行且不续行
+//（2026-11-27 探针：`intro\n1. item\n2. second` + Enter 在 WebKit 上分别为
+// `…\n2. \n3. second` 与 `…\n2. \n3. \n4. second`）。差异来自复位手法，不是产品行为，
+// 因此矩阵只跑 chromium；WebKit 的 DOM 回写形状仍由 `editing-oracle` /
+// `markdown-editing-stability` / `text-clipboard-adversarial` 的双引擎场景与验收套件覆盖。
 
 import { expect, test, type Page } from "@playwright/test";
 import { configApplied, fileText, stubTauri, type VaultFixture } from "./tauri-stub";
@@ -324,6 +332,10 @@ async function runCell(page: Page, cell: MatrixCell): Promise<void> {
       // 跨行合并：动作时被吸收行的 replace 装饰必须仍在场（reveal 只会撤下 caret 所在行）。
       await assertContextDecoration(page, fixture, "action", cell.id);
     }
+
+    // 复位后等两帧再发真实按键：`setState` 之后 DOM 的绘制是异步的，WebKit 下在
+    // 「state 已换、DOM 未画」的窗口里发 Enter 会拿到与绘制后不同的默认行为。
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 
     let actual: Reading;
     if (cell.state === "composing" || cell.state === "settling") {

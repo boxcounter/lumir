@@ -206,17 +206,29 @@ export interface MatrixCell {
   cases: MatrixCase[];
 }
 
-const CLAUSES: Record<EditContext | "selection" | "readonly" | "settling" | "composing", string> = {
+const CONTEXT_CLAUSES: Record<EditContext, string> = {
   plain: "通用编辑（`editor-live-preview`「Enter 换行与自动缩进」/「折叠光标的字素步长前删」）",
   "inline-replace": "M836 / L7 跨 replace 装饰的跨行删除；M854 跨渲染隐藏区的非空选区编辑",
   "block-replace": "M836 块级 replace 的跨行合并；M854 块级 replace 上的选区编辑；C2 指针入口",
   "list-marker": "L6 / L7 列表 marker；M860 字素前删；Enter 续行与空项退出",
   "table-cell": "M855 表格 cell 内的原生键入与单字符删除；C2 指针落点",
-  selection: "M854 非空选区统一事务（删除 / 键入替换）",
-  readonly: "只读会话 MUST NOT 产生文档变更（四段 requirement 的共同边界）",
-  settling: "组合结算窗口内动作仍按 state 判据落点，结算回调不改源码",
-  composing: "L6 组合中删除只吃 marked 区；起点再删不改文档",
 };
+
+/** 一格为什么值得测：状态 / 选区优先于上下文（同一上下文在不同态下的合同边不同）。 */
+function clauseFor(key: CellKey): string {
+  switch (key.state) {
+    case "readOnly":
+      return "只读会话 MUST NOT 产生文档变更（四段 requirement 的共同边界）";
+    case "settling":
+      return "组合结算窗口内动作仍按 state 判据落点，结算回调不改源码";
+    case "composing":
+      return "L6 组合中删除只吃 marked 区；起点再删不改文档";
+    default:
+      return key.selection === "range"
+        ? "M854 非空选区统一事务（删除 / 键入替换）"
+        : CONTEXT_CLAUSES[key.context];
+  }
+}
 
 /** 高风险族：逐个取值展开（不是 pairwise）。 */
 export interface HighRiskFamily {
@@ -358,10 +370,10 @@ export const NOT_APPLICABLE: readonly NotApplicable[] = [
   },
   {
     state: "*",
-    selection: "collapsed",
+    selection: "*",
     context: "list-marker",
     action: "pointer",
-    reason: "C2 只规定块级 replace 的指针入口；marker widget 的点击落点归手感，无机器条款",
+    reason: "C2 只规定块级 replace 的指针入口；marker widget 的点击落点归手感，无机器条款（实测点击 marker widget 不改变选区）",
   },
   // --- 合成通道无法忠实驱动（不是合同缺口） ---
   {
@@ -610,12 +622,13 @@ function casesFor(key: CellKey): MatrixCase[] {
     key.action === "pointer" ? { kind: "pointer", at: fixture.pointerAt ?? caretOf(position) } : actionFor(key.action);
   // 折叠 caret 的删除都经过 beforeinput 闸门（M860 / L7 / M855）；选区删除 / 选区键入归 M854；
   // 表格 cell 的折叠键入归 M855。其余动作（Enter / 粘贴 / 指针 / 行内折叠键入）不经过闸门。
-  const gateHandled =
-    (key.action === "deleteBackward" || key.action === "deleteForward") && key.selection === "collapsed"
-      ? true
-      : key.action === "type" && (key.selection === "range" || key.context === "table-cell")
-        ? true
-        : null;
+  let gateHandled: boolean | null = null;
+  if ((key.action === "deleteBackward" || key.action === "deleteForward") && key.selection === "collapsed") {
+    gateHandled = true;
+  }
+  if (key.action === "type" && (key.selection === "range" || key.context === "table-cell")) {
+    gateHandled = true;
+  }
 
   switch (key.state) {
     case "idle":
@@ -694,7 +707,7 @@ export function buildMatrix(): MatrixReport {
       id,
       ...key,
       highRisk,
-      clause: CLAUSES[key.state === "readOnly" ? "readonly" : key.state === "settling" ? "settling" : key.state === "composing" ? "composing" : key.selection === "range" ? "selection" : key.context],
+      clause: clauseFor(key),
       cases: casesFor(key),
     });
   };

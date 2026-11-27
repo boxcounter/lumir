@@ -16,7 +16,9 @@ MUST 至少含键入、删除（前删 / 后删）、Enter、粘贴、指针。
 
 1. **源码**：动作后的 `EditorState.doc` 逐字节等于模型期望；
 2. **选区**：`state.selection.main` 的 anchor / head 等于模型期望；
-3. **一次撤销**：一次 undo 恢复动作前的源码与选区，一次 redo 恢复动作后的状态；
+3. **一次撤销**：一次 undo 恢复动作前的源码与选区，一次 redo 恢复动作后的状态。组合期的撤销语义归 IME
+   提交事件（CodeMirror 把 `input.type.compose` 并入上一笔 changes），合成通道无法忠实复现该粒度；
+   模型对该状态给 `steps: null`（不判），矩阵 MUST 在 N/A 口径里写明理由，MUST NOT 记为通过；
 4. **非目标行不变**：动作未触及的源码行逐字节不变——删除与键入只改其目标源码区间；
 5. **渲染字形不落盘**：`⌘S` 的保存载荷逐字节等于当前 `EditorState.doc`，且源码 MUST NOT 出现
    只存在于渲染层的字形（列表 marker glyph `–` / `◦`、链接尾标 `→`）。
