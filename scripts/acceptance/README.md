@@ -1017,6 +1017,15 @@ JSONL 里的 `\n` 这类**字面反斜杠**同样不判。`file.jsonlOutput` 的
 （2026-10-25 场景 250/251 首次真跑即此形态：三条断言同时假红，看着像产品缺陷）。多项判据请拆成
 多条 `expect`；`--check` 对这种写法直接判 problem。
 
+**新断言必须做反向必红实测（2026-11-27 治理项；逐条，不是整批）**：写完后先造一个**必须让它 FAIL**
+的输入，实测判红；再恢复输入实测判绿。按断言类型选反例：节点在场性——正向断言把标记挪走，
+负向断言把标记放进一个会被匹配到的普通节点（不要放进 `AXTextArea` 的内部文本，那里本就不参与
+判定）；文本 / 文件——把目标串换成只差一字的值，或放到不该被匹配的位置；几何 / 绘制——把被测
+元素改回被祖先裁切的形态；通道——断开 / 回退被测通道（如把
+`channel: cgevent` 去掉）。两次读数（红 / 绿）进该 change 的证据；没做过反向实测的新断言不得在
+报告里写成「已验」。总口径见 [openspec-workflow.md](../../docs/process/openspec-workflow.md)
+「新断言的反向必红」。
+
 ## 证据布局（`.local/acceptance/<日期>/`，git 外）
 
 ```
@@ -1049,6 +1058,15 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
 此前用 `status !== "PASS"` 把 INVALID 并进 FAIL（M743 全量跑的头部写「FAIL 31」而 JSON 实为
 FAIL 24 / INVALID 7，finding `20261025-worker-archive-model-settings-improve-summary-md-invalid-fail-results-json-readme.md`）；
 INVALID 为 0 时该项省略。台账判据在 `lib/evidence.test.mjs`。
+
+**索引只记本次运行的断言结果**：`PASS / FAIL / INVALID` 描述该场景这一次跑得怎样，不表示 change 的
+implemented / released / machine PASS / native PASS / archived 收口状态——五态按
+[openspec-workflow.md](../../docs/process/openspec-workflow.md)「状态分列」另行记录，不得拿
+`summary.md` 的一行 PASS 代替归档记录。`status.txt = FAIL` 也不等于产品缺陷：归因按同文
+「失败与 finding 归类」四类（产品缺陷 / 测试 oracle 缺陷 / 环境 INVALID / 需求或视觉迭代）；
+只有产品缺陷计入产品 FAIL 与回归轮数。**证据可复核性**：引用旧 PASS 前先 `ls` 指针；已被清理的按
+同文「证据可复核性」写成「归档记录报告 PASS（原证据已清理，当前不可复核）」，MUST NOT 称当前可复核
+或把旧 PASS 当作现有证据。
 
 `results.json` 的每个场景行另带 `phases`（毫秒）：`reset`（复位）/ `stop`（退出旧实例）/
 `launch`（进程启动）/ `ready`（就绪、恢复、钉窗与前台激活）/ `scenario`（场景动作，含场景内

@@ -21,3 +21,18 @@
 - 影响的 specs：<capability 列表>
 - 影响的代码/系统：<概述，不写实现细节>
 - 关联约束：<触及的 ADR 条目，如性能合同、铁律>
+
+## 节点 2：归档记录（实现完成后填写）
+
+口径见 [openspec-workflow.md](../openspec-workflow.md)「状态分列」与「失败与 finding 归类」；
+五要件与归档后强制完成步骤照 workflow 正文逐条填写。
+
+| 状态 | 值 | 证据指针 |
+|---|---|---|
+| implemented | 是 / 否 | 〔commit hash；已合并写 merge hash〕 |
+| released | 是 / 否 / 不适用 | 〔版本号 + release index；本批不打包写原因〕 |
+| machine PASS | 是 / 否 / 不适用 | 〔GATE RESULT 原文行 + 退出码；或命令 + 计数 + 日志〕 |
+| native PASS | 是 / 否 / 不适用 | 〔场景 id + .local/acceptance/... 的 status.txt；无真机项写原因〕 |
+| archived | 是 / 否 | 〔归档提交 hash + --archived PASS 读数；归档前写「否：待归档」〕 |
+
+未发生项写「否」/「不适用」+ 原因，不留空；失败项按四类归因，不混算。

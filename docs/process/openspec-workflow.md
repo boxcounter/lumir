@@ -38,7 +38,7 @@ scripts/openspec-archive.mjs <id>（并入 living spec + 修链） ◄───�
 1. **方案已批准**：该 change 的节点 1 已通过（Alex 裁决原话，或整条有序链的批量裁决记录），实现期没有静默扩 scope。
 2. **独立 reviewer 结论 clean / merge**：由非作者的 assigned reviewer 评审，结论 `clean`（无 P1 / P2 findings）且合并建议 `merge`，并绑定当前分支 tip——tip 之后有任何改动须重新评审。
 3. **tasks 完成或有放弃理由**：`tasks.md` 全部勾选；未勾项就地写明放弃理由（不删任务项、不留空勾）。
-4. **要求的门禁与真机证据通过**：该 change 声明的本地门禁（`scripts/gate.sh` 对应档）与真机验收场景 PASS；证据落 `.local/`（不落 worktree——合并后会被清理）；动过视觉的 change 另须本地像素层门禁绿。门禁红灯先修，不送 Alex。
+4. **要求的门禁与真机证据通过**：该 change 声明的本地门禁（`scripts/gate.sh` 对应档）与真机验收场景 PASS；证据落 `.local/`（不落 worktree——合并后会被清理）；动过视觉的 change 另须本地像素层门禁绿。门禁红灯先修，不送 Alex。记录时按下文「状态分列」分别写 machine PASS 与 native PASS，不互相替代；引用证据按「证据可复核性」加限定语。
 5. **规格对账无丢段（归档前读数）**：`scripts/openspec-archive-check.mjs` 门禁模式（随 `scripts/docs-check.sh` 在 PR 阶段就跑）PASS——delta 的段落相对 living 有替代、无静默删除；`validate --all --strict` PASS；归档跟踪队列有且仅有一条条目（docs-check 门禁）。delta 相对 living 逐字相同（纯目录移动）时五要件照常判，只记为「归档后预期输出 `Specs already in sync; no files changed`」。
 
 **必须找 Alex 的例外类别**（命中任一即停，不得自行归档）：
@@ -64,6 +64,35 @@ scripts/openspec-archive.mjs <id>（并入 living spec + 修链） ◄───�
 - **归档后**：在同一块追加（或在该 change 的归档跟踪条目里给指针）归档提交的 hash、包装器（`openspec archive`）的实际输出（纯目录移动记 `Specs already in sync; no files changed`）、包装器的修链读数（`归档后修链 N 处` 与逐条 `from → to`）与 `--archived <change-id>` 的 PASS 读数及时间。
 - 属有序链的写清链位置与前一环；命中例外、经 Alex 裁决后才归档的抄录原话与日期，机器放行的写「机器 + 独立评审放行（本节要件）」并列出关键读数——两种记录都不得只写「通过」。
 
+**状态分列（2026-11-27 治理项，Alex 采纳复盘建议）**：节点 2 记录、mission / 批次报告与复盘报告 MUST 把下列五个状态**分列**，各自带证据指针或写明「否 / 不适用 + 原因」；不得用一个「PASS」概括，也不得用一项代替另一项：
+
+| 状态 | 含义 | 证据（缺一不可） |
+|---|---|---|
+| implemented | 实现已提交（分支或合并后） | commit hash（已合并写 merge hash） |
+| released | 已进入发布产物 | 版本号 + release `index.md` 指针；本批不打包写「否：本批不打包」 |
+| machine PASS | 自动化门禁 / 单测 / 视觉通过 | `GATE RESULT` 原文行 + 退出码，或命令 + 计数 + 日志指针 |
+| native PASS | 真机验收场景通过 | 场景 id + `.local/acceptance/...` 的 `status.txt` 指针；无真机项写「不适用 + 原因」 |
+| archived | 已归档且 `--archived` 审计 PASS | 归档提交 hash + `--archived` 读数；归档前写「否：待归档」 |
+
+- `released` 与 `archived` 相互独立：代码进入某个版本不等于 change 已收口；归档也不等于已发布（可能随下一版）。现场：change `fix-ime-composition-selection-nov22` 的代码已随 0.15.0 发布（`.local/releases/release-0.15.0/index.md`），但 tasks 3.3 的原生 WKWebView 人工项未勾、change 仍在活跃列表。
+- `machine PASS` 与 `native PASS` 不得互相替代：chromium / 单测绿不证明 WKWebView 真机行为；真机单场景 PASS 也不代表全量门禁绿。没有某类验证项时写「不适用」+ 原因，不留空。
+- 历史记录（已完成归档、旧批次报告）不追溯改写；新写的记录按本节执行。
+
+**证据可复核性（2026-11-27 治理项）**：任何报告 / 记录引用 `.local/` 证据时，指针 MUST 在写下时可用 `ls` 列到。证据目录已被清理（`.local` 随清理轮换，见 `.local/README.md`）时，该 PASS 只能写成「**归档记录报告 PASS（原证据已清理，当前不可复核）**」，MUST NOT 写成「当前可复核」或把旧 PASS 当作现有证据引用；需要当前证据就复跑并落新的 `.local/` 指针。归档记录里的旧指针不改写（历史事实），但引用时必须带上述限定语。
+
+**失败与 finding 归类（2026-11-27 治理项）**：每条 finding、每次 FAIL 复跑、每个失败轮次在落账 / 计数前 MUST 先归入下列四类之一，写在 finding 首行或报告的该行：
+
+| 类别 | 判据 | 计数口径 |
+|---|---|---|
+| 产品缺陷 | 被测行为确实不符合合同 / 规格 | 计入产品 FAIL 与回归轮数 |
+| 测试 oracle 缺陷 | 断言判据错、断言无区分度、场景 fixture / 步骤错 | 不计产品 FAIL；修 oracle 后复跑 |
+| 环境 INVALID | 机器 / 通道 / 实例 / 权限 / 锁等本次运行无效（验收场景即 `status.txt = INVALID`） | 不计产品 FAIL；复跑 |
+| 需求或视觉迭代 | 产品语义变化、视觉偏好调整、新增功能 | 不是回归，不计失败轮数 |
+
+只有「产品缺陷」进「失败轮数 / 复发率」统计；其余三类分列，不得并进产品 FAIL。归因未定时标「待归因」并给下一步定位，不得先记成产品缺陷或 oracle 缺陷结案。批次收尾的 finding 落账率对账按本表核对类别。
+
+**新断言的反向必红（2026-11-27 治理项）**：任何新增 / 修改的断言（单测、视觉、真机）MUST 在写完后先构造一个**必须让它 FAIL** 的输入并实测判红；恢复输入后再判绿。逐条，不是整批。反例按断言类型选：节点在场性——正向断言把标记挪走，负向断言把标记放进会被匹配到的普通节点（不是编辑器内部文本）；文本 / 文件——把目标串换成只差一字的值，或放到不该被匹配的位置；几何 / 绘制——把被测元素改回被祖先裁切的形态；通道——断开或回退被测通道。两次读数（红 / 绿）进该 change 的证据；没有反向实测的新断言不得在报告里写成「已验」。真机场景的具体做法见 [scripts/acceptance/README.md](../../scripts/acceptance/README.md)「新断言必须做反向必红实测」。
+
 **首批适用现场**：权限链 `harness-permission-rules-oct23` → `readonly-allowlist-tightening-oct23` → `rg-zip-flags-dangerous-oct24`（同一 `harness` 权限 requirement 的三段 delta，后一环以前一环归档后的 living 为基线），以及共用该段 requirement 的 `add-cron-conversational-registration`（排在 `harness-permission-rules-oct23` 之后）。这条链**不再逐个走人肉节点 2**：每环按五要件放行，链序与链内例外裁决一次完成（见下节）。
 
 **存量字样**：既有 change 的 tasks / proposal / backlog 里「人肉节点 2」「待节点 2」按本节口径执行，不必为改字样单独返工（下一批自然消失）；但其中列出的**待裁事项**（如「0.3 / 0.4 待 Alex 追认」）仍是价值 / 行为裁决，照旧送 Alex。
@@ -84,9 +113,11 @@ scripts/openspec-archive.mjs <id>（并入 living spec + 修链） ◄───�
 | `proposal.md` | 是 | 提案阶段 | [templates/proposal.md](templates/proposal.md) |
 | `tasks.md` | 是 | 提案阶段（可随实现细化） | [templates/tasks.md](templates/tasks.md)。改权限 / 闸语义时必含「回扫既有验收场景的闸期望」一项（见下） |
 | `design.md` | 技术复杂时；**有原型时必填**，且须含「视觉保真」一节（见下） | 提案阶段 | — |
-| `specs/<capability>/spec.md` | 是 | 提案阶段起草，实现期可修订 | 见下方 spec 增量约定 |
+| `specs/<capability>/spec.md` | 是（纯文档 / 工具变更可省，见下） | 提案阶段起草，实现期可修订 | 见下方 spec 增量约定 |
 
 spec 增量（delta）约定：change 目录下的 `specs/<capability>/spec.md` 只写增量操作——`## ADDED Requirements` / `## MODIFIED Requirements` / `## REMOVED Requirements` / `## RENAMED Requirements`。每个 requirement 用 `### Requirement: <名称>` 起头，正文含 `SHALL`/`MUST`，且至少一个 `#### Scenario:`。archive 时这些增量并入 `openspec/specs/<capability>/spec.md` 成为 living spec。
+
+**零行为变更的例外**：不改产品行为时（流程文档、模板、开发工具），change 根放 `.openspec.yaml`（`schema: spec-driven` + `skip_specs: true`），`validate --all --strict` 接受零 delta，归档时直接移动目录。`skip_specs` 只用于零行为变更；产品行为变更 MUST NOT 用它绕过规格——是否属于例外由 proposal 的 What Changes / Impact 写明，reviewer 按此核对。首批消费者：change `govern-editor-evidence-state-nov27`（纯流程文档）。
 
 **MODIFIED 是整块替换，不是逐段合并**（2026-10-18 实测 + 对账门禁）：`openspec archive` 处理 MODIFIED requirement 时，用 delta 的同名块覆盖 living spec 里那一整条——delta 里少抄的段落会在归档时**静默消失**，`validate --all --strict` 与相对链接检查都看不见（现场：change `add-harness-chat-completions-dialect` 的「会话本地留存」漏抄一段 847 字符的既有正文，归档后从 `openspec/specs/harness/spec.md` 消失，事后人工恢复）。因此写 MODIFIED 的做法是**整条复制现行 requirement 正文再改**，不要只写「改动的那段」。
 
@@ -146,7 +177,7 @@ node scripts/openspec-archive-check.mjs --archived <change-id>
 - [ ] **归档前逐条对账**（对账口径）：tasks 勾选状态 / spec 增量 / 当前实现三者一致才归档；任务未勾但有正当理由的，先就地标注放弃原因再归档；spec 增量与实现矛盾的，**不归档**，并在 `docs/backlog.md` 说明矛盾点。其中「spec 增量没丢掉 living spec 的既有段落」由机器判据分工兜底——**归档前**由 `scripts/openspec-archive-check.mjs` 门禁模式（随 `scripts/docs-check.sh` 在 PR 阶段就跑）判 delta 有没有静默删段，**归档后**由同一脚本的 `--archived <change-id>` 判 delta 的段落是否真的落进了 living（按上文「归档后的强制完成步骤」执行，不 PASS 不算归档完成）。「节点 2 五要件」齐即由 tower 归档（默认不找 Alex），命中「必须找 Alex 的例外类别」才送裁；纯目录移动（delta 与 living 逐字相同）照跑同一套对账。
 - [ ] **归档后核对新建 capability 的 Purpose**：`archive` 会为新建的 living spec 写入占位 Purpose（`TBD - created by archiving change …`），`validate --all --strict` 会因此报红——须手写替换为「这个 capability 是干什么的」，再跑一次 validate 确认全绿。
 - [ ] **backlog 卫生（2026-10-12 Alex 裁决；2026-10-24 机器化）**：本批核销 / 裁决落地的条目**直接从 `docs/backlog.md` 删除、不留索引**（git 历史即台账；含仍在生效的长期口径时迁 `docs/specs/standing-decisions.md`）；**修复 PR MUST 同批删除对应条目、reviewer 合并前核对本批 diff 是否带删除**——不把删除留给下一批清理；条目一律一行 gist + 证据指针 + 出口，批次报告与全量回归总表只留指针；只记改变未来动作的信息（结论 / 待办 / 裁决点 / 复现口径）——过程性验证状态（「跑完、PASS」类）不入账（2026-10-16 Alex 裁决，口径见该文件头部「维护规则」）；体量红线 **80 行是硬上限、无 ratchet、无既有豁免**（Alex 2026-10-24 自 300 下调），超限由 `scripts/backlog-check.mjs` 在 docs-check 里直接报红——「已查即过」的免死口已删除；不为压行数删活条目（该删的是已完成 / 无出口的僵尸条目）。
-- [ ] **finding 落账率对账（2026-10-12 Alex 认可）**：本批 `.tower/comms/findings/` 新增文件数与 `docs/backlog.md` 新增条目数逐一核对，不等即查漏——漏落账的 finding 等于没登记。
+- [ ] **finding 落账率对账（2026-10-12 Alex 认可）**：本批 `.tower/comms/findings/` 新增文件数与 `docs/backlog.md` 新增条目数逐一核对，不等即查漏——漏落账的 finding 等于没登记。每条按上文「失败与 finding 归类」标类别；只有产品缺陷进失败轮数，oracle 缺陷 / 环境 INVALID / 需求或视觉迭代分列，不混算。
 - [ ] **复发对账（2026-10-17 Alex 裁决）**：本批踩的坑若命中 REVIEW.md 已有条目（含已固化删除、只存于 git 历史的条目），复发 = 居所没拦住——先查防线该不该往更近的居所搬（人读 → tower 注入 → 机器门禁）或改写，不是只往该条证据里补一行现场。
 - [ ] **新条目准入与引用写法自检（2026-10-12 Alex 认可）**：本批新增的「待 Alex 裁决」条目只收**价值取舍 / 产品语义**类（答案客观可核的由 tower 直接裁并记录）；跨文件引用 backlog 条目一律用**主题关键词锚**，不用编号 / 行号。
 - [ ] **push 后跟进到 CI 终态**：按 AGENTS.md「操作流程」的 CI 观察者条执行；未全绿不得宣称批次完成。

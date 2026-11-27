@@ -22,7 +22,7 @@ openspec/
 | `proposal.md` | 是 | 为什么改、改什么、不做什么（Non-goals） |
 | `tasks.md` | 是 | 可勾选的任务清单，实现过程逐项勾选 |
 | `design.md` | 技术复杂时 | 技术方案与权衡 |
-| `specs/<capability>/spec.md` | 是 | spec 增量（delta），归档时并入 `openspec/specs/` |
+| `specs/<capability>/spec.md` | 是（零行为变更可省） | spec 增量（delta），归档时并入 `openspec/specs/`；零行为变更用 `.openspec.yaml` 的 `skip_specs: true`，口径见 [docs/process/openspec-workflow.md](../docs/process/openspec-workflow.md)「制品清单」 |
 
 ## 写作约定
 

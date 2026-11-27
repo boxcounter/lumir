@@ -69,6 +69,12 @@ AI-only 模式下（ADR 0004）「待真机验收」清单只增不减，全部�
 
 ### 覆盖映射（实现态）
 
+本表是**历史覆盖记录**，不是当前可复核性声明：早期场景的证据目录多已随 `.local` 清理轮换，
+引用时按 [openspec-workflow.md](openspec-workflow.md)「证据可复核性」写成
+「归档记录报告 PASS（原证据已清理，当前不可复核）」；当前场景清单以
+[COVERAGE.md](../../scripts/acceptance/COVERAGE.md) 为准，当前 PASS 证据以最近一次
+`.local/acceptance/` 为准。
+
 | 验收项 | 场景 |
 |---|---|
 | 1 Mermaid 点击进源码编辑 | `01-mermaid-click`（行为全验） |
