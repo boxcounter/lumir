@@ -7,8 +7,10 @@
       settling / readOnly）各自的源码与选区期望，含组合提交、组合中删除、settling 窗口与
       只读空转。
 - [x] 1.2 模型自检（Node 层，零生产依赖）：只读全空转、组合中删除只吃 marked 区、
-      组合提交整段一个撤销步、settling 结算不改源码、一次 undo 回到动作前 / 一次 redo 回到
-      动作后。
+      组合提交把 marked 文本写回且不改其他字节、settling 结算不改源码、一次 undo 回到动作前 /
+      一次 redo 回到动作后。**组合自身的撤销粒度不在自检内**：`input.type.compose` 的提交并入
+      上一笔 changes 属 IME / CM 历史语义，模型诚实给 `steps:null`（见 N/A 表与 spec）；
+      真引擎层只对「提交之后再键入」的那一步判一次 undo。
 
 ## 2. 矩阵定义与覆盖契约
 
@@ -33,9 +35,16 @@
 
 ## 4. 判红能力（反向验证）
 
-- [x] 4.1 临时移除 `src/editor.ts` 的 `nativeEditGate`，重跑矩阵：删除 / 选区 / 表格 cell
-      三类高风险格 MUST 变红，且失败读数指出源码被渲染字形或结构改写污染。
-- [x] 4.2 恢复后 MUST 全绿；两次读数（红 / 绿）记进完工报告，不留在代码里。
+- [x] 4.1 临时移除 `src/editor.ts` 的 `nativeEditGate`，按族逐个取证（`LUMIR_TRANSITION_FOCUS`
+      单格聚焦），MUST 各有代表格变红、恢复后变绿：
+      - 删除族：`idle/collapsed/block-replace/deleteBackward`（chromium，红读数 `alphatail\n`）；
+      - 非空选区族：`idle/range/list-marker/deleteBackward`（chromium；inline / table 的选区删除
+        在 chromium 原生路径本来就符合合同，只有跨隐藏 marker 的格子有区分度）；
+      - 表格 cell 族：`idle/collapsed/table-cell/type` 在 **WebKit** 取证（M855 是 WebKit 原生
+        target range 缺陷；chromium 原生路径本来就对）——红读数实际 `| cQ| d |`、期望 `| cQ | d |`。
+      日志：`red-*.log` / `green-*.log`（`.local/missions/add-editor-transition-oracle-nov27/`）。
+- [x] 4.2 恢复后三格分别复跑全绿（`green-*.log`），全量 8 个 test 亦全绿；红 / 绿读数只落
+      `.local/`，不留在代码里。
 - [x] 4.3 记录矩阵发现的**新**产品缺陷：只给最小复现与现状读数，不在本 change 修复。
 
 ## 5. 验证
@@ -43,10 +52,14 @@
 - [x] 5.1 `pnpm test`（单测层，含矩阵覆盖契约）通过
 - [x] 5.2 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [x] 5.3 `scripts/gate.sh quick` 全绿（照抄 `GATE RESULT` 原文行）
+      —— `GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0。首次跑 `unit-tests` 判红的是**既有**时序
+      预算用例 `link-suggest`「万文件过滤 16ms」实测 19.2ms（与本 change 无关；`pnpm test` 单跑
+      2167/2167 全绿、同树立即重跑 gate 全绿），已按「不与本改动相关」的口径记录，不掩盖。
 - [x] 5.4 真引擎矩阵场景单独跑通（chromium）；读数与用例数记进报告
-      —— 7 个 test 全绿（5.3s / 6.5s 两跑），矩阵 63 格 / 50 高风险格 / pairwise 27 行 /
-      可行取值对 87/87 / 64 个 case。读数日志 `.local/missions/add-editor-transition-oracle-nov27/`
-      （`red-no-nativeEditGate.log` / `green-restored.log` / `matrix-report.log`）。
+      —— 8 个 test 全绿（15.9s），矩阵 62 格 / 51 高风险格 / pairwise 27 行 / 可行取值对 87/87 /
+      67 个 case（4 个 settling type 格带「有内容的组合提交」case）。读数与红绿证据日志
+      `.local/missions/add-editor-transition-oracle-nov27/`（`matrix-report.log` /
+      `red-*.log` / `green-*.log` / `red-no-nativeEditGate.log` / `red-settle-mutation.log`）。
       WebKit 未登记：逐格 `view.setState` 复位在 Playwright WebKit 下会让 Enter 多出一个空行
       （同一文档不做 setState 时与模型一致），差异来自复位手法而非产品行为，见场景头注记。
 - [ ] 5.5 节点 2 / 归档由 tower 执行，本 change 不自行归档

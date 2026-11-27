@@ -1460,6 +1460,23 @@ export interface TransitionExpectation extends TransitionSnapshot {
   settle: "none" | "pending" | "resolved";
 }
 
+/** 两个文档之间真正变化的**字节区间**（以 after 为坐标；纯删除时 from === to）。
+ *  只用于断言「撤销 / 重做后的光标落在本次改动过的区间内」这类 CM 历史语义——
+ *  产品合同只固定源码，光标落点是历史事件自己记录的选区。 */
+export function changedByteRange(before: string, after: string): { from: number; to: number } {
+  let prefix = 0;
+  const limit = Math.min(before.length, after.length);
+  while (prefix < limit && before[prefix] === after[prefix]) prefix += 1;
+  let suffix = 0;
+  while (
+    suffix < limit - prefix &&
+    before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  return { from: prefix, to: Math.max(prefix, after.length - suffix) };
+}
+
 /** 两个文档之间真正变化的行区间（1 基闭区间）。用于「非目标行不变」的**失败定位**：
  *  期望值本身来自模型，这里的区间只把「哪几行该变」显式化，不改判据。 */
 export function changedLineRange(before: string, after: string): { fromLine: number; toLine: number } | null {

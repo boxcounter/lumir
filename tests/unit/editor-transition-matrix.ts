@@ -25,6 +25,8 @@ export const ACTIONS: readonly EditActionKind[] = ["type", "deleteBackward", "de
 /** 键入 / 粘贴的载荷：纯 ASCII，不会被 paste-url / paste-image 的专用链路改写。 */
 export const TYPE_TEXT = "Q";
 export const PASTE_TEXT = "Paste";
+/** 组合提交 case 的 marked 文本（单字，位置算术保持一位偏移）。 */
+export const COMMITTED_TEXT = "候";
 
 /** 一个上下文 fixture：文档 + 每个动作的源码位置 + 装饰在场判据。
  *
@@ -293,6 +295,7 @@ export const HIGH_RISK_FAMILIES: readonly HighRiskFamily[] = [
       { state: "settling", selection: "collapsed", context: "table-cell", action: "type" },
       { state: "settling", selection: "range", context: "inline-replace", action: "type" },
       { state: "settling", selection: "range", context: "table-cell", action: "type" },
+      { state: "settling", selection: "range", context: "list-marker", action: "type" },
     ],
   },
   {
@@ -324,7 +327,8 @@ export const HIGH_RISK_FAMILIES: readonly HighRiskFamily[] = [
 
 /** 不可行组合及理由。`*` 表示该维任意取值。 */
 export interface NotApplicable {
-  state: EditState | "*";
+  /** `"*"` = 任意态；数组 = 只命中这些态（例如「无条款」只针对可编辑态，不得吞掉只读 no-op）。 */
+  state: EditState | "*" | readonly EditState[];
   selection: SelectionShape | "*";
   context: EditContext | "*";
   action: EditActionKind | "*";
@@ -334,21 +338,21 @@ export interface NotApplicable {
 export const NOT_APPLICABLE: readonly NotApplicable[] = [
   // --- 合同缺口：没有条款覆盖的组合（MUST 上报，不得静默当作通过） ---
   {
-    state: "*",
+    state: ["idle", "settling", "composing"],
     selection: "collapsed",
     context: "table-cell",
     action: "enter",
     reason: "无合同条款；2026-11-27 probe 实测 Enter 会拆散 grid 表格（`| \\nd |`），属产品缺陷候选，见完工报告——本矩阵不把它固化成期望",
   },
   {
-    state: "*",
+    state: ["idle", "settling", "composing"],
     selection: "collapsed",
     context: "table-cell",
     action: "paste",
     reason: "无合同条款：粘贴被 M854 闸门显式排除（语义交回原生），表格 cell 的粘贴结果未定义",
   },
   {
-    state: "*",
+    state: ["idle", "settling", "composing"],
     selection: "collapsed",
     context: "block-replace",
     action: "paste",
@@ -519,8 +523,10 @@ export const NOT_APPLICABLE: readonly NotApplicable[] = [
 ];
 
 function matches(rule: NotApplicable, state: EditState, selection: SelectionShape, context: EditContext, action: EditActionKind): boolean {
+  const stateHit =
+    rule.state === "*" || (Array.isArray(rule.state) ? rule.state.includes(state) : rule.state === state);
   return (
-    (rule.state === "*" || rule.state === state) &&
+    stateHit &&
     (rule.selection === "*" || rule.selection === selection) &&
     (rule.context === "*" || rule.context === context) &&
     (rule.action === "*" || rule.action === action)
@@ -666,7 +672,7 @@ function casesFor(key: CellKey): MatrixCase[] {
       // 要测的是「结算回调未跑完」这个窗口，不是组合文本。range 格的真实序列是
       // 「组合结束 → 用户选一段 → 结算之前动手」，选区因此由 finalSelection 在组合之后落。
       const range = key.selection === "range";
-      return [
+      const cases: MatrixCase[] = [
         {
           setup: {
             selection: range ? { caret: fixture.typeAt } : position,
@@ -678,6 +684,27 @@ function casesFor(key: CellKey): MatrixCase[] {
           note: "compositionend 之后、结算回调之前（同一同步拍内动作）",
         },
       ];
+      if (key.action === "type") {
+        // 高风险族④「组合的删除与提交」的**提交**半边：组合里真有 marked 文本（`候`），
+        // 提交后文档多一个字，再在提交 caret 上键入。源码 / 选区 / 保存载荷都判；
+        // 组合自身的历史粒度仍按诚实边界给 steps:null（见模型与 N/A 表），不冒充撤销已验。
+        const at = fixture.typeAt;
+        const shift = (pos: number): number => (pos >= at ? pos + COMMITTED_TEXT.length : pos);
+        const finalSelection = range
+          ? { anchor: shift(fixture.range.anchor), head: shift(fixture.range.head) }
+          : { anchor: at + COMMITTED_TEXT.length, head: at + COMMITTED_TEXT.length };
+        cases.push({
+          setup: {
+            selection: { caret: at },
+            composition: { marked: COMMITTED_TEXT, end: true },
+            finalSelection,
+          },
+          action,
+          consumed: gateHandled,
+          note: `有内容的组合提交（marked=${JSON.stringify(COMMITTED_TEXT)}）之后键入：组合历史不判（steps:null）`,
+        });
+      }
+      return cases;
     }
   }
 }

@@ -43,7 +43,11 @@ SHALL 断言目标行不含上述任何 replace 装饰。
 - **GIVEN** vault 外只读会话（`state.readOnly` 为真、`contenteditable=false`），文档含列表
   marker / 表格 / wikilink
 - **WHEN** 依次键入、Backspace、Delete、Enter、粘贴
-- **THEN** 每一拍后 `EditorState.doc` 与选区逐字节不变，撤销栈不新增事件，保存载荷不变
+- **THEN** 每一拍后 `EditorState.doc` 逐字节不变，且 MUST NOT 产生可撤销的编辑或保存调用；选区在
+  `readOnly` 下的编辑动作上 MUST 保持不动——唯一例外是上游 markdown 键位在列表内容起点算出的
+  「删 marker」事务：其文档改动被 `changeFilter` 拒收后只落下一条选区事务（光标移到 marker
+  起点），文档与历史仍 MUST 不变；该例外 MUST 由机器用例按位置与动作显式圈定，MUST NOT 扩成
+  「只读允许移动选区」
 
 #### Scenario: 组合中的删除只吃 marked 区
 
