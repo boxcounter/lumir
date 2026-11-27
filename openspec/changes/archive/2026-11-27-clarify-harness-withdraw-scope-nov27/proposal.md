@@ -132,10 +132,15 @@
 - **machine PASS**：是（quick 13/13、完整 visual 15/15、目标视觉 13/13、单测 2195、acceptance
   312、validate 39/39、docs-check PASS）。
 - **native PASS**：是（882 PASS 15 断言 / 887 PASS 17 断言，新 tip）。
-- **archived**：待归档（归档后回填提交与审计读数）。
+- **archived**：是（归档提交 `38ee375b`；`--archived` PASS：1 条 MODIFIED / 63 段 / 0 丢段）。
 
 ### 归档后
 
-- 归档提交：`<待回填>`
-- 包装器输出：`<待回填>`
-- `--archived` 审计：`<待回填>`
+- 归档提交：`38ee375b`（`chore(openspec): archive clarify-harness-withdraw-scope-nov27`）。
+- 包装器输出：`Totals: + 0, ~ 1, - 0, → 0`；`Change 'clarify-harness-withdraw-scope-nov27'
+  archived as '2026-11-27-clarify-harness-withdraw-scope-nov27'.`；
+  `归档后修链 0 处（扫过 3 篇 Markdown / 0 条相对链接）`；
+  `openspec-links: PASS（校验 711 条相对链接，全部可达）`；`openspec-archive: PASS`。
+- `--archived` 审计（2026-11-27）：`openspec-archive-check: PASS（openspec/changes/archive/
+  2026-11-27-clarify-harness-withdraw-scope-nov27：1 条 MODIFIED，对比 63 段；人工恢复 0 段，
+  声明认领 0 段）`。回填本块后再次复跑同一审计，最终提交与审计一致。
