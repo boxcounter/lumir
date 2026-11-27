@@ -73,7 +73,7 @@ steps:
 
   - name: 输入第二句（本轮要撤回的那一条）
     do: typeInNode
-    target: { role: AXTextArea, name: "问点什么|q887-RESTORE-A" }
+    target: { role: AXTextArea, name: "问点什么|q887-WITHDRAWN" }
     text: "q887-WITHDRAWN"
 
   - name: 发送第二句
