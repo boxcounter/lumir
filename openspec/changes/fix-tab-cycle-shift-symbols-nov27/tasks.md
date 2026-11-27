@@ -75,14 +75,21 @@
          用例再失败。该用例在 rebase 后隔离复跑 4/4 PASS，第 1 / 2 次完整 visual 通过；`docs/backlog.md`
          的 END 归档条记录 master 侧同一 oracle 的 A/B（候选 40/40 vs master 37/40），属既有
          flaky oracle（全量串行下约半数失败）。
-      **结论：四次完整 visual 均为 `14/15`，未取得单次全绿 ⇒ 按「仍有红不归档」纪律，本 change
-      未归档**（节点 2 未放行）。四次红均不在本 change 的键位代码 / 场景面（外负载 / 流程条目 /
-      既有 flaky oracle），分类与原始日志如上，交由主会话决定是否再跑或按既有 flake 判定。
-- [x] 最终 `scripts/gate.sh quick`（独立审查在低负载下重跑）：`GATE RESULT: 13/13 PASS（SKIP 0）`，
-      退出码 0；前端单测 `tests 2193 / pass 2193 / fail 0`。证据
-      `.local/reviews/tab-navigation-keys-nov27/evidence/gate-quick-final.log`（作者先前的
-      12/13 是高负载下 `link-suggest` 单次预算测量的噪声，已被本轮取代）。
-- [x] 独立审查（节点 1）：findings P1=0 / P2=1 / P3=2，报告
-      `.local/reviews/tab-navigation-keys-nov27/final-judgment.md`；P2-1（把未验的物理键盘形态写成
-      「真机 / 硬件形态」）与 P3-1 / P3-2 已在后续 commit 修准（措辞与证据归属，无行为改动）。
-      复核结论与归档由 tower 走——本 tasks 不预写 clean。
+      **历史结论（当时）：四次完整 visual 均为 `14/15`，未取得单次全绿 ⇒ 未归档**（节点 2 未放行）；
+      四次红均不在本 change 的键位代码 / 场景面（外负载 / 流程条目 / 既有 flaky oracle）。该 red 的
+      根因（`editing-oracle` 的 settle 计时 oracle）随后由 change `fix-ime-settle-oracle-nov27` 修掉。
+- [x] **最终集成 tip `c21e5fbc` 的完整 `scripts/gate.sh visual`**（在历史四次之后）：
+      `GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0；visual-regression 1410s / 1993 passed /
+      13 skipped / 0 failed。证据
+      `.local/reviews/tab-navigation-keys-nov27/evidence/gate-visual-integrated-2026-11-28.log`。
+- [x] **最终集成 tip `c21e5fbc` 的 `scripts/gate.sh quick`**：`GATE RESULT: 13/13 PASS（SKIP 0）`，
+      退出码 0；前端单测 `tests 2196 / pass 2196 / fail 0`。证据
+      `.local/reviews/tab-navigation-keys-nov27/evidence/gate-quick-final-tip-2026-11-28.log`。
+      历史读数保留：`f458ace7` 时期 quick 13/13（2196）、旧基高负载 12/13（`link-suggest` 噪声）。
+- [x] **最终集成 tip 的真机 45（注入通道）**：PASS，27.4s / 52 断言 / 0 失败（含
+      `cmd+shift+rightbracket` / `cmd+shift+leftbracket` 两步，AX 选中态 + 前台正文双读数）。
+      证据 `.local/acceptance/2026-11-28-tab-navigation-keys-final/`（`status.txt` 与 `steps.md`
+      在 `evidence/45-tab-cycle-keys/`）。**不冒称物理键盘**：dogfood 仍是独立人工边界。
+- [x] 独立审查：首轮 findings P1=0 / P2=1 / P3=2（`final-judgment.md`）→ 修准 → R2 clean/merge
+      （`final-judgment-r2.md`，绑 `f10d9ffd`）→ 终审 **clean/merge P1/P2/P3=0** 绑 `c21e5fbc`
+      （`independent-review-final.md`）。

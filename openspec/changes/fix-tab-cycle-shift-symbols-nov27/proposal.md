@@ -14,14 +14,49 @@
 > 复核 R2：**clean/merge** 绑 `f10d9ffd`（P1/P2/P3=0，`final-judgment-r2.md`）；rebase 到
 > `f458ace7` 后 `git range-diff` 两条提交均为 `=`（补丁逐字相同），当前 tip `450646e5`。
 >
-> **节点 2 状态：未放行（未归档）。** 完整 `scripts/gate.sh visual` 在 rebase 后跑了四次，均为
-> `GATE RESULT: 14/15 PASS（SKIP 0）`：第 1 次红在 `unit-tests`（`link-suggest` 微基准被并发他树
-> 单测打红）；第 2 次红在 `docs-check`（tasks 全勾后缺 backlog 队列条目，已补）；第 3、4 次红在
-> `editing-oracle.spec.ts:1143`（master 侧既有 flaky oracle：隔离 4/4 PASS、第 1/2 次完整 visual
-> 通过，全量串行下约半数失败；END 归档条有 A/B 候选 40/40 vs master 37/40）。四次红均不在本
-> change 的键位代码 / 场景面；按「仍有红不归档」纪律停在此处，是否再跑或按既有 flake 判定由
-> 主会话决定。证据：
-> `.local/reviews/tab-navigation-keys-nov27/evidence/gate-visual-rebased-{1,2,3,4}-*.log`。
+> **节点 2 历史状态（保留）**：rebase 后完整 visual 跑了四次，均 `14/15`（第 1 次 `unit-tests`
+> 被并发他树单测打红；第 2 次 `docs-check` 缺 backlog 队列条目；第 3/4 次 `editing-oracle` 既有
+> flaky oracle），当时按「仍有红不归档」停住。该 oracle 随后由 change `fix-ime-settle-oracle-nov27`
+> 修掉，最终集成 tip 取得全绿（见下节）。逐次分类与原始日志：`tasks.md` §5、
+> `evidence/gate-visual-rebased-{1,2,3,4}-*.log`。
+
+## 节点 2：归档记录
+
+**放行方式**：机器 + 独立评审放行（`docs/process/openspec-workflow.md`「节点 2」五要件）。
+
+### 五要件（归档前）
+
+1. **节点 1**：Alex 2026-11-27 报告「Shift+Command+左右方括号（US 实体键盘）切标签完全无反应，
+   同一问题反馈多次」。本 change 属缺陷修复（事件形态与表内 token 不一致），无 scope 扩张。
+2. **独立评审**：K3 终审 **clean/merge** 绑 `c21e5fbccf8224bf2d2d51a9385e510c9f8e54c1`，
+   P1 / P2 / P3 = 0（`.local/reviews/tab-navigation-keys-nov27/independent-review-final.md`）；
+   前一环 R2 clean/merge 绑 `f10d9ffd`（`final-judgment-r2.md`）。rebase 后产品补丁与原评审版本
+   逐字相同（range-diff）。
+3. **tasks**：全部勾选（物理键盘 dogfood 作为已知边界登记，留 Alex；merge / push 按本批禁令留主会话）。
+4. **门禁与真机证据**：
+   - **machine PASS（最终 tip `c21e5fbc`）**：完整 `scripts/gate.sh visual`
+     **`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0**；visual-regression 1410s / 1993 passed /
+     13 skipped / 0 failed（`evidence/gate-visual-integrated-2026-11-28.log`）。`scripts/gate.sh quick`
+     **`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0**；前端单测 `tests 2196 / pass 2196 / fail 0`
+     （`evidence/gate-quick-final-tip-2026-11-28.log`）。目标单测 84/84
+     （`evidence/unit-target-integrated.log`）。
+   - **native PASS**：场景 45（注入通道）PASS，27.4s / 52 断言 / 0 失败
+     （`.local/acceptance/2026-11-28-tab-navigation-keys-final/`；`status.txt` 与 `steps.md` 在
+     `evidence/45-tab-cycle-keys/`）。**不冒称物理键盘**：dogfood 仍是独立人工边界。
+   - **历史红保留**：四次 `14/15` 的逐次分类见 `tasks.md` §5 与
+     `evidence/gate-visual-rebased-{1,2,3,4}-*.log`，不删、不掩盖。
+5. **规格对账无丢段**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS；
+   `openspec validate --all --strict` PASS；归档跟踪队列有且仅有一条条目（`docs/backlog.md`）。
+
+### 五态
+
+| 状态 | 值 | 证据指针 |
+|---|---|---|
+| implemented | 是 | `5e3b001c`（修复）+ `08ca2973`（审查修准）+ 文档提交至 `c21e5fbc`；基 `fceb3282`；未 merge / 未 push |
+| released | 否 | 本批不打包（无发布动作） |
+| machine PASS | 是 | 完整 visual `GATE RESULT: 15/15 PASS（SKIP 0）` exit 0（1993 passed / 13 skipped / 0 failed，1410s）；quick `13/13 PASS` exit 0（单测 2196/2196）；目标单测 84/84 |
+| native PASS | 是（注入通道） | 场景 45 PASS 27.4s / 52 断言（`.local/acceptance/2026-11-28-tab-navigation-keys-final/`）；物理键盘 dogfood 待 Alex（已知边界） |
+| archived | 否：待归档 | 归档提交 hash 与 `--archived` 读数在归档后追加 |
 
 ## Why
 
