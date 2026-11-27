@@ -23,7 +23,7 @@
 
 - [x] 3.1 新增真机场景 887（恢复 → 撤回 → 再恢复不复活；rebase 到 master 后由 886 让位到 Web 的 886/886b，本 change 顺延为 887）；`node scripts/acceptance/coverage.mjs` 重生成 COVERAGE（311 个场景 / 278 个 item）。
 - [x] 3.2 `node scripts/acceptance/run.mjs --check` 通过（311 个场景；编号与 id 由 check 对账）。
-- [ ] 3.3 真机执行场景 887 至 PASS（证据落 `.local/acceptance/`）——**本 mission 不执行**：真机归主会话，worker 只交付场景与 `--check` 读数。
+- [x] 3.3 真机执行场景 887 至 **PASS**（17 条 PASS：12 断言 + 5 截图；`.local/acceptance/2026-11-27-withdraw-restored-r2/887-harness-withdraw-restored-session/`，`status.txt` = PASS）。首轮 `.local/acceptance/2026-11-27-withdraw-restored/` 因 `typeInNode` 目标跟踪断言 FAIL（第二句已完整输入、旧 target 在注入中从 AX 消失），`4e9802f1` 只修正场景 target 后复跑 PASS。
 
 ## 4. 验证
 
@@ -36,4 +36,5 @@
 ## 5. 范围裁决与归档（本 mission 不执行 merge / 归档）
 
 - [x] 5.1 **0.20 存量会话范围已裁**：节点 1 补充批准（2026-11-27）——采纳「只允许升级后的新消息」，0.20 及更早无 `lumir_user_origin` 标记的存量会话恢复后仍不可撤回；不采用显式认领、不采用非破坏性分叉。记录见 `proposal.md` 的「评审记录 / 节点 1 补充批准」与「范围裁决」一节。
-- [ ] 5.2 节点 2 五要件与归档记录（见 `proposal.md` 的「节点 2：归档记录」）——**本 mission 不执行**：剩余缺口只有真机 887 的 PASS 证据，由 tower 在真机 PASS 后按五要件办理。
+- [x] 5.2 节点 2 五要件与归档记录（见 `proposal.md` 的「节点 2：归档记录」）：方案批准 / K3 clean-merge 绑 `0589fa09` / tasks 全勾 / 门禁与真机 887 PASS / 规格对账，逐条落账。
+- [ ] 5.3 `node scripts/openspec-archive.mjs withdraw-restored-user-message-nov27` 归档 + 提交 + `--archived` 审计 PASS（读数回填 proposal 的「节点 2 / 归档后」）。

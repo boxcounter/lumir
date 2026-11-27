@@ -127,8 +127,29 @@
 
 ## 节点 2：归档记录
 
-（实现完成后由 tower 按五要件填写；真机 887 由主会话执行。）
+**归档前（2026-11-27）**：
 
-**当前状态：待真机 887。** 价值 / 行为裁决已全部落地（节点 1 批准 + 节点 1 补充批准的范围裁决），
-剩余缺口只有真机 887 的 PASS 证据；五要件齐后由 tower 按常规通道办理，不 merge、不归档由本
-mission 执行。
+1. **方案已批准**：节点 1 于 2026-11-26 通过（Alex「好，采纳这个改进。请你安排。」）；节点 1
+   补充批准（2026-11-27）裁定范围——只允许升级后的新消息（见「评审记录」与「范围裁决」）。
+   实现期未扩 scope：K3 终审的三项返修（占用不提前释放、祖先链环 / 超深 fail closed、旧注释
+   收口）都落在本 proposal 的合同内。
+2. **独立 reviewer clean / merge**：K3 verdict `clean/merge`，绑定 **`0589fa09`**（代码 tip
+   `9d4a0e6b`），无开放 P1 / P2 / P3
+   （`.local/reviews/withdraw-restored-user-message-nov27/k3-verdict.md`）。verdict 明确：
+   `4e9802f1` 只调整真机 887 第二句输入目标的跟踪文本，不影响该结论。
+3. **tasks 完成**：全部勾选（3.3 真机、5.2 本条、5.3 归档与审计见下）。
+4. **门禁与真机证据**：`gate.sh quick` `GATE RESULT: 13/13 PASS（SKIP 0）`（`9d4a0e6b`；
+   `.local/missions/withdraw-restored-user-message-nov27/gate-quick-k3-final.log`）；
+   `cargo test --lib` 1308 passed / 0 failed（`withdraw_tests` 29/29）、`pnpm test` 2157/0、
+   docs-check / `validate --all --strict`（39 passed）/ `acceptance --check`（311 场景）全 PASS。
+   **真机 887：PASS，17 条 PASS（12 条断言 + 5 张截图证据）**（2026-11-27，
+   `.local/acceptance/2026-11-27-withdraw-restored-r2/887-harness-withdraw-restored-session/`，
+   `status.txt` = PASS）。首轮 `.local/acceptance/2026-11-27-withdraw-restored/` 在
+   `typeInNode` 的目标跟踪上 FAIL（旧断言把 composer 目标写成 `问点什么|q887-RESTORE-A`，
+   而第二句已完整输入、目标在注入过程中从 AX 消失），`4e9802f1` 只改场景 target（一行），
+   复跑 r2 PASS——产品行为未改。
+5. **规格对账**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS（9 份 delta /
+   8 条 MODIFIED / 156 段，0 静默丢段）；`validate --all --strict` 39 passed / 0 failed；
+   归档跟踪队列有且仅有一条本 change 条目（`docs/backlog.md` 的「归档跟踪队列」）。
+
+**归档后（2026-11-27）**：待归档提交后填写。
