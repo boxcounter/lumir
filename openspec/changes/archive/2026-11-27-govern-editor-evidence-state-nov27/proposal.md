@@ -83,7 +83,7 @@
 |---|---|---|
 | implemented | 是 | `ff288793`（rebase 后分支 tip；评审绑定 pre-rebase `b4d6a145`，rebase 无冲突、内容未变） |
 | released | 否 | 本批不打包；纯文档治理 |
-| machine PASS | 是 | `GATE RESULT: 12/12 PASS（SKIP 1）` exit 0（`scripts/gate.sh quick`，日志 `.local/missions/govern-editor-evidence-state-nov27/gate-quick.log`）；`docs-check: PASS`；`validate --all --strict` 39/39 |
+| machine PASS | 是 | `GATE RESULT: 12/12 PASS（SKIP 1）` exit 0（`scripts/gate.sh quick`，日志 `.local/missions/govern-editor-evidence-state-nov27/gate-quick.log`）；`docs-check: PASS`；`validate --all --strict` 39/39（归档前；归档后 38/38） |
 | native PASS | 不适用 | 纯文档，无真机项 |
 | archived | 是 | 归档提交 `36c01688`；`--archived` PASS（无 `specs/` 增量，无需对账） |
 
@@ -115,6 +115,8 @@
 - 修链与链接门禁：`openspec-archive: 归档后修链 0 处（扫过 2 篇 Markdown / 0 条相对链接）`；
   `openspec-links: PASS（校验 711 条相对链接，全部可达）`；
   `openspec-archive: PASS（归档完成，仓内相对链接门禁绿）`。
+- 归档后复跑：`validate --all --strict` 38/38；`docs-check: PASS`；quick
+  `GATE RESULT: 12/12 PASS（SKIP 1）` exit 0（最终 tip，日志同 `.local/missions/govern-editor-evidence-state-nov27/gate-quick.log`）。
 - `node scripts/openspec-archive-check.mjs --archived govern-editor-evidence-state-nov27`：
   `PASS（openspec/changes/archive/2026-11-27-govern-editor-evidence-state-nov27 没有 specs/ 增量，无需对账）`
   （2026-11-27 11:42 CST）。
