@@ -39,7 +39,7 @@ Alex 已对「按住 ⌘ 时在既有标签上叠加小号序号」方案明确�
 
 | 状态 | 值 | 证据指针 |
 |---|---|---|
-| implemented | 否：实现待提交 | 提交后回填 commit hash |
+| implemented | 是：实现已提交，未合并 | `8e4966821cd68c31c3b61f72cbfe69bf62c57b51` |
 | released | 否：本批不打包 | 不适用 |
 | machine PASS | 是：目标测试与 quick 通过 | `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0；前端 2200/2200、相关浏览器结构 17/17、验收执行器 131/131、驱动 27/27、OpenSpec 39/39；日志 `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/tab-dynamic-numbering-nov27/` |
 | native PASS | 否：真机由主会话统一执行 | 待 14-tabs 的 status.txt |
