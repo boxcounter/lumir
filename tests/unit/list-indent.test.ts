@@ -119,6 +119,13 @@ test("顶层 SHIFT+TAB 无操作；多余的行首空白顺带抹平", () => {
   moved(caret("  - a\n", 1, 4), "outdent", "- a\n", "解析上仍是顶层项：抹平多余空白");
 });
 
+test("任务标记与 `*` 标记不改写：只动行首空白", () => {
+  moved(caret("- [ ] a\n- [x] b\n", 2, 7), "indent", "- [ ] a\n  - [x] b\n", "任务标记缩进");
+  moved(caret("- [ ] a\n  - [x] b\n", 2, 9), "outdent", "- [ ] a\n- [x] b\n", "任务标记凸排");
+  moved(caret("* a\n* b\n", 2, 2), "indent", "* a\n  * b\n", "`*` 标记不换写");
+  moved(caret("* a\n  * b\n", 2, 4), "outdent", "* a\n* b\n", "`*` 标记凸排");
+});
+
 test("无操作：非列表行、空行、代码块内、引用正文", () => {
   moved(caret("para\n\n- a\n", 1, 2), "indent", null, "段落");
   moved(caret("para\n\n- a\n", 1, 2), "outdent", null, "段落");
@@ -240,7 +247,7 @@ test("单行内的部分选区：只处理该行", () => {
 // 多 range / 单次 dispatch / 选区映射
 // ---------------------------------------------------------------------------
 
-test("多 range：并集去重，两个光标所在行都处理", () => {
+test("多 range：并集去重，同一行的多个 range 只缩进一次", () => {
   const doc = "- a\n- b\n- c\n- d\n";
   // 多选在 CM 里默认被折叠成 main range（`allowMultipleSelections` 未开）；本用例显式打开它，
   // 钉住「命令按全部 range 展开行集」这一实现口径（当前产品入口只有单 range，属防御性覆盖）。
@@ -250,8 +257,15 @@ test("多 range：并集去重，两个光标所在行都处理", () => {
   const b = base.doc.line(2);
   const d = base.doc.line(4);
   const state = base.update({
-    selection: EditorSelection.create([EditorSelection.cursor(b.from + 2), EditorSelection.cursor(d.from + 2)]),
+    selection: EditorSelection.create([
+      EditorSelection.cursor(b.from + 1),
+      EditorSelection.cursor(b.from + 3), // 与上一条同一行：行集并集必须去重
+      EditorSelection.cursor(d.from + 2),
+    ]),
   }).state;
+  const edit = listIndentChange(state, "indent");
+  assert.ok(edit !== null);
+  assert.equal(edit.changes.length, 2, "两个不同行 ⇒ 两条 change；同一行的第三个 range 不得重复插入");
   assert.equal(shifted(state, "indent"), "- a\n  - b\n- c\n  - d\n");
 });
 
@@ -281,4 +295,29 @@ test("选区与 caret 按 change mapping 平移，命令不重设选区", () => 
   // 插入发生在光标之前：光标随映射右移，仍在 b 行内
   assert.equal(next.doc.lineAt(next.selection.main.head).number, 2);
   assert.equal(next.selection.main.head, line2.from + 4, "光标应随行首插入的 2 空格右移");
+
+  // 非空选区：anchor / head 都随 change mapping 平移，方向保持（命令不重设选区）。
+  const block = "- a\n  - b\n  - c\n";
+  const nested = completeTree(EditorState.create({ doc: block, extensions: MD }));
+  const forward = nested.update({
+    selection: EditorSelection.range(nested.doc.line(2).from, nested.doc.line(3).to),
+  }).state;
+  const forwardEdit = listIndentChange(forward, "outdent");
+  assert.ok(forwardEdit !== null);
+  const afterForward = forward.update({ changes: forwardEdit.changes }).state;
+  assert.equal(afterForward.doc.toString(), "- a\n- b\n- c\n");
+  assert.equal(afterForward.selection.main.anchor, afterForward.doc.line(2).from, "正向 anchor 映射到 b 行行首");
+  assert.equal(afterForward.selection.main.head, afterForward.doc.line(3).to, "正向 head 映射到 c 行行尾");
+  assert.ok(afterForward.selection.main.anchor < afterForward.selection.main.head, "正向选择方向保持");
+
+  const reverse = nested.update({
+    selection: EditorSelection.range(nested.doc.line(3).to, nested.doc.line(2).from),
+  }).state;
+  const reverseEdit = listIndentChange(reverse, "outdent");
+  assert.ok(reverseEdit !== null);
+  const afterReverse = reverse.update({ changes: reverseEdit.changes }).state;
+  assert.equal(afterReverse.doc.toString(), "- a\n- b\n- c\n");
+  assert.equal(afterReverse.selection.main.anchor, afterReverse.doc.line(3).to, "反向 anchor 映射到 c 行行尾");
+  assert.equal(afterReverse.selection.main.head, afterReverse.doc.line(2).from, "反向 head 映射到 b 行行首");
+  assert.ok(afterReverse.selection.main.anchor > afterReverse.selection.main.head, "反向选择方向保持");
 });

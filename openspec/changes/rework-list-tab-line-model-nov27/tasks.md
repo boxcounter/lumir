@@ -42,5 +42,7 @@
 - [x] 4.3 `scripts/gate.sh quick`（tsc 三份 + 单测 + docs-check + openspec validate）
 - [x] 4.4 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`
 - [x] 4.5 `node scripts/acceptance/coverage.mjs --check` 与 `run.mjs --check`（场景静态契约）
-- [ ] 4.6 真机执行、merge、push、归档、视觉基线更新：**不在本 mission 授权内**，由主会话按批次
-      安排（本项完成前 change 不算收口；真机场景 888 已交付、尚未执行）
+- [ ] 4.6 merge / push / 归档 / 视觉基线更新：**不在本 mission 授权内**，由主会话按批次安排。
+      真机执行已完成并 PASS：43 `PASS / 76 断言`（证据 `.local/acceptance/2026-11-27-list-line-indent`）、
+      888 `PASS / 51 断言`（证据 `.local/acceptance/2026-11-27-list-line-indent-final`）。本项只剩
+      merge / push / 归档 / 基线权限边界；完成前 change 不算收口

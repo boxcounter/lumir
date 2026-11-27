@@ -365,9 +365,9 @@ Alex 节点 1 裁决（D1a / D2c / D3a / D4a / D5a）把 `Tab` / `Shift-Tab` 绑
 上走一遍「按键 → 键位层分发 → 语法树归属判定 → 源码写回 → 落盘」——**验的是命令本身与它下游的一切**。
 
 **`Tab` / `Shift-Tab` 这个键本身的链路在真机上未验**（`press_key("tab")` 不落 WKWebView），它的判据
-落在 chromium：`tests/visual/scenes/m239-list-tab-indent.spec.ts`（真 CM + 真键位层，14 条用例：单行 / 引用 /
-有序 / 首项 / 不带子树 / 多行选区（正向 + 反向）/ 尾落行首 / 混合选区 / 多行撤销 / `[keys]` 解绑
-Tab 的反向对照）。两层合起来才等于「D1a–D4a 全部落地」——**不要把本场景的 PASS 读成
+落在 chromium：`tests/visual/scenes/m239-list-tab-indent.spec.ts`（真 CM + 真键位层，15 条用例：单行 / 引用 /
+有序 / 首项 / 不带子树 / 多行选区（正向 + 反向，含选区 anchor / head 映射与方向）/ 尾落行首 /
+混合选区（含 head 在段落）/ 多行撤销 / `[keys]` 解绑 Tab 的反向对照）。两层合起来才等于「D1a–D4a 全部落地」——**不要把本场景的 PASS 读成
 「Tab 也验过了」**（REVIEW.md 「覆盖声明超出真实验证」条）。
 
 1. **无序列表缩进**：`- bravo`（第二项）按 ⌘J 变 `  - bravoq`（步长 2 = 上一同级项的内容列）。

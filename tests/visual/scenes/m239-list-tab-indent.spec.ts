@@ -77,6 +77,15 @@ function lineEnd(doc: string, line: number): number {
 const activeElementClass = (page: Page) =>
   page.evaluate(() => (document.activeElement as HTMLElement | null)?.className ?? "");
 
+/** 读回 CM 主选区（anchor / head / empty）——「命令不重设选区、由 change mapping 平移」的直接读数。 */
+const readMainSelection = (page: Page) =>
+  page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile
+      .root.view;
+    const main = view.state.selection.main;
+    return { anchor: main.anchor as number, head: main.head as number, empty: main.empty as boolean };
+  });
+
 /** 打开一份文档、把光标放到 `needle` 之后（文档里 `needle` 必须唯一，避免落点歧义）。 */
 async function setup(page: Page, doc: string, needle: string): Promise<void> {
   await openFile(page, { "doc.md": doc }, "doc.md");
@@ -177,6 +186,13 @@ test("多行选区 SHIFT+TAB：正向逐行凸排（用户截图形态），未�
   await page.keyboard.press("Shift+Tab");
 
   await expect.poll(() => readDocument(page)).toBe(BLOCK_OUTDENTED);
+
+  // 命令只 dispatch changes，不重设选区：anchor / head 由 change mapping 平移，方向保持。
+  const forward = await readMainSelection(page);
+  expect(forward.empty, "多行选区不应被折叠成 caret").toBe(false);
+  expect(forward.anchor, "正向 anchor 应映射到第 3 行行首").toBe(lineStart(BLOCK_OUTDENTED, 3));
+  expect(forward.head, "正向 head 应映射到第 8 行行尾").toBe(lineEnd(BLOCK_OUTDENTED, 8));
+  expect(forward.anchor, "正向选择方向（anchor 在上）保持").toBeLessThan(forward.head);
 });
 
 test("多行选区 SHIFT+TAB：反向选区（anchor 在下、head 在上）得到同一结果", async ({ page }) => {
@@ -187,6 +203,12 @@ test("多行选区 SHIFT+TAB：反向选区（anchor 在下、head 在上）得�
   await page.keyboard.press("Shift+Tab");
 
   await expect.poll(() => readDocument(page)).toBe(BLOCK_OUTDENTED);
+
+  const reverse = await readMainSelection(page);
+  expect(reverse.empty, "多行选区不应被折叠成 caret").toBe(false);
+  expect(reverse.anchor, "反向 anchor 应映射到第 8 行行尾").toBe(lineEnd(BLOCK_OUTDENTED, 8));
+  expect(reverse.head, "反向 head 应映射到第 3 行行首").toBe(lineStart(BLOCK_OUTDENTED, 3));
+  expect(reverse.anchor, "反向选择方向（anchor 在下）保持").toBeGreaterThan(reverse.head);
 });
 
 test("选区尾落在行首不计入：终点那一行不动", async ({ page }) => {
