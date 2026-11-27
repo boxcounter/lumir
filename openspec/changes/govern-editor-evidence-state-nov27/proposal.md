@@ -79,8 +79,8 @@
 
 | 状态 | 值 | 证据 |
 |---|---|---|
-| implemented | 是 | `a6ecd955e886f91d51311ead519f83ec3a7cbe43` |
+| implemented | 是 | `d5ac91e4bc387edef80e88a65035fa99f0adf403` |
 | released | 否 | 本批不打包；纯文档治理 |
-| machine PASS | 是 | `GATE RESULT: 12/12 PASS（SKIP 1）` exit 0（`scripts/gate.sh quick`）；`docs-check: PASS`；`validate --all --strict` 39/39 |
+| machine PASS | 是 | `GATE RESULT: 12/12 PASS（SKIP 1）` exit 0（`scripts/gate.sh quick`，日志 `.local/missions/govern-editor-evidence-state-nov27/gate-quick.log`）；`docs-check: PASS`；`validate --all --strict` 39/39 |
 | native PASS | 不适用 | 纯文档，无真机项 |
 | archived | 否 | 本 mission 按指令不归档；待评审后由 tower 归档 |
