@@ -9,9 +9,11 @@ Harness 的次级图标动作 SHALL 遵守 [次级图标动作的指针命中区
 本 requirement MUST NOT 被实现为触屏式 44px 桌面按钮改造。
 
 复制动作 SHALL 使用无依赖的内联 SVG，视觉视盒约为 14×14 CSS px，MUST NOT 继续依赖字符 `⧉` 的字体造型；
-× SHALL 保持约 14px 的紧凑 glyph，@ SHALL 保留既有 mono 视觉层级。复制 / 撤回 SHALL 继续只在消息 hover /
+× SHALL 保持约 14px 的紧凑 glyph，@ SHALL 保留既有 mono 视觉层级。撤回 SHALL 保持既有 12px 撤销 SVG 与
+20×20 CSS px 可见盒，只扩实际命中层，MUST NOT 恢复文字或改为常驻。复制 / 撤回 SHALL 继续只在消息 hover /
 动作 focus-visible 等既有路径显现，MUST NOT 变为常驻动作条；图片 @ / × SHALL 继续恒显。可见底板保持轻量，
-命中区扩大 MUST NOT 同步放大成视觉大按钮。
+命中区扩大 MUST NOT 同步放大成视觉大按钮。撤回的 pointer / focus 双激活源预览、tail notice 在场时整段不预览、
+完整后果提示与既有后端拒绝语义 MUST NOT 因命中区扩大而改变。
 
 所有相关状态下的实际命中区 MUST 满足：相邻动作的命中矩形无正面积交集；在元素完整可见的稳态下不被祖先裁切、
 不越过容器形成不可达区域；不截获正文、摘录、出处或其他既有内容区域的指针操作。复制 success 文案变宽、语言切换、
@@ -31,7 +33,7 @@ MUST NOT 因本条款新增 Tab 停靠点或接管文本编辑按键。
 
 - **WHEN** 在最后一条用户消息与一条 agent 消息上分别检查复制 / 撤回的正常、hover、focus-visible、disabled、success
   与 zh / en 状态，并读取真实矩形和命中结果
-- **THEN** 实际命中区默认达到 28×28 CSS px（含完整文字的动作可更宽），任何方向不小于 24；复制 SVG 保持小巧，
+- **THEN** 实际命中区默认达到 28×28 CSS px（含 success 完整文案的复制动作可更宽），任何方向不小于 24；复制 SVG 保持小巧，
   可见底板不变为触屏式大按钮；复制 / 撤回仍只在既有 hover / focus 路径显现，消息行高与正文布局不变
 - **AND** 复制 success 显示完整既有文案期间，撤回命中区同步让位，两者无交集；反馈约 1.5s 消退后几何恢复，
   disabled 撤回不执行动作

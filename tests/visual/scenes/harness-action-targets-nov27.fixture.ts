@@ -1,0 +1,242 @@
+import { expect, type Locator, type Page } from "@playwright/test";
+import { standardProviders } from "./provider-config";
+import { SYNTHETIC_PNG_BASE64, stubTauri, type VaultFixture } from "./tauri-stub";
+
+export const ACTION_ROOT = "/tmp/lumir-action-targets";
+export const COPY_SOURCE = "复制 **源文本**";
+export const QUOTED = "第一段用于命中区：先读结论再读论证。";
+export const IMAGE_NAME = "pasted-action-target.webp";
+
+const DOC = `# 次级动作命中区\n\n${QUOTED}\n第二段用于区分跳回前后的选区。\n`;
+const PROVIDERS = standardProviders();
+const VAULT: VaultFixture = {
+  entries: [{ path: "action-targets.md", kind: "file", size: DOC.length, mtime_ms: 0 }],
+  files: { "action-targets.md": DOC },
+  links: {},
+  root: ACTION_ROOT,
+  vault_id: "action-targets",
+};
+
+export interface ActionFixtureOptions {
+  theme?: "light" | "dark" | "eink";
+  language?: "zh" | "en";
+  fontSize?: number;
+}
+
+export async function openActionPanel(page: Page, opts: ActionFixtureOptions = {}): Promise<void> {
+  await stubTauri(page, {
+    ...VAULT,
+    config: { theme: opts.theme ?? "light", language: opts.language ?? "zh", font_size: opts.fontSize ?? 15 },
+  });
+  await page.addInitScript(
+    ({ providers, png, copySource, imageName }) => {
+      const w = window as unknown as Record<string, any>;
+      const internals = w.__TAURI_INTERNALS__;
+      const origInvoke = internals.invoke;
+      w.__copied = [] as string[];
+      w.__withdrawCalls = [] as Array<{ confirm: boolean }>;
+      w.__harnessEventHandlerIds = [] as number[];
+      w.__busy = false;
+      const snapshot = {
+        messages: [
+          { role: "user", text: "PREFIX-Q1" },
+          { role: "assistant", text: "前缀答复。" },
+          { role: "user", text: copySource },
+          { role: "assistant", text: "这一轮的回答。" },
+        ],
+        usage: { ctx_pct: 0, cache_pct_session: 0 },
+        pending_approval: null,
+        warn_ctx_pct: 85,
+        withdrawable: true,
+        session_token: 11,
+        in_flight: false,
+      };
+      internals.invoke = async (cmd: string, args: any) => {
+        if (cmd === "harness_state") return JSON.stringify({ ...snapshot, in_flight: w.__busy });
+        if (cmd === "harness_withdraw") {
+          w.__withdrawCalls.push({ confirm: args.confirm === true });
+          throw { code: "harness_withdraw_tail_notice", message: "命中区测试保留会话", params: {} };
+        }
+        if (cmd === "harness_write_image") return { name: imageName, width: 640, height: 360 };
+        if (cmd === "harness_read_image") return png;
+        if (cmd === "harness_new_session") return null;
+        if (cmd === "harness_list_sessions" || cmd === "harness_skills_list") return [];
+        if (cmd === "harness_draft_get" || cmd === "harness_draft_put") return null;
+        if (cmd === "plugin:event|listen" && args.event === "harness:event") {
+          w.__harnessEventHandlerIds.push(args.handler ?? 0);
+        }
+        const result = await origInvoke(cmd, args);
+        if (cmd === "config_get" && result?.config) {
+          result.config.harness = {
+            provider: "mock",
+            providers,
+            permissions: { allow: [], deny: [] },
+            loop_max: 8,
+            warn_ctx_pct: 85,
+            auto_compact: true,
+          };
+        }
+        return result;
+      };
+      Object.assign(navigator.clipboard, {
+        writeText: (text: string) => {
+          w.__copied.push(text);
+          return Promise.resolve();
+        },
+      });
+      w.__fireHarnessEvent = (payload: unknown) => {
+        if ((payload as { type?: string }).type === "auto_turn_started") w.__busy = true;
+        if ((payload as { type?: string }).type === "done") w.__busy = false;
+        for (const id of w.__harnessEventHandlerIds) {
+          internals.runCallback(id, { event: "harness:event", id, payload });
+        }
+      };
+    },
+    { providers: PROVIDERS, png: SYNTHETIC_PNG_BASE64, copySource: COPY_SOURCE, imageName: IMAGE_NAME },
+  );
+  await page.goto("/");
+  await page.locator('.ft-row[title="action-targets.md"]').click();
+  await expect(page.locator(".cm-content").first()).toContainText("第一段用于命中区");
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await expect(page.locator(".lumir-hp-withdraw")).toHaveCount(1);
+}
+
+export async function addQuoteCard(page: Page): Promise<void> {
+  await page.evaluate((quoted) => {
+    const view = (document.querySelector(".cm-content") as unknown as {
+      cmTile: { root: { view: any } };
+    }).cmTile.root.view;
+    const start = view.state.doc.toString().indexOf(quoted) as number;
+    view.focus();
+    view.dispatch({ selection: { anchor: start, head: start + quoted.length } });
+  }, QUOTED);
+  await page.locator(".quote-gesture-btn").click();
+  await expect(quoteCard(page)).toHaveCount(1);
+}
+
+export async function addImageCard(page: Page): Promise<void> {
+  await page.locator(".lumir-hp-composer").evaluate((el) => {
+    const dt = new DataTransfer();
+    dt.items.add(new File([new Uint8Array([137, 80, 78, 71])], "action-target.png", { type: "image/png" }));
+    el.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dt }));
+  });
+  await expect(imageCard(page)).toHaveCount(1);
+}
+
+export async function addCompositeCards(page: Page): Promise<void> {
+  await addQuoteCard(page);
+  await addImageCard(page);
+}
+
+export function quoteCard(page: Page): Locator {
+  return page.locator(".lumir-hp-composer .lumir-hp-cwidget > .lumir-hp-qcard:not(.lumir-hp-imgcard)");
+}
+
+export function imageCard(page: Page): Locator {
+  return page.locator(".lumir-hp-composer .lumir-hp-cwidget > .lumir-hp-imgcard");
+}
+
+export function lastUserMessage(page: Page): Locator {
+  return page.locator(".lumir-hp-msg-user").last();
+}
+
+export async function fireHarnessEvent(page: Page, payload: Record<string, unknown>): Promise<void> {
+  await page.evaluate((event) => {
+    (window as unknown as { __fireHarnessEvent: (payload: unknown) => void }).__fireHarnessEvent(event);
+  }, { vault: ACTION_ROOT, session_token: 11, ...payload });
+}
+
+export interface RectReading {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  right: number;
+  bottom: number;
+}
+
+export interface HitReading {
+  rect: RectReading;
+  misses: Array<{ name: string; x: number; y: number; actual: string }>;
+}
+
+export async function readRect(locator: Locator): Promise<RectReading> {
+  return locator.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return { x: r.x, y: r.y, width: r.width, height: r.height, right: r.right, bottom: r.bottom };
+  });
+}
+
+export async function readHits(locator: Locator): Promise<HitReading> {
+  return locator.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const points = [
+      { name: "center", x: r.left + r.width / 2, y: r.top + r.height / 2 },
+      { name: "top", x: r.left + r.width / 2, y: r.top + 1 },
+      { name: "right", x: r.right - 1, y: r.top + r.height / 2 },
+      { name: "bottom", x: r.left + r.width / 2, y: r.bottom - 1 },
+      { name: "left", x: r.left + 1, y: r.top + r.height / 2 },
+      { name: "top-left", x: r.left + 2, y: r.top + 2 },
+      { name: "bottom-right", x: r.right - 2, y: r.bottom - 2 },
+    ];
+    const misses: Array<{ name: string; x: number; y: number; actual: string }> = [];
+    for (const point of points) {
+      const hit = document.elementFromPoint(point.x, point.y);
+      if (hit !== el && (hit === null || !el.contains(hit))) {
+        misses.push({ ...point, actual: hit === null ? "null" : hit.outerHTML.slice(0, 180) });
+      }
+    }
+    return {
+      rect: { x: r.x, y: r.y, width: r.width, height: r.height, right: r.right, bottom: r.bottom },
+      misses,
+    };
+  });
+}
+
+export function horizontalGap(a: RectReading, b: RectReading): number {
+  return Math.max(a.x, b.x) - Math.min(a.right, b.right);
+}
+
+export function rectsOverlap(a: RectReading, b: RectReading): boolean {
+  return Math.max(a.x, b.x) < Math.min(a.right, b.right) && Math.max(a.y, b.y) < Math.min(a.bottom, b.bottom);
+}
+
+export async function readMessageTextRects(locator: Locator): Promise<RectReading[]> {
+  return locator.evaluate((root) => {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const rects: RectReading[] = [];
+    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+      const parent = node.parentElement;
+      if (parent === null || parent.closest(".lumir-hp-copy, .lumir-hp-withdraw") !== null) continue;
+      if ((node.textContent ?? "").trim() === "") continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      for (const r of range.getClientRects()) {
+        if (r.width > 0 && r.height > 0) {
+          rects.push({ x: r.x, y: r.y, width: r.width, height: r.height, right: r.right, bottom: r.bottom });
+        }
+      }
+    }
+    return rects;
+  });
+}
+
+export async function readComposerState(page: Page): Promise<unknown> {
+  return page.locator(".lumir-hp-composer .cm-content").evaluate((el) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    return {
+      doc: view.state.doc.toString(),
+      selection: view.state.selection.ranges.map((range: { from: number; to: number }) => [range.from, range.to]),
+      cards: el.querySelectorAll(".lumir-hp-qcard").length,
+    };
+  });
+}
+
+export async function readCopied(page: Page): Promise<string[]> {
+  return page.evaluate(() => (window as unknown as { __copied: string[] }).__copied);
+}
+
+export async function readWithdrawCalls(page: Page): Promise<Array<{ confirm: boolean }>> {
+  return page.evaluate(() => (window as unknown as { __withdrawCalls: Array<{ confirm: boolean }> }).__withdrawCalls);
+}

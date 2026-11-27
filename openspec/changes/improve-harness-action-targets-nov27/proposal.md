@@ -4,22 +4,23 @@
 - 日期: 2026-11-27
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
 
-> **节点 1 意图输入（不是本提案的预写通过结论）**：Alex 于 2026-11-27 对七条设计方向回复原文
-> 「好，采纳」；对实施与治理沉淀回复原文「好，采纳。另外，这些是否需要沉淀成原则/规则/约定？」。
+> **评审记录**：节点 1（提案评审）**已通过**（2026-11-27）。主会话确认 Alex 对既定设计方向回复原文
+> 「好，采纳」及治理回复「好，采纳。另外，这些是否需要沉淀成原则/规则/约定？」构成本次既定范围批准。
 > 七条方向是：不做 44px 触屏式桌面按钮；分离图标、可见底板与实际命中区；命中区最低 24、Lumir 默认 28；
 > 图标保持小巧且复制可用无依赖内联 SVG；透明扩展不改消息行高 / 文档内容且相邻命中区不重叠；
 > 保留状态、读屏名、复制反馈与 composer 键盘模型；重点验证 × 及其边缘不触发父卡跳转；现状 / 候选先同屏对比，
-> 正式视觉基线另等 Alex 过目。本提案把这些已批准方向转成合同；提案自身仍按流程接受节点 1 评审。
+> 正式视觉基线另等 Alex 过目。本提案把这些方向转成合同，不新增产品语义。
 
 ## Why
 
 次级动作的可点击面积当前明显小于或贴近其紧凑视觉：
 
 - `.lumir-hp-copy`（`src/harness-panel.css:1948`）为 `min-width:24px; height:20px`，图标是 11.5px 档字符 `⧉`
-  （`src/harness-panel.ts:7004` 起）；`.lumir-hp-withdraw`（CSS:1981）同为 `min-width:24px; height:20px`。
-- composer 的 `.lumir-hp-qc-x`（CSS:2233）真实盒为 16×16px；图片卡的 `@` 也是 16×16px，两者在
-  `.lumir-hp-qc-actions` 内恒显（CSS:2255 起）。
-- composer 引用卡的父表面有点击跳回原文处理器（`src/harness-panel.ts:5517` 起）。× 虽已有事件隔离，
+  （`src/harness-panel.ts:7015` 起）。rebase 后的 `.lumir-hp-withdraw`（CSS:1982）是 12px 撤销 SVG +
+  20×20px 可见盒（`src/harness-panel.ts:7094` 起）；本 change 只扩它的真实命中层，不恢复旧文字钮。
+- composer 的 `.lumir-hp-qc-x`（CSS:2247）真实盒为 16×16px；图片卡的 `@` 也是 16×16px，两者在
+  `.lumir-hp-qc-actions` 内恒显（CSS:2273 起）。
+- composer 引用卡的父表面有点击跳回原文处理器（`src/harness-panel.ts:5528` 起）。× 虽已有事件隔离，
   但扩大后若透明边缘落到父表面、被裁切或遮住正文，误触代价会直接变成意外跳转或错误移除。
 
 [W3C WCAG 2.2 Understanding SC 2.5.8](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html)
@@ -38,8 +39,9 @@
    复制 / 撤回仍只在 hover / focus-visible 等既有路径显现，Withdraw 不变为常驻大按钮；图片 @ / × 继续恒显。
 3. **几何与事件不变量**：命中区不得互相重叠、被祖先裁切、越过容器形成不可达区域或截获正文；
    不改变消息行高、文档内容、卡片块序或 composer 键盘模型。× 的中心和透明边缘都必须只执行移除，不触发父卡跳转。
-4. **既有语义不变**：保留现有 accessible name、复制 Markdown 源文本与约 1.5s 成功反馈、撤回可用性 / disabled 语义、
-   图片 @ 插入行为及 composer 的 Tab / 选区 / history 模型。复制成功文案变宽时仍须与撤回命中区不重叠。
+4. **既有语义不变**：保留现有 accessible name、复制 Markdown 源文本与约 1.5s 成功反馈、撤回 12px 图标 /
+   可用性 / disabled 语义、双激活源预览、tail notice 不预览、图片 @ 插入行为及 composer 的 Tab / 选区 / history
+   模型。复制成功文案变宽时仍须与撤回命中区不重叠；撤回不恢复文字、不常驻。
 5. **可复用治理**：新增 [次级图标动作的指针命中区合同](../../../docs/specs/pointer-targets.md)，约束今后新增或修改的
    次级图标动作；不要求借本 change 回改全仓。
 6. **验收下沉**：真实几何与 `elementFromPoint` / 等效命中测试、真实指针事件、逐条反向必红、现状 / 候选视觉对比、
@@ -61,16 +63,15 @@
   `scripts/acceptance/` 场景；不引入运行时依赖。
 - 关联约束：composer 的零长度 widget、scoped AX、单一 history 与键盘合同；视觉基线人肉裁决；
   新断言逐条反向必红；节点 2 的 implemented / released / machine PASS / native PASS / archived 状态分列。
-- **本轮交付边界**：仅提案、设计、规格增量与 canonical 规则文档；不改生产代码 / 测试 / 正式基线，不创建测试文件，
-  不跑完整视觉或真机，不 merge、不 push。
+- **实施边界**：提案阶段只交付文档；生产实施在依赖合并并 rebase 后进行。完整视觉与真机由主会话另行安排，
+  本 change 不自行更新正式基线，不在 worker 侧 merge、push 或 archive。
 
 ## 实施依赖
 
-另一个 worktree 正在推进 `clarify-harness-withdraw-scope-nov27`。本提案与其不形成提案期阻塞，可以独立评审；
-**生产实施必须等该 change 合并后 rebase 到最新 master**，再核对其对撤回可见性、DOM / CSS 与验收场景的影响。
-高概率冲突面是 `src/harness-panel.ts` 的撤回按钮同步 / 事件代码、`src/harness-panel.css` 的 `.lumir-hp-withdraw`，
-以及双方新增或修改的 Harness 视觉 / 真机场景。若依赖 change 改了本提案已锁定的产品行为，先更新提案并重新送裁，
-不得静默合并语义。
+`clarify-harness-withdraw-scope-nov27` 已合并并推送，主仓 master 为 `b6fe012b`；本分支已完成 `git rebase master`
+并撤回最终 living / 实现。最终撤回入口是 12px 撤销 SVG、20×20 可见盒，读屏名「撤回这一轮」；预览保留
+pointer / focus 双激活源，tail notice 在场时整段不预览。本 change 只扩命中层至 28×28，不回退上述任何行为。
+原提案所列冲突面已按最终实现重读；此更新只修正现状，不新增产品语义。
 
 ## 节点 2：归档记录（实现完成后填写）
 
@@ -79,12 +80,12 @@
 
 | 状态 | 值 | 证据指针 |
 |---|---|---|
-| 视觉候选 | 否：本轮未实现、未产出候选截图 | 实施期补现状 / 候选对比路径与 Alex 基线裁决原话 |
-| implemented | 否：待节点 1 与生产实施 | 〔commit hash；已合并写 merge hash〕 |
-| released | 否：尚未实现，本批不打包 | 〔若发布则补版本号 + release index〕 |
-| machine PASS | 否：实现门禁未运行；本轮只做文档校验 | 〔实施期补 GATE RESULT 原文行 + 退出码与日志指针〕 |
-| native PASS | 否：本轮未跑真机 | 〔实施期补场景 id + `.local/acceptance/.../status.txt`〕 |
-| archived | 否：待归档 | 〔归档提交 hash + `--archived` PASS 读数〕 |
+| 视觉候选 | 候选已产出并由 worker 实际查看；**待 Alex / 独立视觉终审，未更新基线** | `.local/reviews/harness-action-targets-nov27/`（before / after 各 24 张 + 三主题并排图） |
+| implemented | 否：实现已完成，待本分支提交 | 提交后回填 commit hash；未合并 |
+| released | 否：本批不打包 | 不适用：无发布产物 |
+| machine PASS | **部分通过，完整项未齐**：目标 14/14、相关既有 49/49、quick PASS；完整 visual 待主会话 | `GATE RESULT: 13/13 PASS（SKIP 0）`，quick 退出码 0；`.local/reviews/harness-action-targets-nov27/logs/` |
+| native PASS | 否：真机由主会话统一执行，当前未跑 | 81 / 148 / 882 已更新且静态校验 312 场景通过；无 `status.txt`，不预写 PASS |
+| archived | 否：待归档 | 未 archive；无 `--archived` 读数 |
 
 未发生项已写明原因，不留空；后续失败项按产品缺陷 / 测试 oracle 缺陷 / 环境 INVALID / 需求或视觉迭代四类归因。
 

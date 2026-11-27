@@ -53,6 +53,14 @@ steps:
     do: key
     key: enter
 
+  - name: 在途撤回入口为 disabled：28×28 命中几何与「先停止」提示不变
+    do: hover
+    target: { role: AXButton, name: "^撤回这一轮$" }
+    expect:
+      - geom: { target: { role: AXButton, name: "^撤回这一轮$" }, minWidth: 28, minHeight: 28 }
+      - ax: { has: 'help="先停止本轮，再撤回"' }
+      - shot: 01b-在途disabled
+
   - name: 等第一轮回答
     do: waitFor
     waitFor:
@@ -72,6 +80,27 @@ steps:
       - label: 撤回入口的悬停提示说明完整后果（AX help=；change clarify-harness-withdraw-scope-nov27）
         ax: { has: 'help="撤回这条消息和它引发的回答、工具记录；原文回到输入框"' }
       - shot: 02-撤回前
+
+  - name: 真实指针点复制左缘透明区（CGEvent mode=1；change improve-harness-action-targets-nov27）
+    do: doubleClick
+    target: { role: AXButton, name: "复制消息", nth: 0 }
+    mode: 1
+    dx: 0.04
+    dy: 0.5
+    expect:
+      - label: 复制源逐字进入系统剪贴板
+        clipboard: { exact: "q882-WITHDRAW" }
+      - label: 既有 success 反馈仍在
+        ax: { has: "✓ 已复制" }
+      - geom: { target: { role: AXButton, name: "复制消息", nth: 0 }, minWidth: 28, minHeight: 28 }
+      - geom: { target: { role: AXButton, name: "^撤回这一轮$" }, minWidth: 28, minHeight: 28 }
+      - shot: 02a-复制success
+
+  - name: 等复制 success 自动消退
+    do: waitFor
+    waitFor:
+      not: ["✓ 已复制"]
+    timeoutMs: 5000
 
   # 悬停入口 = 预览：本条消息 + 它的回答应被共同高亮（截图证据；像素形态归 Alex，套件不判）。
   - name: 悬停撤回入口（预览将被移除的那一段）

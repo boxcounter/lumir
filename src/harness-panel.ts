@@ -7011,6 +7011,34 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  绝不是渲染后 HTML。 */
   const copySources = new WeakMap<HTMLElement, string>();
 
+  function createCopyIcon(): SVGSVGElement {
+    const icon = document.createElementNS(SVG_NS, "svg");
+    icon.setAttribute("width", "14");
+    icon.setAttribute("height", "14");
+    icon.setAttribute("viewBox", "0 0 14 14");
+    icon.setAttribute("fill", "none");
+    icon.setAttribute("stroke", "currentColor");
+    icon.setAttribute("stroke-width", "1.2");
+    icon.setAttribute("stroke-linecap", "round");
+    icon.setAttribute("stroke-linejoin", "round");
+    icon.setAttribute("aria-hidden", "true");
+    icon.setAttribute("focusable", "false");
+    const front = document.createElementNS(SVG_NS, "rect");
+    front.setAttribute("x", "4.5");
+    front.setAttribute("y", "4.5");
+    front.setAttribute("width", "7");
+    front.setAttribute("height", "7");
+    front.setAttribute("rx", "1");
+    const back = document.createElementNS(SVG_NS, "path");
+    back.setAttribute("d", "M3.5 9.5h-1a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v1");
+    icon.append(back, front);
+    return icon;
+  }
+
+  function syncCopyTargetWidth(host: HTMLElement, btn: HTMLButtonElement): void {
+    host.style.setProperty("--lumir-hp-copy-hit-w", `${btn.getBoundingClientRect().width}px`);
+  }
+
   /** hover 浮现的复制钮：点击写剪贴板，成功把钮面就地换成 ✓ 反馈（约 1.5s 消退，D380）。 */
   function attachCopyButton(el: HTMLElement, source: string): void {
     copySources.set(el, source);
@@ -7018,7 +7046,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     btn.type = "button";
     btn.className = "lumir-hp-copy";
     btn.setAttribute("aria-label", t("D379"));
-    btn.textContent = "⧉"; // i18n-exempt: glyph（双页复制图标图形，非文案）
+    btn.append(createCopyIcon());
     let revertTimer: number | undefined;
     btn.addEventListener("click", () => {
       const text = copySources.get(el);
@@ -7027,9 +7055,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         window.clearTimeout(revertTimer);
         btn.textContent = t("D380");
         btn.classList.add("is-copied");
+        syncCopyTargetWidth(el, btn);
         revertTimer = window.setTimeout(() => {
-          btn.textContent = "⧉"; // i18n-exempt: glyph
+          btn.replaceChildren(createCopyIcon());
           btn.classList.remove("is-copied");
+          syncCopyTargetWidth(el, btn);
         }, 1500);
       }).catch(() => {}); // 剪贴板不可用：钮面不动，不伪造成功反馈。
     });
