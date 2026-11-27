@@ -30,8 +30,8 @@ Alex 已明确选择内容呈现模型：**「我选择这种模型」**。其�
 - 不新增设置，不强制折行，不改容量死区 / latent token 策略，不调整阅读栏上下限。
 - 不把此变更描述成修 bug；既有研究的其它 findings 不随本 change 扩容。
 - 不改 Markdown 手柄的频率、视觉样式或低频去留。
-- 不在本 change 更新正式视觉基线；候选图先供 Alex 过目。
-- 不合并、不推送、不归档；完整视觉、真机与独立终审按主会话排期完成。
+- 除 Alex 单独批准的 `binding-highlight-chromium-darwin.png` 外，不更新其它正式视觉基线，不改容差。
+- 不合并、不推送；完整视觉、真机与独立终审按主会话排期完成。
 
 ## Impact
 
@@ -39,6 +39,33 @@ Alex 已明确选择内容呈现模型：**「我选择这种模型」**。其�
 - 影响的代码/系统：`src/editor.ts` 的 code grid 模板；`src/main.ts` 的阅读手柄显隐同步；相关视觉/结构断言与真机验收场景。
 - 关联约束：ADR 0002 的单内核双模式与性能合同、ADR 0003 的不改写源文件、ADR 0008 的 pane 通用宿主模型。
 
-## 节点 2：归档记录（实现完成后填写）
+## 节点 2：归档记录
 
-本 change 当前不归档。最终按 workflow 分列 implemented / released / machine PASS / native PASS / archived；完整视觉、真机、独立 reviewer 与归档均未提前视为完成。
+### 状态分列
+
+| 状态 | 值 | 证据指针 |
+|---|---|---|
+| implemented | 是 | 实现 `a18b3a7b9b5a26c956bb46436f0657d00f9c184f`；41 oracle 修正 `ae15f97c53dcf5e7ff38bfbfdb4b37dfe21e2d93`；单张授权基线随当前分支提交 |
+| released | 否 | 本批不打包，无 release 产物 |
+| machine PASS | 是 | quick `GATE RESULT: 13/13 PASS（SKIP 0）` exit 0；完整 visual 最终 `GATE RESULT: 15/15 PASS（SKIP 0）` exit 0，1951 passed / 13 skipped；原始日志 `.local/reviews/code-pane-workspace-nov27/evidence/gate-visual-final.log` |
+| native PASS | 是 | 38/41 最终 2/2 PASS、exit 0；证据 `.local/acceptance/2026-11-27-code-pane-workspace-after-oracle-fix/` |
+| archived | 否：待归档 | K3 clean 报告绑定 `a18b3a7b`；最终 oracle/基线提交仍须独立复核并绑定最终 tip，未满足前不归档 |
+
+### 五要件核对
+
+1. **方案已批准**：内容模型由 Alex 原话「我选择这种模型」批准；单张基线另有 Alex 原话「批准代码满 pane 的这张基线」。授权仅限 `binding-highlight-chromium-darwin.png`，760×733→964×733，未改容差或其它基线。
+2. **独立 reviewer**：`.local/reviews/code-pane-workspace-nov27/independent-review.md` 为 K3 clean/merge、无 P1/P2/P3，绑定 `a18b3a7b`；其后的 `ae15f97c` 为41场景时序修正，最终基线/记录提交不得沿用旧 tip 冒充已复核。
+3. **tasks**：1.1–4.4 已完成；4.5 的最终 tip 独立复核与归档保持未勾，直到证据真实存在。
+4. **门禁与真机**：quick / 完整视觉 / native 读数如上。41 原失败为**测试时序/oracle 缺陷**：master 同败，AX 点击无 settle，强制覆盖两段 await 导致磁盘读取抢跑；只用 `waitForFile` 修场景，未改保存或布局生产代码。分类与三套证据见 `.local/reviews/code-pane-workspace-nov27/native-triage.md`。
+5. **规格对账**：以归档前实际 validate / docs / archive-check 输出为准；backlog 队列本 change 恰一条。当前缺最终 tip 独立复核，故不声称五要件已齐。
+
+### 完整 visual 历史
+
+| 次序 | 结果 | 证据与说明 |
+|---|---|---|
+| 首次 | `GATE RESULT: 14/15 PASS（SKIP 0）` exit 1；1950 passed / 1 failed / 13 skipped | `evidence/gate-visual-summary.log`、`gate-visual-regression.log`；唯一差异为授权基线 760×733→964×733 |
+| 更新后最终 | **`GATE RESULT: 15/15 PASS（SKIP 0）` exit 0**；1951 passed / 13 skipped；visual-regression 1367s | `evidence/gate-visual-final.log`；原始套件日志路径也在其中，无额外差异 |
+
+### 归档前后
+
+尚未执行归档包装器，未产生归档提交或 `--archived` 读数。最终 tip 的独立复核是现存的唯一流程缺口；本 change 不 merge、不 push，released 保持否。
