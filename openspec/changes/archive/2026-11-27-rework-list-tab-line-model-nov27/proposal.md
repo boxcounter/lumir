@@ -100,4 +100,16 @@ MODIFIED 块不允许改 scenario 名，先例 `vault-and-session-removal`），
    （1 条 MODIFIED 轨道 D，13 段，无静默丢段）；`validate --all --strict` 39 passed / 0 failed；
    `docs/backlog.md` 归档队列有且仅有一条本 change 条目。
 
-**归档后记录（待实跑归档后追加）**
+**归档后记录**
+
+- 归档提交：`ead4a330`；归档目录
+  `openspec/changes/archive/2026-11-27-rework-list-tab-line-model-nov27/`。
+- 包装器 `node scripts/openspec-archive.mjs rework-list-tab-line-model-nov27` 原文读数：
+  `Totals: + 1, ~ 1, - 1, → 0`（keymap-commands：ADDED「列表行缩进键」/ MODIFIED「轨道 D」/
+  REMOVED 旧「列表项缩进键」）；归档后修链 0 处（4 篇 Markdown / 0 条相对链接）；
+  `openspec-links: PASS（710 条全部可达）`；包装器 `PASS`。
+- `node scripts/openspec-archive-check.mjs --archived rework-list-tab-line-model-nov27`：
+  `PASS（1 条 MODIFIED，对比 13 段；人工恢复 0 段，声明认领 0 段）`。
+- 承接核对：living `openspec/specs/keymap-commands/spec.md` 已无「列表项缩进键」requirement，
+  旧条 9 个 scenario 全部消失；新条「列表行缩进键」12 个 scenario 落位；「轨道 D」的交叉引用
+  已改指新条。归档后 `validate --all --strict` 38 passed / 0 failed。
