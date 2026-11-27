@@ -38,22 +38,31 @@ function assertUneditedLinesEqual(before: string, after: string, editedLine: num
   }
 }
 
+/** 普通正文行与空行的终态：纵向 padding 恒 0（与邻行 / EOF / 结构边界无关）。 */
+const LOCAL_TEXT: LineShape = { kind: "text", top: 0, bottom: 0 };
+
+function totalPadding(map: Map<number, LineShape>): number {
+  let total = 0;
+  for (const shape of map.values()) total += shape.top + shape.bottom;
+  return total;
+}
+
 const PREFIX_FAMILIES = [
   ["-", "- ", "- 哈"],
   ["+", "+ ", "+ 哈"],
   ["*", "* ", "* 哈"],
 ] as const;
 
-test("边界单调性：bullet 每个前缀都同步保留前一行 8px，文档首尾与空行对照同判", () => {
+test("边界单调性：bullet 每个前缀都同步保留 marker 行 2px，正文行纵向 padding 恒 0", () => {
   for (const prefixes of PREFIX_FAMILIES) {
     for (const prefix of prefixes) {
       for (const doc of [`alpha\n${prefix}`, `首段\n中间\n${prefix}`, `${prefix}\n尾段`]) {
         const previous = doc.startsWith(prefix) ? null : shapeAt(doc, doc.split("\n").length - 1);
-        if (previous) assert.equal(previous.bottom, 8, `${JSON.stringify(doc)}：marker 前缀必须构成块边界`);
+        if (previous) assert.deepEqual(previous, LOCAL_TEXT, `${JSON.stringify(doc)}：marker 前缀不得改动前一正文行几何`);
         assert.equal(shapeAt(doc, doc.startsWith(prefix) ? 1 : doc.split("\n").length).top, 2);
       }
       const control = `alpha\n\n${prefix}`;
-      assert.equal(shapeAt(control, 1).bottom, 8);
+      assert.deepEqual(shapeAt(control, 1), LOCAL_TEXT);
       assert.deepEqual(shapeAt(control, 2), { kind: "blank", top: 0, bottom: 0 });
     }
   }
@@ -66,12 +75,12 @@ test("无中段翻转与首帧即终帧：bullet / 有序序列只改当前编�
       assert.deepEqual(shapeAt(`alpha\n${prefixes[i - 1]}`, 2), shapeAt(`alpha\n${prefixes[i]}`, 2));
     }
   }
-  assert.equal(shapeAt("alpha\n1", 1).bottom, 0, "普通数字尚未成为块");
-  assert.equal(shapeAt("alpha\n1.", 1).bottom, 8, "尾点是唯一允许的块成立拍");
+  assert.equal(shapeAt("alpha\n1", 1).bottom, 0, "普通数字前缀不得改动前一正文行");
+  assert.equal(shapeAt("alpha\n1.", 1).bottom, 0, "尾点前缀同样不得改动前一正文行（旧模型在这里给 8px）");
   for (const prefix of ["-", "--", "---"]) {
-    assert.equal(shapeAt(`alpha\n${prefix}`, 1).bottom, 8, "setext 下划线前缀必须保留前段边界");
+    assert.equal(shapeAt(`alpha\n${prefix}`, 1).bottom, 0, "setext 下划线前缀不得改动前一正文行");
   }
-  assert.equal(shapeAt("alpha\n---x", 1).bottom, 0, "---x 回到普通文本是已登记边界");
+  assert.equal(shapeAt("alpha\n---x", 1).bottom, 0, "---x 回到普通文本同样不改动前一行");
 });
 
 test("取值表：标题阶梯、首内容块、列表、空行、引用、代码、表格与 HR 逐项不变", () => {
@@ -94,15 +103,31 @@ test("取值表：标题阶梯、首内容块、列表、空行、引用、代�
   }
 });
 
-test("text 的 8px 只在 EOF / 空行 / 结构边界；嵌套段落与引用不新增下距", () => {
-  assert.equal(shapeAt("alpha", 1).bottom, 8);
-  assert.equal(shapeAt("alpha\n\nbeta", 1).bottom, 8);
-  assert.equal(shapeAt("alpha\nbeta", 1).bottom, 0);
-  assert.equal(shapeAt("alpha\n## next", 1).bottom, 8);
-  assert.equal(shapeAt("alpha\n> quote", 1).bottom, 8);
-  assert.equal(shapeAt("alpha\n```\nx\n```", 1).bottom, 8);
-  assert.equal(shapeAt("- alpha\n  continued", 2).bottom, 0, "列表项内段落保持无下距");
-  assert.equal(shapeAt("> alpha\n> continued", 2).bottom, 0, "引用内段落保持无下距");
+test("普通行局部性：顶层正文与空行的纵向 padding 恒 0，不读邻行 / EOF / 结构边界", () => {
+  const docs = [
+    "alpha",
+    "alpha\nbeta",
+    "alpha\n\nbeta",
+    "alpha\n\n",
+    "\n\n",
+    "alpha\n1.",
+    "## next\nalpha",
+    "alpha\n## next",
+    "alpha\n> quote",
+    "alpha\n```\nx\n```",
+    "alpha\n- item",
+    "alpha\n---",
+    "- alpha\n  continued",
+    "> alpha\n> continued",
+  ];
+  for (const doc of docs) {
+    const lines = doc.split("\n");
+    for (let n = 1; n <= lines.length; n++) {
+      const shape = shapeAt(doc, n);
+      if (shape.kind === "text") assert.deepEqual(shape, LOCAL_TEXT, `${JSON.stringify(doc)} 第 ${n} 行（普通正文）`);
+      if (shape.kind === "blank") assert.deepEqual(shape, { kind: "blank", top: 0, bottom: 0 }, `${JSON.stringify(doc)} 第 ${n} 行（空行）`);
+    }
+  }
 });
 
 test("形态包含：markerTextAt 的普通上下文命中 MUST 同属几何 marker 形态", () => {
@@ -129,11 +154,130 @@ test("frontmatter 不参与行装饰；首个内容块扫描跳过 frontmatter �
   assert.deepEqual(result.get(text.line(5).from), { kind: "heading", top: 0, bottom: 6, headingLevel: 2 });
 });
 
-test("数千行连续正文只取首个可见行：下一行边界检查不递归、不扫描后续全文", () => {
+test("数千行连续正文只取首个可见行：视口求值不扫描后续全文", () => {
   const doc = Array.from({ length: 6000 }, (_, index) => `line ${index}`).join("\n");
   const text = Text.of(doc.split("\n"));
   const first = text.line(1);
   const result = lineShapes(text, parser.parse(doc), first.from, first.to, null);
   assert.equal(result.size, 1);
-  assert.deepEqual(result.get(first.from), { kind: "text", top: 0, bottom: 0 });
+  assert.deepEqual(result.get(first.from), LOCAL_TEXT);
+});
+
+// ---------------------------------------------------------------------------
+// 非语义迁移稳定（终态合同：空行↔有字、正文编辑不改任何行的纵向 padding）
+// ---------------------------------------------------------------------------
+
+test("非语义迁移稳定：空行↔有字不改变任何行的纵向 padding（文档末行 / 中间 / 连续空行）", () => {
+  const migrations: ReadonlyArray<readonly [string, string, string]> = [
+    ["a\n", "a\nx", "文档末尾空行输入首字（单换行）"],
+    ["a\n\n", "a\n\nx", "文档末行空行输入首字（双换行）"],
+    ["a\n\nb\nc", "a\nx\nb\nc", "中间单个空行变正文"],
+    ["p\n\n\n\nq", "p\n\nx\n\nq", "连续空行中的一行变正文"],
+    ["\n", "x\n", "全空文档的第一行落字"],
+    ["a\n\nb\n", "a\n\nb\nx", "段落后的末空行为文档唯一空行"],
+  ];
+  for (const [before, after, label] of migrations) {
+    const a = shapes(before);
+    const b = shapes(after);
+    const at = Text.of(before.split("\n"));
+    const bt = Text.of(after.split("\n"));
+    assert.equal(at.lines, bt.lines, `${label}：行数不得变化`);
+    for (let n = 1; n <= at.lines; n++) {
+      const beforeShape = a.get(at.line(n).from)!;
+      const afterShape = b.get(bt.line(n).from)!;
+      assert.equal(afterShape.top, beforeShape.top, `${label}：第 ${n} 行 top 不得变化`);
+      assert.equal(afterShape.bottom, beforeShape.bottom, `${label}：第 ${n} 行 bottom 不得变化`);
+    }
+    assert.equal(totalPadding(b), totalPadding(a), `${label}：全篇纵向 padding 总和不得变化`);
+  }
+});
+
+test("57 行同族：中段单个空行变正文时全篇行几何逐项锁定", () => {
+  const lines: string[] = Array.from({ length: 57 }, (_, index) => (index === 0 ? "p" : index === 56 ? "q" : ""));
+  const before = lines.join("\n");
+  lines[28] = "x";
+  const after = lines.join("\n");
+  const a = shapes(before);
+  const b = shapes(after);
+  const at = Text.of(before.split("\n"));
+  const bt = Text.of(after.split("\n"));
+  assert.equal(at.lines, 57);
+  assert.equal(bt.lines, 57);
+  for (let n = 1; n <= 57; n++) {
+    const beforeShape = a.get(at.line(n).from)!;
+    const afterShape = b.get(bt.line(n).from)!;
+    assert.equal(afterShape.top, beforeShape.top, `第 ${n} 行 top 不得随第 29 行空行落字而翻转`);
+    assert.equal(afterShape.bottom, beforeShape.bottom, `第 ${n} 行 bottom 不得随第 29 行空行落字而翻转`);
+    if (n !== 29) assert.equal(afterShape.kind, beforeShape.kind, `第 ${n} 行未被编辑，类别不得变化`);
+  }
+  assert.equal(totalPadding(a), 0, "终态下 57 行全篇没有块下距");
+  assert.equal(totalPadding(b), 0);
+  assert.deepEqual(a.get(at.line(29).from), { kind: "blank", top: 0, bottom: 0 });
+  assert.deepEqual(b.get(bt.line(29).from), { kind: "text", top: 0, bottom: 0 }, "第 29 行真的落字了（区分度）");
+});
+
+// ---------------------------------------------------------------------------
+// 语义 reflow 有界（块类型成立 / 消失时，块外行几何不变）
+// ---------------------------------------------------------------------------
+
+test("语义 reflow 有界：heading↔text 只改标题行自身，块外行几何不变", () => {
+  const heading = "正文行\n## 标题\n尾行";
+  const text = "正文行\n标题\n尾行";
+  assert.deepEqual(shapeAt(heading, 1), LOCAL_TEXT, "正文行不受下一行类别影响");
+  assert.deepEqual(shapeAt(text, 1), LOCAL_TEXT);
+  assert.deepEqual(shapeAt(heading, 2), { kind: "heading", top: 20, bottom: 6, headingLevel: 2 });
+  assert.deepEqual(shapeAt(text, 2), LOCAL_TEXT);
+  assert.deepEqual(shapeAt(heading, 3), shapeAt(text, 3), "标题块之后的正文行几何不变（只整体位移）");
+  assert.deepEqual(shapeAt(heading, 3), LOCAL_TEXT);
+
+  const list = "正文行\n- 列表项\n尾行";
+  assert.deepEqual(shapeAt(list, 1), LOCAL_TEXT, "正文行不受下一行列表影响");
+  assert.deepEqual(shapeAt(list, 2), { kind: "list-item", top: 2, bottom: 0 });
+});
+
+test("语义 reflow 有界：标题台阶变化只改变标题行自身的上下距", () => {
+  const h2 = "前文\n\n## 标题\n后文";
+  const h4 = "前文\n\n#### 标题\n后文";
+  assert.deepEqual(shapeAt(h2, 1), shapeAt(h4, 1), "块外前行几何不得随标题级别变化");
+  assert.deepEqual(shapeAt(h2, 4), shapeAt(h4, 4), "块外后行几何不得随标题级别变化（只整体位移）");
+  assert.notDeepEqual(shapeAt(h2, 3), shapeAt(h4, 3), "标题自身的台阶必须真的变化（区分度）");
+});
+
+test("Enter 拆分 / Backspace 合并：高度差只是自然行数变化，普通行不带额外 padding", () => {
+  const merged = "正文第一行";
+  const split = "正文\n第一行";
+  assert.deepEqual(shapeAt(merged, 1), LOCAL_TEXT);
+  assert.deepEqual(shapeAt(split, 1), LOCAL_TEXT);
+  assert.deepEqual(shapeAt(split, 2), LOCAL_TEXT);
+  assert.equal(totalPadding(shapes(split)), totalPadding(shapes(merged)), "拆分不引入段距");
+
+  const mergedHeading = "## 标题";
+  const splitHeading = "## 标\n题";
+  assert.deepEqual(shapeAt(splitHeading, 1), shapeAt(mergedHeading, 1), "拆分标题时标题行自身几何不变");
+  assert.deepEqual(shapeAt(splitHeading, 2), LOCAL_TEXT, "拆出的正文行不带纵向 padding");
+});
+
+// ---------------------------------------------------------------------------
+// 选区 / IME / 视口不是几何输入
+// ---------------------------------------------------------------------------
+
+test("选区 / IME / 视口不是几何输入：同一文档重复求值与视口片段求值逐项一致", () => {
+  const doc = Array.from({ length: 57 }, (_, index) => `line ${index + 1}`).join("\n");
+  const text = Text.of(doc.split("\n"));
+  const tree = parser.parse(doc);
+  const full = lineShapes(text, tree, 0, text.length, null);
+  assert.deepEqual(lineShapes(text, tree, 0, text.length, null), full, "纯函数无隐藏状态：两次求值必须逐项相等");
+  const ranges = [
+    [text.line(1).from, text.line(1).to],
+    [text.line(28).from, text.line(30).to],
+    [text.line(57).from, text.line(57).to],
+  ] as const;
+  for (const [from, to] of ranges) {
+    const slice = lineShapes(text, tree, from, to, null);
+    assert.ok(slice.size > 0, "片段求值必须真的覆盖到行");
+    for (const [pos, shape] of slice) {
+      assert.deepEqual(shape, full.get(pos), `片段 [${from},${to}] 与全量求值对同一行必须给出同一 shape`);
+    }
+  }
+  assert.ok(full.size === 57, "全量求值覆盖全部行");
 });

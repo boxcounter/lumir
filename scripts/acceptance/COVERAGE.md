@@ -124,7 +124,7 @@
 | 96 | `96-harness-transcript-restore` | harness transcript 快照恢复保真：切 vault 回来后工具行带人话化参数、工具清单按消息分块、无光秃 Agent 头 | core |
 | 97 | `97-harness-stream-visible` | 真流式与在途停止：分段到达时可见部分正文、片间隔内点停止能中断在途流并保留已产出正文 | full |
 | 99 | `99-harness-k3-thinking-chip` | k3-256k 思考程度可用（M373 合并 chip）：订阅模型配置下 chip 可点、浮层三档、选择写会话 | full |
-| 100 | `100-empty-line-editing` | 空行编辑三连（M399）——有内容行行首 Enter 换行且新空行可见、空列表项 Enter 去标记留空行（不新增行）、删空项 marker 后行保留可见 | full |
+| 100 | `100-empty-line-editing` | 空行编辑三连（M399）+ 末尾空行落字的行盒 / END 稳定性——有内容行行首 Enter 换行且新空行可见、空列表项 Enter 去标记留空行（不新增行）、删空项 marker 后行保留可见、末尾空行输入首字不改文档总高 | full |
 | 101 | `101-harness-k2-chip-disabled` | kimi-k2.6 思考程度置灰（M373 合并 chip）：同一条配置链配 k2 系模型，能力按 schema 声明现算 | full |
 | 102 | `102-harness-model-dimension` | 合并选择器 model 维度（M373/M381 config-only）：schema models 清单进浮层、选择写回 providers.kimi.model、effort 能力随声明翻转 | full |
 | 103 | `103-harness-tool-order` | 工具行时序：先调工具后作答的轮次，定稿后工具行保持在最终回答之前（M374） | full |

@@ -952,8 +952,10 @@ for (const c of [
     for (const step of steps) {
       for (const frame of framesFor(frames, step.doc)) {
         expect(frame.lines.length).toBe(2);
-        expect(Math.abs(frame.lines[0].height - 33.5), `${step.key}：前一行高度`).toBeLessThanOrEqual(TOL);
-        expect(frame.lines[0].paddingBottom).toBe(8);
+        // change fix-empty-line-height-stability-nov27：普通正文行纵向 padding 恒 0（旧模型
+        // 在「下一行是块边界」时给前行 8px，行高 33.5；终态是正常行高 25.5）。
+        expect(Math.abs(frame.lines[0].height - 25.5), `${step.key}：前一行高度`).toBeLessThanOrEqual(TOL);
+        expect(frame.lines[0].paddingBottom).toBe(0);
         if (step.doc.includes(`\n${c.marker}`)) {
           expect(frame.lines[1].paddingTop).toBe(2);
           expect(Math.abs(frame.lines[1].height - 27.5), `${step.key}：marker 行高度`).toBeLessThanOrEqual(TOL);
@@ -989,7 +991,7 @@ test("块边界首帧：空行起列表对照组不新增前序几何变化", as
   const frames = await stopFrameRecorder(page, "boundary-blank-control");
   for (const step of steps) {
     for (const frame of framesFor(frames, step.doc)) {
-      expect(frame.lines[0].paddingBottom).toBe(8);
+      expect(frame.lines[0].paddingBottom).toBe(0);
       expect(frame.lines[1].paddingTop).toBe(0);
       expect(frame.lines[1].paddingBottom).toBe(0);
       expect(frame.lines[2].paddingTop).toBe(2);

@@ -161,7 +161,7 @@ callout 组标题 `.co-g-label` 0.07em（:651）、键位面板组标题 `.kb-g-
 
 组件间 margin/padding 必须落阶梯；例外仅限收敛规则 3 点名的行内补偿与
 已调优组件内边距。高频出处：正文 `padding: 32px 44px 20px`（sp-11/13/9）、
-doc-body 段落间距 8（sp-4）、h2 `20px 0 6px`、h4 `14px 0 5px`、h5 `12px 0 4px`、
+doc-body 段落纵向 padding 0（段落间隔由空行行高承担；2026-11-27 块几何归零）、h2 `20px 0 6px`、h4 `14px 0 5px`、h5 `12px 0 4px`、
 h6 `10px 0 4px`（h4–h6 为 heading-hierarchy-ramp 补档，2026-09-26）、fm 区 `padding: 8px 14px 9px`、
 代码块 `padding: 9px 14px 10px`、队列条目三行的 20px 悬挂缩进（sp-9，与
 checkbox 对齐——对齐纪律的样板）。
