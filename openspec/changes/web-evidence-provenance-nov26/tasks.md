@@ -48,13 +48,16 @@
 
 ## 3. 执行与信封构造
 
-- [ ] 3.1 `provider.rs::execute_until` 收口处单一写入：仅 Fetch；`ok` → `provider_full()`，
-      `!ok && attempts>0` → `provider_attempted()`，其余 → 五字段 null；Search 恒 null
+- [ ] 3.1 `provider.rs::execute_until` 收口处单一收口：仅 Fetch；`ok` 且信封已有 provenance
+      （测试 provider 的 `scripted`）→ **保留、不覆盖**；`ok` 且无 provenance（生产 DeepSeek）→
+      补 `provider_full()`；`!ok && attempts>0` → `provider_attempted()`；其余 → 五字段 null；
+      Search 恒 null
 - [ ] 3.2 取消覆盖分支（`execute_until` 内 `aborted()` 替换错误码）保留原 `attempts`，因此仍走
       `provider_attempted()`；补一测证明取消不会把 `fetched_by` / `binding` 清空
-- [ ] 3.3 `FetchProvenance` 只有 `provider_full()` / `provider_attempted()` / `none()` 三个生产
-      构造器，`scripted(scope, coverage)` 仅 `cfg(any(test, feature = "acceptance-web"))`；
-      MUST NOT 新增 `local_pinned()` 一类无消费者的构造函数
+- [ ] 3.3 `FetchProvenance` 的构造器：`provider_full()` / `provider_attempted()` 生产可用；
+      `scripted(scope, coverage)` 仅 `cfg(any(test, feature = "acceptance-web"))`，由测试 provider
+      在成功信封上写入（`budget::fetch_success` 之后），MUST NOT 被收口覆盖；MUST NOT 新增
+      `local_pinned()` 一类无消费者的构造函数
 - [ ] 3.4 `budget.rs`：`fetch_success` 不接收 provenance；`apply_truncation` 不读写五个新字段
       （30k 正文用例下 `coverage` 仍 `unknown`）
 - [ ] 3.5 `executor.rs`：成功与预检失败路径只负责 `local_precheck`，不写 provenance；provider 前
@@ -118,18 +121,21 @@
 - [ ] 7.2 `tests/unit`：`parseWebAudit` 缺键 / 非法枚举 / 不推导；`parseWebApprovalPreview` 保留
       `mode`；`PanelWebInput` 持久化 mode + Fetch query；`withWebPanelInput` 只补空缺；
       `webInputText` 对 Fetch 恒返回原始 URL（选取 query 不顶默认行）
-- [ ] 7.3 `tests/unit` + `web_acceptance.rs`：同一 `selected_chunks` 记录的 live / 快照 / JSONL
+- [ ] 7.3 `tests/unit`（DOM 断言）：支持 `selected_chunks` 的 Ask 预览同时显示**完整原始 URL**、
+      选取 `query` 与「query 随 URL 一起发往 provider」的外发说明；同一调用批准后，默认工具行仍只
+      显示原始 URL（query 不顶默认行）
+- [ ] 7.4 `tests/unit` + `web_acceptance.rs`：同一 `selected_chunks` 记录的 live / 快照 / JSONL
       三路径逐字段同形（徽标、五字段、mode/query、详情行）
-- [ ] 7.4 `src-tauri/tests/web_acceptance.rs`（`--features acceptance-web`）：`selected_chunks` +
+- [ ] 7.5 `src-tauri/tests/web_acceptance.rs`（`--features acceptance-web`）：`selected_chunks` +
       `bounded` 成功端到端——测试 provider 声明 `[full, selected_chunks]` 并脚本化返回；真实 socket
       记录证明 URL 与 query 都到达；覆盖 `allow_all` 与 `ask` → 批准 → 执行两条路径；断言五字段与
       恢复同形
-- [ ] 7.5 `web_acceptance.rs`：生产 DeepSeek 请求体没有 `mode` / `query` 字段（与 7.4 的测试 provider
+- [ ] 7.6 `web_acceptance.rs`：生产 DeepSeek 请求体没有 `mode` / `query` 字段（与 7.5 的测试 provider
       记录对照）
-- [ ] 7.6 `web/acceptance.rs`：合成 provider 经 `LUMIR_ACCEPTANCE_WEB_ENDPOINTS` 显式字段激活
+- [ ] 7.7 `web/acceptance.rs`：合成 provider 经 `LUMIR_ACCEPTANCE_WEB_ENDPOINTS` 显式字段激活
       （`#[cfg(feature = "acceptance-web")]`），能力覆盖 `[full, selected_chunks]`；不改 URL / DNS /
       redirect / 内容类型校验
-- [ ] 7.7 `scripts/acceptance/web-production-check.sh`：源码层与产物层判据覆盖新注入面；新增
+- [ ] 7.8 `scripts/acceptance/web-production-check.sh`：源码层与产物层判据覆盖新注入面；新增
       `fetched_by` / `binding` / `final_url` 赋值点白名单判据（`output.rs` 字段声明、`provider.rs`
       构造漏斗；白名单外出现即红）
 

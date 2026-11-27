@@ -23,7 +23,8 @@
 > `content_scope` / `coverage` / `fetched_by` / `binding` / `final_url` 五个可空读数；DeepSeek
 > 只声明 `full`；不支持的模式失败关闭（零目标连接、零 provider 请求、无批准卡、不降级）；
 > 不新增生产 provider、不改配置面、不改价格、不做 `answer`、不做 `web_api`。
-> 评审修订（r1，2026-11-27）：按 needs-changes 的 P1 / P2 逐项收口，行为边界不变。
+> 评审修订（r1 / r2，2026-11-27）：按 needs-changes 的 P1 / P2 逐项收口，行为边界不变；r2 只修
+> 「成功收口保留测试 provider 的 scripted provenance」与「Ask 预览 DOM 断言」两处。
 
 > 节点 2（归档放行）：**未开始**。本 change 目前只有提案制品，没有实现、没有实现期证据；
 > 归档前按 `docs/process/openspec-workflow.md` 的五要件在此追加记录，不提前书写。

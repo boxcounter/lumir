@@ -151,33 +151,39 @@ provider kind 后，由解析结果携带该适配器的声明，调用点不变
 | 预检失败（含超时 / 取消） | `executor.rs:107-115` | true | null | null | 0 | null |
 | 预检通过、provider 前 deadline 用尽 | `provider.rs` 的 `attempts=0` 超时分支 | true | null | null | 0 | null |
 | provider 已请求后失败（含取消覆盖） | `provider.rs::execute_until` 收口 | true | `provider` | `url_submitted` | >0 | null |
-| provider 成功 | `provider.rs::execute_until` 收口 | true | `provider` | `url_submitted` | >0 | `full` / `unknown` / null |
+| provider 成功 | 适配器产出（生产 `provider_full()`；测试 provider `scripted`），`execute_until` 只保留已有值 | true | `provider` | `url_submitted` | >0 | 适配器声明：生产 `full` / `unknown`；测试 provider 按脚本（如 `selected_chunks` / `bounded`） |
 
-实现上**只有一个写入点**：`provider.rs::execute_until` 在应用取消覆盖、补齐 query / source 之后，
-按 `ok` 与 `attempts` 选一个 `FetchProvenance` 写进信封。这样 cancel 覆盖分支、各类 HTTP / 协议 /
-空正文失败、超时都自动一致，不需要在每条失败分支散写（评审 P1-3）：
+实现上**只有一个收口写入点**：`provider.rs::execute_until` 在应用取消覆盖、补齐 query / source 之后
+统一收口。失败与取消由收口写 `provider_attempted()`；**成功则保留当前活跃适配器已经产出的成功
+provenance，收口只在缺失时补 `provider_full()`**——否则测试 provider 的
+`scripted(selected_chunks, bounded)` 会被覆盖成 `full` / `unknown`（复核 P1）：
 
 ```rust
 pub struct FetchProvenance { /* 五个字段 */ }
 impl FetchProvenance {
-    pub fn provider_full() -> Self;       // 成功：full / unknown / provider / url_submitted / null
+    pub fn provider_full() -> Self;       // 生产成功：full / unknown / provider / url_submitted / null
     pub fn provider_attempted() -> Self;  // attempts>0 的失败：null / null / provider / url_submitted / null
     #[cfg(any(test, feature = "acceptance-web"))]
-    pub fn scripted(scope: WebContentScope, coverage: WebCoverage) -> Self; // 测试 provider
+    pub fn scripted(scope: WebContentScope, coverage: WebCoverage) -> Self; // 测试 provider 成功
 }
 
-// execute_until 收口（唯一写入点，仅 Fetch；Search 五字段恒 null）
-let provenance = if operation != WebOperation::Fetch {
-    FetchProvenance::none()
-} else if envelope.ok {
-    FetchProvenance::provider_full()
-} else if envelope.attempts > 0 {
-    FetchProvenance::provider_attempted()
-} else {
-    FetchProvenance::none()               // 五字段全 null
-};
-envelope.apply_provenance(provenance);
+// execute_until 收口（唯一收口点，仅 Fetch；Search 五字段恒 null）
+if operation == WebOperation::Fetch && envelope.ok {
+    // 保留适配器已产出的成功 provenance（测试 provider 的 scripted）；
+    // 生产 DeepSeek 不自行产出，由这里补 provider_full()
+    if !envelope.has_provenance() {
+        envelope.apply_provenance(FetchProvenance::provider_full());
+    }
+} else if operation == WebOperation::Fetch && envelope.attempts > 0 {
+    envelope.apply_provenance(FetchProvenance::provider_attempted());
+}
+// 其余（含 Search）不写：五字段保持 null
 ```
+
+成功 provenance 的产出责任在适配器：生产 DeepSeek **不写**，由收口补 `provider_full()`；测试
+provider 在 `budget::fetch_success` 之后写 `scripted(scope, coverage)`（cfg 门控），收口 MUST NOT
+覆盖。`!ok && attempts>0` 的失败与取消覆盖只由收口写 `provider_attempted()`，适配器不写失败
+provenance。
 
 `local` / `address_pinned` / 非空 `final_url` 在阶段 1 没有构造函数：需要断言序列化或前端降级的
 单测直接在 `#[cfg(test)]` 里构造枚举值，MUST NOT 为它们留一个无人调用的 `local_pinned()`。
@@ -344,15 +350,17 @@ D1 / D2 已裁决，不再是阻塞项，也不再提供「推迟到阶段 3」�
 | 每次结果附一句人话提示（D4） | 否决（本阶段） | 每个结果重复 prose 与 token 开销；先靠字段 + 工具描述，实测忽略再补 |
 | 持久化完整审计投影供恢复使用 | 否决 | 改动面大于给 `PanelWebInput` 补 `mode` + Fetch `query`；且会把「展示投影」变成第二份持久化事实源（评审 P1-1 给了两案，取小） |
 
-## 13. r1 评审逐项对照（needs-changes，绑定 `c7cfb951`）
+## 13. r1 / r2 评审逐项对照（needs-changes，r1 绑定 `c7cfb951`、r2 绑定 `e9364c79`）
 
 | 编号 | 评审要点 | 落点 |
 |---|---|---|
-| P1-1 | `mode/query` 在快照 / JSONL 恢复丢失 | §2.2 两条持久化来源；§6.1 `PanelWebInput` 扩形状；tasks 1.2 / 4.x；TS 三路径同形测试 |
+| P1-1 | `mode/query` 在快照 / JSONL 恢复丢失 | §2.2 两条持久化来源；§6.1 `PanelWebInput` 扩形状；§6.2 `webInputText` 按 operation 分支；tasks 1.2 / 4.2 / 7.2 / 7.4 |
 | P1-2 | 测试 provider 能力与 query 传递不生效 | §3 活跃适配器检查 + 注入路径；§4 单一真源；内部请求携带 `mode/query`；tasks 2.x / 7.x |
-| P1-3 | provenance 构造合同自相矛盾 | §5 单一漏斗 + `provider_full()` / `provider_attempted()`；tasks 3.x |
+| P1-3 | provenance 构造合同自相矛盾 | §5 收口 + `provider_full()` / `provider_attempted()`；tasks 3.x |
 | P1-4 | tasks 会把未跑通模式误记已验收 | §10 端到端 + 错误优先级矩阵；§10 真机覆盖边界；tasks 6.x / 7.x / 8.x |
 | P2-1 | 缺消费者功效证据 | §9 测试生产者 + 四项 DOM 断言；tasks 7.1 |
 | P2-2 | 新增 ADDED 与 living 两处真源 | 删除该 ADDED，改第四条 MODIFIED「Web 真实 HTTP 验收装配边界」 |
-| P2-3 | ts-rs 与失败矩阵漏项 | tasks 1.4 绑定清单、4.6 `parseWebApprovalPreview`、6.x 五行逐行 |
+| P2-3 | ts-rs 与失败矩阵漏项 | tasks 1.4 绑定清单、4.6 `parseWebApprovalPreview`、6.4 五行逐行 |
 | P2-4 | D1/D2 应按最新授权收口 | §8 已裁决表；proposal 节点 1 |
+| r2-P1 | 成功收口把 `scripted(selected_chunks, bounded)` 覆盖成 `full/unknown` | §5 收口改为「成功保留已有 provenance，缺失才补 `provider_full()`」；tasks 3.1 / 3.3 |
+| r2-P2 | Ask 预览缺实际渲染断言 | tasks 7.3（完整 URL + query + 外发说明；批准后默认行仍 URL） |

@@ -450,10 +450,11 @@ SHALL 断言 `fetched_by=local` 不渲染 provider 外发文案、`binding=addre
 `final_url` 在「查看详情」可见、闭集合外的取值归 null 且不渲染、`coverage=bounded` 的
 「完整性受限」后缀真实出现。
 
-五个抓取字段的赋值 SHALL 收敛到单一构造漏斗（`FetchProvenance`），且只有两个语义构造器：
-`provider_full()`（provider 抓取成功）与 `provider_attempted()`（`attempts>0` 的失败，含
-`execute_until` 的取消覆盖分支，此时 `content_scope` / `coverage` / `final_url` 为 null）。
-测试 provider 使用隔离验收装配下的 `scripted(...)`。阶段 1 的 `local` / `address_pinned` /
+五个抓取字段的赋值 SHALL 收敛到单一收口点（`FetchProvenance`）：失败由收口写
+`provider_attempted()`（`attempts>0`，含 `execute_until` 的取消覆盖分支，此时 `content_scope` /
+`coverage` / `final_url` 为 null）；成功 SHALL 保留当前活跃适配器已产出的成功 provenance——生产
+DeepSeek 不自行产出、由收口补 `provider_full()`（`full` / `unknown`）；隔离验收装配的测试 provider
+产出 `scripted(...)`，收口 MUST NOT 用 `provider_full()` 覆盖它。`local` / `address_pinned` /
 非空 `final_url` MUST NOT 存在可达的生产赋值路径。
 
 真值表 SHALL 为：
