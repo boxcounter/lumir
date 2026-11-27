@@ -156,6 +156,13 @@ steps:
   - name: 确认覆盖
     do: click
     target: { role: AXButton, name: "覆盖保存" }
+
+  - name: 等强制覆盖真实落盘（读取最新基准 + 写入有两段 await；等待磁盘事实，不用 sleep 猜时长）
+    do: waitForFile
+    waitForFile: { path: nonmd-config.yaml, has: "NONMD-YAML" }
+    timeoutMs: 15000
+
+  - name: 核对覆盖后的磁盘与反馈
     expect:
       - label: 磁盘已被内存内容覆盖（非 md 的强制覆盖与 md 同一条链路）
         file: { path: nonmd-config.yaml, has: "NONMD-YAML" }
@@ -301,6 +308,9 @@ Alex 节点 1 裁决 D1/D2/D3（注册表全量文本类可编辑 / code 模式�
   场景内的 ⌘S 一律**发两次**（保存闭环后第二次是干净文档上的空操作，幂等）换取一次丢键的容错。
 - **`type` 走回读 + 只在字节完全未变时重试**（≤3），partial landing 直接报错——所以「键入生效」
   那几条不是盲发的运气。
+- **强制覆盖等待真实落盘**：AX 节点点击没有 settle，且强制覆盖有「读取最新基准 + 写入」两段异步；
+  2026-11-27 在本 change 与干净 master 上均出现「磁盘断言先读旧值、成功 AX 稍后到场」的同签名假红。
+  场景因此在确认覆盖后用 `waitForFile` 等 `NONMD-YAML` 落盘，不把保存竞态误归产品或布局。
 - **不做手感判定**：非 md 编辑的输入手感（无高亮扩展的纯文本、行号区）归 Alex，本场景只留截图。
 - **不覆盖**：① 崩溃备份的触发与生命周期归 `08c`/`08d` 与视觉 `save-hardening-autosave.spec.ts`
   （M278 起 `08-autosave`/`08b-autosave-pause` 已随自动保存一并删除）；② 冲突后「重新载入」分支归
