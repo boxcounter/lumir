@@ -73,3 +73,13 @@
   - 新断言需反向必红输入；
   - 老证据目录清理后只能称归档记录报告 PASS，不能称当前可复核。
 - 本 change 按合同落地，未扩 scope。
+
+## 节点 2：实现记录（待归档）
+
+| 状态 | 值 | 证据 |
+|---|---|---|
+| implemented | 是 | `a6ecd955e886f91d51311ead519f83ec3a7cbe43` |
+| released | 否 | 本批不打包；纯文档治理 |
+| machine PASS | 是 | `GATE RESULT: 12/12 PASS（SKIP 1）` exit 0（`scripts/gate.sh quick`）；`docs-check: PASS`；`validate --all --strict` 39/39 |
+| native PASS | 不适用 | 纯文档，无真机项 |
+| archived | 否 | 本 mission 按指令不归档；待评审后由 tower 归档 |
