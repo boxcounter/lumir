@@ -4471,9 +4471,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   let withdrawInFlight = false;
   /** 撤回预览（change clarify-harness-withdraw-scope-nov27）：hover / 键盘聚焦入口时，对
    *  **将被移除的那一段**（最后一条用户消息 + 其后的回答 / 工具块 / 错误行）标的顶层节点。
-   *  只作视觉预览，不参与撤回判定；清理挂点见 [`clearWithdrawPreview`] 的调用方。 */
+   *  只作视觉预览，不参与撤回判定；清理挂点见 [`clearWithdrawPreview`] 的调用方。
+   *
+   *  两个激活源**分别跟踪**（K3 终审 P2-1）：指针悬停与键盘焦点各自独立，任一仍成立就保留
+   *  预览；只有两者都退出、或强制清理（Escape / 在途 / 视图换代 / 动作开始）才撤。 */
   let withdrawPreviewEls: HTMLElement[] = [];
   let withdrawPreviewActive = false;
+  let withdrawPreviewPointer = false;
+  let withdrawPreviewFocus = false;
   /** 合并选择器状态（config_get 宽容提取的 HarnessSelection；null = 未配置/读不到——
    *  桩环境 / 旧配置 / 读取失败不伪造读数，chip 隐藏）。 */
   let selSelection: HarnessSelection | null = null;
@@ -7034,21 +7039,33 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // ── 撤回最近一条用户消息（change add-harness-message-withdraw-nov26；
   //    clarify-harness-withdraw-scope-nov27 补入口图标、完整后果提示与预览）──────────────
   /** 预览目标：最后一条用户消息 + transcript 中其后的全部内容节点（该轮的回答 / 工具块 /
-   *  错误行）。进度行与空态提示不属于将被移除的内容，跳过。 */
+   *  错误行）。进度行与空态提示不属于将被移除的内容，跳过。
+   *
+   *  **尾部后台通知 = 不预览**（K3 终审 P2-2）：目标之后存在 `.lumir-hp-notice` 时，后端会以
+   *  `harness_withdraw_tail_notice` 拒绝整个撤回（`harness.rs` 对目标后的 user 项检查，含
+   *  blocked / 触顶分支与自动唤醒通知）。这种通知不是「将消失的内容」——此时返回空表，MUST
+   *  NOT 只把通知排除出虚线框后继续暗示其余内容会撤回。撤回动作与后端错误语义不变，由用户
+   *  点击后看到既有错误行。 */
   function withdrawPreviewTargets(): HTMLElement[] {
     const host = lastUserMessageEl;
     if (host === null || !transcript.contains(host)) return [];
     const targets: HTMLElement[] = [host];
     for (let node = host.nextElementSibling; node !== null; node = node.nextElementSibling) {
       if (node === progress || node === emptyHint) continue;
-      if (node instanceof HTMLElement) targets.push(node);
+      if (!(node instanceof HTMLElement)) continue;
+      if (node.classList.contains("lumir-hp-notice")) return [];
+      targets.push(node);
     }
     return targets;
   }
 
-  /** 显示预览（hover / 键盘聚焦入口）：只标将被移除的那一段，不碰前缀。在途 / 不可撤回时
-   *  不预览——此时点击也只会得到「先停止」的提示。 */
-  function showWithdrawPreview(): void {
+  /** 按两个激活源重算预览：任一仍成立就保持 / 建立，两个都退出才清。在途 / 不可撤回 /
+   *  目标不可预览（尾部通知）时不标——此时点击也只会得到既有拒绝或「先停止」的提示。 */
+  function updateWithdrawPreview(): void {
+    if (!withdrawPreviewPointer && !withdrawPreviewFocus) {
+      clearWithdrawPreview();
+      return;
+    }
     if (withdrawPreviewActive || !withdrawable) return;
     if (withdrawButtonEl === null || withdrawButtonEl.disabled) return;
     const targets = withdrawPreviewTargets();
@@ -7060,8 +7077,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     registerEscapeLayer("harness-withdraw-preview", clearWithdrawPreview);
   }
 
-  /** 清除预览（幂等）：指针移出 / 入口失焦 / Escape / 在途变化 / 会话换代都走这一条出口。 */
+  /** 强制清除预览（幂等）：Escape / 在途变化 / 视图换代 / 面板摘除 / 撤回动作开始 / 通知追加
+   *  都走这一条出口。两个激活源一并复位——此后要重新悬停或聚焦才会再次出现。 */
   function clearWithdrawPreview(): void {
+    withdrawPreviewPointer = false;
+    withdrawPreviewFocus = false;
     if (!withdrawPreviewActive) return;
     withdrawPreviewActive = false;
     for (const el of withdrawPreviewEls) el.classList.remove("is-withdraw-preview");
@@ -7117,10 +7137,22 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     btn.append(icon);
     btn.disabled = busy;
     btn.title = busy ? t("D1053") : t("D1089");
-    btn.addEventListener("pointerenter", showWithdrawPreview);
-    btn.addEventListener("pointerleave", clearWithdrawPreview);
-    btn.addEventListener("focus", showWithdrawPreview);
-    btn.addEventListener("blur", clearWithdrawPreview);
+    btn.addEventListener("pointerenter", () => {
+      withdrawPreviewPointer = true;
+      updateWithdrawPreview();
+    });
+    btn.addEventListener("pointerleave", () => {
+      withdrawPreviewPointer = false;
+      updateWithdrawPreview();
+    });
+    btn.addEventListener("focus", () => {
+      withdrawPreviewFocus = true;
+      updateWithdrawPreview();
+    });
+    btn.addEventListener("blur", () => {
+      withdrawPreviewFocus = false;
+      updateWithdrawPreview();
+    });
     btn.addEventListener("click", (event) => {
       event.stopPropagation();
       if (currentActivity().phase !== "idle") {
@@ -9972,6 +10004,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     wakeNotice.text.textContent = text;
     wakeNotice.button.textContent = t("D491");
     wakeNotice.button.hidden = wakeContinued || autoWake.blocked === null;
+    // 触顶提示也是目标之后的自动唤醒通知（后端按 user 项拒绝撤回，见 withdrawPreviewTargets）：
+    // 提示在场时撤回预览不得再显示。
+    clearWithdrawPreview();
   }
 
   /** 后台完成通知上屏（tasks §10.4）：与用户消息视觉区分（左侧色条 + 标签），多条合并成
@@ -10003,6 +10038,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     appendTranscriptNode(el);
     syncEmptyHint();
     follow.contentGrew(); // 分流表 #12：后台完成通知不拽视口
+    // 目标之后到达的通知会让撤回被后端拒绝（`harness_withdraw_tail_notice`）：已显示的
+    // 撤回预览立即撤下，不继续声称这些内容会消失。
+    clearWithdrawPreview();
   }
 
   /** 通知正文无法还原成 run 行时的兜底上屏（原文照登，不丢内容）。 */
@@ -10016,6 +10054,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     appendTranscriptNode(el);
     syncEmptyHint();
     follow.contentGrew(); // 分流表 #13：同上（兜底上屏）
+    // 同 `appendNotice`：尾部通知 = 后端拒绝撤回，预览随之撤下。
+    clearWithdrawPreview();
   }
 
   /** 事件 → store 记账输入（只有生命周期事件进记录；分片 / 工具行 / `notice` / 审批不动它）。 */
