@@ -3833,3 +3833,41 @@ test("vaultWrite 第二合成 vault 只接受 second，其它取值静态报 pro
   assert.deepEqual(checkScenario(scenario(undefined)), []);
   assert.ok(checkScenario(scenario("real")).some((p) => p.includes("vaultWrite") && p.includes("second")));
 });
+
+
+test("889 native 长行行尾 oracle：跳转第 3 行、End 后行号读数与截图缺一不可", async () => {
+  const scenario = await loadScenario(path.join(repoRoot(), "scripts/acceptance/scenarios/889-markdown-visible-width.md"));
+  const steps = scenario.steps ?? [];
+  const focusIndex = steps.findIndex((step) => step.do === "clickEditor");
+  assert.ok(focusIndex >= 0, "必须先建立编辑器焦点");
+  assert.equal(steps[focusIndex].dy, undefined, "不得再用会落到 short anchor 的固定 dy；默认顶部落点后走 goto-line");
+
+  const openGoto = steps[focusIndex + 1];
+  assert.equal(openGoto?.do, "key");
+  assert.equal(openGoto?.key, "alt+g");
+  const initialLine = openGoto?.expect?.find((item) => typeof item.ax?.has === "string" && item.ax.has.includes('AXTextField = "1"'))?.ax.has;
+  assert.ok(initialLine, "起点必须读出当前行 1，证明后续跳转有区分度");
+
+  const typeLine = steps[focusIndex + 2];
+  assert.equal(typeLine?.do, "keys");
+  assert.deepEqual(typeLine?.keys, ["3"]);
+  assert.ok(typeLine?.expect?.some((item) => item.ax?.has === '/AXTextField = "3"/'), "输入后必须读回目标行号 3");
+  assert.equal(steps[focusIndex + 3]?.do, "key");
+  assert.equal(steps[focusIndex + 3]?.key, "return");
+
+  const endIndex = focusIndex + 4;
+  assert.equal(steps[endIndex]?.do, "key");
+  assert.equal(steps[endIndex]?.key, "end");
+  assert.ok(steps[endIndex]?.expect?.some((item) => item.shot === "行尾揭示"), "End 后必须立刻留行尾截图");
+
+  const verifyLine = steps[endIndex + 1];
+  assert.equal(verifyLine?.do, "key");
+  assert.equal(verifyLine?.key, "alt+g", "End 后必须再开 goto-line 读取 caret 所在行");
+  const currentLine = verifyLine?.expect?.find((item) => typeof item.ax?.has === "string" && item.ax.has.includes('AXTextField = "3"'))?.ax.has;
+  assert.ok(currentLine, "End 后必须有预填值 = 3 的正向断言，不能只判文档不变");
+  assert.equal(matcher(currentLine).test('AXTextField = "3" (focused)'), true);
+  assert.equal(matcher(currentLine).test('AXTextField = "6" (focused)'), false, "旧现场落在第 6 行 short anchor，必须判红");
+  assert.ok(verifyLine?.expect?.some((item) => item.shot === "行尾光标行号"), "行号读数也要留图供主会话对照");
+  assert.equal(steps[endIndex + 2]?.do, "key");
+  assert.equal(steps[endIndex + 2]?.key, "escape");
+});
