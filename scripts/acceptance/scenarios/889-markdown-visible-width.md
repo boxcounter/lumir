@@ -82,15 +82,15 @@ steps:
       - label: 跳转不改源文件
         file: { path: native-visible.md, unchangedSince: 源文件基线, mtimeUnchangedSince: 源文件基线 }
 
-  - name: End 到自然长行行尾并立即留图（图中必须显示 NATIVE-WIDTH-END，caret 在第 3 行行尾/X 内，由主会话复核）
+  - name: Ctrl+E 到自然长行行尾并立即留图（图中必须显示 NATIVE-WIDTH-END，caret 在第 3 行行尾/X 内，由主会话复核）
     do: key
-    key: "end"
+    key: "ctrl+e"
     expect:
       - label: 行尾揭示不改文档
         file: { path: native-visible.md, unchangedSince: 源文件基线, mtimeUnchangedSince: 源文件基线 }
       - shot: 行尾揭示
 
-  - name: End 后重开 ⌥G：预填值直接证明 caret 仍在第 3 行
+  - name: Ctrl+E 后重开 ⌥G：预填值直接证明 caret 仍在第 3 行
     do: key
     key: "alt+g"
     expect:
@@ -131,6 +131,6 @@ steps:
 
 - 本场景由 change `clip-markdown-content-to-reading-width-nov27` 引入。精确 glyph Range/裁剪交集、三主题、单双 pane、宽窄窗、行号 off/on、搜索、粘贴、undo 与阅读位置数值矩阵归 `tests/visual/scenes/markdown-visible-width.spec.ts`。
 - AX 不提供可靠的 contentDOM scrollLeft 或 caret/selection 像素坐标；本场景用真实输入 + 截图 + 文档/剪贴板断言，不把「AX 仍读得到被裁文本」冒充可见性。
-- 行尾路径不依赖 `clickEditor` 的行高坐标标定：默认顶部落点只负责建立焦点，再用 ⌥G 跳到第 3 行。End 后立即留「行尾揭示」图，随后再开 ⌥G；预填值必须仍为 3。这个读数会把旧场景误落第 6 行 `short anchor` 的现场判红，不再只靠「文档不变」放行。
+- 行尾路径不依赖 `clickEditor` 的行高坐标标定：默认顶部落点只负责建立焦点，再用 ⌥G 跳到第 3 行。Ctrl+E 后立即留「行尾揭示」图，随后再开 ⌥G；预填值必须仍为 3。这个读数会把旧场景误落第 6 行 `short anchor` 的现场判红，不再只靠「文档不变」放行。
 - `editor.has` 只证明文本进入 AX 可读面，不能证明 glyph 在 X 内。主会话复跑时必须审「行尾揭示」图：明确看到 `NATIVE-WIDTH-END`，caret 在第 3 行行尾且位于阅读栏 X 内；「行尾光标行号」图提供同现场的行号旁证。
 - native 由主会话统一执行。横滚落点使用默认 1200 窗口内的正文点；若窗口管理器改变尺寸，按实际截图复核，不把坐标失败计作产品缺陷。

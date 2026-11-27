@@ -3835,7 +3835,7 @@ test("vaultWrite 第二合成 vault 只接受 second，其它取值静态报 pro
 });
 
 
-test("889 native 长行行尾 oracle：跳转第 3 行、End 后行号读数与截图缺一不可", async () => {
+test("889 native 长行行尾 oracle：跳转第 3 行、Ctrl+E 后行号读数与截图缺一不可", async () => {
   const scenario = await loadScenario(path.join(repoRoot(), "scripts/acceptance/scenarios/889-markdown-visible-width.md"));
   const steps = scenario.steps ?? [];
   const focusIndex = steps.findIndex((step) => step.do === "clickEditor");
@@ -3857,14 +3857,14 @@ test("889 native 长行行尾 oracle：跳转第 3 行、End 后行号读数与�
 
   const endIndex = focusIndex + 4;
   assert.equal(steps[endIndex]?.do, "key");
-  assert.equal(steps[endIndex]?.key, "end");
-  assert.ok(steps[endIndex]?.expect?.some((item) => item.shot === "行尾揭示"), "End 后必须立刻留行尾截图");
+  assert.equal(steps[endIndex]?.key, "ctrl+e");
+  assert.ok(steps[endIndex]?.expect?.some((item) => item.shot === "行尾揭示"), "Ctrl+E 后必须立刻留行尾截图");
 
   const verifyLine = steps[endIndex + 1];
   assert.equal(verifyLine?.do, "key");
-  assert.equal(verifyLine?.key, "alt+g", "End 后必须再开 goto-line 读取 caret 所在行");
+  assert.equal(verifyLine?.key, "alt+g", "Ctrl+E 后必须再开 goto-line 读取 caret 所在行");
   const currentLine = verifyLine?.expect?.find((item) => typeof item.ax?.has === "string" && item.ax.has.includes('AXTextField = "3"'))?.ax.has;
-  assert.ok(currentLine, "End 后必须有预填值 = 3 的正向断言，不能只判文档不变");
+  assert.ok(currentLine, "Ctrl+E 后必须有预填值 = 3 的正向断言，不能只判文档不变");
   assert.equal(matcher(currentLine).test('AXTextField = "3" (focused)'), true);
   assert.equal(matcher(currentLine).test('AXTextField = "6" (focused)'), false, "旧现场落在第 6 行 short anchor，必须判红");
   assert.ok(verifyLine?.expect?.some((item) => item.shot === "行尾光标行号"), "行号读数也要留图供主会话对照");
