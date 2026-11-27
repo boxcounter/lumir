@@ -45,7 +45,7 @@
 - [x] 5.3 `scripts/gate.sh quick` 全绿（照抄 `GATE RESULT` 原文行）
 - [x] 5.4 真引擎矩阵场景单独跑通（chromium）；读数与用例数记进报告
       —— 7 个 test 全绿（5.3s / 6.5s 两跑），矩阵 63 格 / 50 高风险格 / pairwise 27 行 /
-      可行取值对 87/87 / 65 个 case。读数日志 `.local/missions/add-editor-transition-oracle-nov27/`
+      可行取值对 87/87 / 64 个 case。读数日志 `.local/missions/add-editor-transition-oracle-nov27/`
       （`red-no-nativeEditGate.log` / `green-restored.log` / `matrix-report.log`）。
       WebKit 未登记：逐格 `view.setState` 复位在 Playwright WebKit 下会让 Enter 多出一个空行
       （同一文档不做 setState 时与模型一致），差异来自复位手法而非产品行为，见场景头注记。
