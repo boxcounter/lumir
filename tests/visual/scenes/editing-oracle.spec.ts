@@ -356,38 +356,92 @@ test("正文 IME：insertText 提交且无 compositionend 时解除 shield 冻�
 });
 
 test("正文 IME：available 但 state 树陈旧时先同步再 build（Chromium）", async ({ page }) => {
-  // 足够长的文档：dispatch 候选后 state 树不会同步解析到末尾，给 context 留出领先窗口。
+  // 不能观察「dispatch 后 state 树仍是旧树」：12KB 文档的后台 parse worker 可能在
+  // 用例等待窗口内解析到末尾，下一次 LanguageState.apply 会同步把 state 树带新
+  // （CI 46024536448 两次都拿到整篇 2000 段 + BulletList 的 state 树）。这里改成
+  // 在 compositionend 的 settle 首拍前，把 state 的语言树显式置回旧树——构造产品
+  // 要防的「context 已到行末、state 快照陈旧」形态，且不依赖 parse worker 时序。
   const doc = "para\n\n".repeat(2000) + "词汇\n- ";
   await openBody(page, "oracle.md", doc);
   await setBodyCaret(page, doc.length);
   await expect(page.locator(".cm-lp-list-marker")).toHaveCount(0);
   const probe = await page.locator(".cm-content").evaluate((el, length) => {
     const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
-    el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
-    // 候选进入 EditorState；parse context 单独推进，state 字段快照仍是旧树。
-    view.dispatch({ changes: { from: length, insert: "是" }, selection: { anchor: length + 1 } });
-    const values = (view.state as { values?: unknown[] }).values ?? [];
-    const lang = values.find((value) => value && typeof value === "object" && "context" in value && "tree" in value) as {
-      context: { updateViewport(range: { from: number; to: number }): void; work(timeout: number, upto: number): unknown; isDone(upto: number): boolean; tree: { toString(): string } };
-      tree: { toString(): string };
+    const findLang = () => {
+      const values = (view.state as { values?: unknown[] }).values ?? [];
+      return values.find((value) => value && typeof value === "object" && "context" in value && "tree" in value) as {
+        context: { updateViewport(range: { from: number; to: number }): void; work(timeout: number, upto: number): unknown; isDone(upto: number): boolean; tree: { toString(): string } };
+        tree: { toString(): string; length: number };
+      };
     };
+    const staleTree = findLang().tree;
+    el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    // 候选进入 EditorState；parse context 单独推进到行末，state 字段快照由下面显式置旧。
+    view.dispatch({ changes: { from: length, insert: "是" }, selection: { anchor: length + 1 } });
+    const lang = findLang();
     const docLen = view.state.doc.length;
     lang.context.updateViewport({ from: 0, to: docLen });
     lang.context.work(1000, docLen);
     const contextDone = lang.context.isDone(docLen);
-    const stateNodes = lang.tree.toString();
     const contextNodes = lang.context.tree.toString();
+    // beginSettle 先记 settleStarted、再排 0ms settleStep 首拍；在首拍被调度时、
+    // 回调执行前把当前 LanguageState.tree 置回旧树。effect dispatch 可能已经把
+    // 它同步成新树（这也是本用例原先会假绿/随机红的根源），所以必须在这一刻强制。
+    const plugin = ((view as { plugins?: { value?: unknown }[] }).plugins ?? [])
+      .map((entry) => entry.value)
+      .find((value) => value && typeof (value as { settleStep?: unknown }).settleStep === "function") as
+      { tree: { toString(): string }; build(view: unknown): void } | undefined;
+    if (!plugin) throw new Error("ListLayout plugin not found");
+    // settle 首拍 build 用的树：正确实现是 ensureSyntaxTree 给的 context 树（已到行末），
+    // 若误用 view.state 的陈旧树，第一次 build 的树不含 BulletList。
+    const settleBuilds: boolean[] = [];
+    const realBuild = plugin.build.bind(plugin);
+    plugin.build = (target: unknown) => {
+      settleBuilds.push(plugin.tree.toString().includes("BulletList"));
+      realBuild(target);
+    };
+    (window as unknown as { __settleBuilds: boolean[] }).__settleBuilds = settleBuilds;
+    const realSetTimeout = window.setTimeout;
+    const forced: { done: boolean; hasList: boolean; installedLen: number } =
+      { done: false, hasList: false, installedLen: 0 };
+    (window as unknown as { __forcedStale: typeof forced }).__forcedStale = forced;
+    window.setTimeout = ((callback: TimerHandler, delay?: number, ...args: unknown[]) => {
+      const source = typeof callback === "function" ? callback.toString() : "";
+      if (!forced.done && (delay ?? 0) === 0 && /settleStep/.test(source)) {
+        const current = findLang();
+        current.tree = staleTree;
+        forced.done = true;
+        forced.hasList = current.tree.toString().includes("BulletList");
+        forced.installedLen = current.tree.length;
+      }
+      return realSetTimeout(callback, delay, ...args as []);
+    }) as typeof window.setTimeout;
     el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
-    return { contextDone, stateNodes, contextNodes };
+    return {
+      contextDone,
+      contextNodes,
+      staleTreeHasList: staleTree.toString().includes("BulletList"),
+      staleLen: staleTree.length,
+    };
   }, doc.length);
   expect(probe.contextDone).toBe(true);
-  // 覆盖前提：context 已解析出新列表，state 快照仍是旧的 setext 形态。
   expect(probe.contextNodes).toContain("BulletList");
-  expect(probe.stateNodes).not.toContain("BulletList");
+  // 覆盖前提：构造用的旧树不含新列表；settle 首拍前 state 树确实被置回这棵旧树。
+  expect(probe.staleTreeHasList, "构造用的旧树 MUST 不含新列表").toBe(false);
+  await expect.poll(() => page.evaluate(() =>
+    (window as unknown as { __forcedStale: { done: boolean } }).__forcedStale.done)).toBe(true);
+  const forced = await page.evaluate(() =>
+    (window as unknown as { __forcedStale: { done: boolean; hasList: boolean; installedLen: number } }).__forcedStale);
+  expect(forced.hasList, "settle 首拍前 state 树 MUST 陈旧").toBe(false);
+  expect(forced.installedLen).toBe(probe.staleLen);
   await expect.poll(() => bodyState(page)).toEqual({ doc: `${doc}是`, anchor: doc.length + 1, head: doc.length + 1 });
   await page.locator(".cm-scroller").evaluate((el) => { el.scrollTop = el.scrollHeight; });
   await expect(page.locator(".cm-lp-list-marker")).toHaveCount(1);
   await expect(page.locator(".cm-line").last()).toContainText("是");
+  const settleBuilds = await page.evaluate(() =>
+    (window as unknown as { __settleBuilds: boolean[] }).__settleBuilds);
+  expect(settleBuilds.length, "settle MUST 至少 build 一次").toBeGreaterThan(0);
+  expect(settleBuilds[0], "settle 首拍 build 必须用已到行末的 context 树").toBe(true);
 });
 
 test("正文 IME：settleStep available 分支不得用旧 state 树（Chromium）", async ({ page }) => {
@@ -1142,36 +1196,42 @@ test("正文 IME 大文档：解析未完成时组合结束走有界恢复并最
 
 test("IME 组合结束越过 4s 截止后仍低频恢复 marker 且不重复（Chromium）", async ({ page }) => {
   await page.addInitScript(() => {
-    const real = window.setTimeout;
-    (window as unknown as { __timerDelays: number[] }).__timerDelays = [];
+    const realSetTimeout = window.setTimeout;
+    const realNow = performance.now.bind(performance);
+    let offset = 0;
+    let advanced = false;
+    (window as unknown as { __settleDelays: number[] }).__settleDelays = [];
+    Object.defineProperty(performance, "now", { configurable: true, value: () => realNow() + offset });
     window.setTimeout = ((callback: TimerHandler, delay?: number, ...args: unknown[]) => {
-      (window as unknown as { __timerDelays: number[] }).__timerDelays.push(delay ?? 0);
-      return real(callback, delay, ...args as []);
+      const source = typeof callback === "function" ? callback.toString() : "";
+      if (/settleStep/.test(source)) {
+        (window as unknown as { __settleDelays: number[] }).__settleDelays.push(delay ?? 0);
+        // beginSettle 先记 settleStarted、再排这一拍 0ms 首拍；把时钟推过 4s 必须在
+        // 首拍回调执行前。不能按「compositionend 后等 N ms 再推进」：WebKit 下
+        // beginSettle 晚于任何固定壁钟窗口都可能发生（scheduleCompositionSettle 要等
+        // pending MutationRecord 与 compositionStarted 归位，最长 25×8ms），此时
+        // settleStarted 已落在假时钟之后，elapsed 永远到不了 4000ms。
+        if ((delay ?? 0) === 0 && !advanced) {
+          advanced = true;
+          offset += 5000;
+        }
+      }
+      return realSetTimeout(callback, delay, ...args as []);
     }) as typeof window.setTimeout;
   });
   await openBody(page, "oracle.md", "- a");
   await expect(page.locator(".cm-lp-list-marker")).toHaveCount(1);
   await setBodyCaret(page, 3);
-  // 用可控时钟把 settle 的 elapsed 推过 4s，确定性进入低频分支（不真等 4s）。
-  await page.evaluate(() => {
-    const realNow = performance.now.bind(performance);
-    let offset = 0;
-    (window as unknown as { __advanceImeClock(ms: number): void }).__advanceImeClock = (ms: number) => { offset += ms; };
-    Object.defineProperty(performance, "now", { configurable: true, value: () => realNow() + offset });
-  });
-  const probe = await page.locator(".cm-content").evaluate(async (el, length) => {
+  const probe = await page.locator(".cm-content").evaluate((el, length) => {
     const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
-    // 2MB 文档：20ms 时解析一定还没覆盖末尾，保证下一拍进入 deadline 分支。
+    // 1.2MB 文档：首拍（0ms）时语法树一定还没覆盖末尾，保证 elapsed 已过 4s 的这一拍
+    // 必须转低频重试，而不是收束。
     const body = "\n" + "para\n\n".repeat(300000) + "- ";
     view.dispatch({ changes: { from: length, insert: body }, selection: { anchor: length + body.length } });
     el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
     const end = view.state.doc.length;
     view.dispatch({ changes: { from: end, insert: "s" }, selection: { anchor: end + 1 } });
     el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
-    // 等 deferred effect + beginSettle 捕获起点，再把时钟推过 4s：下一拍必须转低频，
-    // 而不是 cancelSettle 后停止。
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    (window as unknown as { __advanceImeClock(ms: number): void }).__advanceImeClock(5000);
     return { docLen: view.state.doc.length };
   }, 3);
   expect(probe.docLen).toBeGreaterThan(1_000_000);
@@ -1181,7 +1241,9 @@ test("IME 组合结束越过 4s 截止后仍低频恢复 marker 且不重复（C
   expect(rows.every((row) => row.markerCount <= 1), "低频恢复不得产生重复 marker").toBe(true);
   expect(rows.at(-1)?.markerText).toBe("–");
   // 低频分支确实被调度（250ms）；旧实现在 4s 后 cancel，不会出现这个延迟。
-  const delays = await page.evaluate(() => (window as unknown as { __timerDelays: number[] }).__timerDelays);
+  // 只取 settle 链自己排的定时器（回调含 settleStep），避免别处恰好出现的 250ms
+  // 定时器把断言带绿。
+  const delays = await page.evaluate(() => (window as unknown as { __settleDelays: number[] }).__settleDelays);
   expect(delays, "4s 后 MUST 转 250ms 低频恢复").toContain(250);
 });
 
