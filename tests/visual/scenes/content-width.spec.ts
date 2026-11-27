@@ -3,7 +3,7 @@
 // 判据一律是**读数**（token 计算值、列缘几何、写入序列、toast 文本），不是「某个函数被调用过」：
 // 本 change 的可见结果就是栏宽本身与那两条手柄（REVIEW.md 「断言等价于子串 / 键盘注入丢键」条）。
 //
-// 覆盖：出厂口径（D1 = 760，默认值即下限）、手柄的读屏名与几何贴合（D5 含 code 模式）、
+// 覆盖：出厂口径（D1 = 760，默认值即下限）、Markdown 手柄的读屏名与几何贴合、
 // hover/拖拽显现、对称拖拽换算（栏宽变化 = 2 × 位移）、上下限钳制（D2 = [760, 1200]）、
 // 松手写一次且只在有变化时写（D3 = config_set_ui_value）、写失败的 toast 与不回滚（D121）、
 // 配置值启动生效、空态无手柄。
@@ -209,7 +209,7 @@ test("配置值启动生效（config 800 → token 800px）", async ({ page }) =
   expect(contentWidth).toBe(800);
 });
 
-test("code 模式：手柄按实测矩形贴合（列不居中也不偏）", async ({ page }) => {
+test("code 模式：正文占满 pane，阅读栏手柄没有作用对象", async ({ page }) => {
   const code = ["const alpha = 1;", "const bravo = 2;", "", "// filler", ...Array.from({ length: 20 }, (_, i) => `const line${i} = ${i};`)].join("\n");
   await stubTauri(page, {
     entries: [{ path: "main.ts", kind: "file", size: code.length, mtime_ms: 0 }],
@@ -221,14 +221,11 @@ test("code 模式：手柄按实测矩形贴合（列不居中也不偏）", asy
   await configApplied(page);
   await page.waitForTimeout(80);
   const geometry = await page.evaluate(() => {
-    const rect = document.querySelector(".cm-content")!.getBoundingClientRect();
-    const left = document.querySelector(".content-width-handle-left")!.getBoundingClientRect();
-    const right = document.querySelector(".content-width-handle-right")!.getBoundingClientRect();
-    return { rectLeft: rect.left, rectRight: rect.right, leftMid: left.left + left.width / 2, rightMid: right.left + right.width / 2 };
+    const content = document.querySelector(".cm-content")!.getBoundingClientRect();
+    const scroller = document.querySelector(".cm-scroller")!.getBoundingClientRect();
+    return { contentLeft: content.left, contentRight: content.right, scrollerLeft: scroller.left, scrollerRight: scroller.right };
   });
-  expect(geometry.leftMid).toBeCloseTo(geometry.rectLeft, 0);
-  expect(geometry.rightMid).toBeCloseTo(geometry.rectRight, 0);
-  // code 模式下拖拽同样生效（D5：手柄进 code 模式）
-  await dragHandle(page, "right", 40);
-  await expect.poll(() => widthToken(page)).toBe("840px");
+  expect(geometry.contentLeft).toBeCloseTo(geometry.scrollerLeft, 0);
+  expect(geometry.contentRight).toBeCloseTo(geometry.scrollerRight, 0);
+  await expect(page.locator(".content-width-handles")).toBeHidden();
 });

@@ -2166,17 +2166,14 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // 因此「正文列居中」这条守恒条款逐值不变（gutter 在场只改左轨道里放什么，不改轨道宽度；
       // 几何判据见 tests/visual/scenes/m281-goto-line.spec.ts 的实测断言）。
       //
-      // code 模式（design §4 未决项 1 的另一半，口径落地见 test-results/m212/）：模板不变
-      // （行的左列要容下 gutter），中列同样换成定值。行为口径：`minmax(max-content, 1fr)`
-      // 的 gutter 列与 `minmax(0, 1fr)` 的右列都是弹性轨道，中列的非弹性轨道先被撑满到
-      // 栏宽上限，剩余空间再由这两列**等分**——即 gutter 列的最终宽度 = 行号自然宽 + 剩余
-      // 空间的一半，代码正文列恒为栏宽值。这是旧口径（80% 中列 + 同样的两侧模板）的同一形态，
-      // 只是中列从 80% 变定值：代码文件视图仍是「行号贴在中列左缘、列外余白由左右两列吸收」。
+      // code 模式是工作区型内容（change model-code-pane-workspace-nov27）：不消费阅读栏
+      // token。gutter 列只取行号自然宽（无 gutter 时为 0），正文列吃满剩余可用宽度；
+      // `minmax(0,1fr)` 保留收缩能力，不折行长行仍由主 scroller 横向到达。
       ".cm-scroller": {
         fontFamily: "inherit", lineHeight: "var(--lh-reading)",
         display: "grid !important", gridTemplateColumns: mode === "md"
           ? "minmax(24px, 1fr) minmax(0, var(--layout-doc-measure)) minmax(24px, 1fr)"
-          : "minmax(max-content, 1fr) minmax(0, var(--layout-doc-measure)) minmax(0, 1fr)",
+          : "max-content minmax(0, 1fr) 0px",
         alignItems: "start",
       },
       ".cm-content": {

@@ -71,10 +71,10 @@
 | 35 | `35-restyle-three-themes` | 三主题真机呈现（light / dark / eink 各一张截图，重启生效）与 overlay 标题栏的窗口级读数 | evidence |
 | 36 | `36-restyle-content` | restyle 内容面真机呈现：doc-title 块（fm 后正文前 + meta 三要素）、callout 双段标签、文件树目录 chevron 与选中行 | full |
 | 37 | `37-heading-hierarchy` | 标题六级阶梯（稿 A）真机呈现：H1–H6 全部渲染、编辑器源码不动、文档零写盘 | full |
-| 38 | `38-content-width-drag` | 栏宽双侧拖拽手柄：拖拽写回 config.json（合并写、不抹其他键）、文档零写盘、重启保持 | full |
+| 38 | `38-content-width-drag` | Markdown 栏宽双侧拖拽手柄：拖拽写回 config.json（合并写、不抹其他键）、文档零写盘、重启保持 | full |
 | 39 | `39-titlebar-identity` | 标题栏产品标识块：版本号与 tauri.conf.json 逐字节一致、窄窗 ≈520px 退让 modeline、标识块上拖拽窗口成立、三主题截图 | core |
 | 40 | `40-table-fullscreen-view` | 表格放大全屏查看：命令打开遮罩、快照在场、Esc 关闭焦点回编辑器、降级表无入口、不改写源文件 | full |
-| 41 | `41-editable-non-md-files` | 非 md 文本文件可编辑——键入 / dirty / ⌘S 落盘 / 撤销收窄，外部修改走同一组冲突双逃生口 | full |
+| 41 | `41-editable-non-md-files` | 非 md 文本文件满 pane 且无阅读手柄——键入 / dirty / ⌘S 落盘 / 撤销收窄，外部修改走同一组冲突双逃生口 | full |
 | 42 | `42-non-md-edit-guardrails` | 非 md 可编辑的护栏矩阵——二进制仍「暂不支持预览」、非 UTF-8 打开即拒、文本类不受牵连 | core |
 | 43 | `43-list-tab-indent` | 列表行缩进命令的真机链路——经 [keys] 绑到通道可达的 ⌘J / ⌘⇧J：缩进的源码写回（行模型：有序列表只动空白、不改编号）、到顶 / 非列表 / 非 md 会话无操作、一次撤销还原 | full |
 | 44 | `44-theme-live-switch` | 主题运行期切换：⌘⇧T 与 modeline 钮三档循环、逐档写回 config.json、重启后首帧持久 | full |

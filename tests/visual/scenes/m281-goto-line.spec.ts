@@ -395,9 +395,9 @@ test("输入条：[keys] 重绑 ⌃J 生效；切标签收起且不跳转", asyn
 //     非编辑器焦点（搜索框 / harness composer）下同样命中（作用域 global）；
 //   - 交叉态两个方向（`on → ⌥G → 切 off`、`off → ⌥G → 切 on`）：`gotoGutterVisible` 的赋值
 //     顺序是这两条成立的前提（design §4.2）；
-//   - 几何：贴正文列左缘、正文列居中、窄窗不裁、纵向对准——在 `on` 档下判（常驻形态是
-//     几何压力面）；**开关不跳动**：md 任意宽度与 code 宽窗的正文列 rect 逐值不变，code 窄窗
-//     允许左移但 MUST NOT 横向滚动 / 裁切行号（design §10.1 的已知边界，不是缺陷）；
+//   - 几何：贴正文列左缘、md 正文列居中、窄窗不裁、纵向对准——在 `on` 档下判（常驻形态是
+//     几何压力面）；md 开关正文列不动；code 满 pane 的右缘不动，gutter 占自然宽、正文贴其右缘；
+//     code 窄窗 MUST NOT 横向滚动 / 裁切行号（design §10.1 的已知边界，不是缺陷）；
 //   - 持久化：`__uiValueWrites` 断言每次切换恰一笔 `{key:"line_numbers"}`；写失败不回滚 +
 //     toast；启动按 `ui.line_numbers` 施加；
 //   - 整页基线两条：`m281-md-gutter.png` 是 **on 档**的常驻形态、`m281-goto-prompt.png`
@@ -626,20 +626,24 @@ test("开关不跳动：md 1200 / 640 切 on / off 正文列 rect 逐值不变",
   await page.setViewportSize({ width: 1200, height: 800 });
 });
 
-test("code 的几何让位边界：1200 切 on / off 正文列逐值不变；640 无横滚、行号不裁切", async ({ page }) => {
+test("code 的几何让位边界：1200 开 gutter 占自然宽且右缘不动；640 无横滚、行号不裁切", async ({ page }) => {
   // 短行文档：code 模式默认不折行，长行本身就会撑出横向滚动（那是文档的，不是 gutter 的）。
   // 本用例判的是「gutter 有没有引入横向滚动」，因此用一份天然不需要横滚的短行文档。
   const codeDoc = `${Array.from({ length: 20 }, (_, i) => `const v${i + 1} = ${i + 1};`).join("\n")}\n`;
   await openFile(page, { "code.ts": codeDoc }, "code.ts");
 
-  // 1200px：左侧余量的一半 ≥ gutter 自然宽 ⇒ 关 / 开 gutter 不移动正文
+  // 满 pane 工作区：off 时正文贴可用区两缘；on 时 gutter 取自然宽，正文贴 gutter 右缘，
+  // 右缘不移动。旧「左侧余量均分、正文 rect 不变」是阅读栏共享模型的期望，不再是合同。
   await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
   const wideOff = columnShape(await contentBox(page));
   await page.locator(".cm-content").click();
   await page.keyboard.press("Meta+Shift+N");
   await expect(page.locator(".cm-lineNumbers")).toBeVisible();
-  const wideOn = columnShape(await contentBox(page));
-  expect(wideOn, "1200px 切 on 时 code 正文列动了").toEqual(wideOff);
+  const wideReading = await readGutter(page);
+  const wideOn = columnShape(wideReading.content);
+  expect(wideOn.right, "1200px 切 on 时 code 正文右缘动了").toEqual(wideOff.right);
+  expect(wideOn.left, "code 正文必须贴 gutter 右缘").toBeCloseTo(wideReading.gutter?.right ?? Number.NaN, 1);
+  expect(wideOn.width, "正文只让出 gutter 的自然宽").toBeCloseTo(wideOff.width - (wideReading.gutter?.width ?? Number.NaN), 1);
   await page.keyboard.press("Meta+Shift+N");
   await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
   expect(columnShape(await contentBox(page))).toEqual(wideOff);

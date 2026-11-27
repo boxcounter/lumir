@@ -2,7 +2,7 @@
 id: "41-editable-non-md-files"
 item: 41
 tier: full
-title: 非 md 文本文件可编辑——键入 / dirty / ⌘S 落盘 / 撤销收窄，外部修改走同一组冲突双逃生口
+title: 非 md 文本文件满 pane 且无阅读手柄——键入 / dirty / ⌘S 落盘 / 撤销收窄，外部修改走同一组冲突双逃生口
 fixtures: [notes.txt, nonmd-config.yaml, LICENSE]
 open: notes.txt
 marker: "真机验收用的非 md 文件"
@@ -16,6 +16,10 @@ steps:
         file: { path: notes.txt, exists: true }
       - label: 渲染态可读（正向锚点：本次 AX 读取是活的）
         editor: { has: "真机验收用的非 md 文件" }
+      - label: code 满 pane 工作区没有阅读栏宽手柄（Markdown 才有两条同名 separator）
+        ax: { count: { pattern: "/AXSplitter \\(调整内容宽度\\)/", exact: 0 } }
+      - label: 打开 code 不写阅读栏宽度配置
+        file: { path: "env:config.json", not: "content_width" }
       - label: 起点是干净的（标签读屏名没有「未保存」后缀，D90——dirty 的唯一可读通道）
         ax: { not: "（未保存）" }
       - label: 反向输入铺底：探针此刻**不在**磁盘基线里（后面「磁盘已含探针」那条断言因此有区分度）
@@ -31,6 +35,8 @@ steps:
     expect:
       - label: 焦点落在编辑器正文里（键盘注入的前置）
         ax: { focused: "AXTextArea" }
+      - label: 点击 code 正文不触发阅读栏宽度写入
+        file: { path: "env:config.json", not: "content_width" }
 
   - name: 键入探针（非 md 文本此前只读，这一步是翻转的直接判据）
     do: type

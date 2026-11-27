@@ -1023,7 +1023,10 @@ const editor: EditorHandle = {
       (event?: KeyboardEvent) => activeEditor().commands[id](event),
     ]),
   ) as Record<EditorCommandId, CommandRunner>,
-  setMode: (mode) => forEachEditor((handle) => handle.setMode(mode)),
+  setMode: (mode) => {
+    forEachEditor((handle) => handle.setMode(mode));
+    syncWidthHandleVisibility();
+  },
   mode: () => activeEditor().mode(),
   setWrap: (next) => forEachEditor((handle) => handle.setWrap(next)),
   wrapSettings: () => activeEditor().wrapSettings(),
@@ -1052,7 +1055,7 @@ const editor: EditorHandle = {
     });
     return ratio;
   },
-  // 栏宽是**全局单键**（`ui.content_width`，ADR 0008 Decision 2）：一份值管全部 pane，
+  // 阅读栏宽是**全局 Markdown 单键**（`ui.content_width`，ADR 0008 Decision 2）：一份值管全部 pane 的 Markdown，
   // 单 key 不动（M317 2.5）。广播施加到每个实例（各写一次 documentElement 上的 token，幂等），
   // 并**逐 pane 各自 requestMeasure()**——CSS 变量变化不触发 CM 的 ResizeObserver（editor.ts
   // 的 setContentWidth 注释），只给 root 请求重测量会让另一个 pane 停在旧列宽上。CM 会把同帧
@@ -1811,13 +1814,22 @@ function showFirstRunTips(): void {
   renderAllTabStrips();
 }
 
+/** 阅读手柄只服务 Markdown；root 宿主与活跃 doc 会话必须同型，覆盖层仍优先隐藏。 */
+function syncWidthHandleVisibility(): void {
+  const root = docPanes()[0];
+  const rootIsMarkdown = root?.handle.kind === "doc" && root.handle.editor.mode() === "md";
+  widthDrag.setVisible(
+    notice.hidden && !firstRunTipsVisible && rootIsMarkdown && activeEditor().mode() === "md",
+  );
+}
+
 /** 撤下 tips：清 flag、移除 DOM、恢复 widthDrag 与可编辑性；由 showEditor 统一调用。 */
 function hideFirstRunTips(): void {
   if (!firstRunTipsVisible) return;
   firstRunTipsVisible = false;
   firstRunTipsEl?.remove();
   firstRunTipsEl = null;
-  widthDrag.setVisible(true);
+  syncWidthHandleVisibility();
   renderAllTabStrips();
 }
 
@@ -1829,7 +1841,7 @@ function showEditor() {
     noticeHostEditor.view.dom.style.display = "";
     noticeHostEditor = null;
   }
-  widthDrag.setVisible(true);
+  syncWidthHandleVisibility();
 }
 
 // 瞬时提示（锚点缺失 / 创建结果 / 解析错误）：**发起它的 pane** 右下角浮条，自动消隐。
@@ -2927,8 +2939,8 @@ function syncActiveDocument({ passiveOverlayClose = false }: DocumentSwitchOptio
   // 大纲浮层打开期间活跃 pane / 前台文档变化 ⇒ 内容源即时换源（M317 2.1；未打开时 no-op）。
   toc.sourceChanged();
   tree.setCurrentPath(session.path);
-  // 会话切换后栏宽手柄重新贴合列缘（模式 / gutter 进出只改列位置不改列宽，控制器自己的
-  // ResizeObserver 看不见位置变化）。
+  // 会话 / pane 激活后先按内容模式同步阅读手柄，再贴合 Markdown 列缘。
+  syncWidthHandleVisibility();
   widthDrag.reposition();
   // 标签账本与各 pane 会话表对齐（M317 标签级接线）：这是「标签集合 / 归属变化」的唯一同步点，
   // 开 / 关 / 移动标签与实例内部建会话都汇到这里。
