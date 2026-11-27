@@ -124,7 +124,7 @@ CI 的 received string 是**整篇 2000 段 + 末尾 BulletList**，说明 state
 | released | 不适用 | 测试基础设施，不随版本发布 |
 | machine PASS | 是 | `GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0；visual-regression 1382s / 1984 passed / 0 failed / 13 skipped（`37`/`38`）；quick 13/13 exit 0（`29`） |
 | native PASS | 不适用 | 无真机判定面（纯测试 oracle） |
-| archived | 否：待归档 | 归档后回填归档提交与 `--archived` 读数 |
+| archived | 是 | 归档提交 `d8e56cc9`；`--archived` PASS（无 specs 增量，无需对账；`42-archived-audit.log`、`46-postarchive-audit.log`） |
 
 反向必红与恢复绿读数（同一证据目录）：1143 的全局「4s 后 cancel」产品变异体 5/5 红
 （`06-webkit-mutant-global-cancel-at-4s.log`，`Received array: [0]`）；回退并重建后
@@ -138,8 +138,8 @@ webkit 20/20、chromium 20/20 绿（`07`/`08`）；旧 20ms 窗口 oracle 4/20 �
 ### 归档后追加
 
 - 归档目录：`openspec/changes/archive/2026-11-28-fix-ime-settle-oracle-nov27/`
-- 归档提交：待回填
+- 归档提交：`d8e56cc9`
 - 包装器输出：`Change 'fix-ime-settle-oracle-nov27' archived as '2026-11-28-fix-ime-settle-oracle-nov27'.`；
   归档后修链 0 处（扫过 3 篇 Markdown / 0 条相对链接）；`openspec-links: PASS`（716 条相对链接全部可达）。
   归档时 tasks 18/19（4.1 merge / push 留主会话），CLI 以 `--yes` 继续。
-- `--archived` 审计读数：待回填
+- `--archived` 审计读数：**PASS**（`openspec-archive-check: PASS（openspec/changes/archive/2026-11-28-fix-ime-settle-oracle-nov27 没有 specs/ 增量，无需对账）`，退出码 0；`42-archived-audit.log`）
