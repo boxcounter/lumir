@@ -1116,10 +1116,11 @@ function extendByWord(view: EditorView, forward: boolean): void {
   if (head !== main.head) extendSelection(view, head, forward ? 1 : -1, main.goalColumn);
 }
 
-/** 列表项缩进 / 凸排（M239，change list-tab-indent）的 runner：只读模式提前返回，判定与
- *  changes 由纯函数 `listIndentChange`（src/list-indent.ts）给出，这里只做一次 dispatch，
- *  选区交由 CM 的 change mapping 平移（命令不显式重设选区）。口径与实测依据见
- *  `openspec/changes/list-tab-indent` 的 design §2/§3。 */
+/** 列表行缩进 / 凸排（M239；change rework-list-tab-line-model-nov27 起为行模型）的 runner：
+ *  只读模式提前返回，判定与 changes 由纯函数 `listIndentChange`（src/list-indent.ts）给出，
+ *  这里只做一次 dispatch，选区交由 CM 的 change mapping 平移（命令不显式重设选区）。
+ *  行集、逐行步长与六个裁决点的口径见 `openspec/changes/rework-list-tab-line-model-nov27`
+ *  的 design §2/§3。 */
 function applyListIndent(view: EditorView, dir: ListIndentDirection): void {
   if (view.state.readOnly) return;
   const edit = listIndentChange(view.state, dir);
@@ -2923,7 +2924,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     "editor.extend-word-backward": () => {
       extendByWord(view, false);
     },
-    // M239：列表项缩进 / 凸排（change list-tab-indent）。判定与 changes 由纯函数
+    // M239：列表行缩进 / 凸排（change list-tab-indent；行模型见 change
+    // rework-list-tab-line-model-nov27）。判定与 changes 由纯函数
     // `listIndentChange` 给出（见其上方注释段），这里只做 readOnly 提前返回与单次 dispatch。
     "editor.list-indent": () => {
       applyListIndent(view, "indent");

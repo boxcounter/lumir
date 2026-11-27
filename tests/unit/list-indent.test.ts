@@ -1,24 +1,30 @@
-// src/list-indent.ts 的纯判定单测（M239，change list-tab-indent）：列表项 TAB / SHIFT+TAB 的
-// 平移口径（design §2 状态机 + §3 写回规则 + Alex 裁决 D1a/D2c/D3a/D4a/D5a）。
+// src/list-indent.ts 的纯判定单测（change rework-list-tab-line-model-nov27）：
+// **行模型**的 TAB / SHIFT+TAB 口径——操作对象是选区触及的行，不是列表项 / 子树。
+//
+// 取代 M239（change list-tab-indent）的项 / 子树用例：旧实现只读 `selection.main.head`，把 head
+// 所属 `ListItem` 覆盖的全部行整体平移，并按 D2c 重排有序编号；本 change 起逐行判定、逐行写回，
+// 未选中的行逐字节不动，编号一律不改写。
 //
 // 为什么这条口径能在本层测：判定只读 EditorState（文档 + 解析树），不碰 view、不碰坐标、不碰渲染层
-//（与 tests/unit/cell-geometry.test.ts 同一形态，先例说明见那边的文件头）。runner（readOnly 提前
-// 返回 + 单次 dispatch）留在 src/editor.ts，本层测不到——那一半归 chromium 场景与真机套件
-//（scripts/acceptance/scenarios/43-list-tab-indent.md）。
+//（与 tests/unit/cell-geometry.test.ts 同一形态）。runner（readOnly 提前返回 + 单次 dispatch）留在
+// src/editor.ts，本层测不到——那一半归 chromium 场景（tests/visual/scenes/m239-list-tab-indent.spec.ts）
+// 与真机场景 43 / 888。
 //
-// 三条实现期实测口径（写在这里，避免下一个人按「固定 2 空格」的直觉改回去）：
-// 1. **步长按语法树取**（上一同级项的内容列 − 本项 marker 列）：固定 2 空格对有序列表不构成嵌套
-//   （真 lezer 实测：`1. a` + `\n  2. b` 仍是同层兄弟项，要 3 空格；`10. b` 之下要 4 空格）——
-//    照固定 2 实现，TAB 在有序列表上只留下不可见的空白 diff，D2c 的「按新归属重排」也就没有对象。
-// 2. **缩进侧无可嵌套的父项**（本项是所在列表的第一项）时无操作：没有父项可嵌，写入只会留下
-//    不可见空白（与 D4c 被否决的同一理由，对称于 D3a 的顶层凸排无操作）。
-// 3. **有序编号按新归属重排**（D2c）：受影响的两个分组（被平移项的原分组、它落入的新分组）内
-//    的有序项一律改写为 1 起递增的规范序号。代价如实记录：源文件里本来不规范的编号会被顺带
-//    规范化，因此「TAB 再 SHIFT+TAB」对这类源文件不逐字节回到原样（见最后一组用例）。
+// 六条实现期口径（写在这里，避免下一个人按「整项 / 固定 2 空格」的直觉改回去）：
+// 1. **行集 = 选区触及的行**：空选区取 head 行；非空选区取与选区相交的行，终点恰在行首的那行不计
+//   （与 CM `changeBySelectedLine` 的选择口径一致）。
+// 2. **首行用结构目标、续行用内容列宽**：首行 TAB 的量 = 上一同级项内容列 − 本行 marker 列
+//   （`1. a` 之下要 3 空格、`10. b` 之下要 4 空格，固定 2 会嵌不进去）；续行的量 = 所属项的内容列宽。
+// 3. **首项 TAB 无操作**：没有上一同级项可嵌套，写入只会留下不可见的空白 diff（M239 的 S1b 理由
+//   在行模型下仍成立）；首项的续行照常按内容列宽处理。
+// 4. **不带子树**：选中一行只改这一行；同一项未选中的续行 / 子项 MUST NOT 被「顺手」平移。
+// 5. **不改编号**（切断 M239 的 D2c）：重排会改动未选中的兄弟项；只排选中行又会制造重复 / 跳号。
+//   有序列表的显示编号由渲染层按组序算，不读源码字面数字。
+// 6. **单次 dispatch**：多行编辑是一个 changeset，一次 undo 全还原；命令不重设选区。
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { EditorState } from "@codemirror/state";
+import { EditorSelection, EditorState } from "@codemirror/state";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
 import { history, undo } from "@codemirror/commands";
@@ -28,183 +34,290 @@ import { completeTree } from "./syntax-tree.ts";
 
 const MD = [markdown({ base: markdownLanguage, extensions: [GFM] })];
 
-/** 真 EditorState + 真 markdown 解析器，光标落在 `needle` 首次出现处（+ offset）。
- *  先过 `completeTree`：被测的 `listIndentChange` 读语法树快照，机器有负载时快照会残缺
- *  （见 `syntax-tree.ts` 的文件头）。 */
-function stateAt(doc: string, needle: string, offset = 0): EditorState {
-  const at = doc.indexOf(needle);
-  assert.ok(at >= 0, `fixture 里找不到 ${JSON.stringify(needle)}`);
-  return completeTree(EditorState.create({ doc, extensions: MD })).update({ selection: { anchor: at + offset } }).state;
+/** 真 EditorState + 真 markdown 解析器，光标落在第 `line` 行第 `column` 列。 */
+function caret(doc: string, line: number, column = 0): EditorState {
+  const base = completeTree(EditorState.create({ doc, extensions: MD }));
+  const target = base.doc.line(line);
+  return base.update({ selection: EditorSelection.cursor(Math.min(target.from + column, target.to)) }).state;
 }
 
-/** 一次平移后的文档全文；命令无操作（不 dispatch）时返回 null——与「动完正好等于原样」区分开。 */
-function shifted(doc: string, needle: string, dir: ListIndentDirection, offset = 0): string | null {
-  const state = stateAt(doc, needle, offset);
+/** 真 EditorState + 真 markdown 解析器，选区从 `fromLine:fromColumn` 到 `toLine:toColumn`。 */
+function selection(doc: string, fromLine: number, fromColumn: number, toLine: number, toColumn: number): EditorState {
+  const base = completeTree(EditorState.create({ doc, extensions: MD }));
+  const from = base.doc.line(fromLine);
+  const to = base.doc.line(toLine);
+  return base.update({
+    selection: EditorSelection.range(
+      Math.min(from.from + fromColumn, from.to),
+      Math.min(to.from + toColumn, to.to),
+    ),
+  }).state;
+}
+
+/** 一次按键后的文档全文；无操作（不 dispatch）时返回 null——与「动完正好等于原样」区分开。 */
+function shifted(state: EditorState, dir: ListIndentDirection): string | null {
   const edit = listIndentChange(state, dir);
   if (edit === null) return null;
   return state.update({ changes: edit.changes }).state.doc.toString();
 }
 
-/** 断言一次平移的产物（`null` 期望写在这里，省得每条用例都判 no-op）。 */
-function moved(doc: string, needle: string, dir: ListIndentDirection, expected: string | null, offset = 0): void {
-  assert.equal(
-    shifted(doc, needle, dir, offset),
-    expected,
-    `${JSON.stringify(doc)} 光标在 ${JSON.stringify(needle)} 上按 ${dir}`,
-  );
+/** 断言一次按键的产物（`null` 期望写在这里，省得每条用例都判 no-op）。 */
+function moved(state: EditorState, dir: ListIndentDirection, expected: string | null, label: string): void {
+  assert.equal(shifted(state, dir), expected, `${label} 按 ${dir}`);
 }
 
 // ---------------------------------------------------------------------------
-// S1：归属项整体平移（首行 + 续行 + 子树）
+// 单行：只动该行，不带子树
 // ---------------------------------------------------------------------------
 
-test("TAB：无序项连同续行与子树整体平移一层（`- ` 的步长 = 2）", () => {
-  moved("- a\n- b\n", "- b", "indent", "- a\n  - b\n");
-  // 续行与子列表按同一 delta 平移：相对结构逐字节保持
-  moved("- a\n  cont\n- b\n  cont2\n", "- b", "indent", "- a\n  cont\n  - b\n    cont2\n");
-  moved("- a\n- b\n  - b1\n", "- b", "indent", "- a\n  - b\n    - b1\n");
-  // 光标落在续行上同样归属本项（归属判定走语法树，不看光标是否在标记之后）
-  moved("- a\n- b\n  cont2\n", "cont2", "indent", "- a\n  - b\n    cont2\n");
+test("TAB：只缩进光标所在行，未选中的续行 / 子项逐字节不动", () => {
+  const doc = "- a\n- b\n  - b1\n";
+  moved(caret(doc, 2, 2), "indent", "- a\n  - b\n  - b1\n", "光标在 b 行（b1 未选中）");
+  // 续行也不被「顺手」带走：光标在项首行时只动首行
+  moved(caret("- a\n  cont\n- b\n", 3, 0), "indent", "- a\n  cont\n  - b\n", "光标在 b 行（a 的续行未选中）");
+  // 续行自身被选中时按内容列宽处理，不碰所属项首行
+  moved(caret("- a\n  cont\n- b\n", 2, 3), "indent", "- a\n    cont\n- b\n", "光标在续行");
 });
 
-test("TAB：嵌套列表只动归属项（父项与前面的兄弟项逐字节不变）", () => {
-  moved("- a\n  - b\n  - c\n", "- c", "indent", "- a\n  - b\n    - c\n");
-  // 归属子项：父项那一行不动（缩进只落在 c 自己那一行）
-  moved("- a\n  - b\n    - c\n", "- b", "indent", null); // b 是子列表第一项 ⇒ 无可嵌套父项
+test("SHIFT+TAB：只凸排光标所在行，未选中的子项逐字节不动", () => {
+  const doc = "- a\n  - b\n    - c\n";
+  moved(caret(doc, 2, 3), "outdent", "- a\n- b\n    - c\n", "光标在 b 行（c 未选中）");
+  // 续行按自身内容列宽收缩：`  cont` 再删一层成为顶层 lazy continuation
+  moved(caret("- a\n  cont\n", 2, 3), "outdent", "- a\ncont\n", "光标在续行");
 });
 
-test("TAB：步长按 marker 的内容列取（`1.` / `9.` → 3 空格，`10.` → 4 空格）", () => {
-  moved("1. x\n2. y\n", "2. y", "indent", "1. x\n   1. y\n");
-  moved("9. a\n8. b\n", "8. b", "indent", "1. a\n   1. b\n"); // 3 空格；原分组与目标分组各自规范化
-  moved("10. a\n2. b\n", "2. b", "indent", "1. a\n    1. b\n"); // `10. ` 内容列 4 ⇒ 4 空格
-  // `10. ` 之下 3 空格嵌不进去（实测那是同层兄弟项）——上面那条因此必须是 4 空格
-  moved("9. a\n10. b\n2. c\n", "2. c", "indent", "1. a\n2. b\n    1. c\n");
+test("SHIFT+TAB：多缩进的项一次回到祖先层（按结构目标，不是机械减固定值）", () => {
+  moved(caret("- a\n    - b\n", 2, 5), "outdent", "- a\n- b\n", "b 多缩了 2 格");
+  moved(caret("9. a\n10. b\n   2. c\n", 3, 4), "outdent", "9. a\n10. b\n2. c\n", "3 空格在 `10.` 下不构成嵌套：c 是顶层兄弟项");
 });
 
-// ---------------------------------------------------------------------------
-// S2 / D3a：凸排与到顶
-// ---------------------------------------------------------------------------
-
-test("SHIFT+TAB：凸排回祖先列表项所处的缩进层", () => {
-  moved("- a\n  - b\n", "  - b", "outdent", "- a\n- b\n");
-  // x 凸到 a 之后成为第 2 项、b 顺延为第 3 项（原分组位置变化的兄弟项一并重排）
-  moved("1. a\n   1. x\n2. b\n", "   1. x", "outdent", "1. a\n2. x\n3. b\n");
-  // 多缩了 2 个空格的子项一次回到顶层（不是机械减 2）
-  moved("- a\n    - b\n", "    - b", "outdent", "- a\n- b\n");
-  // 顶层项多余的行首空白（解析上仍是顶层项）顺带抹平，但分组没变 ⇒ 不改编号
-  moved("9. a\n10. b\n   1. c\n", "   1. c", "outdent", "9. a\n10. b\n1. c\n");
-});
-
-test("无操作（D3a / D4a）：顶层凸排、无可嵌套父项、非列表行、代码块内、只读", () => {
-  moved("- a\n- b\n", "- a", "outdent", null); // 已在顶层
-  moved("- a\n- b\n", "- a", "indent", null); // 列表第一项：没有可嵌套的父项
-  moved("1. a\n2. b\n", "1. a", "indent", null);
-  moved("para\n\n- a\n", "para", "indent", null); // 段落
-  moved("# 标题\n\n- a\n", "标题", "indent", null); // 标题
-  moved("```\n1. a\n```\n", "1. a", "indent", null); // 围栏代码块内
-  moved("> 引用段落\n", "引用", "indent", null); // 引用内但不是列表
-  // 只读 state（非 md 文件的视图层口径）由 runner 提前返回（纯函数不管 readOnly）——
-  // 那一半在 src/editor.ts 的 applyListIndent，本层测不到，归真机场景 43 与 chromium 场景。
+test("TAB：有序列表按上一同级项的内容列取步长，源码编号不改写", () => {
+  moved(caret("1. x\n2. y\n", 2, 0), "indent", "1. x\n   2. y\n", "`1. ` 的内容列 = 3");
+  moved(caret("9. a\n10. b\n2. c\n", 3, 0), "indent", "9. a\n10. b\n    2. c\n", "`10. ` 之下要 4 空格");
+  // 编号 MUST NOT 按新归属重排：旧 M239 期望是 `   1. y`，行模型下保持字面 `2.`
+  moved(caret("1) a\n2) b\n", 2, 0), "indent", "1) a\n   2) b\n", "`)` 分隔符同样只动空白");
+  // 续行按所属项的内容列宽（`1. ` = 3），不按 2
+  moved(caret("1. a\n   cont\n", 2, 4), "indent", "1. a\n      cont\n", "有序项续行");
+  moved(caret("1. a\n      cont\n", 2, 7), "outdent", "1. a\n   cont\n", "有序项续行凸排");
 });
 
 // ---------------------------------------------------------------------------
-// S5：引用内列表（插入 / 删除点在最内层 `>` 之后）
+// 首项 / 顶层：无嵌套目标
 // ---------------------------------------------------------------------------
 
-test("引用内列表：插入点在最内层 `>` 之后，步长同口径", () => {
-  moved("> - a\n> - b\n", "> - b", "indent", "> - a\n>   - b\n");
-  moved("> 1. a\n> 2. b\n", "> 2. b", "indent", "> 1. a\n>    1. b\n");
-  moved("> > - a\n> > - b\n", "> > - b", "indent", "> > - a\n> >   - b\n");
-  moved("> - a\n>   - b\n", ">   - b", "outdent", "> - a\n> - b\n");
-  moved("> - a\n> - b\n", "> - a", "outdent", null); // 该层顶层：无空白可减
-  moved("> - a\n> - b\n", "> - a", "indent", null); // 该层第一项：没有可嵌套的父项
-  // 引用内嵌套列表（M138 口径：引用内列表与正文列表同一套装饰，编辑口径也同一套）
-  moved("> - a\n>   - b\n>   - c\n", ">   - c", "indent", "> - a\n>   - b\n>     - c\n");
+test("首项 TAB 无操作；首项续行与多行选区里的其余行照常", () => {
+  moved(caret("- a\n- b\n", 1, 2), "indent", null, "第一项无上一同级项");
+  moved(caret("1. a\n2. b\n", 1, 3), "indent", null, "有序列表第一项");
+  moved(selection("- a\n- b\n", 1, 0, 2, 3), "indent", "- a\n  - b\n", "选中两项：首项不动，b 并入 a");
+  // 嵌套层的首项：TAB 无操作；SHIFT+TAB 按祖先层正常凸排
+  moved(caret("- a\n  - b\n", 2, 3), "indent", null, "子列表第一项");
+  moved(caret("- a\n  - b\n", 2, 3), "outdent", "- a\n- b\n", "子列表第一项凸排");
+});
+
+test("顶层 SHIFT+TAB 无操作；多余的行首空白顺带抹平", () => {
+  moved(caret("- a\n- b\n", 1, 2), "outdent", null, "顶层项无空白可减");
+  moved(caret("  - a\n", 1, 4), "outdent", "- a\n", "解析上仍是顶层项：抹平多余空白");
+});
+
+test("任务标记与 `*` 标记不改写：只动行首空白", () => {
+  moved(caret("- [ ] a\n- [x] b\n", 2, 7), "indent", "- [ ] a\n  - [x] b\n", "任务标记缩进");
+  moved(caret("- [ ] a\n  - [x] b\n", 2, 9), "outdent", "- [ ] a\n- [x] b\n", "任务标记凸排");
+  moved(caret("* a\n* b\n", 2, 2), "indent", "* a\n  * b\n", "`*` 标记不换写");
+  moved(caret("* a\n  * b\n", 2, 4), "outdent", "* a\n* b\n", "`*` 标记凸排");
+});
+
+test("无操作：非列表行、空行、代码块内、引用正文", () => {
+  moved(caret("para\n\n- a\n", 1, 2), "indent", null, "段落");
+  moved(caret("para\n\n- a\n", 1, 2), "outdent", null, "段落");
+  moved(caret("# 标题\n\n- a\n", 1, 2), "indent", null, "标题");
+  moved(caret("- a\n\n- b\n", 2, 0), "indent", null, "空行");
+  moved(caret("```\n- a\n```\n", 2, 2), "indent", null, "围栏代码块内");
+  moved(caret("> 引用段落\n", 1, 3), "indent", null, "引用内但不是列表");
+  // 列表项内的围栏代码块同样不写（禁区优先于列表归属）
+  moved(caret("- a\n  ```\n  code\n  ```\n", 3, 3), "indent", null, "列表项内的代码块");
 });
 
 // ---------------------------------------------------------------------------
-// D2c：有序列表编号按新归属重排
+// 引用前缀
 // ---------------------------------------------------------------------------
 
-test("D2c：有序列表缩进后按新归属重排（含原分组位置前移的兄弟项）", () => {
-  moved("1. a\n2. b\n3. c\n4. d\n", "3. c", "indent", "1. a\n2. b\n   1. c\n3. d\n");
-  // 并入既有同型子列表（内层本来不规范的 `3.` 一并规范化）
-  moved("1. a\n   3. x\n2. b\n", "2. b", "indent", "1. a\n   1. x\n   2. b\n");
-  // 上一同级项的末子列表是异型列表：另起新列表（内层 `- x` 不动）
-  moved("1. a\n   - x\n2. b\n", "2. b", "indent", "1. a\n   - x\n   1. b\n");
-  // 父项 marker 更宽（`10. `）时，原分组与目标分组各自规范化
-  moved("9. a\n10. b\n2. c\n", "2. c", "indent", "1. a\n2. b\n    1. c\n");
-});
-
-test("D2c：有序列表凸排后按新归属重排（原分组与祖先分组双向）", () => {
-  moved("1. a\n   1. x\n   2. y\n2. b\n", "   1. x", "outdent", "1. a\n2. x\n   1. y\n3. b\n");
-  moved("1. a\n   2. y\n2. b\n", "   2. y", "outdent", "1. a\n2. y\n3. b\n");
-  // 分隔符沿用原标题（`)` 形态不被改写）
-  moved("1) a\n2) b\n", "2) b", "indent", "1) a\n   1) b\n");
-});
-
-test("D2c 不越界：任务标记、标记字符、列表之外的行逐字节不变", () => {
-  moved("- [ ] a\n- [x] b\n", "- [x] b", "indent", "- [ ] a\n  - [x] b\n");
-  // 标记字符不换写（`*` 仍是 `*`，不因缩进被改写）
-  moved("* a\n* b\n", "* b", "indent", "* a\n  * b\n");
-  // 有序列表的编号重排只落在受影响的分组：子树内部的分组不动
-  moved("1. a\n2. b\n", "2. b", "indent", "1. a\n   1. b\n");
-  // 并入既有同型子列表：整组一起规范化（x/y 本来不规范，随并入一并改写）
-  moved("1. a\n   5. x\n   6. y\n2. b\n", "2. b", "indent", "1. a\n   1. x\n   2. y\n   3. b\n");
+test("引用内列表：插入 / 删除点在最内层 `>` 与其分隔空白之后", () => {
+  moved(caret("> - a\n> - b\n", 2, 4), "indent", "> - a\n>   - b\n", "单层引用");
+  moved(caret("> - a\n>   - b\n", 2, 6), "outdent", "> - a\n> - b\n", "单层引用凸排");
+  moved(caret("> > - a\n> > - b\n", 2, 6), "indent", "> > - a\n> >   - b\n", "嵌套引用");
+  moved(caret("> > - a\n> >   - b\n", 2, 8), "outdent", "> > - a\n> > - b\n", "嵌套引用凸排");
+  // 引用行本身（`>` 与其后一个分隔空格）不可删
+  moved(caret("> - a\n", 1, 4), "outdent", null, "该层已是顶层");
+  // 单个 `> - a` 是该列表的首项：TAB 无操作（与正文首项同判，P1 的钉子）
+  moved(caret("> - a\n", 1, 4), "indent", null, "引用内单首项");
 });
 
 // ---------------------------------------------------------------------------
-// 单次 dispatch 的落点、往返与撤销
+// 多行选区：逐行处理，未选行不动
 // ---------------------------------------------------------------------------
 
-test("平移是单次 dispatch：一次 undo 还原整次平移（含子树与编号重排）", () => {
-  const doc = "1. a\n2. b\n3. c\n4. d\n";
-  let state = completeTree(EditorState.create({ doc, extensions: [...MD, history()] })).update({
-    selection: { anchor: doc.indexOf("3. c") + 2 },
+test("多行选区 SHIFT+TAB：正向逐行凸排，未选中的首行与子项不动", () => {
+  const doc = "- a\n  - b\n    - c\n  - d\n";
+  moved(selection(doc, 2, 0, 4, 5), "outdent", "- a\n- b\n  - c\n- d\n", "第 2–4 行正向");
+});
+
+test("多行选区 SHIFT+TAB：反向选区得到同一结果", () => {
+  const doc = "- a\n  - b\n    - c\n  - d\n";
+  moved(selection(doc, 4, 5, 2, 0), "outdent", "- a\n- b\n  - c\n- d\n", "第 4→2 行反向");
+});
+
+test("选区尾落在行首不计入：终点那一行不动", () => {
+  const doc = "- a\n  - b\n    - c\n  - d\n";
+  moved(selection(doc, 2, 0, 4, 0), "outdent", "- a\n- b\n  - c\n  - d\n", "到第 4 行行首为止");
+});
+
+test("多行选区 TAB：块内各行按各自结构步长缩进", () => {
+  moved(selection("- a\n- b\n- c\n", 2, 0, 3, 3), "indent", "- a\n  - b\n  - c\n", "b / c 并入 a");
+  moved(selection("1. a\n2. b\n3. c\n", 2, 0, 3, 3), "indent", "1. a\n   2. b\n   3. c\n", "有序列表各自 3 空格");
+  // 有序块 TAB 后 SHIFT+TAB 逐字节回到原样（编号全程未动）
+  const indented = "1. a\n   2. b\n   3. c\n";
+  moved(selection(indented, 2, 0, 3, 3), "outdent", "1. a\n2. b\n3. c\n", "有序块往返");
+});
+
+test("用户截图形态：6 行嵌套选区逐行凸排，首行与未选中的子项不受牵连", () => {
+  const doc = [
+    "- alpha",
+    "  - bravo",
+    "    - charlie",
+    "    - delta",
+    "  - echo",
+    "  - foxtrot",
+    "    - golf",
+    "  - hotel",
+    "- india",
+    "",
+  ].join("\n");
+  // 选第 3–8 行（charlie … hotel，共 6 行）；第 1 / 2 / 9 行未选中
+  const expected = [
+    "- alpha",
+    "  - bravo",
+    "  - charlie",
+    "  - delta",
+    "- echo",
+    "- foxtrot",
+    "  - golf",
+    "- hotel",
+    "- india",
+    "",
+  ].join("\n");
+  moved(selection(doc, 3, 0, 8, 8), "outdent", expected, "6 行选区");
+});
+
+test("混合列表 / 非列表选区：只处理列表行", () => {
+  moved(selection("para\n- a\n- b\n", 1, 0, 3, 3), "indent", "para\n- a\n  - b\n", "段落不写、首项不动");
+  // 区分度：head 在段落行（反向选区）。旧 head 模型会因「head 不在列表项内」整体 no-op。
+  moved(selection("para\n- a\n- b\n", 3, 3, 1, 0), "indent", "para\n- a\n  - b\n", "head 在段落行也处理列表行");
+  // 选区把代码块行也包进来：代码块行跳过，列表行照常
+  const doc = "- a\n- b\n\n```\ncode\n```\n- c\n";
+  moved(selection(doc, 2, 0, 5, 4), "indent", "- a\n  - b\n\n```\ncode\n```\n- c\n", "代码块行跳过");
+});
+
+test("禁区优先于列表归属：列表项内的表格行 / 缩进代码块行不写", () => {
+  // 表格在列表项内（真 lezer：TableDelimiter < Table < ListItem）
+  const table = "- a\n- b\n  | h1 | h2 |\n  | -- | -- |\n  | v1 | v2 |\n";
+  moved(caret(table, 4, 4), "indent", null, "表格行单独");
+  moved(selection(table, 2, 0, 4, 3), "indent", "- a\n  - b\n  | h1 | h2 |\n  | -- | -- |\n  | v1 | v2 |\n", "选区含表格行：只缩 b");
+  // 缩进代码块在列表项内（CodeText < CodeBlock < ListItem）
+  const code = "- a\n- b\n\n      code line\n";
+  moved(caret(code, 4, 7), "indent", null, "缩进代码块行单独");
+  moved(selection(code, 2, 0, 4, 7), "indent", "- a\n  - b\n\n      code line\n", "选区含代码块行：只缩 b");
+  // 块级 HTML 在树里是 CommentBlock / HTMLBlock，内容再包一层内嵌 Document；
+  // listItemForLine 向上遍历先停在内嵌 Document ⇒ 不写。HTMLBlock 仍与 lists.ts / block-geometry.ts 同口径。
+  const html = "- a\n- b\n  <!-- c -->\n";
+  moved(caret(html, 3, 4), "indent", null, "列表项内的 HTML 注释行");
+});
+
+test("纯空白行不写：空行不产生行尾空格", () => {
+  const doc = "- a\n- b\n\n- c\n";
+  moved(selection(doc, 2, 0, 4, 3), "indent", "- a\n  - b\n\n  - c\n", "空行保持空");
+  assert.ok(!listIndentChange(caret("- a\n  \n- b\n", 2, 0), "indent"), "纯空白行本身不产生编辑");
+});
+
+test("单行内的部分选区：只处理该行", () => {
+  const doc = "- a\n- b\n  - b1\n";
+  moved(selection(doc, 2, 1, 2, 3), "indent", "- a\n  - b\n  - b1\n", "只选了 b");
+});
+
+// ---------------------------------------------------------------------------
+// 多 range / 单次 dispatch / 选区映射
+// ---------------------------------------------------------------------------
+
+test("多 range：并集去重，同一行的多个 range 只缩进一次", () => {
+  const doc = "- a\n- b\n- c\n- d\n";
+  // 多选在 CM 里默认被折叠成 main range（`allowMultipleSelections` 未开）；本用例显式打开它，
+  // 钉住「命令按全部 range 展开行集」这一实现口径（当前产品入口只有单 range，属防御性覆盖）。
+  const base = completeTree(
+    EditorState.create({ doc, extensions: [...MD, EditorState.allowMultipleSelections.of(true)] }),
+  );
+  const b = base.doc.line(2);
+  const d = base.doc.line(4);
+  const state = base.update({
+    selection: EditorSelection.create([
+      EditorSelection.cursor(b.from + 1),
+      EditorSelection.cursor(b.from + 3), // 与上一条同一行：行集并集必须去重
+      EditorSelection.cursor(d.from + 2),
+    ]),
+  }).state;
+  const edit = listIndentChange(state, "indent");
+  assert.ok(edit !== null);
+  assert.equal(edit.changes.length, 2, "两个不同行 ⇒ 两条 change；同一行的第三个 range 不得重复插入");
+  assert.equal(shifted(state, "indent"), "- a\n  - b\n- c\n  - d\n");
+});
+
+test("单次 dispatch：一次 undo 还原整次多行编辑（含所有被触及行）", () => {
+  const doc = "- a\n- b\n- c\n- d\n";
+  const base = completeTree(EditorState.create({ doc, extensions: [...MD, history()] }));
+  let state = base.update({
+    selection: EditorSelection.range(base.doc.line(2).from, base.doc.line(4).to),
   }).state;
   const edit = listIndentChange(state, "indent");
   assert.ok(edit !== null);
   state = state.update({ changes: edit.changes, userEvent: "input.indent" }).state;
-  assert.equal(state.doc.toString(), "1. a\n2. b\n   1. c\n3. d\n");
-  // 选区随 change mapping 平移（命令不显式重设）——光标仍在被平移项那一行内
-  assert.equal(state.doc.lineAt(state.selection.main.head).number, 3, "光标应随行首插入右移、留在本项行内");
+  assert.equal(state.doc.toString(), "- a\n  - b\n  - c\n  - d\n");
   const target = { state, dispatch: (tr: { state: EditorState }) => { state = tr.state; } };
   undo(target);
-  assert.equal(state.doc.toString(), doc, "一次 undo 应还原整次平移（含子树与编号重排）");
+  assert.equal(state.doc.toString(), doc, "一次 undo 应还原整次编辑");
 });
 
-test("往返：TAB 后 SHIFT+TAB 回到原源码（源文件编号本已规范时逐字节相同）", () => {
-  for (const [doc, needle] of [
-    ["- a\n- b\n  - b1\n", "- b"],
-    ["1. a\n2. b\n3. c\n4. d\n", "3. c"],
-    ["1. a\n   1. x\n2. b\n", "2. b"],
-    ["> - a\n> - b\n", "> - b"],
-    ["> 1. a\n> 2. b\n", "> 2. b"],
-    ["- a\n  cont\n- b\n  cont2\n", "cont2"],
-  ]) {
-    const first = stateAt(doc, needle);
-    const up = listIndentChange(first, "indent");
-    assert.ok(up !== null, `${JSON.stringify(doc)}：TAB 应有产物`);
-    const afterUp = first.update({ changes: up.changes }).state;
-    const down = listIndentChange(afterUp, "outdent");
-    assert.ok(down !== null, `${JSON.stringify(doc)}：SHIFT+TAB 应有产物`);
-    assert.equal(afterUp.update({ changes: down.changes }).state.doc.toString(), doc);
-  }
-});
+test("选区与 caret 按 change mapping 平移，命令不重设选区", () => {
+  const doc = "- a\n- b\n- c\n";
+  const base = completeTree(EditorState.create({ doc, extensions: MD }));
+  const line2 = base.doc.line(2);
+  const state = base.update({ selection: EditorSelection.cursor(line2.from + 2) }).state;
+  const edit = listIndentChange(state, "indent");
+  assert.ok(edit !== null);
+  const next = state.update({ changes: edit.changes }).state;
+  // 插入发生在光标之前：光标随映射右移，仍在 b 行内
+  assert.equal(next.doc.lineAt(next.selection.main.head).number, 2);
+  assert.equal(next.selection.main.head, line2.from + 4, "光标应随行首插入的 2 空格右移");
 
-test("已知代价（D2c）：源文件编号本来不规范时，往返会停在规范化后的形态", () => {
-  // 原稿 `1. a` / `   3. x` / `2. b`：TAB 让 b 并入内层分组，内层的 `3.` 被规范化为 `1.`
-  const doc = "1. a\n   3. x\n2. b\n";
-  const first = stateAt(doc, "2. b");
-  const up = listIndentChange(first, "indent");
-  assert.ok(up !== null);
-  const afterUp = first.update({ changes: up.changes }).state;
-  assert.equal(afterUp.doc.toString(), "1. a\n   1. x\n   2. b\n");
-  const down = listIndentChange(afterUp, "outdent");
-  assert.ok(down !== null);
-  assert.equal(
-    afterUp.update({ changes: down.changes }).state.doc.toString(),
-    "1. a\n   1. x\n2. b\n",
-    "凸排把 b 退回顶层后，内层已被规范化的 `1. x` 不回退成 `3. x`——规范化不可逆是 D2c 的既定代价",
-  );
+  // 非空选区：anchor / head 都随 change mapping 平移，方向保持（命令不重设选区）。
+  const block = "- a\n  - b\n  - c\n";
+  const nested = completeTree(EditorState.create({ doc: block, extensions: MD }));
+  const forward = nested.update({
+    selection: EditorSelection.range(nested.doc.line(2).from, nested.doc.line(3).to),
+  }).state;
+  const forwardEdit = listIndentChange(forward, "outdent");
+  assert.ok(forwardEdit !== null);
+  const afterForward = forward.update({ changes: forwardEdit.changes }).state;
+  assert.equal(afterForward.doc.toString(), "- a\n- b\n- c\n");
+  assert.equal(afterForward.selection.main.anchor, afterForward.doc.line(2).from, "正向 anchor 映射到 b 行行首");
+  assert.equal(afterForward.selection.main.head, afterForward.doc.line(3).to, "正向 head 映射到 c 行行尾");
+  assert.ok(afterForward.selection.main.anchor < afterForward.selection.main.head, "正向选择方向保持");
+
+  const reverse = nested.update({
+    selection: EditorSelection.range(nested.doc.line(3).to, nested.doc.line(2).from),
+  }).state;
+  const reverseEdit = listIndentChange(reverse, "outdent");
+  assert.ok(reverseEdit !== null);
+  const afterReverse = reverse.update({ changes: reverseEdit.changes }).state;
+  assert.equal(afterReverse.doc.toString(), "- a\n- b\n- c\n");
+  assert.equal(afterReverse.selection.main.anchor, afterReverse.doc.line(3).to, "反向 anchor 映射到 c 行行尾");
+  assert.equal(afterReverse.selection.main.head, afterReverse.doc.line(2).from, "反向 head 映射到 b 行行首");
+  assert.ok(afterReverse.selection.main.anchor > afterReverse.selection.main.head, "反向选择方向保持");
 });

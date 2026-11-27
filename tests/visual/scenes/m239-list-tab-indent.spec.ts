@@ -2,20 +2,22 @@ import { expect, test, type Page } from "@playwright/test";
 import { stubTauri } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
 
-// M239 列表项 TAB / SHIFT+TAB 的**按键链路**（change list-tab-indent 的 D1a / D2c / D3a / D4a）。
+// M239 列表行 TAB / SHIFT+TAB 的**按键链路**（change list-tab-indent；行模型见 change
+// rework-list-tab-line-model-nov27 的 D1a / D3a / D4a 与六个裁决点）。
 //
 // 为什么这条判据必须在这里（真机套件验不到）：
 //   KimiCU 的 `press_key("tab")` 注入不落 WKWebView（M240 归因三步实测：单独复跑仍红、把 src/ 整体
-//   回到实现前仍红、chromium 探针里行为正常 ⇒ 边界在注入通道，不是产品），因此真机场景 43 只验
+//   回到实现前仍红、chromium 探针里行为正常 ⇒ 边界在注入通道，不是产品），因此真机场景 43 / 888 只验
 //   「经 `[keys]` 绑到通道可达组合的同一条命令」；**Tab 这个键本身的链路**由本场景覆盖——chromium
 //   的 `keyboard.press` 产的是真实 DOM KeyboardEvent（`key="Tab"`，见 README 已知边界那一节）。
 //
 // 本层与既有两层的分工（别重复也不要留缺口）：
-//   - `tests/unit/list-indent.test.ts`：纯判定（语法树归属 + 写回规则 + 编号重排），不碰 view；
-//     它自己的文件头写明「runner（readOnly 提前返回 + 单次 dispatch）本层测不到，那一半归 chromium
-//     场景与真机套件」。
-//   - 本场景：**键位层 → 命令 → 文档**（真 CM view、真键位分发、真 History 扩展），即 runner 那一半。
-//   - `scripts/acceptance/scenarios/43-list-tab-indent.md`：真机上的命令链路与落盘（+ 外部写入时序）。
+//   - `tests/unit/list-indent.test.ts`：纯判定（选区展开行集 + 逐行归属 + 写回规则 + 编号不动），
+//     不碰 view；它自己的文件头写明「runner（readOnly 提前返回 + 单次 dispatch）本层测不到」。
+//   - 本场景：**键位层 → 命令 → 文档**（真 CM view、真键位分发、真 History 扩展），即 runner 那一半；
+//     多行选区在真键位链路上走一遍（单测已覆盖判定，这里覆盖「Tab / Shift-Tab 按键 + 选区」）。
+//   - `scripts/acceptance/scenarios/43-list-tab-indent.md`：真机上的命令链路与落盘（单行 / 引用 /
+//     有序 / 非列表）；`888-list-line-indent`：真机上的多行选区（用户截图形态）。
 //
 // 判据一律落在 **CM 文档源码**（`readDocument`）：列表标记与行首空白在渲染层被 widget 吃掉，
 // live preview 的 DOM 读不到它们。
@@ -25,6 +27,12 @@ const ORDERED = "1. uno\n2. dos\n";
 const NESTED = "- alpha\n  - bravo\n  - charlie\n";
 const QUOTE = "> - echo\n> - foxtrot\n";
 const PARAGRAPH = "这一行是普通段落。\n";
+// 「不带子树」用：bravo 有上一同级项（alpha）、下面挂一个未选中的子项 child。
+const WITH_CHILD = "- alpha\n- bravo\n  - child\n";
+// 用户截图形态：6 行嵌套选区（第 3–8 行），第 1 / 2 / 9 行未选中。
+const BLOCK = "- alpha\n  - bravo\n    - charlie\n    - delta\n  - echo\n  - foxtrot\n    - golf\n  - hotel\n- india\n";
+const BLOCK_OUTDENTED =
+  "- alpha\n  - bravo\n  - charlie\n  - delta\n- echo\n- foxtrot\n  - golf\n- hotel\n- india\n";
 
 /** 打开 fixture 里的某个文件（装载 vault → 点树行）。 */
 async function openFile(page: Page, files: Record<string, string>, name: string): Promise<void> {
@@ -47,9 +55,36 @@ async function setCursor(page: Page, pos: number): Promise<void> {
   }, pos);
 }
 
+/** 落选区（anchor / head 分开传，用于正向 / 反向两种形态）。 */
+async function setSelection(page: Page, anchor: number, head: number): Promise<void> {
+  await page.evaluate(([a, h]) => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile
+      .root.view;
+    view.dispatch({ selection: { anchor: a, head: h } });
+    view.focus();
+  }, [anchor, head] as const);
+}
+
+/** 行号（1 起）→ 字符偏移：fixture 全是单字节 ASCII，行偏移即字符偏移。 */
+function lineStart(doc: string, line: number): number {
+  return doc.split("\n").slice(0, line - 1).reduce((sum, text) => sum + text.length + 1, 0);
+}
+function lineEnd(doc: string, line: number): number {
+  return lineStart(doc, line) + doc.split("\n")[line - 1].length;
+}
+
 /** 浏览器视角的活动元素——D1a / D4a 的「键被本层命中并消费，焦点不跳出编辑器」这一条。 */
 const activeElementClass = (page: Page) =>
   page.evaluate(() => (document.activeElement as HTMLElement | null)?.className ?? "");
+
+/** 读回 CM 主选区（anchor / head / empty）——「命令不重设选区、由 change mapping 平移」的直接读数。 */
+const readMainSelection = (page: Page) =>
+  page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile
+      .root.view;
+    const main = view.state.selection.main;
+    return { anchor: main.anchor as number, head: main.head as number, empty: main.empty as boolean };
+  });
 
 /** 打开一份文档、把光标放到 `needle` 之后（文档里 `needle` 必须唯一，避免落点歧义）。 */
 async function setup(page: Page, doc: string, needle: string): Promise<void> {
@@ -83,22 +118,31 @@ test("SHIFT+TAB：刚缩进的那一项凸排回顶层（逐字节回到原源�
   expect(await activeElementClass(page)).toContain("cm-content");
 });
 
-test("TAB：有序列表第二项缩进后按新归属重排编号（D2c，3 空格 = `1. ` 的内容列）", async ({ page }) => {
+test("TAB：有序列表只加空白、源码编号不改写（切断 D2c，3 空格 = `1. ` 的内容列）", async ({ page }) => {
   await setup(page, ORDERED, "dos");
 
   await page.keyboard.press("Tab");
 
-  // 原分组的第一项（uno）与目标分组的首项（dos）各自规范化成 1 起递增——固定 2 空格在有序列表上
-  // 嵌不进去（真 lezer 实测），步长必须按上一个同级项的内容列取。
-  await expect.poll(() => readDocument(page)).toBe("1. uno\n   1. dos\n");
+  // 固定 2 空格在有序列表上嵌不进去（真 lezer 实测），步长仍按上一同级项的内容列取；
+  // 但行模型不再按新归属重排编号：`2. dos` 保持字面 `2.`，`1. uno` 逐字节不动。
+  await expect.poll(() => readDocument(page)).toBe("1. uno\n   2. dos\n");
 });
 
-test("TAB：嵌套列表只动归属项那一支（兄弟项与父项逐字节不变）", async ({ page }) => {
+test("TAB：嵌套列表只动光标所在行（未选中的子项 / 兄弟项逐字节不变）", async ({ page }) => {
   await setup(page, NESTED, "charlie");
 
   await page.keyboard.press("Tab");
 
   await expect.poll(() => readDocument(page)).toBe("- alpha\n  - bravo\n    - charlie\n");
+});
+
+test("TAB：只缩进光标所在行，不带子树（未选中的子项留在原处）", async ({ page }) => {
+  await setup(page, WITH_CHILD, "bravo");
+
+  await page.keyboard.press("Tab");
+
+  // 旧项 / 子树模型会连 `  - child` 一起平移；行模型只动 bravo 这一行。
+  await expect.poll(() => readDocument(page)).toBe("- alpha\n  - bravo\n  - child\n");
 });
 
 test("TAB：引用内列表把空白插在最内层 `>` 之后（引用结构不动）", async ({ page }) => {
@@ -134,16 +178,99 @@ test("D3a/D4a：第一项 TAB、非列表行 TAB/SHIFT+TAB 都无操作，且键
   expect(await activeElementClass(page)).toContain("cm-content");
 });
 
-test("单次 dispatch：一次 ⌘Z 还原整次平移（含相邻行与编号重排）", async ({ page }) => {
-  await setup(page, ORDERED, "dos");
+test("多行选区 SHIFT+TAB：正向逐行凸排（用户截图形态），未选中的行逐字节不动", async ({ page }) => {
+  await openFile(page, { "doc.md": BLOCK }, "doc.md");
+  await setSelection(page, lineStart(BLOCK, 3), lineEnd(BLOCK, 8));
+  await expect.poll(() => activeElementClass(page)).toContain("cm-content");
+
+  await page.keyboard.press("Shift+Tab");
+
+  await expect.poll(() => readDocument(page)).toBe(BLOCK_OUTDENTED);
+
+  // 命令只 dispatch changes，不重设选区：anchor / head 由 change mapping 平移，方向保持。
+  const forward = await readMainSelection(page);
+  expect(forward.empty, "多行选区不应被折叠成 caret").toBe(false);
+  expect(forward.anchor, "正向 anchor 应映射到第 3 行行首").toBe(lineStart(BLOCK_OUTDENTED, 3));
+  expect(forward.head, "正向 head 应映射到第 8 行行尾").toBe(lineEnd(BLOCK_OUTDENTED, 8));
+  expect(forward.anchor, "正向选择方向（anchor 在上）保持").toBeLessThan(forward.head);
+});
+
+test("多行选区 SHIFT+TAB：反向选区（anchor 在下、head 在上）得到同一结果", async ({ page }) => {
+  await openFile(page, { "doc.md": BLOCK }, "doc.md");
+  await setSelection(page, lineEnd(BLOCK, 8), lineStart(BLOCK, 3));
+  await expect.poll(() => activeElementClass(page)).toContain("cm-content");
+
+  await page.keyboard.press("Shift+Tab");
+
+  await expect.poll(() => readDocument(page)).toBe(BLOCK_OUTDENTED);
+
+  const reverse = await readMainSelection(page);
+  expect(reverse.empty, "多行选区不应被折叠成 caret").toBe(false);
+  expect(reverse.anchor, "反向 anchor 应映射到第 8 行行尾").toBe(lineEnd(BLOCK_OUTDENTED, 8));
+  expect(reverse.head, "反向 head 应映射到第 3 行行首").toBe(lineStart(BLOCK_OUTDENTED, 3));
+  expect(reverse.anchor, "反向选择方向（anchor 在下）保持").toBeGreaterThan(reverse.head);
+});
+
+test("选区尾落在行首不计入：终点那一行不动", async ({ page }) => {
+  await openFile(page, { "doc.md": BLOCK }, "doc.md");
+  // 第 3 行行首 → 第 6 行行首：只触及第 3–5 行
+  await setSelection(page, lineStart(BLOCK, 3), lineStart(BLOCK, 6));
+  await expect.poll(() => activeElementClass(page)).toContain("cm-content");
+
+  await page.keyboard.press("Shift+Tab");
+
+  await expect
+    .poll(() => readDocument(page))
+    .toBe("- alpha\n  - bravo\n  - charlie\n  - delta\n- echo\n  - foxtrot\n    - golf\n  - hotel\n- india\n");
+});
+
+test("多行选区 TAB：块内各行按各自结构步长缩进，未选中的首行不动", async ({ page }) => {
+  await openFile(page, { "doc.md": BLOCK }, "doc.md");
+  await setSelection(page, lineStart(BLOCK, 4), lineEnd(BLOCK, 5));
+  await expect.poll(() => activeElementClass(page)).toContain("cm-content");
+
   await page.keyboard.press("Tab");
-  await expect.poll(() => readDocument(page)).toBe("1. uno\n   1. dos\n");
+
+  // 第 4 / 5 行各加 2 空格（分别按上一同级项 charlie / bravo 的内容列）；第 1–3 行与其余行不动。
+  await expect
+    .poll(() => readDocument(page))
+    .toBe("- alpha\n  - bravo\n    - charlie\n      - delta\n    - echo\n  - foxtrot\n    - golf\n  - hotel\n- india\n");
+});
+
+test("混合列表 / 非列表选区：只处理列表行（段落逐字节不动）", async ({ page }) => {
+  const doc = "para\n- alpha\n- bravo\n";
+  await openFile(page, { "doc.md": doc }, "doc.md");
+  await setSelection(page, lineStart(doc, 1), lineEnd(doc, 3));
+  await expect.poll(() => activeElementClass(page)).toContain("cm-content");
+
+  await page.keyboard.press("Tab");
+
+  await expect.poll(() => readDocument(page)).toBe("para\n- alpha\n  - bravo\n");
+});
+
+test("混合列表 / 非列表选区：head 在段落行（反向选区）也照常处理列表行", async ({ page }) => {
+  // 区分度：旧 head 模型只看 `selection.main.head`，head 在段落上会整体 no-op；行模型按行集处理。
+  const doc = "para\n- alpha\n- bravo\n";
+  await openFile(page, { "doc.md": doc }, "doc.md");
+  await setSelection(page, lineEnd(doc, 3), lineStart(doc, 1));
+  await expect.poll(() => activeElementClass(page)).toContain("cm-content");
+
+  await page.keyboard.press("Tab");
+
+  await expect.poll(() => readDocument(page)).toBe("para\n- alpha\n  - bravo\n");
+});
+
+test("单次 dispatch：多行选区一次 ⌘Z 还原整次编辑", async ({ page }) => {
+  await openFile(page, { "doc.md": BLOCK }, "doc.md");
+  await setSelection(page, lineStart(BLOCK, 3), lineEnd(BLOCK, 8));
+  await expect.poll(() => activeElementClass(page)).toContain("cm-content");
+  await page.keyboard.press("Shift+Tab");
+  await expect.poll(() => readDocument(page)).toBe(BLOCK_OUTDENTED);
 
   await page.keyboard.press("Meta+z");
 
-  // 平移是**一次** dispatch（写回与编号重排同在一条 change 里）⇒ 一次撤销应完整还原。
-  // 若实现拆成多次 dispatch，这里会停在中间态（正是要挡的回归）。
-  await expect.poll(() => readDocument(page)).toBe(ORDERED);
+  // 多行编辑是**一次** dispatch（所有被触及行同在一个 changeset）⇒ 一次撤销完整还原。
+  await expect.poll(() => readDocument(page)).toBe(BLOCK);
 });
 
 test("反向对照：经 `[keys]` 解绑 `Tab` 后同一个键不再缩进（证明上面那些断言不是恒真）", async ({ page }) => {

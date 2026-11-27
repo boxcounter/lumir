@@ -73,7 +73,8 @@
 // 不变——该命令默认有绑定，MUST NOT 登记进「默认不绑键」清单。
 //
 // M239：表新增两条**有默认绑定**的编辑器命令（`Tab` → `editor.list-indent`、`Shift-Tab` →
-// `editor.list-outdent`，change list-tab-indent 的 D1a/D2c/D3a/D4a/D5a 裁决）。键位占用已核
+// `editor.list-outdent`，change list-tab-indent 的 D1a/D2c/D3a/D4a/D5a 裁决；其中 D2c 的有序
+// 编号重排已被 change rework-list-tab-line-model-nov27 切断——行模型只写选中行的空白）。键位占用已核
 //（三条独立来源，逐条可复核）：① 表内无 `Tab` / `Shift-Tab` token——`Ctrl-Tab` /
 // `Ctrl-Shift-Tab`（tab.next / tab.prev，M149）归一化后是不同 token，互不干扰；② 原生菜单
 // accelerator 集合（tauri 的 `Menu::default()` 逐项来自 muda `items/predefined.rs`，清单见
@@ -276,10 +277,11 @@ const EDITOR_CORE_COMMAND_IDS = [
   "editor.extend-line-end",
   "editor.extend-word-forward",
   "editor.extend-word-backward",
-  // M239：列表项缩进 / 凸排（change list-tab-indent）。归内核组是因为实现在 editor.ts 的
-  // commands 记录里（判归属 + 产 changes 的纯函数在 src/list-indent.ts）；作用域随组派生为
-  // editor——「head 在不在列表项内」这个前提由命令自己按语法树判（键位层没有条件分支，
-  // 表内也没有第二条 Tab 系绑定可用）。
+  // M239：列表行缩进 / 凸排（change list-tab-indent；行模型见 change
+  // rework-list-tab-line-model-nov27）。归内核组是因为实现在 editor.ts 的 commands 记录里
+  //（判归属 + 产 changes 的纯函数在 src/list-indent.ts）；作用域随组派生为 editor——「选区
+  // 触及的行在不在列表项内」这个前提由命令自己按语法树判（键位层没有条件分支，表内也没有
+  // 第二条 Tab 系绑定可用）。
   "editor.list-indent",
   "editor.list-outdent",
   // M277：块级复制（change block-copy-affordance，裁决点 5 取推荐项「给键盘入口」）。
@@ -805,16 +807,17 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   // 三条独立来源的零冲突核对写在条目 D461 的正文里（表即文档，本文件不另抄一份）。
   { key: "Ctrl-Alt-KeyS", command: "editor.focus-block-scroll", scope: scopeOfCommand("editor.focus-block-scroll"), docKey: "D461" },
 
-  // ── 编辑器内：列表项缩进 / 凸排（M239，change list-tab-indent）
-  // 语义（Alex 节点 1 裁决）：TAB = 把 head 归属的列表项连同续行与子树整体缩进一层，
-  // Shift-Tab = 对称地凸排一层；到顶（顶层项凸排）与「head 不在任何列表项内」（段落 / 标题 /
-  // 表格 / 代码块内）一律无操作——**命中即消费**（键位层统一吞默认行为），文档逐字节不变、
-  // 不进撤销栈、焦点不跳出编辑器，MUST NOT 把键放回原生路径（D3a / D4a）。
-  // 缩进步长按**语法树**取（上一同级项的内容列 = marker 宽 + 1 空格：`- ` → 2、`1. ` → 3），
-  // 不是固定 2 空格——固定 2 空格在有序列表上不构成嵌套（实测），口径与证据见
-  // change list-tab-indent 的 design §3。
+  // ── 编辑器内：列表行缩进 / 凸排（M239；行模型见 change rework-list-tab-line-model-nov27）
+  // 语义（Alex 2026-11-27 裁决「行」模型）：TAB = 缩进**选区触及的每一行**，Shift-Tab =
+  // 对称地逐行凸排；操作对象是行不是项——未选中的续行 / 子项 / 兄弟项逐字节不动，不带子树。
+  // 逐行步长按语法树取：项首行用上一同级项的内容列（`- ` → 2、`1. ` → 3、`10. ` → 4），
+  // 续行用所属项的内容列宽；不是固定 2 空格（固定 2 在有序列表上不构成嵌套，实测见
+  // change list-tab-indent 的 design §3）。列表标记与有序源码编号不改写（D2c 已切断）。
+  // 无操作：首项 TAB（无上一同级项）、顶层项 SHIFT+TAB、非列表行（段落 / 标题 / 引用正文）、
+  // 表格 / 代码块 / HTML 块内、纯空白行——**命中即消费**（键位层统一吞默认行为），文档逐字节
+  // 不变、不进撤销栈、焦点不跳出编辑器，MUST NOT 把键放回原生路径（D3a / D4a）。
   // 冲突核对见文件头 M239 段（三条独立来源 + CM 侧无 indentWithTab / defaultKeymap）。
-  // 起作用域 editor：「head 是否在列表项内」由命令按语法树判（键位层不做条件分支——
+  // 起作用域 editor：「选区触及的行是否在列表项内」由命令按语法树逐行判（键位层不做条件分支——
   // 这里也不用 `when`：`when` 表达的是「同一物理键在不同焦点下语义不同」，而本键的语义不随
   // 焦点变，只随文档结构变；结构判定的单一来源留在命令侧，避免两处各判一次而漂移）。
   { key: "Tab", command: "editor.list-indent", scope: "editor", docKey: "D299" },

@@ -73,8 +73,9 @@ export const BINDING_GROUPS: ReadonlyArray<{ titleKey: CopyKey; commands: readon
   // 光标位置与滚动（落点复用 revealLine），与「移动与选择」的逐字符/逐行移动不是一族。
   { titleKey: "D64.5", commands: ["editor.scroll-page-down", "editor.scroll-page-up", "editor.recenter", "editor.goto-line"] },
   { titleKey: "D64.6", commands: ["editor.undo", "editor.redo"] },
-  // M239 的两条列表结构命令（Tab / ⇧Tab）单列一组：它们改写的是**列表项的嵌套层级**
-  // （连同续行与子树整体平移），与「移动与选择」（只动光标 / 选区）和「删除」都不是一族。
+  // M239 的两条列表结构命令（Tab / ⇧Tab）单列一组：它们改写的是**选区触及行的行首空白**
+  // （行模型：逐行处理，未选中的续行 / 子项 / 兄弟项不动），与「移动与选择」（只动光标 /
+  // 选区）和「删除」都不是一族。
   // 归组去重是面板的硬约束：漏登记的命令会落进末尾的兜底「其他」组，那条兜底是 M133 的
   // 有意设计（新命令不从面板消失），但代价是漏归组只表现为「别处场景红」——M239 就这么
   // 漏过一次（master 视觉门禁红，M240 顺手收）。现在由 tests/unit/bindings-panel.test.ts
