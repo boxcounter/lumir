@@ -12,12 +12,18 @@
 // 判据只能退化成读声明（computed style）。本模块把候选 A 那套「不参与 CM 数据结构」的性质
 // 用真元素实现，三条判据因此都有渲染结果可读。机制取舍与实测记录见 change 的 design.md §1.1.1。
 //
-// **在场态的落地时机（M238）**：判据照旧在 CM 的 DOM 读相位算（`MeasureRequest.read`），但
-// 元素与行尺寸口径的改写在**测量周期之外**落地（`write` 只记录期望值并排一帧，`apply` 才动
-// DOM）。理由与实测证据见下方 `write` 与 `apply` 的注释：在测量周期里改布局，会让 CM 在该
-// 周期尾段（`scrollIntoView` + 新一轮 `measure`）读到被自己改动过的几何。正文行的尺寸口径
-// 另已改为**与标记在场无关**（`src/preview/theme.ts` 的 `.cm-scroller` 段），两处一起保证
-// 「标记恒贴在正文内容盒之下」这条不变量。
+// **在场态与落点的落地时机（M238）**：判据和落点在 CM 的 DOM 读相位算（`MeasureRequest.read`），
+// 但 DOM / 样式改写在**测量周期之外**落地（`write` 只记录期望值并排一帧，`apply` 才动 DOM）。
+// 理由与实测证据见下方 `write` 与 `apply` 的注释：在测量周期里改布局，会让 CM 在该周期尾段
+//（`scrollIntoView` + 新一轮 `measure`）读到被自己改动过的几何。
+//
+// **指针命中面与 END 落点（change show-document-end-marker-all-docs-nov27）**：正文盒保持
+// `minmax(max-content, 1fr)` 行 + CM 基础主题的 `min-height: 100%`——它是 CM 的原生命中面，
+// 正文下方空白处的单击 / 双击 / 拖选仍走 CM 自己的手势路径。END 是这个命中面之上绝对定位的
+// chrome（`position: absolute` + `pointer-events: none`），`top` = 正文自然末尾、`left/width`
+// = 正文盒的水平区间，全部由 `read` 里的 O(1) 布局读数给出（`contentHeight` + `offset*`，不读
+// 滚动位置）。因此短文档的 END 钉在自然末尾而不是窗口底，而点它自身也穿透到正文盒——不是
+// 「只给单击打补丁」的分叉。正文行的尺寸与标记在场无关，绝对定位的盒子不参与内容布局 / heightmap。
 //
 // **元素生命周期 ⊆ 插件实例生命周期（M251 的结构性修复）**：元素可以晚于 `destroy` 被挂回来。
 // 现场（Alex 2026-09-27 真机报告：`— End —` 出现在非 markdown 文件的正文右侧空白区）与实测
@@ -38,6 +44,7 @@
 // `tests/visual/scenes/end-marker.spec.ts` 的模式切换矩阵属性用例。
 
 import { EditorView, ViewPlugin } from "@codemirror/view";
+import type { ViewUpdate } from "@codemirror/view";
 
 export const END_MARKER_CLASS = "cm-lp-end-marker";
 export const END_MARKER_LINE_CLASS = "cm-lp-end-marker-line";
@@ -56,8 +63,9 @@ export const END_MARKER_TEXT = "END";
  *   浮现后变成一次无意义的显隐跳变；
  * - 判据只读一个既有布局数（`scrollDOM.clientHeight`），常量级、不含逐帧监听（ADR 0002 §6）。
  *
- * 标记本身在 `.cm-content` 之外，纵向位置由 CSS grid 的自然流给出（`src/preview/theme.ts` 的
- * end-marker 段），因此判据不存在「标记一旦出现就把自己推过判据」的自我指涉。
+ * 标记本身在 `.cm-content` 之外，纵向位置由本模块按正文自然末尾绝对定位（`theme.ts` 的
+ * end-marker 段 + 下方 `read` 的 O(1) 布局读数），因此判据不存在「标记一旦出现就把自己推过判据」
+ * 的自我指涉。
  */
 export function endMarkerVisible(viewportHeight: number): boolean {
   return viewportHeight > 0;
@@ -85,6 +93,17 @@ function createEndMarker(): HTMLElement {
   return root;
 }
 
+/** 一次测量给出的 END 落点（正文自然末尾，scroller 内容坐标）与在场态。 */
+interface EndMarkerGeometry {
+  visible: boolean;
+  top: number;
+  left: number;
+  width: number;
+}
+
+const sameGeometry = (a: EndMarkerGeometry, b: EndMarkerGeometry): boolean =>
+  a.visible === b.visible && a.top === b.top && a.left === b.left && a.width === b.width;
+
 class EndMarkerView {
   // 不用构造器参数属性：`tests/unit` 直接跑 src 源码（Node 的类型剥离不支持参数属性，
   // 那是会生成代码的语法而不是纯类型标注）。
@@ -92,8 +111,8 @@ class EndMarkerView {
   private readonly marker: HTMLElement;
   /** 已落地的在场态（判据的**结论**不一定等于它，见 `pending`）。 */
   private attached = false;
-  /** 待落地的在场态：`write` 只记录期望值，真正的 DOM 改动在 `apply` 里做（下一帧）。 */
-  private pending = false;
+  /** 待落地的几何：`write` 只记录期望值，真正的 DOM / 样式改动在 `apply` 里做（下一帧）。 */
+  private pending: EndMarkerGeometry = { visible: false, top: 0, left: 0, width: 0 };
   /** 已排的动画帧句柄（0 = 没排队）。 */
   private frame = 0;
   /** 已销毁（M251）：销毁后在途的测量 / 帧回调一律不得再触碰 DOM，理由见文件头的
@@ -102,8 +121,8 @@ class EndMarkerView {
   private readonly observer: ResizeObserver;
   private readonly request: {
     key: unknown;
-    read: (view: EditorView) => boolean;
-    write: (visible: boolean, view: EditorView) => void;
+    read: (view: EditorView) => EndMarkerGeometry;
+    write: (geometry: EndMarkerGeometry, view: EditorView) => void;
   };
 
   constructor(view: EditorView) {
@@ -114,23 +133,40 @@ class EndMarkerView {
     for (const stale of view.scrollDOM.querySelectorAll(`.${END_MARKER_CLASS}`)) stale.remove();
     this.request = {
       key: this,
-      // 唯一读数：滚动容器的可用高度（布局是否完成）。标记在 `.cm-content` 之外、纵向位置由 CSS
-      // 自然流给出（theme.ts），所以判据不需要内容高度，也不会量到标记自己的贡献。
-      read: (target) => endMarkerVisible(target.scrollDOM.clientHeight),
-      // **不在 write 相位动 DOM**（M238）：CM 的 `MeasureRequest.write` 明文要求「不得做触发
-      // 布局的事」（@codemirror/view 6.43.11 的 MeasureRequest 注释），而本模块的 patch 会往
-      // 滚动容器里加元素——正是「触发布局」。更要紧的是 `measure()` 的循环在这一步之后还会走
-      // `docView.scrollIntoView(...)` 与**新一轮测量**（同文件 `measure()` 尾段），同步改布局
+      // 两个既有几何读数：布局是否完成（视口高 > 0），以及正文自然末尾在 scroller 内容坐标里的
+      // 位置。后者 = 正文盒相对 scroller 的矩形偏移 + `contentHeight`（正文自然高，含上下内边距；
+      // 高度图在 read 之前已由 CM 自己量完）。`scrollTop/Left` 只用于把视口矩形换算回**内容坐标**，
+      // 换算结果与滚动位置无关；判据（visible）MUST NOT 读它。全是 O(1) 布局读数：不遍历文档、
+      // 不含标记自己的贡献。
+      read: (target) => {
+        const scroller = target.scrollDOM.getBoundingClientRect();
+        const content = target.contentDOM.getBoundingClientRect();
+        return {
+          visible: endMarkerVisible(target.scrollDOM.clientHeight),
+          top: content.top - scroller.top + target.scrollDOM.scrollTop + target.contentHeight,
+          left: content.left - scroller.left + target.scrollDOM.scrollLeft,
+          width: content.width,
+        };
+      },
+      // **不在 write 相位动 DOM / 写样式**（M238）：CM 的 `MeasureRequest.write` 明文要求「不得做
+      // 触发布局的事」（@codemirror/view 6.43.11 的 MeasureRequest 注释），而本模块的 patch 会改
+      // 绝对定位元素与 scrollDOM 的子节点。更要紧的是 `measure()` 的循环在这一步之后还会走
+      // `docView.scrollIntoView(...)` 与**新一轮测量**（同文件 `measure()` 尾段），同步改样式
       // 等于让那一轮读到被自己改动过的几何。这里只记录期望值，落地交给下一帧的 `apply`。
-      write: (visible) => this.schedule(visible),
+      write: (geometry) => this.schedule(geometry),
     };
-    // 重算触发点（判据是重算型，不是逐帧监听）：只观察 `.cm-scroller` 的**视口尺寸**（窗口
-    // resize、侧栏拖动、模式切换后的首次布局）。内容尺寸不再影响显隐（判据不比较内容高度），
-    // 纵向位置则由 CSS grid 自然流承担——异步图片 / 缩放 / 字体度量把内容变高变矮时，标记跟着
-    // 内容走，无需本插件重算。
+    // 视口尺寸变化（窗口 resize、侧栏拖动、模式切换后的首次布局）由 ResizeObserver 触发；
+    // 文档变更与 CM 几何变更（异步图片、字体度量、缩放）由 `update` 触发——两者都只重算
+    // END 的绝对落点，不改变正文布局。
     this.observer = new ResizeObserver(() => view.requestMeasure(this.request));
     this.observer.observe(view.scrollDOM);
     view.requestMeasure(this.request);
+  }
+
+  update(update: ViewUpdate): void {
+    // END 的纵坐标由 contentHeight 派生：装载 / 键入 / 异步图片 / 缩放都会改它。这里只排队一次
+    // 测量（CM 每次重绘本来就排了自己那一趟），读的是 `contentHeight` 与 offset* 两个既有布局数。
+    if (update.docChanged || update.geometryChanged) update.view.requestMeasure(this.request);
   }
 
   destroy(): void {
@@ -142,15 +178,17 @@ class EndMarkerView {
     this.marker.remove();
   }
 
-  /** 记录期望的在场态并（必要时）排一次落地。排队期间重复的请求被合并：以最后一次期望为准，
+  /** 记录期望的几何并（必要时）排一次落地。排队期间重复的请求被合并：以最后一次期望为准，
    *  已排的那一帧不重排——反复排帧会让 patch 永远追不上期望值。 */
-  private schedule(visible: boolean): void {
+  private schedule(geometry: EndMarkerGeometry): void {
     // 销毁后一律空动作（M251）：这一步的调用方可能是**已经排进 CM 测量队列**的那一趟
     //（销毁发生在它之前），此时 state 已不含本插件，任何落地都会造出孤儿元素。
     if (this.destroyed) return;
-    if (visible === this.attached && this.frame === 0) return;
-    this.pending = visible;
+    if (geometry.visible === this.attached && sameGeometry(geometry, this.pending) && this.frame === 0) return;
+    this.pending = geometry;
     if (this.frame !== 0) return;
+    // 不可见且本来就不在场：只更新 pending，不排帧。
+    if (!geometry.visible && !this.attached) return;
     // **一帧，不是两帧**（M238 实测，别改成双帧）：一帧就足以离开当前的测量周期（CM 的
     // `measure()` 自己跑在一个动画帧回调里，本模块的回调必然排在它那次任务之后）；而多等一帧
     // 会挪到测量周期尾段的 `scrollIntoView`/滚动锚点落地之后，实证代价是阅读位置恢复偏 13px
@@ -167,19 +205,25 @@ class EndMarkerView {
     this.frame = 0;
   }
 
-  /** 落地一次在场态（视口为 0 时元素根本不在 DOM 里——spec：尚未布局时不显示）。
-   *  挂载位置：`.cm-scroller` 的第 2 列、正文所在行的下一行（样式在 theme.ts）。正文行是自然
-   *  高度（`max-content`），标记那一行是隐式 `max-content` 行，因此这次改动只多出 / 收起标记
-   *  自己那一行，正文行的尺寸与标记在场无关（M238 / change show-document-end-marker-all-docs-nov27）。
+  /** 落地一次几何（视口为 0 时元素根本不在 DOM 里——spec：尚未布局时不显示）。
    *
-   *  落地后**不补排测量**：标记在 `.cm-content` 之外、正文行的尺寸也已与它解耦，CM 量到的
-   *  几何（正文内容盒）没有变化，没有需要对齐的东西；在这个窗口里多排一趟测量只会让 CM
-   *  拿在途的滚动锚点再算一次 scrollTop（ADR 0002 §6 的「不新增测量」在这条路径同样成立）。 */
-  private apply(visible: boolean): void {
+   *  元素是 `.cm-scroller` 上绝对定位的 chrome：top = 正文自然末尾，left / width = 正文盒的
+   *  水平区间。正文盒本身仍铺满可用高度（`minmax(max-content, 1fr)` + `min-height: 100%`），
+   *  它是 CM 的指针命中面——单击 / 双击 / 拖选在正文下方空白处仍走 CM 自己的手势路径。
+   *  标记 `pointer-events: none`，点在它自身上也穿透到正文盒，因此不存在「只给单击打补丁」的
+   *  分叉。绝对定位的盒子不参与正文布局、不进 heightmap，也不改滚动锚点。
+   *
+   *  落地后**不补排测量**：标记在 `.cm-content` 之外、不改变任何布局，CM 量到的几何没有变化；
+   *  在这个窗口里多排一趟测量只会让 CM 拿在途的滚动锚点再算一次 scrollTop（ADR 0002 §6 的
+   *  「不新增测量」在这条路径同样成立）。 */
+  private apply(geometry: EndMarkerGeometry): void {
     if (this.destroyed) return;
-    if (visible === this.attached) return;
-    this.attached = visible;
-    if (visible) this.view.scrollDOM.append(this.marker);
+    this.marker.style.top = `${geometry.top}px`;
+    this.marker.style.left = `${geometry.left}px`;
+    this.marker.style.width = `${geometry.width}px`;
+    if (geometry.visible === this.attached) return;
+    this.attached = geometry.visible;
+    if (geometry.visible) this.view.scrollDOM.append(this.marker);
     else this.marker.remove();
   }
 }

@@ -402,16 +402,16 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-lp-doc-meta-sep": { color: "var(--border)" },
 
   // document-top 落点（无 fm，M222 劈叉修复）：doc-title 是 `.cm-scroller` 的首个子元素
-  //（grid 第 2 列第 1 行），正文行下移到第 2 行、末尾标记再到第 3 行。机制与不变量见
-  // doc-title.ts 文件头——这里只承载几何：
-  // - 行尺寸：title 行与正文行都是 max-content（正文自然高；show-document-end-marker-all-docs-nov27
-  //   起不再用 1fr 铺满视口，否则短文 END 会被推到窗口底），标记行是隐式 max-content 行。
+  //（grid 第 2 列第 1 行），正文行下移到第 2 行。机制与不变量见 doc-title.ts 文件头——这里只承载几何：
+  // - 行尺寸：title 行 max-content、正文行 `minmax(max-content, 1fr)`——正文盒保持**铺满可用高度**
+  //   （CM 指针命中面：正文下方空白仍落在 `.cm-content` 内）。END 不再占独立行，绝对定位在
+  //   正文自然末尾（见下方 end-marker 段）。
   // - 正文的 32px 上内边距（--sp-11）与横向 44px（--sp-13）转由 title 节点承担，正文
   //   paddingTop 归零——视觉几何与 widget 形态逐项一致：32 / title / 20（--sp-9，上方既有
   //   规则的 paddingBottom）/ 首个内容块。
   // - 字号基准同 endMarker 的 backlog #31 教训：节点不继承 .cm-content 的字号声明，显式落
   //   --editor-font-size，内层的 calc(Nem/15) 才按正文锚解析。
-  [`.cm-scroller.${DOC_TITLE_TOP_CLASS}`]: { gridTemplateRows: "max-content max-content" },
+  [`.cm-scroller.${DOC_TITLE_TOP_CLASS}`]: { gridTemplateRows: "max-content minmax(max-content, 1fr)" },
   [`.cm-scroller.${DOC_TITLE_TOP_CLASS} .cm-content`]: { gridRow: "2", paddingTop: "0" },
   [`.cm-scroller.${DOC_TITLE_TOP_CLASS} > .cm-lp-doc-title-outer`]: {
     gridColumn: "2",
@@ -422,7 +422,6 @@ export const livePreviewTheme = EditorView.theme({
     paddingTop: "var(--sp-11)",
     paddingInline: "var(--sp-13)",
   },
-  [`.cm-scroller.${DOC_TITLE_TOP_CLASS} .cm-lp-end-marker`]: { gridRow: "3" },
 
   // md 的行号 gutter（M281，change goto-line-command 的 D4 改判；在场判据自 change
   // global-line-numbers-toggle-nov23 起与 code 共用 `[ui] line_numbers` 一个开关）——**md 这一侧的
@@ -574,28 +573,25 @@ export const livePreviewTheme = EditorView.theme({
   // 因此不进 CM 的 DOM 观察子树 / heightmap / 按视口增量构建的装饰层；显隐是**在场与否**，
   // 由 endMarker.ts 的判据决定（可用视口高度为 0 时元素不在 DOM 里）。
   //
-  // **正文行的尺寸口径（M238 修复 + 本次统一）**：正文所在行恒为 `max-content`（正文自然高），
-  // 标记自己那一行是隐式 `max-content` 行——行的尺寸与标记在场与否、视口高度都无关。`.cm-content`
-  // 在 md 内覆盖 `min-height: 0`（CM 基础主题的 `min-height: 100%` 会把短文正文盒撑到视口高，
-  // 再让 END 落到窗口底）。两者成对，短文 END 才贴在末行之下（change design §2 / §3 A）。
+  // **正文盒保持铺满可用高度**：正文行恒为 `minmax(max-content, 1fr)`——下界是正文自然高、上界 1fr
+  // 让短文正文盒仍铺满视口；CM 的指针手势（单击 / 双击 / 拖选）因此覆盖正文下方空白，命中面与
+  // M238 之前逐项一致。MUST NOT 在 md 内解除 `.cm-content` 的 `min-height: 100%`：解除会把
+  // 「点正文下方空白落到文档末尾」这条既有 CodeMirror 行为一并删掉（change design §3）。
   //
-  // **代价（如实记录）**：正文盒不再铺满视口，点正文下方空白不再落在 `.cm-content` 内，因此
-  // 不再把光标放到末尾（M238 曾以 1fr 上界保住该行为）。合同明确要求短文档 END 不得被
-  // min-height 推到一屏底，解除 min-height 是其直接落地；是否恢复点击行为由 Alex 另行裁决
-  // （change design §3 A 的候选 B / C 已评估，未采用）。
+  // **END 的定位**：元素 `position: absolute`、脱离 grid 流，top / left / width 由 endMarker.ts
+  // 在测量周期之外写入——top = `.cm-content` 的 offsetTop + CM 的 `view.contentHeight`（正文自然
+  // 末尾，含正文下内边距；O(1) 既有读数，不读滚动位置），width = 正文盒宽（水平居中因此与正文
+  // 同列）。绝对定位的 chrome 盒子不参与内容布局，与正文行尺寸、heightmap、滚动锚点都无关。
+  // `pointer-events: none` 是合同的一部分：点在 END 自身上也穿透到 `.cm-content`，仍然走 CM
+  // 自己的指针路径（不是只处理单击的补丁）。短文档 END 因此钉在自然末尾而不是窗口底。
   //
-  // 为什么行尺寸必须与标记无关：`.cm-content` 带 `min-height: 100%`（CM 基础主题），行被压到
-  // 可用高度时它的隐式行贡献算成 0——正文溢出在行外，任何「正文之下的行」都会落在正文中部而
-  // 不是末尾（M189 实测：标记 y=652 而正文内容盒到 y=1228）。M238 的处置是「行下界恒为
-  // max-content」，本 change 把上界 1fr 也去掉，行的尺寸与视口 / 标记都解耦。
+  // 为什么不能把 END 放回 grid 行 / 用 `.cm-content::after` 撑命中面：前者在短文里会被 1fr 行
+  // 推到窗口底；后者（绝对伪元素）的盒子会进入 scroller 的 scrollable overflow，短文平白多出
+  // 一屏滚动（change design §3 的实测）。
   //
-  // 只在 md 模式生效：本 theme 只装进 md 分支（src/editor.ts 的 modeExtensions），code 模式
-  // 的 `.cm-content` 仍走 CM 基础主题的 min-height:100%，视觉保持原样。`.cm-scroller` 上这两条
-  // 与 doc-title 段的模板规则同源，后者更具体、覆盖行 1–2（title 行 / 正文行）。
-  ".cm-scroller": { gridTemplateRows: "max-content", gridAutoRows: "max-content" },
-  // min-height 的覆盖带 `.cm-scroller >` 锚点：与 gutter 段同一口径，用更高的特异性压过 CM
-  // 基础主题的同名规则（两条都是 CM theme，生成 CSS 的先后顺序不是可依赖的契约）。
-  ".cm-scroller > .cm-content": { minHeight: "0" },
+  // 只在 md 模式生效：本 theme 只装进 md 分支（src/editor.ts 的 modeExtensions），code 模式的
+  // 行尺寸与 `.cm-content` 保持 CM 基础主题原样。`.cm-scroller` 上的行模板与 doc-title 段同源。
+  ".cm-scroller": { gridTemplateRows: "minmax(max-content, 1fr)" },
   // 纵向间距一律走 padding（CM 测量的高度不含 margin，见下方 frontmatter 段的 M110 教训）：
   // 上方 --sp-9（在 .cm-content 自己的 --sp-9 下内边距之后再补一档），下方 --sp-13。
   //
@@ -607,8 +603,11 @@ export const livePreviewTheme = EditorView.theme({
   // `.cm-editor` 的 --font-sans）；字距收到 tokens 文档 §字距的口径（正字距只给大写小标签档，
   // 取 +0.06em）——旧口径的 0.34em 大字距属已被删除的 editorial 装饰。
   ".cm-lp-end-marker": {
-    gridColumn: "2",
-    gridRow: "2",
+    position: "absolute",
+    top: "0",
+    left: "0",
+    width: "0",
+    pointerEvents: "none",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -624,12 +623,12 @@ export const livePreviewTheme = EditorView.theme({
   // 与 .cm-lp-hr 的结构差别是**双重**的——定宽短线段（不是 inlineSize:100% 的通栏线）+ 夹着文字；
   // 只靠「更短」不够：用户分不清「这条是作者写的分隔」与「这条是应用说完了」。
   //
-  // **定位与模式的关系（M251 的现场教训）**：这几条（gridColumn / gridRow）是本模块随
-  // live preview 一起装进 md 分支的，**code 模式没有它们**。一旦标记元素在 code 模式下在场
-  // （历史形态见 src/preview/endMarker.ts 文件头的「元素生命周期 ⊆ 插件实例生命周期」段），
-  // 它就没有任何定位声明、自动落位到 `.cm-scroller` 三列 grid 的行 1 第 3 列——正是 Alex
-  // 2026-09-27 看到的「标记漂在正文右侧的空白列」。根因修在生命周期（元素不越界到场），
-  // 这里的位置声明不为那种失控兜底：兜底会让「元素为什么在场」失去信号。
+  // **定位与模式的关系（M251 的现场教训）**：这几条（position / top / left / width /
+  // pointer-events）是本模块随 live preview 一起装进 md 分支的，**code 模式没有它们**。一旦
+  // 标记元素在 code 模式下在场（历史形态见 src/preview/endMarker.ts 文件头的「元素生命周期 ⊆
+  // 插件实例生命周期」段），它就没有任何定位声明、自动落位到 `.cm-scroller` 三列 grid 的行 1
+  // 第 3 列——正是 Alex 2026-09-27 看到的「标记漂在正文右侧的空白列」。根因修在生命周期
+  //（元素不越界到场），这里的位置声明不为那种失控兜底：兜底会让「元素为什么在场」失去信号。
   ".cm-lp-end-marker-line": { inlineSize: "4em", blockSize: "0", borderTop: "1px solid var(--border-soft)" },
   // 文字：弱化色（提示档）+ 上面的字距——一眼是装饰，不是正文。
   ".cm-lp-end-marker-text": { lineHeight: "1.4" },
