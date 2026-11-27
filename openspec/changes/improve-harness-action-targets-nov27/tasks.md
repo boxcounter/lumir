@@ -67,11 +67,13 @@
 
 - [x] 5.1 新增 / 更新 `scripts/acceptance/` 场景：WKWebView 真实指针点击引用 × 的中心与透明边缘，
       证明移除一次且父卡零跳转；点击 @ / × 相邻边缘证明不串动作；不得只用 AXPress 冒充边缘命中
-- [ ] 5.2 覆盖复制 success、撤回 disabled / focus、卡片几何与三主题中受影响的视觉证据；真机断言同样逐条反向必红并恢复判绿
+- [x] 5.2 覆盖复制 success、撤回 disabled / focus、卡片几何与三主题中受影响的视觉证据；真机新增 / 修改断言
+      已逐条反向必红并恢复判绿，8 份红日志 `.local/reviews/harness-action-targets-nov27/logs/native-reverse-*.log`
 - [x] 5.3 运行 `node scripts/acceptance/coverage.mjs` 更新覆盖表，`node scripts/acceptance/run.mjs --check` 通过：
       312 场景；原始日志 `.local/reviews/harness-action-targets-nov27/logs/acceptance-{coverage,check}.log`
-- [ ] 5.4 真机由主会话统一执行新增 / 修改场景并取得 PASS，证据与 `status.txt` 落 `.local/acceptance/`；
-      worker 不预写 native PASS
+- [x] 5.4 真机由主会话 / runner 串行执行：81 PASS 19、148 PASS 33、882 PASS 22，3/3 PASS；
+      证据 `.local/acceptance/2026-11-27-harness-action-targets-final/`；882 另以
+      `2026-11-27-harness-action-targets-882-shot-final-r2/` 复核 success 原图并 PASS
 
 ## 6. 门禁、独立终审与状态证据
 

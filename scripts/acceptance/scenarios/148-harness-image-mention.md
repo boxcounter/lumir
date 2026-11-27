@@ -127,11 +127,18 @@ steps:
       - label: 前缀没有漏进编辑器文档（焦点确在 composer，编辑器逐字节未变）
         editor: { unchangedSince: doc-before-composer }
 
+  - name: 把图 A 滚入 composer 可视区（AX 会给被裁卡完整 bbox；窗口级定位不知道嵌套滚动容器）
+    do: scroll
+    target: { role: AXTextArea, name: ".*", nth: 1 }
+    dy: 6
+    wheel: true
+
   - name: ① @ / × 的真实几何均为 28×28（change improve-harness-action-targets-nov27）
     do: settle
     expect:
       - geom: { target: { role: AXButton, name: "插入图片引用", nth: 0 }, minWidth: 28, minHeight: 28 }
       - geom: { target: { role: AXButton, name: "移除摘录", nth: 0 }, minWidth: 28, minHeight: 28 }
+      - shot: 01a-图A边缘点击前
 
   - name: ① 真实指针点图 A @ 的左缘透明区（CGEvent mode=1，非 AXPress）→ 光标处插入 `Image 1`
     do: doubleClick
@@ -147,6 +154,12 @@ steps:
     expect:
       - label: ① `@` 在光标处插入 `Image 1`（与图 A 的编号一致）
         ax: { has: "tag-Image 1" }
+
+  - name: 把图 B 滚入 composer 可视区（与图 A 同一嵌套容器前置）
+    do: scroll
+    target: { role: AXTextArea, name: ".*", nth: 1 }
+    dy: -6
+    wheel: true
 
   - name: ① 真实指针点图 B @ 的中心（CGEvent mode=1）→ 光标处插入 `Image 2`
     do: doubleClick
@@ -293,6 +306,11 @@ steps:
       - label: 两张图片卡片（两个 `@` 钮）
         ax: { count: { pattern: "/AXButton \\(插入图片引用\\)/", exact: 2 } }
 
+  - name: ④ 把第一张图滚入 composer 可视区（再验嵌套容器裁切前提）
+    do: scroll
+    target: { role: AXTextArea, name: ".*", nth: 1 }
+    dy: 6
+    wheel: true
   - name: ④ 真实指针点第一张图 × 的左缘透明区（CGEvent mode=1；D371 是图片卡与引用卡共用读屏名）
     do: doubleClick
     target: { role: AXButton, name: "移除摘录", nth: 0 }

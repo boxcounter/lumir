@@ -73,6 +73,24 @@
 pointer / focus 双激活源，tail notice 在场时整段不预览。本 change 只扩命中层至 28×28，不回退上述任何行为。
 原提案所列冲突面已按最终实现重读；此更新只修正现状，不新增产品语义。
 
+## 真机首轮归因与修复（0/3 → 3/3）
+
+首轮 0/3 经逐条读取 steps / AX / 截图后全部归为**测试 oracle / 前置缺陷**，未发现产品缺陷或环境 INVALID，
+生产代码未因这些红发生二次修改：
+
+- **81**：卡片摘录已是 composer 内的 AXStaticText，旧断言却找 `AXTextArea = "Q…"`。改为 composer AXGroup 的
+  scoped 判序；另用 `clipboardText(q81) + cgevent ⌘V` 产生可读 value，保留 `notInValue`，编辑器原文不参与。
+  中心 / 边缘 × 在首轮即均 PASS。
+- **148**：@ 的 CGEvent 落点计算正确，但目标卡被 composer 嵌套滚动区裁在可视区上方；AX 仍给完整 bbox，
+  窗口级定位不会处理该层裁切。点击前改为锚定 composer AXTextArea 滚入对应卡，首轮等待 `tag-Image 1` 超时因此消失。
+  后半段空 composer 改用 `name:".*", nth:1`，不依赖已不存在的历史文本。
+- **882**：立即 mock 在读取前已完成，busy help 不可能成立；新增首个响应 3s 延迟并先等停止 / 撤回节点。
+  success 的内部文本受既有 `aria-label=复制消息` 覆盖，没有独立 AX 节点，改判实测扩宽几何 + 截图；disabled
+  节点可能无 AX bbox，只保留 busy help + 截图，不伪造几何读数。复制源、success、撤回及重发行为均 PASS。
+
+每个新增 / 修改真机断言均做了反向必红与恢复绿；8 份红日志在
+`.local/reviews/harness-action-targets-nov27/logs/native-reverse-*.log`。最终跑批与 success 复核路径见下方状态表。
+
 ## 节点 2：归档记录（实现完成后填写）
 
 口径见 [OpenSpec 流程](../../../docs/process/openspec-workflow.md)「状态分列」与「失败与 finding 归类」；
@@ -84,7 +102,7 @@ pointer / focus 双激活源，tail notice 在场时整段不预览。本 change
 | implemented | 是：worker 分支实施提交 `4f75e6fedf1ad01205a84ee04b649330763f6a6a`；未合并 | 实现与目标证据见 `.local/reviews/harness-action-targets-nov27/` |
 | released | 否：本批不打包 | 不适用：无发布产物 |
 | machine PASS | **部分通过，完整项未齐**：目标 14/14、相关既有 49/49、quick PASS；完整 visual 待主会话 | `GATE RESULT: 13/13 PASS（SKIP 0）`，quick 退出码 0；`.local/reviews/harness-action-targets-nov27/logs/` |
-| native PASS | 否：真机由主会话统一执行，当前未跑 | 81 / 148 / 882 已更新且静态校验 312 场景通过；无 `status.txt`，不预写 PASS |
+| native PASS | 是：81 / 148 / 882 串行 3/3 PASS；882 success 截图另复跑 PASS | `.local/acceptance/2026-11-27-harness-action-targets-final/`（19 / 33 / 22 断言；各 status.txt=PASS）与 `.local/acceptance/2026-11-27-harness-action-targets-882-shot-final-r2/` |
 | archived | 否：待归档 | 未 archive；无 `--archived` 读数 |
 
 未发生项已写明原因，不留空；后续失败项按产品缺陷 / 测试 oracle 缺陷 / 环境 INVALID / 需求或视觉迭代四类归因。

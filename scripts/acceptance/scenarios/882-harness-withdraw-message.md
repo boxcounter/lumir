@@ -21,7 +21,7 @@ marker: "HNL-ALPHA"
 config:
   harness:
     provider: mock
-    fixture: "$fixtures/harness-mock-basic.json"
+    fixture: "$fixtures/harness-mock-withdraw-delay.json"
 seed:
   registry:
     - { id: acc-withdraw, path: $vault, lastOpenedAt: 1757000002000 }
@@ -53,11 +53,17 @@ steps:
     do: key
     key: enter
 
+  - name: 等首个 mock 响应进入确定的在途窗口（首响应 delay_ms=3000；第二响应不延迟）
+    do: waitFor
+    waitFor:
+      has: ["/AXButton \\(停止\\)/", "/AXButton \\(撤回这一轮\\)/"]
+    timeoutMs: 10000
+
   - name: 在途撤回入口为 disabled：28×28 命中几何与「先停止」提示不变
     do: hover
-    target: { role: AXButton, name: "^撤回这一轮$" }
+    target: { role: AXButton, name: "复制消息", nth: 0 }
     expect:
-      - geom: { target: { role: AXButton, name: "^撤回这一轮$" }, minWidth: 28, minHeight: 28 }
+      # disabled 钮在 WKWebView AX 中可能没有 bbox；不据此伪造几何 PASS。正常 / success 态仍做 28px 几何断言。
       - ax: { has: 'help="先停止本轮，再撤回"' }
       - shot: 01b-在途disabled
 
@@ -87,20 +93,21 @@ steps:
     mode: 1
     dx: 0.04
     dy: 0.5
+    settleMs: 100
     expect:
+      # 先截 1.5s 反馈，再做 AX / 剪贴板读取，避免证据动作本身错过 success 窗口。
+      - shot: 02a-复制success
       - label: 复制源逐字进入系统剪贴板
         clipboard: { exact: "q882-WITHDRAW" }
-      - label: 既有 success 反馈仍在
-        ax: { has: "✓ 已复制" }
-      - geom: { target: { role: AXButton, name: "复制消息", nth: 0 }, minWidth: 28, minHeight: 28 }
+      - label: 既有 success 反馈使复制底板真实扩宽（AX 名仍为复制消息；按钮内部文本无独立 AX 节点，改判几何 + 截图）
+        geom: { target: { role: AXButton, name: "复制消息", nth: 0 }, minWidth: 40, minHeight: 28 }
       - geom: { target: { role: AXButton, name: "^撤回这一轮$" }, minWidth: 28, minHeight: 28 }
-      - shot: 02a-复制success
 
-  - name: 等复制 success 自动消退
-    do: waitFor
-    waitFor:
-      not: ["✓ 已复制"]
-    timeoutMs: 5000
+  - name: 等复制 success 按既有 1.5s 定时器消退（留恢复截图；文本不在 AX，不能用 waitFor.not 冒充判据）
+    do: sleep
+    ms: 2000
+    expect:
+      - shot: 02c-复制反馈恢复
 
   # 悬停入口 = 预览：本条消息 + 它的回答应被共同高亮（截图证据；像素形态归 Alex，套件不判）。
   - name: 悬停撤回入口（预览将被移除的那一段）

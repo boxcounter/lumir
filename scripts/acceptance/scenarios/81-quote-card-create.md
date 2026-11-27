@@ -41,13 +41,22 @@ steps:
         ax: { has: "/AXButton \\(发送\\)/" }
       - label: composer 内的卡片带出处行（文档名 · 最近一级标题）
         ax: { has: "harness-quote.md · 摘录卡片验收" }
-      - label: 卡片摘录原文进了 composer（选区那几行的正文在卡片里）
-        ax: { has: "/AXTextArea = \"Q[A-Z]+ (甲|乙|丙)段/" }
       - label: chip 走「仅路径」形态（消息携带卡片时跳过视口注入）
         ax: { has: "上下文：harness-quote.md" }
       - label: 卡片带 × 移除钮（composer 形态；读屏名 D371）
         ax: { has: "/AXButton \\(移除摘录\\)/" }
       - shot: 02-卡片入composer
+
+  - name: 把卡后文本 q81 置入剪贴板
+    do: clipboardText
+    text: "q81"
+  - name: ⌘V 贴入卡后文本（cgevent 真键盘事件；让 AXTextArea.value 可读且进入 composer 模型）
+    do: key
+    key: "cmd+v"
+    channel: cgevent
+    expect:
+      - label: 卡片摘录进了 composer 且位于文本前；编辑器原文不参与 scoped 判序，卡片文本不进 value
+        ax: { scope: { role: AXGroup, name: "问点什么" }, order: ["QALPHA 甲段", "q81"], notInValue: "QALPHA 甲段" }
 
   - name: 记录编辑器原文基线（× 不得误触父卡跳转或编辑）
     do: recordEditor
