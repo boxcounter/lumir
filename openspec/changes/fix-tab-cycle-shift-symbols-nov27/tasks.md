@@ -58,9 +58,9 @@
 - [x] `scripts/gate.sh quick`（rebase 到 `f458ace7` 后，补 backlog 队列条目后复跑）：
       `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0。历史读数保留：旧基高负载下曾 `12/13`
       （唯一 FAIL 即上述 `link-suggest` 测量）。
-- [x] 完整 `scripts/gate.sh visual`（rebase 后三次，原始日志在
-      `.local/reviews/tab-navigation-keys-nov27/evidence/gate-visual-rebased-{1,2,3}-*.log`）：
-      三次均 `GATE RESULT: 14/15 PASS（SKIP 0）`，**未取得单次全绿**，逐次分类如下：
+- [x] 完整 `scripts/gate.sh visual`（rebase 后四次，原始日志在
+      `.local/reviews/tab-navigation-keys-nov27/evidence/gate-visual-rebased-{1,2,3,4}-*.log`）：
+      四次均 `GATE RESULT: 14/15 PASS（SKIP 0）`，**未取得单次全绿**，逐次分类如下：
       1. 第 1 次：visual-regression PASS（1945 passed / 13 skipped / 0 failed，1359s）；
          `unit-tests` FAIL——`link-suggest` 单次 16ms 预算测出 22.02ms，失败时段同机有他树
          2195 测试全通过日志（并发单测），归因为外部负载。
