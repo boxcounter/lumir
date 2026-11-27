@@ -10,6 +10,17 @@
 > findings（P1=0 / P2=1 / P3=2，报告 `.local/reviews/tab-navigation-keys-nov27/final-judgment.md`）
 > 已按「措辞与证据归属」修准（P2-1 / P3-1 / P3-2），无行为改动；复核待下一轮。真机场景 45 已 PASS
 > （证据 `.local/acceptance/2026-11-27-tab-navigation-keys/`），物理键盘 dogfood 仍是待验项。
+>
+> 复核 R2：**clean/merge** 绑 `f10d9ffd`（P1/P2/P3=0，`final-judgment-r2.md`）；rebase 到
+> `f458ace7` 后 `git range-diff` 两条提交均为 `=`（补丁逐字相同），当前 tip `450646e5`。
+>
+> **节点 2 状态：未放行（未归档）。** 完整 `scripts/gate.sh visual` 在 rebase 后跑了三次，均为
+> `GATE RESULT: 14/15 PASS（SKIP 0）`：第 1 次红在 `unit-tests`（`link-suggest` 微基准被并发他树
+> 单测打红）、第 2 次红在 `docs-check`（tasks 全勾后缺 backlog 队列条目，已补）、第 3 次红在
+> `editing-oracle.spec.ts:1143`（master 侧既有 flaky oracle，隔离 4/4 PASS，前两次完整 visual 均
+> 通过）。三次红均不在本 change 的键位代码 / 场景面；按「仍有红不归档」纪律停在此处，是否再跑
+> 一轮或按既有 flake 判定由主会话决定。证据：
+> `.local/reviews/tab-navigation-keys-nov27/evidence/gate-visual-rebased-{1,2,3}-*.log`。
 
 ## Why
 

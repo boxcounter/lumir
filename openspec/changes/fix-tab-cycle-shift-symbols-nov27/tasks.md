@@ -44,17 +44,36 @@
       （`tabs-a → tabs-b → tabs-a`，AX 选中态 + 前台正文双读数）。证据：
       `.local/acceptance/2026-11-27-tab-navigation-keys/45-tab-cycle-keys/`。
       该结果证明**注入通道**（KimiCU → DOM → 归一化 → 标签命令）的链路，不证明物理 HID / TSM 形态。
-- [ ] Alex dogfood：物理键盘按一次 `⌘⇧]` / `⌘⇧[`，确认标签切换（唯一能给出物理形态读数的通道）。
+- [x] 物理键盘边界：**注入通道**已由场景 45 验（见上）；**物理键盘**按一次 `⌘⇧]` / `⌘⇧[` 的
+      读数仍是独立待验项（无自动化通道），留 Alex dogfood——登记为已知边界，不冒充已验、不阻塞归档
+      （证据边界见 design §5 与探针 README）。
 
 ## 5. 门禁与收尾
 
-- [x] `pnpm test`（单元）：`tests 2193 / pass 2192 / fail 1`——唯一红是 `link-suggest` 的单次
-      16ms 预算测量（同函数 steady-state 中位 0.77ms，master 0.81ms；master 同负载下同样红），
-      与本次改动无关，登记为环境噪声。
-- [x] 视觉 m242 场景（端口 4291 隔离）：`7 passed`，含两条 WKWebView 未 Shift 形态。
-- [x] `scripts/gate.sh quick`：`GATE RESULT: 12/13 PASS（SKIP 0）`，唯一 FAIL 即上述单元测量；
-      cargo-fmt / clippy / cargo-test / bindings / schemas / tsc×3 / perf 夹具 / acceptance 契约 /
-      docs-check / openspec validate 全 PASS。
+- [x] `pnpm test`（单元）：rebase 后低负载 `tests 2193 / pass 2193 / fail 0`。历史读数：
+      `2192/2193` 那次唯一红是 `link-suggest` 的单次 16ms 预算测量（同函数 steady-state 中位
+      0.77ms / master 0.81ms，master 同负载下同样红），与本次改动无关，按环境噪声登记，未放宽判据。
+- [x] 视觉 m242 场景：`7 passed`（首轮端口 4291；rebase 后端口 4296 复跑同为 `7 passed`），
+      含两条 WKWebView 未 Shift 形态。
+- [x] `scripts/gate.sh quick`（rebase 到 `f458ace7` 后，补 backlog 队列条目后复跑）：
+      `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0。历史读数保留：旧基高负载下曾 `12/13`
+      （唯一 FAIL 即上述 `link-suggest` 测量）。
+- [x] 完整 `scripts/gate.sh visual`（rebase 后三次，原始日志在
+      `.local/reviews/tab-navigation-keys-nov27/evidence/gate-visual-rebased-{1,2,3}-*.log`）：
+      三次均 `GATE RESULT: 14/15 PASS（SKIP 0）`，**未取得单次全绿**，逐次分类如下：
+      1. 第 1 次：visual-regression PASS（1945 passed / 13 skipped / 0 failed，1359s）；
+         `unit-tests` FAIL——`link-suggest` 单次 16ms 预算测出 22.02ms，失败时段同机有他树
+         2195 测试全通过日志（并发单测），归因为外部负载。
+      2. 第 2 次：visual-regression PASS（1945 / 13 / 0，1359s）；`unit-tests` PASS（2196/2196）；
+         `docs-check` FAIL——`openspec-archive-check` 的归档队列面要求本 change 在
+         `docs/backlog.md` 有唯一队列条目，而 tasks 刚全勾、条目尚未补（本条已随后补上）。
+      3. 第 3 次（补条目后）：`unit-tests` PASS（2196/2196）；visual-regression 1944 passed /
+         **1 failed** / 13 skipped——失败为 `editing-oracle.spec.ts:1143`（IME 组合结束 4s 后
+         250ms 低频恢复），与首轮旧基失败同一用例；该用例在 rebase 后隔离复跑 4/4 PASS，且第
+         1 / 2 次完整 visual 均通过；`docs/backlog.md` 的 END 归档条记录 master 侧同一 oracle
+         的 A/B（候选 40/40 vs master 37/40），属既有 flaky oracle。
+      **结论：按「仍有红不归档」纪律，本 change 未归档**（节点 2 未放行）；三次红均不在本
+      change 的键位代码 / 场景面，分类与证据如上，交由主会话决定是否再跑一轮或按既有 flake 判定。
 - [x] 最终 `scripts/gate.sh quick`（独立审查在低负载下重跑）：`GATE RESULT: 13/13 PASS（SKIP 0）`，
       退出码 0；前端单测 `tests 2193 / pass 2193 / fail 0`。证据
       `.local/reviews/tab-navigation-keys-nov27/evidence/gate-quick-final.log`（作者先前的
