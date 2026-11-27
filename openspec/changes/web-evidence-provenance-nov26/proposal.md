@@ -7,21 +7,23 @@
   均已按当前 master `0018f0a39` 的代码与 living spec 复核，未沿用材料里的旧行号）
 
 > 评审记录
-> 节点 1（提案评审）：**推进指令已给出；D1 / D2 两项裁决面未逐条确认**（2026-11-27）。
-> Alex 原话（会话指令）：「继续推进 Web Fetch/API 与多 provider 架构中已明确且可验收的下一步」，
-> 本任务按设计材料的推荐执行**阶段 1**。该指令批准的是「推进阶段 1 这件事」与材料 §7 的推荐
-> 顺序，**不是**材料 §8 标注「必须 Alex 裁」的 D1（`mode` 命名用 `full` 还是 `document`）与 D2
-> （是否现在暴露 `selected_chunks`）的逐条选择。本提案按材料的推荐值起草（`full`；现在暴露、
-> 失败关闭），两者作为**待确认的默认值**在 [design.md](design.md) §8 给出改判后的裁剪路径；
-> 若任一被改判，改动面限于一个枚举名或一条模式的暴露，不影响其余合同。
-> 证据状态：本节 MUST NOT 被读作「D1 / D2 已批准」，也不构成无条件的节点 1 通过——若流程要求
-> 独立评审通过后才记批准，当前状态是「待独立评审 + D1 / D2 确认」。
+> 节点 1（提案评审）：**通过**（2026-11-27）。批准依据是 Alex 的推进授权：会话指令「继续推进
+> Web Fetch/API 与多 provider 架构中已明确且可验收的下一步」，并明确选择阶段 1 的推荐值
+> **D1=`full`、D2=现在暴露 `selected_chunks`**。二者因此不再是待裁产品问题，也不构成节点 1 的
+> 阻塞项；D3（缺省 `full`）/ D4（只用字段 + 工具描述）按材料「实现期可自定」执行。实现期不得
+> 借这两项扩展任何其他范围。
 >
-> 批准范围（已被上述指令覆盖的部分）：阶段 1 的边界——`web_fetch` 增加
+> 独立评审（K3）结论为 needs-changes，**不构成本节批准**：它的作用是收口实施级断链（P1 四项、
+> P2 四项），并确认「阶段 1 的范围可以保留：`full` + 现在暴露 `selected_chunks`，不新增生产
+> provider、配置面或 `web_api`」。r1 修订按该结论逐项落实（见 tasks 与 design §13 的对照），
+> 关闭以复核结论为准。
+>
+> 批准范围：阶段 1 的边界——`web_fetch` 增加
 > `mode`（`full` | `selected_chunks`，缺省 `full`）与配套 `query`；信封新增
 > `content_scope` / `coverage` / `fetched_by` / `binding` / `final_url` 五个可空读数；DeepSeek
 > 只声明 `full`；不支持的模式失败关闭（零目标连接、零 provider 请求、无批准卡、不降级）；
-> 不新增 provider、不改配置面、不改价格、不做 `answer`、不做 `web_api`。
+> 不新增生产 provider、不改配置面、不改价格、不做 `answer`、不做 `web_api`。
+> 评审修订（r1，2026-11-27）：按 needs-changes 的 P1 / P2 逐项收口，行为边界不变。
 
 > 节点 2（归档放行）：**未开始**。本 change 目前只有提案制品，没有实现、没有实现期证据；
 > 归档前按 `docs/process/openspec-workflow.md` 的五要件在此追加记录，不提前书写。
@@ -80,12 +82,15 @@ DNS / redirect / 内容类型，但 DeepSeek 不返回远端 final URL … 系�
    ` · 完整性受限` / ` · 已截断`；禁止「全文」措辞）；「查看详情」扩五个字段与 Fetch 的
    `mode` / `query`；外发文案改由 `fetched_by=provider` 判定；live 与恢复同形，旧留存缺字段
    不显示、不伪造；审计只透传、不重算。
-5. **测试 provider 装配边界**（ADDED「Web 测试 provider 装配边界」）：一个只在
-   `acceptance-web` feature + `LUMIR_ACCEPTANCE_WEB_ENDPOINTS` 下可注入的合成 provider，声明
-   `[full, selected_chunks]` 并按脚本返回 `content_scope` / `coverage`；生产构造器 MUST NOT 接受；
-   `scripts/acceptance/web-production-check.sh` 的源码层与产物层判据须覆盖新注入面。
+5. **验收装配与多模式测试 provider**（MODIFIED「Web 真实 HTTP 验收装配边界」，不新增近义
+   requirement）：只在 `acceptance-web` feature + `LUMIR_ACCEPTANCE_WEB_ENDPOINTS` 下可注入的合成
+   provider，能力声明覆盖为 `[full, selected_chunks]` 并按脚本返回 `content_scope` / `coverage`；
+   真实 HTTP 记录须证明 URL 与 query 都到达测试 provider，且生产 DeepSeek 请求体仍只有 `url`；
+   生产构造器 MUST NOT 接受；`scripts/acceptance/web-production-check.sh` 的源码层与产物层判据
+   覆盖新注入面。
 
-不新增 capability：全部落在既有 `harness` capability 的 Web requirements 上。
+不新增 capability：全部落在既有 `harness` capability 的 Web requirements 上（4 条 MODIFIED +
+1 条 ADDED）。
 
 ## Non-goals
 
@@ -96,7 +101,7 @@ DNS / redirect / 内容类型，但 DeepSeek 不返回远端 final URL … 系�
 - **不做 `answer` 模式**：生成式答案不是证据形态，不进入 `content_scope` 枚举，也不与正文混在
   同一 `content` 字段。
 - **不做 `web_api` / 本地受控 JSON GET**（阶段 2）：本阶段 `fetched_by=local` /
-  `binding=address_pinned` 零生产者，MUST NOT 被生产路径产出。
+  `binding=address_pinned` 无生产生产者（由测试构造并断言消费者行为），MUST NOT 被生产路径产出。
 - **不做完整性校验**：不二次抓取、不比对长度、不猜 provider 是否截断；`coverage` 不收
   `verified` 一类「看起来能证明完整」的值。
 - **不改 Search 的 `need_content` 语义**，也不给 Search 结果标抓取形态：Search 五个字段恒 null。
@@ -106,15 +111,16 @@ DNS / redirect / 内容类型，但 DeepSeek 不返回远端 final URL … 系�
 
 ## Impact
 
-- **影响的 specs**：`harness`（3 条 MODIFIED + 2 条 ADDED，见 `specs/harness/spec.md`）。
+- **影响的 specs**：`harness`（4 条 MODIFIED + 1 条 ADDED，见 `specs/harness/spec.md`）。
 - **影响的代码 / 系统**：`src-tauri/src/harness/web/{output,mod,executor,provider,budget,acceptance}.rs`
   的字段、schema、能力声明与信封构造；`src/bindings/**` 的 ts-rs 重导出；`src/harness-panel.ts` /
   `src/web-audit.ts` / `src/copy-data.ts` 与文案 deck 的徽标、详情行与外发文案；`tests/unit` 的
   面板解析测试；`scripts/acceptance` 新增真机场景与生产反向断言。
 - **关联约束**：ADR 0004（AI-only 开发，本提案即意图层）；`openspec/project.md` 的「配置即数据」
   与「不改写源文件」不在本 change 的面上；工具清单不变，不触发 ADR 0007。
-- **修订记录（对设计材料的偏差，详见 design §7）**：材料 §3.4「预计」只改两条 requirement，但
-  `web_mode_unsupported` 的稳定错误码清单住在「Web 请求可靠性与计费边界」条里，不改那一条会让
-  规格自相矛盾，故本提案 MODIFIED 三条；材料 §3.5 #8「工具描述中英各一条」与当前代码不符
+- **修订记录（对设计材料的偏差，详见 design §7）**：材料 §3.4「预计」只改两条 requirement，实际
+  MODIFIED 四条——`web_mode_unsupported` 的稳定错误码清单住在「Web 请求可靠性与计费边界」条里，
+  不改会自相矛盾；「Web 真实 HTTP 验收装配边界」必须整条替换而不是再加一条近义 ADDED
+  （REVIEW.md「同一语义两处真源」条）。材料 §3.5 #8「工具描述中英各一条」与当前代码不符
   （工具描述是中文单语硬编码），改为只要求中文一条；材料未定义 `coverage=bounded` 的徽标文案，
   本提案补 ` · 完整性受限`。

@@ -1,8 +1,8 @@
 # harness 增量规格
 
 > 起草注记（非规格正文）：本 change 给 Web 抓取结果加「证据形态」与「抓取归属」，只改
-> `web_fetch` 的输入面、统一信封的可空读数与面板呈现，不新增 provider / 配置 / 价格 / 网络路径。
-> 三条 MODIFIED requirement 均基于当前 living spec（`openspec/specs/harness/spec.md`，master
+> `web_fetch` 的输入面、统一信封的可空读数与面板呈现，不新增生产 provider / 配置 / 价格 / 网络路径。
+> 四条 MODIFIED requirement 均基于当前 living spec（`openspec/specs/harness/spec.md`，master
 > `0018f0a39`）的原文**整块复制**后改，未改动的段落与场景逐字保留；新增一条 ADDED requirement
 > 承载字段词汇与真值表。活跃期不改 living spec。
 
@@ -169,7 +169,9 @@ Fetch 的 provider 外发说明 SHALL 只在 `fetched_by=provider` 时呈现；`
 `provider_fetch` 的组合 MUST NOT 继续作为外发文案的唯一判据（本地预检执行过不等于字节发给了
 provider，见「Web 抓取证据形态与归属」）。live 事件与快照 / 会话恢复两条路径 SHALL 同形同默认态：恢复行的
 query / URL SHALL 从该调用的持久化输入（同一份 arguments，完整不截断；Fetch 为原始输入
-URL）恢复，MUST NOT 把失败摘要（`状态 · code: message`）或最终 `source.url` 当默认行参数；
+URL，`selected_chunks` 时另含 `mode` 与选取 `query`）恢复，MUST NOT 把失败摘要（`状态 · code: message`）或最终 `source.url` 当默认行参数；
+持久化的选取 `query` MUST NOT 顶替默认行 URL——Fetch 默认行恒为原始输入 URL，query 只进「查看详情」
+与批准预览。
 旧留存缺该输入时 SHALL 安全降级为空、MUST NOT 伪造。
 旧留存缺结果读数时 SHALL 不显示条数与文本大小（MUST NOT 补零）。
 旧留存缺 `content_scope` / `coverage` / `fetched_by` / `binding` / `final_url`，或缺 Fetch 的
@@ -323,6 +325,67 @@ Web 自动重试。工具内部重试只重发当前 HTTP 请求，MUST NOT 重�
 - **THEN** 直接以 `web_mode_unsupported` 收尾：`attempts=0`、零目标连接、零 provider 请求、
   无退避等待、无批准卡；不进入重试循环，也不改试另一模式或另一 provider
 
+
+### Requirement: Web 真实 HTTP 验收装配边界
+
+生产 Web provider SHALL 只有 official 装配：DeepSeek endpoint 来自官方常量，生产配置 MUST NOT 提供
+endpoint 参数、loopback 白名单、代理开关或跳过 URL / DNS 校验的路径。生产 transport / resolver
+SHALL 执行真实 HTTP 与系统 DNS，目标预检与 DeepSeek client 均显式 `no_proxy`。
+
+隔离测试与真机验收 SHALL 使用独立测试 provider / transport 装配，同时复用生产同款参数校验、DNS
+全集检查、地址固定、redirect、预算、重试与错误分类。只有测试 provider 构造器可接收合成 DeepSeek
+endpoint；生产构造器 MUST NOT 接收该参数。合成 resolver SHALL 给 `target.test` 返回脚本化公网身份，
+测试 connector SHALL 再把已验证公网 IP + 原 host 映射到本地监听地址，不得为验收全局放行 loopback。
+HTTPS SHALL 使用只含 `target.test` 的测试 CA / 证书与隔离 trust store，不得关闭证书校验或挂载真实
+浏览器凭据。
+
+注入 SHALL 只能由隔离验收专用 build / 装配显式激活；普通 `config.json`、环境变量、真实 vault、
+生产 `pnpm tauri dev` 与发布构建 MUST NOT 有激活入口。验收 SHALL 记录真实 HTTP method / path / body /
+状态序列 / 请求次数 / 读取字节数；LLM mock 只驱动确定的工具调用，MUST NOT 用 fixture 声明的错误
+替代这些 Web HTTP 证据。
+
+验收装配 SHALL 能覆盖**当前活跃适配器**的 `fetch_modes`：生产 DeepSeek 恒声明 `[full]`，测试 provider
+SHALL 声明 `[full, selected_chunks]`，覆盖只存在于隔离验收装配，生产构造器 MUST NOT 接受能力参数。
+测试 provider SHALL 能按脚本返回 `content_scope` / `coverage`，至少覆盖 `full` + `unknown` 与
+`selected_chunks` + `bounded` 两种形态。
+
+真实 HTTP 记录 SHALL 证明 Fetch 请求把 URL 与（`selected_chunks` 时的）query 都交给了测试 provider，
+并 SHALL 同时证明生产 DeepSeek 的请求体仍只有 `url`（MUST NOT 因 `mode` 扩字段）。新增注入面与
+`fetched_by` / `binding` / `final_url` 的赋值点 MUST 被 `web-production-check.sh` 的源码层与产物层
+判据覆盖：赋值点仅允许出现在白名单文件（`output.rs` 字段声明、`provider.rs` 构造漏斗），白名单外
+出现即红。
+
+#### Scenario: 合成公网身份映射本地服务
+
+- **WHEN** 隔离验收以 `target.test` 跑 search → fetch、redirect / DNS 与超时取消
+- **THEN** 生产同款全集校验与地址固定先执行，测试 connector 才把已验证公网身份映射到本地监听；
+  记录包含真实 HTTP 请求形状与次数，不是仅断言 mock fixture 被调用
+
+#### Scenario: HTTPS 保留 Host / SNI 与证书校验
+
+- **WHEN** 隔离验收以 HTTPS 访问 `target.test`
+- **THEN** 仅信任测试 CA / 证书与隔离 trust store，原 Host / SNI 与证书链均被验证；不得关闭证书
+  校验或以 HTTP 用例冒充 SNI 证据
+
+#### Scenario: 生产不能激活测试旁路
+
+- **WHEN** 普通配置 / 环境变量 / 真实 vault / 生产构建尝试提供合成 endpoint 或 loopback 映射
+- **THEN** 没有激活入口，生产仍只使用官方 DeepSeek endpoint，URL / DNS 拒绝规则不变；
+  测试装配不出现在发布构建里
+
+#### Scenario: 多模式测试 provider 的请求与结果记录
+
+- **WHEN** 隔离验收以测试 provider 分别执行 `full` 与 `selected_chunks`（后者带 query）的 Fetch
+- **THEN** 真实 socket 记录显示两次请求都到达测试 provider，`selected_chunks` 的 query 随请求送达；
+  前者产出 `full` + `unknown`，后者产出 `selected_chunks` + `bounded`，两者 `fetched_by=provider` /
+  `binding=url_submitted`；记录不是仅断言 mock fixture 被调用
+
+#### Scenario: 生产请求体不因模式扩字段
+
+- **WHEN** 生产装配对 DeepSeek 执行 `mode=full` 的 Fetch
+- **THEN** 请求体仍只有 `{"url": …}`；`mode` / `query` 只存在于本地参数与能力检查，MUST NOT 进入
+  DeepSeek 请求 JSON
+
 ## ADDED Requirements
 
 ### Requirement: Web 抓取证据形态与归属
@@ -339,12 +402,19 @@ Web 自动重试。工具内部重试只重发当前 HTTP 请求，MUST NOT 重�
 预览与「查看详情」可见。
 
 每个 provider 适配器 SHALL 静态声明 `fetch_modes`（该 API 结构上能保证什么），MUST NOT 从响应内容
-反推。首个 provider（DeepSeek）SHALL 只声明 `[full]`。Fetch 的解析顺序 SHALL 为：参数形状与
+反推。能力检查 SHALL 读取**当前活跃适配器**的声明（生产 DeepSeek `[full]`；隔离验收装配的测试
+provider `[full, selected_chunks]`，见「Web 真实 HTTP 验收装配边界」），MUST NOT 硬编码成一张与
+活跃适配器无关的表。Fetch 的解析顺序 SHALL 为：参数形状与
 `mode` / `query` 一致性 → URL 静态安全校验 → origin deny（deny 永远优先，先于能力检查）→
 provider 解析 → 能力检查 → 可选批准 → 本地预检 → provider 请求。能力检查不通过 SHALL 返回
 `web_mode_unsupported`：`provider` / `provider_id` 为已解析值，`attempts=0`、`local_precheck=false`、
 五个抓取读数全为 null，零目标连接、零 provider 请求、不产生批准卡；`message` SHALL 写明当前
 provider 支持的模式。系统 MUST NOT 暗换模式、MUST NOT 暗换 provider、MUST NOT 跨 provider 重试。
+
+错误优先级 SHALL 为：参数形状与 URL 静态校验 > origin deny > provider 解析 > 能力检查。
+`web_mode_unsupported` MUST NOT 掩盖前三类错误——被 deny 的调用仍是 `permission_denied`，静态非法
+URL 仍是 `web_url_blocked` / `web_args_invalid`，无可用 provider 的调用仍是
+`web_provider_unconfigured`。
 
 结果字段 SHALL 为五个可空读数，键恒在场：
 
@@ -368,16 +438,23 @@ Search 的五个字段 SHALL 恒为 null：搜索结果不是抓取证据，MUST
 
 本阶段（阶段 1）**生产路径**允许的**生产者** SHALL 只有四个值：`content_scope=full`（provider 文档
 提取成功）、`coverage=unknown`（provider 无完整性信号）、`fetched_by=provider`、
-`binding=url_submitted`；`selected_chunks` / `coverage=bounded` 只由「Web 测试 provider 装配边界」
+`binding=url_submitted`；`selected_chunks` / `coverage=bounded` 只由「Web 真实 HTTP 验收装配边界」
 一节的测试 provider 与构造信封的单测产出，不构成生产能力。`fetched_by=local` /
 `binding=address_pinned` / 非空 `final_url` 在阶段 1
-**零生产者**，MUST NOT 被任何生产路径产出——它们的第一个真实生产者是后续的本地受控 JSON 读取
+**无生产生产者**，MUST NOT 被任何生产路径产出——它们的第一个真实生产者是后续的本地受控 JSON 读取
 change。枚举值先行声明是为了让阶段 2 / 3 复用同一词汇、不再改一次工具 schema；实现 MUST NOT 为
 这些无生产者的值提供配置开关、UI 开关或能力声明，它们只能被类型层与呈现层当作可处理取值。
 
-五个抓取字段的赋值 SHALL 收敛到单一构造漏斗（`FetchProvenance`），生产构造器只产出
-`provider_full()`；阶段 1 的 `local` / `address_pinned` / 非空 `final_url` MUST NOT 存在可达的赋值
-路径。
+无生产者的取值 MUST 有**测试生产者 + 消费者功效断言**，仅声明枚举或只做序列化断言不满足：测试
+SHALL 断言 `fetched_by=local` 不渲染 provider 外发文案、`binding=address_pinned` 与非空
+`final_url` 在「查看详情」可见、闭集合外的取值归 null 且不渲染、`coverage=bounded` 的
+「完整性受限」后缀真实出现。
+
+五个抓取字段的赋值 SHALL 收敛到单一构造漏斗（`FetchProvenance`），且只有两个语义构造器：
+`provider_full()`（provider 抓取成功）与 `provider_attempted()`（`attempts>0` 的失败，含
+`execute_until` 的取消覆盖分支，此时 `content_scope` / `coverage` / `final_url` 为 null）。
+测试 provider 使用隔离验收装配下的 `scripted(...)`。阶段 1 的 `local` / `address_pinned` /
+非空 `final_url` MUST NOT 存在可达的生产赋值路径。
 
 真值表 SHALL 为：
 
@@ -434,6 +511,20 @@ MUST NOT 伪造 provider，MUST NOT 声称验证了 provider 内部 DNS / redire
 - **THEN** `local_precheck=true`、`fetched_by=provider`、`binding=url_submitted`、`attempts>0`，
   `content_scope` / `coverage` / `final_url` 为 null；不得反推目标站不可读
 
+#### Scenario: provider 已请求后取消仍保留抓取归属
+
+- **WHEN** provider 已发起 attempt，随后用户停止（取消覆盖分支替换错误码）
+- **THEN** `attempts>0` 保持不变，`fetched_by=provider`、`binding=url_submitted`，
+  `content_scope` / `coverage` / `final_url` 为 null；取消 MUST NOT 把抓取归属清空
+
+#### Scenario: 能力错误不掩盖更早的拒绝
+
+- **WHEN** 同一 `selected_chunks` 请求分别命中 origin deny、静态非法 URL、无可用 provider，以及
+  「已解析 provider + `approval=ask`」四种前置状态
+- **THEN** 前三种分别返回 `permission_denied`、`web_url_blocked` / `web_args_invalid`、
+  `web_provider_unconfigured`，不得改写成 `web_mode_unsupported`；第四种返回
+  `web_mode_unsupported`，不产生批准卡、`local_precheck=false`、零目标连接、零 provider 请求
+
 #### Scenario: 截断与完整性是两个轴
 
 - **WHEN** DeepSeek 成功返回 30,000 字符正文、`mode=full`
@@ -450,32 +541,3 @@ MUST NOT 伪造 provider，MUST NOT 声称验证了 provider 内部 DNS / redire
 
 - **WHEN** 以生产装配（无验收注入）执行任意 Fetch
 - **THEN** `fetched_by` 只会是 `provider` 或 null，`binding` 只会是 `url_submitted` 或 null，
-  `final_url` 恒为 null；`local` / `address_pinned` 在 `src-tauri/src` 的生产路径零构造点
-
-### Requirement: Web 测试 provider 装配边界
-
-阶段 1 的可测性依赖一个**仅测试 / 验收装配可注入**的假 provider：它 SHALL 声明
-`fetch_modes=[full, selected_chunks]`，并能按脚本返回不同的 `content_scope` / `coverage`，用于证明
-信封与面板能表达两种形态。生产构造器 MUST NOT 接受该 provider 或任何 provider 参数。
-
-注入 SHALL 只能由隔离验收专用 build / 装配显式激活（沿用既有 `acceptance-web` feature 与
-`LUMIR_ACCEPTANCE_WEB_ENDPOINTS` 的隔离口径）；普通 `config.json`、环境变量、真实 vault、生产
-`pnpm tauri dev` 与发布构建 MUST NOT 有激活入口。合成 provider MUST NOT 放宽 URL / DNS / 重定向 /
-内容类型校验，MUST NOT 为验收全局放行 loopback。
-
-生产反向断言 SHALL 机器化：`scripts/acceptance/web-production-check.sh` 的源码层与产物层判据
-（生产装配只走 official endpoint、rlib 不含验收端点字符串）SHALL 覆盖新增的合成 provider，
-新增注入面 MUST NOT 只在 `cfg` 里自觉隔离而没有产物层证据。
-
-#### Scenario: 测试 provider 证明两种形态可表达
-
-- **WHEN** 隔离验收以测试 provider 分别返回 `full` + `coverage=unknown` 与
-  `selected_chunks` + `coverage=bounded`
-- **THEN** 信封字段与面板徽标分别是「文档提取 · 完整性未验证」「相关段落」（后者另含
-  ` · 完整性受限`），测试记录到真实 HTTP 请求形状与次数；两种形态都不出现「全文」
-
-#### Scenario: 生产构建不能激活合成 provider
-
-- **WHEN** 普通配置 / 环境变量 / 真实 vault / 生产构建尝试启用测试 provider 的多模式声明
-- **THEN** 没有激活入口，生产仍只声明 `[full]`；`web-production-check.sh` 的产物层判据不因新增
-  注入面而假绿
