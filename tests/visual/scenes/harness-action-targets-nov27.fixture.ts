@@ -245,6 +245,7 @@ export async function readWithdrawCalls(page: Page): Promise<Array<{ confirm: bo
 interface InkMask {
   pixels: number[];
   count: number;
+  devicePixelsPerCssPixel: number;
   bounds: { x: number; y: number; right: number; bottom: number } | null;
 }
 
@@ -252,6 +253,7 @@ export interface ActionInkReading {
   plate: RectReading;
   svg: RectReading | null;
   content: RectReading | null;
+  devicePlateCenter: { x: number; y: number };
   missingInk: number;
   centerOffset: { x: number; y: number } | null;
 }
@@ -278,6 +280,7 @@ function readRedInk(buffer: Buffer, clip: RectReading): InkMask {
   return {
     pixels,
     count: pixels.length,
+    devicePixelsPerCssPixel: scale,
     bounds: pixels.length === 0 ? null : {
       x: clip.x + minX / scale,
       y: clip.y + minY / scale,
@@ -347,12 +350,19 @@ export async function readActionInk(button: Locator): Promise<ActionInkReading> 
     ` });
     const reference = readRedInk(await page.screenshot({ clip, animations: "disabled" }), clip);
     const actualPixels = new Set(actual.pixels);
+    const scale = reference.devicePixelsPerCssPixel;
+    // 墨迹 bounds 来自设备像素；底板中心也先落到同一像素中心网格，避免分数 CSS 坐标制造虚假偏移。
+    const devicePlateCenter = {
+      x: (Math.floor((geometry.plate.x + geometry.plate.right) * scale / 2) + 0.5) / scale,
+      y: (Math.floor((geometry.plate.y + geometry.plate.bottom) * scale / 2) + 0.5) / scale,
+    };
     const centerOffset = reference.bounds === null ? null : {
-      x: (reference.bounds.x + reference.bounds.right - geometry.plate.x - geometry.plate.right) / 2,
-      y: (reference.bounds.y + reference.bounds.bottom - geometry.plate.y - geometry.plate.bottom) / 2,
+      x: (reference.bounds.x + reference.bounds.right) / 2 - devicePlateCenter.x,
+      y: (reference.bounds.y + reference.bounds.bottom) / 2 - devicePlateCenter.y,
     };
     return {
       ...geometry,
+      devicePlateCenter,
       missingInk: reference.pixels.filter((pixel) => !actualPixels.has(pixel)).length,
       centerOffset,
     };
