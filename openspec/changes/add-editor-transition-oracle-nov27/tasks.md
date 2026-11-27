@@ -40,6 +40,7 @@
       - 删除族：`idle/collapsed/block-replace/deleteBackward`（chromium，红读数 `alphatail\n`）；
       - 非空选区族：`idle/range/list-marker/deleteBackward`（chromium；inline / table 的选区删除
         在 chromium 原生路径本来就符合合同，只有跨隐藏 marker 的格子有区分度）；
+      - 只读族覆盖由高风险族自身保证（18 格全部标 `readonly-noop`，不依赖 pairwise 偶然选中）；
       - 表格 cell 族：`idle/collapsed/table-cell/type` 在 **WebKit** 取证（M855 是 WebKit 原生
         target range 缺陷；chromium 原生路径本来就对）——红读数实际 `| cQ| d |`、期望 `| cQ | d |`。
       日志：`red-*.log` / `green-*.log`（`.local/missions/add-editor-transition-oracle-nov27/`）。
@@ -56,8 +57,9 @@
       预算用例 `link-suggest`「万文件过滤 16ms」实测 19.2ms（与本 change 无关；`pnpm test` 单跑
       2167/2167 全绿、同树立即重跑 gate 全绿），已按「不与本改动相关」的口径记录，不掩盖。
 - [x] 5.4 真引擎矩阵场景单独跑通（chromium）；读数与用例数记进报告
-      —— 8 个 test 全绿（15.9s），矩阵 62 格 / 51 高风险格 / pairwise 27 行 / 可行取值对 87/87 /
-      67 个 case（4 个 settling type 格带「有内容的组合提交」case）。读数与红绿证据日志
+      —— 8 个 test 全绿（15.6s），矩阵 65 格 / 55 高风险格 / pairwise 27 行 / 可行取值对 87/87 /
+      70 个 case（4 个 settling type 格带「有内容的组合提交」case；只读族 18 格全展开：折叠
+      6 动作 × 2 上下文 + 选区 3 动作 × 2 上下文）。读数与红绿证据日志
       `.local/missions/add-editor-transition-oracle-nov27/`（`matrix-report.log` /
       `red-*.log` / `green-*.log` / `red-no-nativeEditGate.log` / `red-settle-mutation.log`）。
       WebKit 未登记：逐格 `view.setState` 复位在 Playwright WebKit 下会让 Enter 多出一个空行

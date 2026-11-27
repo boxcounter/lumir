@@ -302,18 +302,18 @@ export const HIGH_RISK_FAMILIES: readonly HighRiskFamily[] = [
     name: "readonly-noop",
     why: "只读会话的全部编辑动作必须空转（视图层拒收 + changeFilter 兜底）",
     cells: [
+      // 只读 no-op 是全局的：表格 Enter / 折叠粘贴的「无条款」只针对可编辑态
+      // （N/A 规则按状态集合收窄），因此这里**不按上下文过滤**，6 个动作 × 2 个上下文逐格在场。
       ...(["type", "deleteBackward", "deleteForward", "enter", "paste", "pointer"] as const).flatMap((action) =>
-        // 表格 cell 的 Enter / 折叠粘贴没有合同条款（全局 N/A），只读族里也不得声明它们。
-        (["plain", "table-cell"] as const)
-          .filter((context) => !(context === "table-cell" && (action === "enter" || action === "paste")))
-          .map((context) => ({
+        (["plain", "table-cell"] as const).map((context) => ({
           state: "readOnly" as const,
           selection: "collapsed" as const,
           context,
           action,
         })),
       ),
-      ...(["type", "deleteBackward"] as const).flatMap((action) =>
+      // 非空选区的三个对称动作：键入替换与两个方向的删除（只读同样必须空转）。
+      ...(["type", "deleteBackward", "deleteForward"] as const).flatMap((action) =>
         (["plain", "table-cell"] as const).map((context) => ({
           state: "readOnly" as const,
           selection: "range" as const,
