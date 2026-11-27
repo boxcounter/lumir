@@ -12,8 +12,8 @@ steps:
     as: 长文文件
     file: end-marker-long.md
     expect:
-      - label: 编辑器文档文本里没有标记的文案（标记不是正文内容）
-        editor: { not: "END" }
+      - label: 文档中不存在独立一行的 END（标记不是正文内容；正文可提及 END）
+        editor: { not: "/^END$/" }
       - shot: 长文首屏
   - name: 建立渲染层焦点（后面的翻屏键要落到编辑器上）
     do: clickEditor
@@ -33,8 +33,8 @@ steps:
         editor: { has: "它的下面是文件的终点" }
       - label: 标记的可读文本节点仍在 AX 里（长文侧正观测）
         ax: { count: { pattern: "/AXStaticText = \"END\"/", exact: 1 } }
-      - label: 标记的文案不在编辑器文档文本里（渲染不写文档）
-        editor: { not: "END" }
+      - label: 文档中不存在独立一行的 END（渲染不写文档；正文可提及 END）
+        editor: { not: "/^END$/" }
       - label: 磁盘文件逐字节未变（ADR 0003 §3）
         file: { path: end-marker-long.md, unchangedSince: 长文文件 }
       - shot: 长文滚到底
@@ -54,8 +54,8 @@ steps:
         ax: { count: { pattern: "/AXStaticText = \"END\"/", exact: 0 } }
       - label: 读的确实是非 md 那份文件（正观测：文档文本是 aaa-nonmd.txt 的原文）
         editor: { has: "M251 的孤儿元素回归" }
-      - label: 编辑器文档文本里也没有标记的文案
-        editor: { not: "END" }
+      - label: 文档中也不存在独立一行的 END（正文可提及 END）
+        editor: { not: "/^END$/" }
       - shot: 非 md 文件（标记应已离场）
   - name: 切到一屏装得下的短文
     do: open
@@ -70,8 +70,8 @@ steps:
         editor: { has: "第三段，也是最后一段" }
       - label: 短文侧标记的可读文本节点在场（与长文同一个匹配器；旧判据下这里为 0，是本 change 的行为翻转点）
         ax: { count: { pattern: "/AXStaticText = \"END\"/", exact: 1 } }
-      - label: 编辑器文档文本里没有标记的文案
-        editor: { not: "END" }
+      - label: 文档中不存在独立一行的 END（正文可提及 END）
+        editor: { not: "/^END$/" }
       - label: 磁盘文件逐字节未变
         file: { path: end-marker-short.md, unchangedSince: 短文件 }
       - shot: 短文（END 在末行之下）
@@ -97,6 +97,20 @@ steps:
 两侧仍用**同一个匹配器**：长文与短文两步都必须命中标记的可读文本节点（`AXStaticText = "END"`），
 非 md 文件那一步必须完全不命中——「不命中」因此不是恒真的空转（REVIEW.md 「读不到当成空」条），
 也同时证明 AX 读数本身是活的。
+
+## 测试 oracle 缺陷与修正（2026-11-27 首轮真机）
+
+- 首轮 27 的 FAIL **分类为测试 oracle 缺陷，不是产品缺陷**：短文 fixture 的说明句含「END 同样显示」，
+  旧的 `editor: { not: "END" }` 是裸子串断言，误把正文里的合法提及当成标记文案。产品侧短文 END 的
+  AX 节点、截图与磁盘读数当时全部 PASS。
+- 修正：四处 `editor.not` 收紧为 `/^END$/`（`matcher()` 把 `/…/` 编译成正则并带 `m` flag，`^` / `$`
+  锚定行首 / 行尾），只判「文档中不存在独立一行的 END」；正文句子里的 END 不再误命中。
+- 反向必红：临时给合成 fixture 加独立一行 `END`，跑 27 必须 FAIL；随后**逐字恢复** fixture 再跑 27
+  取得 PASS。首轮 oracle 误报不作为反向证据。
+- 证据：`.local/acceptance/2026-11-27-end-marker-all-docs/`——`01-oracle-fail-repro/`（旧断言复现
+  oracle FAIL）、`02-reverse-red/`（独立一行 END，反向 FAIL）、`03-final-pass/`（fixture 逐字恢复后
+  PASS）；`README.md` 有三类读数与不混算口径。首轮原始 run 目录已被首次 PASS run 覆盖，复现使用
+  同一旧断言，原始失败消息与复现一致。
 
 ## 覆盖边界（如实标注，不许读成「已验证」）
 

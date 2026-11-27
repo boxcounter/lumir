@@ -27,6 +27,7 @@
 - [x] 2.5 反向必红：构造违反不变量的输入（短文侧按 master 判据不显示 / 把 END 钉到窗口底 / 视口 0 仍显示），确认对应用例判红后恢复；读数记进证据。
 - [x] 2.6 邻接测试的 oracle 修正：`m399-empty-lines.spec.ts` 的 P2 原用 `.cm-content` 中心点击来「落到文档末」，短文正文盒回到自然高度后中心落在中间行——改为点最后一行 + End（同一意图的显式写法），产品断言不变。
 - [x] 2.7 `no-tab-empty-state-nov27.spec.ts`：S4 分栏空 pane 无 END、打开 b.md 后 END 出现；S3 首启 tips 无 END（结构性空态与空态无行号 / 无光标同格）。
+- [x] 2.9 真机 27 的 oracle 修正：四处 `editor.not` 由裸子串 `"END"` 收紧为 `/^END$/`（只判独立一行）；新增场景说明分类为「测试 oracle 缺陷」。反向：给合成 fixture 临时加独立一行 `END` → 27 FAIL（`02-reverse-red/`），fixture 逐字恢复（sha256 `5550ce7bcada…`）→ 27 PASS（`03-final-pass/`，23 断言）。首轮误报不作反向证据。
 - [x] 2.8 指针行为反向必红：在「正文自然流」回归实现（提交 `2abc3a3d`）上，主指针用例单击空白后 `activeElement=.cm-scroller` 判红（`pointer-red-regression.log`）；另以三条独立用例逐条判红——点 END 自身 / 双击空白 / 空白区按下均不落在 `.cm-content`，**3 failed**（`pointer-late-red-regression.log`，临时 detached worktree 跑完即移除）。改回「正文盒铺满 + END 绝对定位」后主用例 13/13 绿（`end-marker-final-hitarea.log`），全目标 120/120（`target-final-committed.log`）。
 
 ## 3. 视觉材料（候选，不更新正式基线）
@@ -43,6 +44,7 @@
 - [x] 4.4 `node scripts/openspec-archive-check.mjs` 门禁模式：PASS（MODIFIED 无静默丢段；必要的「归档对账声明」已写）。
 - [x] 4.5 `node scripts/acceptance/run.mjs --check`：PASS（场景 27 的静态校验与覆盖表）。
 - [x] 4.6 完工报告：commit hash、测试计数、候选截图路径、待 Alex 基线清单、主会话真机项（场景 27）。
+- [x] 4.7 真机场景 27：首轮 FAIL 分类为测试 oracle 缺陷（旧 `not: "END"` 误命中短文说明句）；修正后最终 **PASS 23 断言**，证据 `.local/acceptance/2026-11-27-end-marker-all-docs/03-final-pass/`；反向 FAIL 在 `02-reverse-red/`，三类不混算（`README.md`）。
 
 ## 5. 证据（绝对路径）
 
@@ -58,5 +60,7 @@
 - 全量视觉：`full-visual.log`（1934 passed / 2 failed / 13 skipped；两项失败处置见 BASELINES.md）；
   `wrap-baseline-after-hitarea.log`（指针修复后重跑四种组合：仍 22724 px / 3.0%，候选截图不变）；
   `wrap-candidates-2.log`（四种组合的 save-only 候选截图，未更新基线）。
-- 候选材料：`.local/reviews/end-marker-all-docs-nov27/index.html`（审阅页）、`BASELINES.md`、`short/{before,criterion-only,after}.png`、
+- 候选材料：`.local/reviews/end-marker-all-docs-nov27/index.html`（审阅页）、`BASELINES.md`、`short/{before,criterion-only,after,pointer-selection}.png`、
   `short/readings.json`、`candidates/`。
+- 真机 27：`.local/acceptance/2026-11-27-end-marker-all-docs/{00-oracle-fixed-pass,01-oracle-fail-repro,02-reverse-red,03-final-pass}/`
+  + `README.md`（首轮 oracle FAIL 复现 / 反向 FAIL / 最终 PASS 三类，产品失败 0）。
