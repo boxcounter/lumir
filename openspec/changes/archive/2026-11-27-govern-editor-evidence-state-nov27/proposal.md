@@ -85,7 +85,7 @@
 | released | 否 | 本批不打包；纯文档治理 |
 | machine PASS | 是 | `GATE RESULT: 12/12 PASS（SKIP 1）` exit 0（`scripts/gate.sh quick`，日志 `.local/missions/govern-editor-evidence-state-nov27/gate-quick.log`）；`docs-check: PASS`；`validate --all --strict` 39/39 |
 | native PASS | 不适用 | 纯文档，无真机项 |
-| archived | 否 | 待本 mission 归档；归档提交与 `--archived` 读数见「归档后」 |
+| archived | 是 | 归档提交 `36c01688`；`--archived` PASS（无 `specs/` 增量，无需对账） |
 
 ### 归档前（五要件）
 
@@ -106,7 +106,15 @@
 
 ### 归档后（强制完成）
 
-- 归档提交：待本 mission 归档后回填。
-- 包装器（`node scripts/openspec-archive.mjs govern-editor-evidence-state-nov27`）输出：待回填。
-- 修链与链接门禁：待回填。
-- `node scripts/openspec-archive-check.mjs --archived govern-editor-evidence-state-nov27`：待回填。
+- 归档提交：`36c01688`（`chore(openspec): archive govern-editor-evidence-state-nov27`）。
+- 包装器（`node scripts/openspec-archive.mjs govern-editor-evidence-state-nov27`）输出：
+  `Task status: 17/18 tasks` / `Warning: 1 incomplete task(s) found. Continuing due to --yes flag.` /
+  `Change 'govern-editor-evidence-state-nov27' archived as '2026-11-27-govern-editor-evidence-state-nov27'.` /
+  `openspec-archive: 已归档到 openspec/changes/archive/2026-11-27-govern-editor-evidence-state-nov27/`。
+  17/18 来自 4.2 merge / push 未勾（tower 执行），不影响归档。
+- 修链与链接门禁：`openspec-archive: 归档后修链 0 处（扫过 2 篇 Markdown / 0 条相对链接）`；
+  `openspec-links: PASS（校验 711 条相对链接，全部可达）`；
+  `openspec-archive: PASS（归档完成，仓内相对链接门禁绿）`。
+- `node scripts/openspec-archive-check.mjs --archived govern-editor-evidence-state-nov27`：
+  `PASS（openspec/changes/archive/2026-11-27-govern-editor-evidence-state-nov27 没有 specs/ 增量，无需对账）`
+  （2026-11-27 11:42 CST）。
