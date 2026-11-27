@@ -36,10 +36,18 @@
 
 ## 6. 边界（如实登记，不做事后扩写）
 
-- [x] 6.1 静态扫描只认直接调用 `Decoration.replace(...)`；别名、动态属性访问、第三方库内部构造不在判据内——别名已由 2.5 判红兜底
+- [x] 6.1 静态扫描只认直接调用 `Decoration.replace(...)`；别名 / 解构 / 整体赋值 / import 重命名 / 字面量元素访问 `Decoration["replace"]` 均判红；`Decoration[method]` 这类计算动态属性访问与第三方库内部构造不在判据内
 - [x] 6.2 注册表不证明运行时正确；行为证据归各条目的测试指针
 - [x] 6.3 站点序号对同组内插入 / 删除 / 换序敏感（刻意的准入成本），不引入行号这类更易腐烂的定位
 
 ## 7. 移交（本批显式禁止，不勾）
 
 - [ ] 7.1 merge / push / 归档：本批明确禁止，由 tower 后续批次处理；`tasks.md` 因此不是全勾状态，docs-check 的归档队列判据不要求本 change 先落 `docs/backlog.md` 跟踪条目
+
+## 8. K3 返修（needs-changes，2026-11-27）
+
+- [x] 8.1 不支持的参数形态（非对象 / spread / 计算属性名 / 非字面 `block` 简写 / 动态 `widget`）一律产生 `problems` 判红，并补合成反向用例
+- [x] 8.2 `geometry.owner` 非空校验；`nativeEdit` 锚点必须恰好是 `src/editor.ts` / `absorbNativeEdit`，并补反向用例
+- [x] 8.3 符号锚点改为遍历 TS AST 的 `Identifier` 节点；注释 / 字符串不可冒充（新增 fixture 与反向用例）
+- [x] 8.4 修正人读文档失效测试路径；新增「文档测试路径全部存在」判据与缺失路径反向用例
+- [x] 8.5 边界改准：字面量元素访问 `Decoration["replace"]` 判红，`Decoration[method]` 计算动态访问不在扫描范围；文档 / tasks / 测试头注释同步

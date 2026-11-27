@@ -27,7 +27,8 @@
 原生编辑接管或 IME 收口的可执行替代；运行时行为仍只由 `reveal-gate.ts`、各构造的既有监听、
 `absorbNativeEdit` 与共享组合生命周期承担。新增 replace 构造 SHALL 在同一变更内先登记、
 再实现；MUST NOT 先加构造等评审发现问题。`Decoration.replace` MUST NOT 被别名引用
-（`const replace = Decoration.replace` / 解构等），否则静态扫描失明，判据随之失效。
+（`const replace = Decoration.replace` / 解构 / `Decoration["replace"]` 字面量元素访问等），否则
+静态扫描失明，判据随之失效；`Decoration[method]` 这类计算动态属性访问不在静态判据内。
 
 本条不证明运行时行为正确——它只保证每个构造的七项责任被显式分配、且「新构造」不能再绕过
 准入面；行为正确性由各条目的测试指针与既有门禁承担。

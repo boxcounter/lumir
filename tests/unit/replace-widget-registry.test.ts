@@ -13,8 +13,9 @@
 // 这是「新构造进入准入面」的信号，刻意的准入成本。MUST NOT 改用行号：行号会随无关改动漂移。
 //
 // 扫描边界（如实登记）：只认直接调用 `Decoration.replace(...)`。别名（`const replace =
-// Decoration.replace` / 解构 / 元素访问）会让扫描失明，故由「单一实现」用例单独判红；
-// 第三方库内部构造、动态属性访问不在本层判据内。`src/preview/**` 出现 `beforeinput` 同样判红
+// Decoration.replace` / 解构 / 整体赋值 / import 重命名 / 字面量元素访问 `Decoration["replace"]`）
+// 会让扫描失明，故由「单一实现」用例单独判红；`Decoration[method]` 这类计算动态属性访问与
+// 第三方库内部构造不在本层判据内。`src/preview/**` 出现 `beforeinput` 同样判红
 // ——原生编辑只允许有 `src/editor.ts` 的 `absorbNativeEdit` 这一份实现。
 
 import assert from "node:assert/strict";
@@ -217,15 +218,24 @@ function expressionName(expr: ts.Expression): string {
   return expr.getText().replace(/\s+/g, " ");
 }
 
-/** `new X(...)` / `factory(...)` / 直接标识符 → 构造名。 */
-function widgetName(init: ts.Expression): string {
-  if (ts.isNewExpression(init)) return expressionName(init.expression);
-  if (ts.isCallExpression(init)) return expressionName(init.expression);
-  return expressionName(init);
+interface WidgetResolution {
+  widget: string | null;
+  problem?: string;
 }
 
-/** `{ widget }` 简写：在同层（或外层）块里找最近一个在调用之前的 `const widget = ...`。 */
-function resolveShorthandWidget(call: ts.CallExpression): string {
+/** 只接受 `new X(...)` / 工厂调用；标识符、条件、成员访问等动态形式无法静态对账，必须判红。 */
+function widgetOfInitializer(init: ts.Expression): WidgetResolution {
+  if (ts.isNewExpression(init)) return { widget: expressionName(init.expression) };
+  if (ts.isCallExpression(init)) return { widget: expressionName(init.expression) };
+  return {
+    widget: null,
+    problem: "widget 初始值必须是 new X(...) 或工厂调用；标识符 / 条件等动态形式无法静态对账",
+  };
+}
+
+/** `{ widget }` 简写：在同层（或外层）块里找最近一个在调用之前的 `const widget = ...`，
+ *  其初始化式仍必须是 `new X(...)` / 工厂调用；找不到或初始化式动态同样判红。 */
+function resolveShorthandWidget(call: ts.CallExpression): WidgetResolution {
   let scope: ts.Node | undefined = call.parent;
   while (scope) {
     if (ts.isBlock(scope) || ts.isSourceFile(scope)) {
@@ -238,14 +248,17 @@ function resolveShorthandWidget(call: ts.CallExpression): string {
             declaration.name.text === "widget" &&
             declaration.initializer
           ) {
-            return widgetName(declaration.initializer);
+            return widgetOfInitializer(declaration.initializer);
           }
         }
       }
     }
     scope = scope.parent;
   }
-  return "widget";
+  return {
+    widget: null,
+    problem: "widget 简写找不到同层 `const widget = ...` 初始化，无法静态对账",
+  };
 }
 
 function isDecorationReplaceCall(node: ts.Node): node is ts.CallExpression {
@@ -264,24 +277,47 @@ function readCallShape(call: ts.CallExpression): {
   span: Span;
   problems: string[];
 } {
-  const arg = call.arguments[0];
-  if (!arg || !ts.isObjectLiteralExpression(arg)) {
-    return { widget: null, span: "inline", problems: [] };
-  }
+  const problems: string[] = [];
   let widget: string | null = null;
   let span: Span = "inline";
-  const problems: string[] = [];
+  const arg = call.arguments[0];
+  if (call.arguments.length !== 1 || !arg || !ts.isObjectLiteralExpression(arg)) {
+    problems.push(
+      "Decoration.replace 必须恰好一个对象字面量参数；非对象 / 变量 / 多余参数无法静态对账",
+    );
+    return { widget, span, problems };
+  }
   for (const prop of arg.properties) {
-    if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name)) {
-      if (prop.name.text === "widget") widget = widgetName(prop.initializer);
-      if (prop.name.text === "block") {
-        if (prop.initializer.kind === ts.SyntaxKind.TrueKeyword) span = "block";
-        else if (prop.initializer.kind !== ts.SyntaxKind.FalseKeyword) {
-          problems.push("block 属性必须是字面量 true / false（动态值会让注册表无法对账）");
-        }
+    if (ts.isSpreadAssignment(prop)) {
+      problems.push("不支持展开属性（...spec）：widget / block 可能被静态扫描漏掉");
+      continue;
+    }
+    if (!ts.isPropertyAssignment(prop) && !ts.isShorthandPropertyAssignment(prop)) {
+      problems.push("不支持方法 / 访问器 / 其他属性形态，widget / block 必须可静态对账");
+      continue;
+    }
+    if (!ts.isIdentifier(prop.name)) {
+      problems.push("不支持计算属性名：widget / block 必须写成静态标识符");
+      continue;
+    }
+    if (prop.name.text === "widget") {
+      if (ts.isShorthandPropertyAssignment(prop)) {
+        const resolved = resolveShorthandWidget(call);
+        if (resolved.widget === null) problems.push(resolved.problem ?? "widget 简写无法静态识别");
+        else widget = resolved.widget;
+      } else {
+        const resolved = widgetOfInitializer(prop.initializer);
+        if (resolved.widget === null) problems.push(resolved.problem ?? "widget 初始值无法静态识别");
+        else widget = resolved.widget;
       }
-    } else if (ts.isShorthandPropertyAssignment(prop) && prop.name.text === "widget") {
-      widget = resolveShorthandWidget(call);
+    } else if (prop.name.text === "block") {
+      if (ts.isShorthandPropertyAssignment(prop)) {
+        problems.push("block 简写不是字面量 true / false，无法静态对账");
+      } else if (prop.initializer.kind === ts.SyntaxKind.TrueKeyword) {
+        span = "block";
+      } else if (prop.initializer.kind !== ts.SyntaxKind.FalseKeyword) {
+        problems.push("block 属性必须是字面量 true / false（动态值会让注册表无法对账）");
+      }
     }
   }
   return { widget, span, problems };
@@ -960,18 +996,54 @@ function diff(sites: readonly Site[], registry: readonly RegistryEntry[]): DiffR
   return { unregistered, stale, duplicate };
 }
 
+/** 符号锚点只认 TS AST 的 Identifier 节点：注释、字符串、正则里的同名字串都不算。
+ *  这是「符号锚点可以冒充」的机器判据——用文本正则时，`// InlineMathWidget` 就能喂绿。 */
+function symbolExistsInSource(source: ts.SourceFile, needle: string): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isIdentifier(node) && node.text === needle) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+}
+
+function makeProbeEntry(): RegistryEntry {
+  const probe: Site = {
+    file: "src/preview/probe.ts",
+    owner: "probe",
+    widget: "ProbeWidget",
+    span: "inline",
+    ordinal: 1,
+    line: 1,
+  };
+  return {
+    id: "probe",
+    ...probe,
+    reveal: always(A.buildStandardImage, "probe"),
+    pointerReadonly: noPointer(A.imageWidget, "probe"),
+    nativeEdit: SHARED_NATIVE_EDIT,
+    geometry: geometry("probe", [A.imageWidget], "probe"),
+    ime: NATIVE_IME,
+    tests: ["tests/unit/image-widget.test.ts"],
+    note: "probe",
+  };
+}
+
 function anchorProblem(anchor: Anchor): string | null {
   const full = path.join(root, anchor.file);
   if (!existsSync(full)) return `${anchor.file} 不存在`;
-  const source = textOf(full);
   if (anchor.kind === "symbol") {
-    const escaped = anchor.needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    if (!new RegExp(`\\b${escaped}\\b`).test(source)) {
-      return `${anchor.file} 中找不到符号 ${anchor.needle}`;
-    }
-    return null;
+    if (!full.endsWith(".ts")) return `${anchor.file} 不是 .ts 文件，symbol 锚点只支持 TS 标识符`;
+    return symbolExistsInSource(parse(full), anchor.needle)
+      ? null
+      : `${anchor.file} 中找不到标识符 ${anchor.needle}（注释 / 字符串不算）`;
   }
-  return source.includes(anchor.needle)
+  return textOf(full).includes(anchor.needle)
     ? null
     : `${anchor.file} 中找不到文本 ${anchor.needle}`;
 }
@@ -990,6 +1062,20 @@ function fieldProblems(entry: RegistryEntry): string[] {
   if (!IME_POLICIES.has(entry.ime.policy)) problems.push(`${entry.id} 的 IME 策略不在词表：${entry.ime.policy}`);
   if (entry.nativeEdit.policy !== "shared-gate") {
     problems.push(`${entry.id} 的原生编辑策略必须是 shared-gate（共享 state 闸门），实际 ${entry.nativeEdit.policy}`);
+  }
+  const nativeAnchors = entry.nativeEdit.anchors;
+  if (
+    nativeAnchors.length !== 1 ||
+    nativeAnchors[0].file !== "src/editor.ts" ||
+    nativeAnchors[0].kind !== "symbol" ||
+    nativeAnchors[0].needle !== "absorbNativeEdit"
+  ) {
+    problems.push(
+      `${entry.id} 的原生编辑锚点必须恰好是 src/editor.ts 的 absorbNativeEdit（唯一共享 state 闸门）`,
+    );
+  }
+  if (entry.geometry.owner.trim() === "") {
+    problems.push(`${entry.id} 的几何写入者 owner 为空`);
   }
   for (const [field, anchors] of [
     ["reveal", entry.reveal.anchors],
@@ -1013,6 +1099,17 @@ function fieldProblems(entry: RegistryEntry): string[] {
     }
   }
   return problems;
+}
+
+/** 人读清单里的测试路径也必须当下可达：抽取反引号里的 `tests/...` / 验收场景路径，
+ *  逐条查在不在。机器注册表的 tests 字段与文档清单是两份读者面，二者都可能腐烂。 */
+function docPointerProblems(text: string): string[] {
+  const paths = [...text.matchAll(/`((?:tests|scripts\/acceptance\/scenarios)\/[^`\s]+)`/g)]
+    .map((match) => match[1])
+    .filter((value) => value.endsWith(".ts") || value.endsWith(".md"));
+  return [...new Set(paths)]
+    .filter((pointer) => !existsSync(path.join(root, pointer)))
+    .map((pointer) => `文档测试路径不存在：${pointer}`);
 }
 
 function beforeinputSites(file: string): number[] {
@@ -1167,17 +1264,7 @@ test("反向输入：缺登记 / 僵尸 / 序号漂移 / 锚点失效 / 别名�
     ordinal: 1,
     line: 1,
   };
-  const entry: RegistryEntry = {
-    id: "probe",
-    ...probe,
-    reveal: always(A.buildStandardImage, "probe"),
-    pointerReadonly: noPointer(A.imageWidget, "probe"),
-    nativeEdit: SHARED_NATIVE_EDIT,
-    geometry: geometry("probe", [A.imageWidget], "probe"),
-    ime: NATIVE_IME,
-    tests: ["tests/unit/image-widget.test.ts"],
-    note: "probe",
-  };
+  const entry = makeProbeEntry();
 
   // ① 源码有站点、注册表没有 → 未登记。
   assert.deepEqual(
@@ -1210,4 +1297,103 @@ test("反向输入：缺登记 / 僵尸 / 序号漂移 / 锚点失效 / 别名�
   const aliasSource = ts.createSourceFile(aliasFile, aliasText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const inlineHits = aliasesInSource(aliasSource);
   assert.equal(inlineHits.length, 4, "别名 / 解构 / 整体赋值 / import 重命名没有被识别");
+});
+
+test("反向输入：不支持的 replace 参数形态必须 problems 判红", () => {
+  const text = [
+    "Decoration.replace(spec);",
+    "Decoration.replace({ ...spec });",
+    'Decoration.replace({ ["widget"]: new ComputedWidget() });',
+    'Decoration.replace({ ["block"]: true });',
+    "Decoration.replace({ block });",
+    "const dynamic = true;",
+    "Decoration.replace({ widget: new W(), block: dynamic });",
+    "Decoration.replace({ widget: w });",
+    "Decoration.replace();",
+  ].join("\n");
+  const { problems } = scanSourceFile("src/preview/__probe-unsupported.ts", text);
+  const joined = problems.join("\n");
+  for (const expected of [
+    "对象字面量",
+    "展开属性",
+    "计算属性名",
+    "block 简写",
+    "block 属性必须是字面量",
+    "widget 初始值必须是 new",
+  ]) {
+    assert.ok(joined.includes(expected), `不支持的参数形态没有被判红：缺少「${expected}」\n实际：\n${joined}`);
+  }
+});
+
+test("反向输入：空白 geometry.owner / 错误的 nativeEdit 锚点必须判红", () => {
+  const entry = makeProbeEntry();
+  const emptyOwner: RegistryEntry = {
+    ...entry,
+    geometry: { ...entry.geometry, owner: "  " },
+  };
+  assert.ok(
+    fieldProblems(emptyOwner).some((problem) => problem.includes("几何写入者")),
+    "geometry.owner 为空没有被判红",
+  );
+  const wrongNative: RegistryEntry = {
+    ...entry,
+    nativeEdit: { policy: "shared-gate", anchors: [A.imageWidget], note: entry.nativeEdit.note },
+  };
+  assert.ok(
+    fieldProblems(wrongNative).some((problem) => problem.includes("absorbNativeEdit")),
+    "nativeEdit 锚点没有精确指向 src/editor.ts / absorbNativeEdit 时没有判红",
+  );
+});
+
+test("反向输入：注释 / 字符串里的同名符号不能冒充符号锚点", () => {
+  const commentOnly = ts.createSourceFile(
+    "probe.ts",
+    '// InlineMathWidget\nconst label = "InlineMathWidget";',
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  assert.equal(symbolExistsInSource(commentOnly, "InlineMathWidget"), false);
+  const realIdentifier = ts.createSourceFile(
+    "probe.ts",
+    "const InlineMathWidget = 1;",
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  assert.equal(symbolExistsInSource(realIdentifier, "InlineMathWidget"), true);
+  assert.notEqual(
+    anchorProblem({
+      file: "tests/unit/fixtures/replace-anchor-comment-probe.ts",
+      kind: "symbol",
+      needle: "InlineMathWidget",
+    }),
+    null,
+    "注释 / 字符串里的同名字串被当成了符号锚点",
+  );
+});
+
+test("人读文档的测试指针全部存在（缺一条即红）", () => {
+  const doc = textOf(path.join(root, "docs/specs/replace-widget-contracts.md"));
+  assert.deepEqual(docPointerProblems(doc), [], "人读文档里的测试路径有缺失");
+  assert.deepEqual(
+    docPointerProblems("| x | `tests/visual/scenes/__missing__.spec.ts` |"),
+    ["文档测试路径不存在：tests/visual/scenes/__missing__.spec.ts"],
+    "文档测试路径缺失没有被判红",
+  );
+});
+
+test("别名边界：字面量元素访问判红，计算动态访问不在扫描范围", () => {
+  const source = ts.createSourceFile(
+    "probe.ts",
+    [
+      'Decoration["replace"]({});',
+      "const method = \"replace\";",
+      "Decoration[method]({});",
+    ].join("\n"),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  assert.equal(aliasesInSource(source).length, 1, "字面量元素访问必须判红，计算动态访问不在范围");
 });

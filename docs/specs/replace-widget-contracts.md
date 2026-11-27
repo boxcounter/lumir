@@ -60,12 +60,13 @@ IME 策略、测试指针。
 
 新增 replace 构造 SHALL 在同一变更内先登记、再实现；MUST NOT 先加构造等评审发现问题。
 `Decoration.replace` MUST NOT 被别名引用（`const replace = Decoration.replace`、解构
-`const { replace } = Decoration`、把属性访问结果存进变量等）——别名会让静态扫描失明，
-判据随之失效。
+`const { replace } = Decoration`、把属性访问结果存进变量、`Decoration["replace"]` 这类
+字面量元素访问等）——别名会让静态扫描失明，判据随之失效。
 
-**边界（如实登记）**：静态扫描只认直接调用 `Decoration.replace(...)` 的形态；第三方库内部
-构造、动态属性访问（如 `Decoration["replace"]`）不在判据内。别名已由 R5 判红兜底；其余形态
-当前不存在，出现时应先扩扫描器而不是绕过。
+**边界（如实登记）**：静态扫描只认直接调用 `Decoration.replace(...)` 的形态；字面量元素访问
+`Decoration["replace"]` 与别名 / 解构 / 整体赋值 / import 重命名一样判红。真正不在扫描范围内的是
+`Decoration[method]` 这类**计算动态属性访问**——属性名在运行期才能确定，静态层无法对账；出现时
+应先扩扫描器而不是绕过。第三方库内部的 replace 构造同样不在本层判据内。
 
 ## 登记清单
 
@@ -97,7 +98,7 @@ IME 策略、测试指针。
 | `link-marks` | `livePreview.ts` · `collectSyntaxDecorations` · `hide` · 3 | inline | 节点严格重叠：链接范围被触及即整条显示源码 | 点击跟随链接；只读同左 | `block-geometry.ts` `lineShapes` | 原生 | `tests/visual/scenes/render-link.spec.ts`、`tests/unit/literal-link.test.ts` |
 | `autolink-brackets` | `livePreview.ts` · `collectSyntaxDecorations` · `hide` · 4 | inline | 节点严格重叠：裸 URL / 角括号链接被触及即显示源码 | 点击跟随链接；只读同左 | `block-geometry.ts` `lineShapes` | 原生 | `tests/visual/scenes/render-link.spec.ts`、`tests/unit/literal-link.test.ts` |
 | `image-remote` | `livePreview.ts` · `buildStandardImage` · `ImageWidget` · 1 | inline | 恒渲染：远程引用永远走占位终态，不显露源码 | 不消费（远程占位没有 `<img>`，无放大 / 引用路径）；只读同左 | `attachments.ts` `knownGeometry` / `imageReserve` | 原生 | `tests/unit/image-widget.test.ts`、`tests/visual/scenes/m182-image-first-open-width.spec.ts` |
-| `image-notice-standard` | `livePreview.ts` · `buildStandardImage` · `AttachmentNoticeWidget` · 1 | inline | 恒渲染：未接线附件提示不显露源码 | 不消费；只读同左 | `theme.ts` `.cm-lp-embed-unsupported` | 原生 | `tests/unit/image-widget.test.ts`、`tests/visual/scenes/render-markdown.spec.ts` |
+| `image-notice-standard` | `livePreview.ts` · `buildStandardImage` · `AttachmentNoticeWidget` · 1 | inline | 恒渲染：未接线附件提示不显露源码 | 不消费；只读同左 | `theme.ts` `.cm-lp-embed-unsupported` | 原生 | `tests/unit/image-widget.test.ts`、`scripts/acceptance/scenarios/render-markdown.md` |
 | `image-local` | `livePreview.ts` · `buildStandardImage` · `ImageWidget` · 2 | inline | 恒渲染：本地图片永远渲染，不显露源码 | 双击放大 + 引用钮；只读同左 | `attachments.ts` `knownGeometry` / `imageReserve` | 原生 | `tests/unit/image-widget.test.ts`、`tests/visual/scenes/m633-image-quote.spec.ts` |
 | `wikilink-embed-fallback` | `livePreview.ts` · `buildWikilink` · `buildWikiEmbedWidget` · 1 | inline | 恒渲染：无解析器时的嵌入降级不看选区 | 图片动作 / 提示不消费（按工厂返回值）；只读同左 | `theme.ts` `.cm-lp-embed-unsupported` | 原生 | `tests/visual/scenes/wikilink.spec.ts`、`scripts/acceptance/scenarios/865-wikilink-caret-reveal-nov24.md` |
 | `wikilink-notice-unsupported` | `livePreview.ts` · `buildWikilink` · `AttachmentNoticeWidget` · 1 | inline | 恒渲染：块引用不支持提示不显露源码 | 不消费；只读同左 | `theme.ts` `.cm-lp-embed-unsupported` | 原生 | `tests/visual/scenes/wikilink.spec.ts`、`scripts/acceptance/scenarios/865-wikilink-caret-reveal-nov24.md` |
