@@ -1,10 +1,10 @@
 // 内容区域宽度（change content-width-drag，节点 1 裁决 2026-09-25 → **2026-09-26 Alex 修订**：
-// D1 默认 760、D2 上下限 [760, 1200]、D4 live 拖拽、D5 手柄进 code 模式）——栏宽 token 的**唯一
+// D1 默认 760、D2 上下限 [760, 1200]、D4 live 拖拽）——栏宽 token 的**唯一
 // 写入通道名**、TS 侧默认/上下限镜像常量、对称换算与钳制纯函数，以及双侧手柄的拖拽控制器。
 //
 // 栏宽 = `.cm-scroller` grid 中列轨道 `minmax(0, var(--layout-doc-measure))`（src/editor.ts），
 // 语义是**上限**：窗口不够宽时中列收缩到可用宽度。token 写在 `documentElement` 上
-//（与 typography 的 `--editor-font-size` 同一条路），天然覆盖全部会话与 md/code 两种模式。
+//（与 typography 的 `--editor-font-size` 同一条路），覆盖全部 Markdown 会话；code 工作区不消费它。
 //
 // 三处出厂默认写值的处置（与 font_size 同族，REVIEW.md 「同一语义两处真源」条）：Rust
 // `src-tauri/src/config.rs` 的 `DEFAULT_CONTENT_WIDTH` / 本文件的 `DEFAULT_CONTENT_WIDTH` /
@@ -80,8 +80,8 @@ export interface ContentWidthDrag {
 }
 
 /**
- * 双侧栏宽拖拽手柄（D5：md 与 code 模式同一条轨道，手柄按 `.cm-content` 实测矩形定位——
- * code 模式列不居中，纯 CSS 百分比定位在两种模式间不一致）。
+ * 双侧栏宽拖拽手柄（只用于 md；code 满 pane 后没有该控制的作用对象）。
+ * 手柄按 `.cm-content` 实测矩形定位。
  *
  * 交互口径（提案「手柄交互面」表）：常态不可见（2px 视觉线 opacity 0），hover 命中区
  *（10px，列缘两侧各 5px）或拖拽全程显现；`setPointerCapture` 锁定指针，拖出命中区不中断；
@@ -99,7 +99,7 @@ export function createContentWidthDrag(deps: ContentWidthDragDeps): ContentWidth
     rightHandle.style.left = `${rect.right - paneRect.left - 5}px`;
   }
 
-  // 列缘矩形的移动来源：pane 缩放（md 居中 / code 等分都随之动）、内容自身尺寸变化
+  // 列缘矩形的移动来源：Markdown pane 缩放、内容自身尺寸变化
   //（栏宽施加后）、横向滚动（line_wrap = false 时）。三条都在控制器内自闭环；
   // 模式 / 会话切换不改变尺寸但可能改位置（gutter 进出），由装配层显式调 reposition()。
   const paneObserver = new ResizeObserver(position);

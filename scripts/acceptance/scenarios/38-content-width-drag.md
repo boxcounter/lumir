@@ -2,7 +2,7 @@
 id: "38-content-width-drag"
 item: 38
 tier: full
-title: 栏宽双侧拖拽手柄：拖拽写回 config.json（合并写、不抹其他键）、文档零写盘、重启保持
+title: Markdown 栏宽双侧拖拽手柄：拖拽写回 config.json（合并写、不抹其他键）、文档零写盘、重启保持
 fixtures: [keys.md]
 open: keys.md
 marker: "键位场景"
@@ -21,7 +21,7 @@ steps:
     do: recordEditor
     as: 编辑器基线
 
-  - name: 手柄的读屏身份在场（D120：两条 separator，共用同一读屏名）
+  - name: Markdown 手柄的读屏身份在场（D120：两条 separator，共用同一读屏名；code 不出现该控制）
     do: settle
     expect:
       - label: AX 树里恰有两条「调整内容宽度」（左右缘各一，读屏可辨）
