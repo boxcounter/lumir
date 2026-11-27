@@ -5544,15 +5544,35 @@ MUST NOT 级联删除这些会话，MUST NOT 静默保留 A。派生检测 SHALL
 删除 A 失败时，系统 MUST 撤销本次新建的 B（清掉其发布文件）并保留 A，MUST NOT 报成成功，也
 MUST NOT 改动原会话与 composer。任何失败路径 MUST NOT 先丢弃 A。
 
-撤回 SHALL 只对**本进程发起的交互轮 / 重试轮**开放：在途（含 `Finishing` 与待批）MUST 被拒绝
-（用户先停止），cron / 自动唤醒 / 子运行推入的用户项与「恢复出来但尚未在本进程发言」的会话
-MUST 被拒绝并给出原因。停止 SHALL 保持「不再继续、不回滚」的既有语义，MUST NOT 被当作撤回。
+撤回 SHALL 只对**本进程发起的交互轮 / 重试轮**、或**恢复出来且本进程尚未跑过任何轮时的恢复
+目标**开放：在途（含 `Finishing` 与待批）MUST 被拒绝（用户先停止）；cron / 自动唤醒 / 子运行推入
+的用户项 MUST 被拒绝并给出原因——本进程一旦跑过任何轮（含上述非交互轮），轮次来源 SHALL 优先于
+恢复目标，恢复目标 MUST NOT 越过来源闸复活。停止 SHALL 保持「不再继续、不回滚」的既有语义，
+MUST NOT 被当作撤回。
 
 撤回目标 SHALL 是**入队时记录的那一条交互用户消息**（input 与 panel 两份下标），MUST NOT 用
 「输入里最后一条 `role=user`」反推——后台通知（blocked / 触顶分支）同样以 user 项进入 input、
 以 notice 行进入面板，反推会把它当成目标、错删真实用户轮次并让工具清单从空切片起算。该轮之后
 混入任何其它 user 项时，撤回 MUST 被拒绝（不得吞掉通知），且 MUST NOT 产生任何文件或 composer
 变化。
+
+恢复出来的会话 SHALL 在恢复时从灌回的 input 重建撤回目标：取**最后一条带交互来源标记的用户项**及
+其在重建面板里的行下标。该标记 SHALL 是用户项顶层的机器字段（`lumir_user_origin`，值
+`interactive`），只在交互发送 / 重试轮的入队点写入、随 `llm_request.messages` 与 `withdraw_seed`
+持久化，发送给 provider 前 SHALL 剥除（provider 永不看见）；来源 MUST NOT 由正文文本推断——后台
+通知的正文标记不是来源证据。留存没有该标记（本 change 之前的旧记录）、命中项没有面板行、或历史
+已被压缩替换时，恢复出来的会话 MUST 视为没有可撤回目标并安全拒绝（`harness_withdraw_not_applicable`），
+MUST NOT 猜一条目标，MUST NOT 给旧记录补写标记。
+
+恢复件上的撤回 SHALL 删除**恢复来源 A 的留存**——恢复本身尚未发布任何轮次，当前会话没有自己的
+文件；B 的 `restored_from` SHALL 指向 A。恢复占用检查 SHALL **排除本会话自己登记的那一份**，且
+MUST NOT 在撤回成功换出之前释放它（发布时间 / 删除失败 / 派生或祖先链拒绝 / 回滚失败等任何失败
+路径都必须保留该占用——否则外部 Runtime 可趁隙恢复并删除来源，本会话之后发布的派生文件会复活被
+撤回的消息）；占用只 SHALL 在旧会话被换出（丢弃）时随之释放。随后按既有栅栏与派生检测复核。
+删除前 SHALL 沿 A 的 `restored_from` 祖先链逐项比对，确认没有更早的留存仍包含被撤回的那一条消息；
+命中时撤回 MUST 被拒绝（`harness_withdraw_copy_exists`）并点名那些留存，MUST NOT 静默留下副本；
+祖先不可读、祖先链出现环或超过深度上限时 MUST 按扫描失败 fail closed（`harness_withdraw_scan_failed`），
+MUST NOT 当作「已扫完、没有副本」继续删除；只有祖先文件在盘上正常缺失才允许终止扫描。
 
 派生检测 MUST 与「恢复」共享同一把进程级栅栏：恢复在读取源文件之前 SHALL 登记占用，撤回从
 「检查占用 / 扫描派生」到「删除 A」MUST 全程持有该栅栏；有会话正在从 A 恢复（包括尚未发布的
@@ -5601,9 +5621,52 @@ provider wire 前整体剥除），旧记录缺完整原名时 SHALL 回落展�
 
 #### Scenario: 非交互来源不开放撤回
 
-- **WHEN** 最近一轮来自 cron / 自动唤醒 / 子运行，或当前会话是从历史恢复且本进程尚未发言
+- **WHEN** 最近一轮来自 cron / 自动唤醒 / 子运行，或恢复出来的会话在本进程已经跑过这样的轮次
 - **THEN** 撤回被拒绝（`harness_withdraw_not_applicable`），并给出「不是你在本窗口发出的消息」
-  的原因；文件与会话均不变
+  的原因；文件与会话均不变；恢复目标 MUST NOT 越过该来源闸复活
+
+#### Scenario: 恢复出来的会话可撤回最近一条真实用户消息
+
+- **WHEN** 用户从会话清单恢复一份普通交互会话（最后一条用户消息带交互来源标记），未发送任何新消息
+  就请求撤回
+- **THEN** 撤回照常执行：恢复来源 A 的留存被删除，B 从撤回点之前的前缀发布；composer 得到该消息
+  原文；面板只剩撤回点之前的历史
+
+#### Scenario: 恢复后切走再回来不复活
+
+- **WHEN** 在恢复出来的会话里撤回成功，之后切到新会话再从清单选中 B
+- **THEN** B 从 `withdraw_seed` 恢复出撤回点之前的历史；被撤回的消息与其后轮次既不在面板上、也不
+  在磁盘的任何会话留存里
+
+#### Scenario: 旧记录或压缩后的恢复没有可撤回目标
+
+- **WHEN** 恢复一份本 change 之前写下的会话（用户项没有来源标记），或恢复一份历史已被压缩替换的
+  会话
+- **THEN** 快照的 `withdrawable` 为 false；撤回被拒绝（`harness_withdraw_not_applicable`）；文件与
+  会话均不变，MUST NOT 按正文文本猜目标、MUST NOT 给旧记录补写标记
+
+#### Scenario: 恢复件撤回失败后占用不释放
+
+- **WHEN** 恢复出来的会话撤回在发布 / 删除 / 回滚任一步失败
+- **THEN** 该会话对恢复来源的占用保留：另一 Runtime 从该来源恢复后尝试撤回被拒
+  （`harness_withdraw_resume_in_flight`），直到失败撤回的会话被丢弃（新会话 / 换会话）才放行；
+  来源留存不被删除
+
+#### Scenario: 祖先链成环或超深时 fail closed
+
+- **WHEN** 恢复来源的 `restored_from` 祖先链出现环，或超过深度上限
+- **THEN** 撤回被拒绝（`harness_withdraw_scan_failed`，点名当前路径与原因）；来源留存不删除、
+  不创建 B
+
+#### Scenario: 恢复件的尾部后台通知不被当成目标
+
+- **WHEN** 恢复出来的会话在最后一条交互消息之后还有后台通知（input 里是 user 项、面板里是 notice 行）
+- **THEN** 撤回被拒绝（`harness_withdraw_tail_notice`）；通知不被吞掉、不创建 B、composer 不变
+
+#### Scenario: 恢复来源的更早留存仍含该消息时拒绝
+
+- **WHEN** 恢复来源 A 自身是另一份会话的恢复件，且被撤回的消息仍存在于 A 的更早留存里
+- **THEN** 撤回被拒绝（`harness_withdraw_copy_exists`，回执点名那些留存）；A 不被删除、不创建 B
 
 #### Scenario: 派生会话在场时拒绝
 

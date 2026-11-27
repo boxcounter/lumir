@@ -4462,8 +4462,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   let withdrawButtonEl: HTMLButtonElement | null = null;
   /** 工具确认条（有工具副作用时插在消息下方；同一时刻至多一条）。 */
   let withdrawConfirmEl: HTMLElement | null = null;
-  /** 后端快照的 `withdrawable`（本进程发起的交互轮 / 重试轮）：只决定钮的可见性。真正的判定
-   *  （busy / 目标项 / 派生会话）由撤回命令在动作时点复跑——前端不复制那套判据。 */
+  /** 后端快照的 `withdrawable`（本进程发起的交互轮 / 重试轮，或恢复出来、本进程尚未跑过任何轮
+   *  时的恢复目标）：只决定钮的可见性。真正的判定（busy / 来源闸 / 目标项 / 派生会话）由撤回
+   *  命令在动作时点复跑——前端不复制那套判据。恢复回执的 `withdrawable` 走同一取值。 */
   let withdrawable = false;
   /** 撤回命令在途：连点 / 确认后重复触发只发一次（后端幂等，但第二次会回「不可撤回」的错误行）。 */
   let withdrawInFlight = false;
@@ -10672,8 +10673,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
     const messages = Array.isArray(state.messages) ? state.messages : [];
     renderSnapshotMessages(messages);
-    // 可撤回性以后端快照为准（本进程发起的交互轮 / 重试轮才为 true）：历史恢复 / cron 会话
-    // 因此不挂撤回钮；真正的判定仍由撤回命令复跑。
+    // 可撤回性以后端快照为准（本进程发起的交互轮 / 重试轮，或恢复出来且本进程尚未跑过任何轮
+    // 时的恢复目标才为 true）：cron / 自动唤醒 / 子运行轮之后不挂撤回钮；真正的判定仍由撤回
+    // 命令复跑。
     withdrawable = state.withdrawable === true;
     syncWithdrawButton();
     // 可重试失败的动作行（change add-harness-turn-retry-nov23 design §6.3）：**两档都重建**。
@@ -11665,6 +11667,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         hidePersistenceLine();
         fetchPersistenceSnapshot();
         renderSnapshotMessages(Array.isArray(info.messages) ? info.messages : []);
+        // 可撤回性随恢复回执落地（change withdraw-restored-user-message-nov27）：恢复流程不重取
+        // `harness_state`，不回填这一项的话钮要等下一次内容快照才出现。只做可见性，判定仍在
+        // 后端（来源闸 / 目标项 / 派生会话都在动作时点复跑）。
+        withdrawable = info.withdrawable === true;
+        syncWithdrawButton();
         firstUserText = entry.firstUserText;
         sessionTitle = entry.title;
         applySessionName();

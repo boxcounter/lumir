@@ -719,6 +719,7 @@ impl Runtime {
                         restored_items: 0,
                         messages: Vec::new(),
                         switched: false,
+                        withdrawable: current.withdrawable(),
                     });
                 }
                 if current.is_busy() {
@@ -911,7 +912,11 @@ impl Runtime {
         // 后再次退出」仍可恢复。
         let restored_notices = subagents::restored_notices(&file.records);
         let restored_items = restored.len();
-        let mut messages = restored_panel_messages(&restored, &restored_ts, &approvals);
+        let (mut messages, user_panel_index) =
+            restored_panel_messages_with_users(&restored, &restored_ts, &approvals);
+        // 恢复期重建撤回目标（change withdraw-restored-user-message-nov27）：在追加恢复通知
+        // **之前**算——通知是系统注入的 user 项，不是用户发出去的那一句，永远不参与目标。
+        let restored_target = restored_withdraw_target(&restored, &user_panel_index);
         for notice in &restored_notices {
             restored.push(session::user_item(&notice.text));
             restored_ts.push(None);
@@ -964,7 +969,11 @@ impl Runtime {
             new_session.set_title(Some(title.clone()));
         }
         new_session.attach_resume_claim(claim);
+        if let Some(target) = restored_target {
+            new_session.set_restored_withdraw_target(target);
+        }
         let new_token = new_session.subagent_token();
+        let withdrawable = new_session.withdrawable();
         self.guard_unpublished_replacement(scope)?;
         self.inner
             .sessions
@@ -982,6 +991,7 @@ impl Runtime {
             restored_items,
             messages,
             switched: true,
+            withdrawable,
         })
     }
 
@@ -1039,7 +1049,8 @@ impl Runtime {
         })
     }
 
-    /// 撤回最近一条用户消息及其后全部轮次（change add-harness-message-withdraw-nov26）。
+    /// 撤回最近一条用户消息及其后全部轮次（change add-harness-message-withdraw-nov26；
+    /// change withdraw-restored-user-message-nov27 把来源闸向恢复出来的交互会话打开）。
     ///
     /// 语义是「从模型上下文与显示历史里一起拿掉」，不是视觉删除；工具副作用**不回滚**，只在
     /// 回执里如实列出（`tool_names`）供前端二次确认。
@@ -1052,6 +1063,9 @@ impl Runtime {
     /// 4. 删除 A 的 JSONL——失败则删 B、A 保持原样（就地回滚；A 的内存态从未被丢弃，不需要
     ///    重新恢复它）；
     /// 5. 换入 B、丢弃 A（`Drop` 收口子运行中枢与待唤醒）。
+    ///
+    /// 「A」是被撤回消息所在的那份留存：交互轮是当前会话自己的文件；恢复件是**恢复来源**——
+    /// 恢复是惰性发布，本进程尚未跑过任何轮时当前会话没有自己的文件（见调用点 `delete_id`）。
     pub fn withdraw_last_turn(
         &self,
         scope: &VaultScope,
@@ -1076,24 +1090,43 @@ impl Runtime {
                 "对话正在处理中；请先停止本轮，再撤回",
             ));
         }
-        if !matches!(
-            session.last_turn_origin(),
-            Some(turn::TurnOrigin::Interactive | turn::TurnOrigin::Retry)
-        ) {
-            return Err(CommandError::new(
-                "harness_withdraw_not_applicable",
-                "最近一轮不是你在本窗口发出的消息（cron / 自动唤醒 / 恢复出来的历史会话），不能撤回",
-            ));
-        }
-        // 目标只认**入队时记录的下标**：后台通知（blocked / 触顶分支）同样是 input 里的 user 项，
-        // 按「最后一条 role=user」反推会把通知当作目标并错删真实用户轮次（K3 P1-1）。
-        let input = session.input().to_vec();
-        let Some(target) = session.withdraw_target() else {
-            return Err(CommandError::new(
-                "harness_withdraw_nothing",
-                "当前会话没有可撤回的用户消息（历史已被压缩或替换）",
-            ));
+        // 来源闸（change withdraw-restored-user-message-nov27）：两条合法来源——本进程的交互 /
+        // 重试轮，或恢复出来且本进程尚未跑过任何轮时的恢复目标。跑过任何轮之后只看轮次来源：
+        // cron / 自动唤醒 / 子运行轮因此让会话不可撤回，恢复目标 MUST NOT 越过该闸复活。
+        let source = match session.last_turn_origin() {
+            Some(origin) if !origin.is_interactive() => {
+                return Err(CommandError::new(
+                    "harness_withdraw_not_applicable",
+                    "最近一轮不是你在本窗口发出的消息（cron / 自动唤醒 / 子运行），不能撤回",
+                ));
+            }
+            Some(_) => match session.withdraw_target() {
+                Some(target) => session::WithdrawSource::Turn(target),
+                // 交互轮但目标已失效（压缩 / 历史替换）——与既有口径一致。
+                None => {
+                    return Err(CommandError::new(
+                        "harness_withdraw_nothing",
+                        "当前会话没有可撤回的用户消息（历史已被压缩或替换）",
+                    ));
+                }
+            },
+            None => match session.restored_withdraw_target() {
+                Some(target) => session::WithdrawSource::Restored(target),
+                // 本进程没跑过任何轮、恢复期也没重建出目标：旧留存没有来源标记 / 已压缩。
+                // 安全拒绝——不猜目标、不补写标记。
+                None => {
+                    return Err(CommandError::new(
+                        "harness_withdraw_not_applicable",
+                        "当前会话没有可撤回的交互消息（恢复出的旧留存没有来源标记，或历史已被压缩替换）",
+                    ));
+                }
+            },
         };
+        // 目标只认**记录下来的下标**（交互轮入队时 / 恢复时从来源标记重建）：后台通知
+        // （blocked / 触顶分支）同样是 input 里的 user 项，按「最后一条 role=user」反推会把通知
+        // 当作目标并错删真实用户轮次（K3 P1-1）。
+        let input = session.input().to_vec();
+        let target = source.target();
         let stale = || {
             CommandError::new(
                 "harness_withdraw_not_applicable",
@@ -1134,7 +1167,23 @@ impl Runtime {
                 "当前会话还没有留存身份，无法撤回",
             ));
         };
+        // 删除目标（change withdraw-restored-user-message-nov27）：交互轮撤回删自己的留存；
+        // 恢复件撤回删**恢复来源**——恢复是惰性发布，本进程尚未跑过任何轮时当前会话没有自己的
+        // 文件，被撤回的消息物理上只在来源留存里（删自己的空身份等于什么都没删，来源会复活它）。
+        let delete_id = match source {
+            session::WithdrawSource::Turn(_) => active_id.clone(),
+            session::WithdrawSource::Restored(_) => session
+                .jsonl()
+                .pending_restore_source()
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    CommandError::new("harness_withdraw_failed", "恢复来源身份缺失，无法撤回")
+                        .param("reason", "pending_restore_source missing")
+                })?,
+        };
         let withdrawn = withdrawn_composer(target_item);
+        // 祖先链副本检测要按项级深比较找同一条消息，而 `input` 随后被 drop——先留一份。
+        let target_item = target_item.clone();
         let prefix = input[..index].to_vec();
         drop(input);
         // 面板与 input 同源：按同一目标下标截断（不是「最后一条 role=user」）。
@@ -1149,13 +1198,16 @@ impl Runtime {
         let subrun_usage = session.subrun_usage().clone();
         let subrun_runs = session.subrun_runs().clone();
         let title = session.title().map(str::to_string);
-        // B 的装配记录沿用 A 的 `assembly`。**读失败 / 缺键一律拒绝**：静默置空会造出
-        // 「assembly 缺失的 B」并把 A 永久删除（K3 P2-3）。
-        let assembly = jsonl::read_session_open(session.jsonl().path())
+        // B 的装配记录沿用 A 的 `assembly`，从**被删除的那份留存**读（交互轮 = 自己的文件；
+        // 恢复件 = 恢复来源 A——当前会话是惰性恢复，还没有文件）。**读失败 / 缺键一律拒绝**：
+        // 静默置空会造出「assembly 缺失的 B」并把 A 永久删除（K3 P2-3）。
+        let delete_path =
+            jsonl::vault_sessions_path(&scope.vault_id)?.join(format!("{delete_id}.jsonl"));
+        let assembly = jsonl::read_session_open(&delete_path)
             .map_err(|error| {
                 CommandError::new(
                     "harness_withdraw_read_failed",
-                    "无法读取当前会话的装配记录，撤回已取消；原会话未改动",
+                    "无法读取会话的装配记录，撤回已取消；原会话未改动",
                 )
                 .param("reason", error.message)
             })?
@@ -1175,18 +1227,30 @@ impl Runtime {
             .and_then(first_paragraph_text);
 
         // 栅栏从「检查恢复占用 / 派生」一直持到「删除 A」：与 `resume_session` 的登记互斥，
-        // 独立 Runtime 的恢复因此不可能落在两次扫描之间（K3 P1-3）。释放放在换入 B 之前
-        // （换入会 drop A，A 若本身是恢复出来的会话会在 Drop 里释放占用）。
+        // 独立 Runtime 的恢复因此不可能落在两次扫描之间（K3 P1-3）。本会话自己的占用不在
+        // 这里释放——成功换入 B 时旧 `Session` 被 drop，占用才随之释放（失败路径必须保留）。
         let fence = session::lock_resume_fence();
-        if session::resume_claim_count(&active_id) > 0 {
+        // 恢复件撤回：本会话自己也登记着从来源恢复的占用——**不释放**，只按「除自己之外」的
+        // 占用拒绝（K3 P1-2）：撤回中途失败时本会话仍可能用内存里的旧历史发布派生文件，
+        // 提前释放会让独立 Runtime 趁隙恢复并删掉来源，撤回被复活。成功换出（旧 Session 被
+        // drop）时占用才由 `ResumeClaim` 释放，失败路径因此天然保留保护。
+        if session.foreign_resume_claim_count(&delete_id) > 0 {
             return Err(CommandError::new(
                 "harness_withdraw_resume_in_flight",
                 "有另一个会话正在从它恢复（如 cron 专用会话）；请等这次运行结束后再撤回",
             ));
         }
+        // 恢复件的祖先链副本检测：被撤回的消息若还留在更早的留存里，删掉来源之后切回那份
+        // 会话就是复活——命中即拒绝，不静默留副本（change withdraw-restored-user-message-nov27）。
+        if matches!(source, session::WithdrawSource::Restored(_)) {
+            let copies = ancestor_copy_ids(scope, &delete_id, &target_item)?;
+            if !copies.is_empty() {
+                return Err(withdraw_copy_error(&copies));
+            }
+        }
         // 派生会话初检：A 有任何一个「从它恢复出来」的会话就拒绝；任何不可读候选一律
         // fail closed（无法排除派生 = 不允许删除 A）。
-        let derived = derived_session_ids(scope, &active_id, None)?;
+        let derived = derived_session_ids(scope, &delete_id, None)?;
         if !derived.is_empty() {
             return Err(derived_withdraw_error(&derived));
         }
@@ -1198,7 +1262,7 @@ impl Runtime {
             "session_id": new_id,
             "vault_root": scope.key(),
             "opened_from": "withdraw",
-            "restored_from": active_id,
+            "restored_from": delete_id,
             "provider": config.provider,
             "model": llm::active_model(config),
             "wire_api": config.wire_api(),
@@ -1220,7 +1284,7 @@ impl Runtime {
         initial_records.push(jsonl::withdraw_seed_payload(&prefix));
         let writer = jsonl::JsonlWriter::create_restore(
             &new_id,
-            &active_id,
+            &delete_id,
             &scope.vault_id,
             &open_payload,
             initial_records,
@@ -1249,12 +1313,11 @@ impl Runtime {
         let after_publish = (|| -> Result<(), CommandError> {
             // 发布后复核（排除刚建的 B）：同一把栅栏内，恢复登记不可能插进来；仍复核一次
             // 兜住「B 发布期间外部进程直接落盘派生文件」这类盘面变化。
-            let derived = derived_session_ids(scope, &active_id, Some(&new_id))?;
+            let derived = derived_session_ids(scope, &delete_id, Some(&new_id))?;
             if !derived.is_empty() {
                 return Err(derived_withdraw_error(&derived));
             }
-            let a_path =
-                jsonl::vault_sessions_path(&scope.vault_id)?.join(format!("{active_id}.jsonl"));
+            let a_path = delete_path.clone();
             if a_path.exists() {
                 #[cfg(test)]
                 let removed =
@@ -1470,6 +1533,117 @@ fn derived_withdraw_error(ids: &[String]) -> CommandError {
         "harness_withdraw_derived_exists",
         format!(
             "该会话还有派生出来的会话（{}）；撤回会留下悬空的恢复来源，请先处理这些会话后再试",
+            ids.join("、")
+        ),
+    )
+    .param("sessions", ids.join(","))
+}
+
+/// `open.restored_from` 的规范化读取（空串 / 自指 ⇒ `None`，与派生检测同口径）。
+fn restored_from_of(open: &serde_json::Value, id: &str) -> Option<String> {
+    open["restored_from"]
+        .as_str()
+        .filter(|parent| !parent.is_empty() && *parent != id)
+        .map(str::to_string)
+}
+
+/// 一条留存记录里是否含 `item`（项级深比较，不是正文匹配）：会话轮次请求的 `messages` 与
+/// 撤回 fork 的 `withdraw_seed` 都是历史正文的持久化载体——两者都查，否则「祖先是一份撤回
+/// fork」时副本会被漏掉。
+fn record_contains_item(record: &serde_json::Value, item: &serde_json::Value) -> bool {
+    let messages = match record["kind"].as_str() {
+        Some("llm_request") => record["request"]["messages"].as_array(),
+        Some(jsonl::WITHDRAW_SEED_KIND) => record["messages"].as_array(),
+        _ => None,
+    };
+    messages.is_some_and(|messages| messages.iter().any(|existing| existing == item))
+}
+
+/// 恢复来源的祖先链上仍包含 `item` 的留存 id（change withdraw-restored-user-message-nov27）。
+///
+/// 恢复件撤回删除的是恢复来源 A，而 A 自己也可能是一份恢复件：它继承来的消息在更早的留存里
+/// 还有副本，删掉 A 之后切回那份会话就是复活。删除前沿 `restored_from` 链逐层读留存、按
+/// **项级深比较**找同一条消息（MUST NOT 用正文匹配）。任何一层不可读 ⇒ fail closed；链在盘上
+/// 断开（祖先文件不存在）时只剩可读部分——那份留存已不在，没有可比的副本面。
+fn ancestor_copy_ids(
+    scope: &VaultScope,
+    source: &str,
+    item: &serde_json::Value,
+) -> Result<Vec<String>, CommandError> {
+    const MAX_DEPTH: usize = 256;
+    let source_path = jsonl::vault_sessions_path(&scope.vault_id)?.join(format!("{source}.jsonl"));
+    let source_open = jsonl::read_session_open(&source_path).map_err(|error| {
+        CommandError::new(
+            "harness_withdraw_scan_failed",
+            format!(
+                "无法读取恢复来源的首行（{} 不可读），为安全起见不撤回：{}",
+                source_path.display(),
+                error.message
+            ),
+        )
+        .param("path", source_path.display().to_string())
+        .param("reason", error.message)
+    })?;
+    let mut copies = Vec::new();
+    let mut visited: HashSet<String> = HashSet::new();
+    visited.insert(source.to_string());
+    let mut current = restored_from_of(&source_open, source);
+    let mut depth = 0;
+    while let Some(id) = current {
+        let path = jsonl::vault_sessions_path(&scope.vault_id)?.join(format!("{id}.jsonl"));
+        if !path.exists() {
+            // 链在盘上断开：这份祖先已不存在，没有可读的副本面。
+            break;
+        }
+        // 环或超深：剩余链路枚举不完，就**无法证明没有副本**——fail closed，不当作「扫完
+        // 了为空」继续删来源（K3 P2）。
+        if depth >= MAX_DEPTH || !visited.insert(id.clone()) {
+            let reason = if depth >= MAX_DEPTH {
+                "ancestor depth exceeded"
+            } else {
+                "ancestor cycle"
+            };
+            return Err(CommandError::new(
+                "harness_withdraw_scan_failed",
+                format!(
+                    "无法确认更早的留存里是否还有这条消息（祖先恢复链出现环或超过深度上限 {MAX_DEPTH}），撤回已取消：{}",
+                    path.display()
+                ),
+            )
+            .param("path", path.display().to_string())
+            .param("reason", reason));
+        }
+        depth += 1;
+        let file = jsonl::read_session_file(&path).map_err(|error| {
+            CommandError::new(
+                "harness_withdraw_scan_failed",
+                format!(
+                    "无法确认更早的留存里是否还有这条消息（{} 不可读），为安全起见不撤回：{}",
+                    path.display(),
+                    error.message
+                ),
+            )
+            .param("path", path.display().to_string())
+            .param("reason", error.message)
+        })?;
+        if file
+            .records
+            .iter()
+            .any(|record| record_contains_item(record, item))
+        {
+            copies.push(id.clone());
+        }
+        current = restored_from_of(&file.session_open, &id);
+    }
+    copies.sort();
+    Ok(copies)
+}
+
+fn withdraw_copy_error(ids: &[String]) -> CommandError {
+    CommandError::new(
+        "harness_withdraw_copy_exists",
+        format!(
+            "撤回已取消：这条消息还留在更早的会话留存（{}）里，删除后仍会留下副本；请先处理这些留存后再试",
             ids.join("、")
         ),
     )
@@ -1975,11 +2149,23 @@ fn restored_messages_ts(
 ///   记过闸的调用、不记 call 关联，同一会话内同工具既有 allow 直执行又过闸时，两侧次序对
 ///   不齐，decision 会贴错行——精确配对待 sidecar 记 request id ↔ call id。仅影响恢复路径的
 ///   展示字段（live 路径 decision 由 handle_call 直写，无此问题）。
+#[cfg(test)]
 fn restored_panel_messages(
     restored: &[serde_json::Value],
     restored_ts: &[Option<u64>],
     approvals: &[(String, String)],
 ) -> Vec<session::PanelMessage> {
+    restored_panel_messages_with_users(restored, restored_ts, approvals).0
+}
+
+/// [`restored_panel_messages`] 的唯一实现：另返回「input 下标 → 该 user 项在面板里的行下标」
+/// 的映射（change withdraw-restored-user-message-nov27 用它重建恢复件的撤回目标）。
+/// 只有真正产出面板行的 user 项进映射——没有行的项不能当目标（撤回会取空截断点）。
+fn restored_panel_messages_with_users(
+    restored: &[serde_json::Value],
+    restored_ts: &[Option<u64>],
+    approvals: &[(String, String)],
+) -> (Vec<session::PanelMessage>, Vec<(usize, usize)>) {
     // 工具结果按 call_id 先成图：调用项与输出项在 wire 里成组分离（同轮全部调用在前、
     // 输出在后，同序配对——provider 合同，M360），function_call 项落面板消息时按此回填。
     let mut outputs: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
@@ -2003,6 +2189,8 @@ fn restored_panel_messages(
             .push_back(decision.as_str());
     }
     let mut messages = Vec::new();
+    // input 下标 → 面板行下标（只收真正产出面板行的 user 项；恢复件撤回目标的唯一来源）。
+    let mut user_panel_index: Vec<(usize, usize)> = Vec::new();
     let mut pending_reasoning: Option<String> = None;
     for (index, item) in restored.iter().enumerate() {
         let at = restored_ts.get(index).copied().flatten().unwrap_or(0);
@@ -2072,6 +2260,7 @@ fn restored_panel_messages(
                             decision: None,
                             ts: at,
                         });
+                        user_panel_index.push((index, messages.len() - 1));
                     }
                     // 显式 Skill 痕迹（change add-explicit-skill-trace-nov26）：用户消息项的本地字段
                     // 是恢复路径的唯一重建源——live 与恢复共用 `explicit_skill_panel_message`，
@@ -2116,7 +2305,26 @@ fn restored_panel_messages(
             },
         }
     }
-    messages
+    (messages, user_panel_index)
+}
+
+/// 恢复期重建撤回目标（change withdraw-restored-user-message-nov27）：灌回 input 里**最后一条
+/// 带交互来源标记的 user 项**及其面板行下标。
+///
+/// 判据只看持久化的机器标记（[`turn::USER_ORIGIN_FIELD`]），MUST NOT 用正文文本推断——后台通知
+/// 与压缩摘要同样是 user 项，通知正文里的标记串不是来源证据。没有标记（本 change 之前的旧留存）、
+/// 命中项没有面板行（内容为空）时返回 `None`：恢复出的会话就是没有可撤回目标，安全拒绝，
+/// MUST NOT 猜一条目标、MUST NOT 给旧记录补写标记。
+fn restored_withdraw_target(
+    input: &[serde_json::Value],
+    user_panel_index: &[(usize, usize)],
+) -> Option<session::WithdrawTarget> {
+    let input = input.iter().rposition(turn::is_interactive_user_item)?;
+    let panel = user_panel_index
+        .iter()
+        .find(|(index, _)| *index == input)
+        .map(|(_, panel)| *panel)?;
+    Some(session::WithdrawTarget { input, panel })
 }
 
 /// 取得（必要时建立）该 vault 的会话：会话不存在时装配系统上下文、开新留存文件

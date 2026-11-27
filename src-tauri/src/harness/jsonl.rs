@@ -525,6 +525,11 @@ impl RestorePublishError {
     }
 }
 
+/// 测试注入：下一条恢复文件发布强制失败（撤回的 B 发布失败路径）。
+#[cfg(test)]
+pub(crate) static FAIL_NEXT_RESTORE_PUBLISH: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// 发布错误的信封化（撤回路径要把失败如实回执给用户；健康上报路径仍走 `fail`）。
 fn publish_error(error: RestorePublishError) -> CommandError {
     CommandError::new(
@@ -919,6 +924,18 @@ impl JsonlWriter {
     }
 
     fn publish_restore(&mut self) -> Result<(), RestorePublishError> {
+        // 测试注入：撤回 fork 的 B 发布失败（与 harness 的 `FAIL_NEXT_SOURCE_UNLINK` 同一
+        // 纪律——只在测试构建存在，生产路径没有这条分支）。
+        #[cfg(test)]
+        if FAIL_NEXT_RESTORE_PUBLISH.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            return Err(RestorePublishError::new(
+                "injected",
+                std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "injected restore publish failure",
+                ),
+            ));
+        }
         let lines = self
             .restore
             .as_ref()

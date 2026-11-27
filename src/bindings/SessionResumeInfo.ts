@@ -32,4 +32,11 @@ messages: Array<PanelMessage>,
 /**
  * 是否真正替换了当前会话；false 表示当前文件直切或同源 pending 复用。
  */
-switched: boolean, };
+switched: boolean, 
+/**
+ * 恢复出的会话是否可撤回最近一条用户消息（change withdraw-restored-user-message-nov27）。
+ * 恢复流程不重取 `harness_state`，撤回钮的可见性因此要随回执一起回来——取值与快照
+ * `withdrawable` 同一判据（`Session::withdrawable`）。恒在场；`switched=false` 时是当前
+ * 会话的读数（前端不重放消息，但可见性仍以它为准）。
+ */
+withdrawable: boolean, };

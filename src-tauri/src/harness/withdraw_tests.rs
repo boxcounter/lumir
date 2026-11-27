@@ -108,7 +108,30 @@ impl Fixture {
         self.seed_turn_with_item(session::user_item(user), user);
     }
 
+    /// 生产口径的交互用户项：与 `run_turn_core` 的入队点同形（带来源标记）。恢复期的撤回
+    /// 目标只认这个标记——seed 不带它就等于「本 change 之前的旧留存」。
+    fn interactive_item(item: &serde_json::Value) -> serde_json::Value {
+        let mut item = item.clone();
+        item[super::turn::USER_ORIGIN_FIELD] =
+            serde_json::json!(super::turn::USER_ORIGIN_INTERACTIVE);
+        item
+    }
+
     fn seed_turn_with_item(&self, item: serde_json::Value, panel_text: &str) {
+        self.seed_turn_with_item_marked(item, panel_text, true);
+    }
+
+    /// 旧留存口径：用户项**不带**来源标记（本 change 之前的记录）。
+    fn seed_legacy_turn(&self, user: &str) {
+        self.seed_turn_with_item_marked(session::user_item(user), user, false);
+    }
+
+    fn seed_turn_with_item_marked(&self, item: serde_json::Value, panel_text: &str, marked: bool) {
+        let item = if marked {
+            Self::interactive_item(&item)
+        } else {
+            item
+        };
         self.runtime
             .acquire_turn(&self.scope, &self.config)
             .unwrap();
@@ -149,6 +172,7 @@ impl Fixture {
         self.runtime
             .acquire_turn(&self.scope, &self.config)
             .unwrap();
+        let item = Self::interactive_item(&session::user_item(user));
         self.runtime
             .with_session(&self.scope, |s| {
                 s.set_last_turn_origin(TurnOrigin::Interactive);
@@ -156,7 +180,7 @@ impl Fixture {
                     input: s.input().len(),
                     panel: s.panel_len(),
                 };
-                s.push_input(session::user_item(user));
+                s.push_input(item);
                 s.push_panel(panel("user", user));
                 s.set_withdraw_target(target);
                 let request = serde_json::json!({
@@ -187,6 +211,31 @@ impl Fixture {
             })
             .unwrap();
         self.runtime.release_turn(&self.scope);
+    }
+
+    /// 把当前 input 原样落成一条 `llm_request`（模拟非交互轮发布 / 让通知进留存）。
+    fn persist_input(&self) {
+        self.runtime
+            .with_session(&self.scope, |s| {
+                let request = serde_json::json!({
+                    "kind": "llm_request",
+                    "request": {
+                        "system": s.system(),
+                        "messages": s.input().to_vec(),
+                        "params": {"thinking": "high"},
+                    },
+                });
+                s.jsonl().record(&request);
+            })
+            .unwrap();
+    }
+
+    /// 丢弃内存会话（文件留在盘上），再按留存恢复：恢复路径的正规入口。
+    fn restore(&self, source: &str) -> session::SessionResumeInfo {
+        self.runtime.new_session(&self.scope).unwrap();
+        self.runtime
+            .resume_session(&self.scope, &self.config, source)
+            .expect("留存可恢复")
     }
 
     /// 模拟 blocked / 触顶分支：不起新回合，把一条后台通知直接压进 input + 面板。
@@ -792,4 +841,421 @@ fn withdraw_degrades_old_skill_trace_without_raw_name() {
         vec!["ghost-name"],
         "不得从省略号猜全名"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 恢复出来的会话撤回（change withdraw-restored-user-message-nov27）
+// ---------------------------------------------------------------------------
+
+/// 恢复出来的交互会话：从最后一条带来源标记的用户消息重建目标，撤回照常执行——删的是
+/// **恢复来源**的留存（恢复是惰性发布，当前会话没有自己的文件），切走再恢复 B 不复活。
+#[test]
+fn withdraw_works_after_restoring_an_interactive_session() {
+    let fixture = Fixture::new("restore-withdraw");
+    fixture.seed_turn("q1-ALPHA");
+    fixture.seed_turn("q2-WITHDRAWN");
+    let a_id = fixture.current_id();
+    let a_path = fixture.session_file(&a_id);
+
+    let resumed = fixture.restore(&a_id);
+    assert!(resumed.switched);
+    assert!(
+        resumed.withdrawable,
+        "恢复回执必须带可撤回读数（前端不重取快照，钮的可见性靠它）"
+    );
+    assert!(
+        fixture
+            .runtime
+            .snapshot(&fixture.scope, &fixture.config)
+            .withdrawable,
+        "快照与恢复回执同一判据"
+    );
+
+    let info = fixture
+        .runtime
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect("恢复出来的会话可以撤回")
+        .info
+        .unwrap();
+    assert_eq!(info.withdrawn.text, "q2-WITHDRAWN");
+    assert_eq!(
+        info.messages
+            .iter()
+            .map(|m| m.text.as_deref().unwrap_or(""))
+            .collect::<Vec<_>>(),
+        vec!["q1-ALPHA", "答复"],
+        "面板只剩撤回点之前的历史"
+    );
+    assert!(
+        !a_path.exists(),
+        "恢复来源 A 的留存必须被删除（当前会话没有自己的文件可删）"
+    );
+    assert_eq!(
+        fixture.session_files(),
+        vec![fixture.session_file(&info.session_id)]
+    );
+    let content = std::fs::read_to_string(fixture.session_file(&info.session_id)).unwrap();
+    assert!(content.contains("opened_from\":\"withdraw"));
+    assert!(
+        content.contains(&format!("restored_from\":\"{a_id}\"")),
+        "B 的谱系指向被删除的恢复来源 A"
+    );
+    assert!(
+        !content.contains("q2-WITHDRAWN"),
+        "被撤回文本不得进入 B 的任何记录"
+    );
+
+    // 切走再恢复 B：前缀在、被撤回的那句不在（不复活）。
+    let again = fixture.restore(&info.session_id);
+    assert!(
+        !again
+            .messages
+            .iter()
+            .any(|m| m.text.as_deref() == Some("q2-WITHDRAWN")),
+        "被撤回的消息不得随恢复复活"
+    );
+    assert_eq!(
+        again
+            .messages
+            .iter()
+            .map(|m| m.text.as_deref().unwrap_or(""))
+            .collect::<Vec<_>>(),
+        vec!["q1-ALPHA", "答复"]
+    );
+}
+
+/// 本 change 之前的旧留存没有来源标记：恢复后没有可撤回目标——安全拒绝，不猜、不补写。
+#[test]
+fn restored_legacy_session_without_origin_marker_is_not_withdrawable() {
+    let fixture = Fixture::new("restore-legacy");
+    fixture.seed_legacy_turn("q1-LEGACY");
+    let a_id = fixture.current_id();
+    let a_path = fixture.session_file(&a_id);
+
+    let resumed = fixture.restore(&a_id);
+    assert!(!resumed.withdrawable, "旧留存没有来源标记 ⇒ 没有可撤回目标");
+    assert!(
+        !fixture
+            .runtime
+            .snapshot(&fixture.scope, &fixture.config)
+            .withdrawable
+    );
+    let error = fixture
+        .runtime
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect_err("旧留存必须拒绝");
+    assert_eq!(error.code, "harness_withdraw_not_applicable");
+    assert!(a_path.exists(), "拒绝时来源留存不动");
+    assert_eq!(fixture.session_files(), vec![a_path]);
+}
+
+/// 恢复出的会话在最后一条交互消息之后还有后台通知：目标是带标记的那条，尾部通知让撤回
+/// 拒绝——通知不被吞掉、不创建 B。
+#[test]
+fn restored_session_with_a_trailing_notice_refuses_to_withdraw() {
+    let fixture = Fixture::new("restore-notice");
+    fixture.seed_turn("q1-ALPHA");
+    let a_id = fixture.current_id();
+    fixture.push_notice("后台完成：某任务结束");
+    // 通知随下一条请求进留存（blocked / 触顶分支的真实形态：input 里是 user 项）。
+    fixture.persist_input();
+    let a_path = fixture.session_file(&a_id);
+
+    let resumed = fixture.restore(&a_id);
+    assert!(resumed.withdrawable, "目标仍是最后一条带标记的用户消息");
+    let error = fixture
+        .runtime
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect_err("尾部通知必须拒绝");
+    assert_eq!(error.code, "harness_withdraw_tail_notice");
+    assert!(a_path.exists(), "拒绝时来源留存不动");
+    assert_eq!(fixture.session_files(), vec![a_path]);
+}
+
+/// 恢复后跑过 cron / 自动唤醒轮：轮次来源优先，恢复目标不得复活。
+#[test]
+fn restored_target_does_not_survive_a_non_interactive_turn() {
+    let fixture = Fixture::new("restore-cron");
+    fixture.seed_turn("q1-ALPHA");
+    let a_id = fixture.current_id();
+    fixture.restore(&a_id);
+    fixture
+        .runtime
+        .with_session(&fixture.scope, |s| s.set_last_turn_origin(TurnOrigin::Cron))
+        .unwrap();
+
+    assert!(
+        !fixture
+            .runtime
+            .snapshot(&fixture.scope, &fixture.config)
+            .withdrawable,
+        "非交互轮之后快照不得报告可撤回"
+    );
+    let error = fixture
+        .runtime
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect_err("cron 轮之后必须拒绝");
+    assert_eq!(error.code, "harness_withdraw_not_applicable");
+    assert!(fixture.session_file(&a_id).exists(), "来源留存不动");
+}
+
+/// 恢复来源自己也是一份恢复件，且被撤回的消息仍留在更早的留存里：删来源会留下副本，
+/// 因此拒绝（不级联删除、不静默留副本）。
+#[test]
+fn withdraw_refuses_when_an_ancestor_retention_still_holds_the_message() {
+    let fixture = Fixture::new("restore-ancestor");
+    // Z：真实交互会话（q1 在这里第一次入队）。
+    fixture.seed_turn("q1-ALPHA");
+    let z_id = fixture.current_id();
+    // A：从 Z 恢复出来的留存，由一条非交互轮次发布（cron / 自动唤醒同形：不带来源标记）。
+    let restored_a = fixture.restore(&z_id);
+    let a_id = restored_a.session_id.clone();
+    assert!(restored_a.withdrawable, "A 的恢复目标就是 Z 里的 q1");
+    fixture.persist_input();
+    assert!(fixture.session_file(&a_id).exists(), "A 已发布");
+
+    // 用户再恢复 A 并撤回 q1：q1 仍在 Z 里，删 A 会留下副本。
+    let resumed = fixture.restore(&a_id);
+    assert!(resumed.withdrawable);
+    let error = fixture
+        .runtime
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect_err("更早的留存仍含该消息必须拒绝");
+    assert_eq!(error.code, "harness_withdraw_copy_exists");
+    assert_eq!(
+        error.params.get("sessions").map(String::as_str),
+        Some(z_id.as_str())
+    );
+    assert!(fixture.session_file(&a_id).exists(), "A 不被删除");
+    assert!(fixture.session_file(&z_id).exists(), "Z 不动");
+    assert_eq!(fixture.session_files().len(), 2, "拒绝时不得创建 B");
+}
+
+/// 恢复来源有派生会话在场时，沿用既有的派生拒绝（删的是来源，扫描面随之换成它）。
+#[test]
+fn withdraw_from_a_restored_session_refuses_when_the_source_has_derived_sessions() {
+    let fixture = Fixture::new("restore-derived");
+    fixture.seed_turn("q1-ALPHA");
+    let a_id = fixture.current_id();
+    let child_id = "s1700000000000-child02";
+    std::fs::write(
+        fixture.session_file(child_id),
+        format!(
+            "{{\"ts\":1,\"payload\":{{\"kind\":\"session_open\",\"session_id\":\"{child_id}\",\"vault_root\":{:?},\"opened_from\":\"restore\",\"restored_from\":\"{a_id}\",\"system\":\"S\"}}}}\n",
+            fixture.scope.key()
+        ),
+    )
+    .unwrap();
+
+    let resumed = fixture.restore(&a_id);
+    assert!(resumed.withdrawable);
+    let error = fixture
+        .runtime
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect_err("来源有派生会话必须拒绝");
+    assert_eq!(error.code, "harness_withdraw_derived_exists");
+    assert_eq!(
+        error.params.get("sessions").map(String::as_str),
+        Some(child_id)
+    );
+    assert!(fixture.session_file(&a_id).exists());
+    assert_eq!(fixture.session_files().len(), 2, "拒绝时不得创建 B");
+}
+
+/// 写一份只有首行的会话留存（祖先链 / 派生检测的素材）。
+fn write_bare_session_open(fixture: &Fixture, id: &str, restored_from: &str) {
+    let payload = serde_json::json!({
+        "kind": "session_open",
+        "session_id": id,
+        "vault_root": fixture.scope.key(),
+        "opened_from": "restore",
+        "restored_from": restored_from,
+        "system": "S",
+    });
+    std::fs::write(
+        fixture.session_file(id),
+        format!(
+            "{{\"ts\":1,\"payload\":{}}}\n",
+            serde_json::to_string(&payload).unwrap()
+        ),
+    )
+    .unwrap();
+}
+
+/// 改写 A 首行 `session_open` 的若干字段（造链式恢复前提；不改任何记录行）。
+fn patch_session_open(fixture: &Fixture, id: &str, patch: serde_json::Value) {
+    let path = fixture.session_file(id);
+    let content = std::fs::read_to_string(&path).unwrap();
+    let (first, rest) = content.split_once('\n').unwrap();
+    let mut record: serde_json::Value = serde_json::from_str(first).unwrap();
+    for (key, value) in patch.as_object().unwrap() {
+        record["payload"][key] = value.clone();
+    }
+    std::fs::write(
+        &path,
+        format!("{}\n{rest}", serde_json::to_string(&record).unwrap()),
+    )
+    .unwrap();
+}
+
+/// K3 P1-2：恢复件撤回**失败后不得释放自身占用**——否则独立 Runtime 可以趁隙恢复并删掉
+/// 来源，本会话之后再用内存里的旧历史发布，撤回被复活。删除失败、发布失败、双故障各覆盖
+/// 一次，并断言「失败后 R 仍占着 A、外来恢复的撤回被拒；drop R 后才放行」。
+#[test]
+fn failed_restored_withdraw_keeps_own_resume_claim() {
+    let fixture = Fixture::new("restore-claim-kept");
+    fixture.seed_turn("q1-ALPHA");
+    let a_id = fixture.current_id();
+    let a_path = fixture.session_file(&a_id);
+
+    // R：交互运行时从 A 惰性恢复，撤回在 unlink 一步失败。
+    let r = fixture.restore(&a_id);
+    assert!(r.withdrawable);
+    super::FAIL_NEXT_SOURCE_UNLINK.store(true, std::sync::atomic::Ordering::SeqCst);
+    let error = fixture
+        .runtime
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect_err("删除失败必须报错");
+    assert_eq!(error.code, "harness_withdraw_delete_failed");
+    assert_eq!(
+        session::resume_claim_count(&a_id),
+        1,
+        "失败后 R 必须继续占着恢复来源（K3 P1-2）"
+    );
+
+    // C：另一 Runtime 从 A 恢复，撤回必须被 R 的占用拦住（R 尚未发布，扫描看不到它）。
+    let c = Runtime::isolated();
+    let resumed = c
+        .resume_session(&fixture.scope, &fixture.config, &a_id)
+        .expect("C 可以恢复");
+    assert!(resumed.withdrawable);
+    let blocked = c
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect_err("R 的占用仍在，C 不得撤回");
+    assert_eq!(blocked.code, "harness_withdraw_resume_in_flight");
+    assert!(a_path.exists(), "被拦时来源留存不动");
+
+    // drop R（切走 = 丢弃内存态）：占用释放，C 才被放行。
+    fixture.runtime.new_session(&fixture.scope).unwrap();
+    assert_eq!(
+        session::resume_claim_count(&a_id),
+        1,
+        "此时只剩 C 自己那一份"
+    );
+    let done = c
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect("R 释放后 C 可撤回");
+    assert!(done.info.is_some());
+    assert!(!a_path.exists(), "C 撤回删除的是恢复来源 A");
+}
+
+/// K3 P1-2：发布 B 失败时 R 仍是当前会话，占用必须仍在（失败路径天然保留）。
+#[test]
+fn failed_restore_publish_keeps_own_resume_claim() {
+    let fixture = Fixture::new("restore-claim-publish");
+    fixture.seed_turn("q1-ALPHA");
+    let a_id = fixture.current_id();
+    let a_path = fixture.session_file(&a_id);
+    fixture.restore(&a_id);
+
+    super::jsonl::FAIL_NEXT_RESTORE_PUBLISH.store(true, std::sync::atomic::Ordering::SeqCst);
+    let error = fixture
+        .runtime
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect_err("发布失败必须报错");
+    assert_eq!(error.code, "harness_withdraw_publish_failed");
+    assert_eq!(
+        session::resume_claim_count(&a_id),
+        1,
+        "发布失败后 R 的占用必须仍在"
+    );
+    assert!(a_path.exists());
+    assert_eq!(fixture.session_files(), vec![a_path], "失败不留下 B");
+}
+
+/// K3 P1-2：删除失败且清理 B 也失败（双故障）时，占用同样必须仍在。
+#[test]
+fn double_fault_keeps_own_resume_claim() {
+    let fixture = Fixture::new("restore-claim-double");
+    fixture.seed_turn("q1-ALPHA");
+    let a_id = fixture.current_id();
+    let a_path = fixture.session_file(&a_id);
+    fixture.restore(&a_id);
+
+    super::FAIL_NEXT_SOURCE_UNLINK.store(true, std::sync::atomic::Ordering::SeqCst);
+    super::FAIL_NEXT_CLEANUP.store(true, std::sync::atomic::Ordering::SeqCst);
+    let error = fixture
+        .runtime
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect_err("双故障必须报错");
+    assert_eq!(error.code, "harness_withdraw_rollback_incomplete");
+    assert_eq!(
+        session::resume_claim_count(&a_id),
+        1,
+        "双故障后 R 的占用必须仍在"
+    );
+    assert!(a_path.exists(), "A 保留");
+}
+
+/// K3 P2：祖先链出现环时无法枚举剩余链路 ⇒ 必须 fail closed，不能当作「扫完为空」删来源。
+#[test]
+fn ancestor_cycle_fails_closed() {
+    let fixture = Fixture::new("restore-ancestor-cycle");
+    fixture.seed_turn("q1-ALPHA");
+    let a_id = fixture.current_id();
+    let a_path = fixture.session_file(&a_id);
+    // A → cycle-b → A：首行互指成环（不改任何记录行）。
+    patch_session_open(
+        &fixture,
+        &a_id,
+        serde_json::json!({ "restored_from": "s1700000000000-cycle-b" }),
+    );
+    write_bare_session_open(&fixture, "s1700000000000-cycle-b", &a_id);
+
+    let resumed = fixture.restore(&a_id);
+    assert!(resumed.withdrawable);
+    let error = fixture
+        .runtime
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect_err("祖先链成环必须拒绝");
+    assert_eq!(error.code, "harness_withdraw_scan_failed");
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("ancestor cycle")
+    );
+    assert!(a_path.exists(), "拒绝时来源留存不动");
+}
+
+/// K3 P2：祖先链超过深度上限时同样 fail closed（枚举不完 = 不能证明没有副本）。
+#[test]
+fn ancestor_depth_limit_fails_closed() {
+    let fixture = Fixture::new("restore-ancestor-depth");
+    fixture.seed_turn("q1-ALPHA");
+    let a_id = fixture.current_id();
+    let a_path = fixture.session_file(&a_id);
+    // A → d1 → d2 → … → d257（全部在盘上，链不提前断开 ⇒ 只能靠深度上限收口）。
+    const DEPTH: usize = 257;
+    let id = |n: usize| format!("s1700000000000-depth-{n:03}");
+    patch_session_open(
+        &fixture,
+        &a_id,
+        serde_json::json!({ "restored_from": id(1) }),
+    );
+    for n in 1..=DEPTH {
+        let parent = if n == DEPTH { String::new() } else { id(n + 1) };
+        write_bare_session_open(&fixture, &id(n), &parent);
+    }
+
+    let resumed = fixture.restore(&a_id);
+    assert!(resumed.withdrawable);
+    let error = fixture
+        .runtime
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect_err("祖先链超深必须拒绝");
+    assert_eq!(error.code, "harness_withdraw_scan_failed");
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("ancestor depth exceeded")
+    );
+    assert!(a_path.exists(), "拒绝时来源留存不动");
 }

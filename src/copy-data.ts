@@ -3141,6 +3141,12 @@ const COPY_TABLE = {
     zh: "选取查询会与 URL 一起发往 DeepSeek。",
     en: "The selection query is sent to DeepSeek together with the URL.",
   },
+  // 恢复件撤回：被撤回的消息还留在更早的会话留存里（链式恢复的祖先副本）。删掉当前来源
+  // 也无法让它消失，因此拒绝并点名那些留存（change withdraw-restored-user-message-nov27）。
+  D1088: {
+    zh: "这条消息还留在更早的会话留存（{sessions}）里，撤回会留下副本；请先处理这些留存后再试",
+    en: "This message also exists in earlier session records ({sessions}), so withdrawing would leave a copy; handle those records first",
+  },
 
 } satisfies Record<string, CopyEntry>;
 
@@ -3181,6 +3187,7 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   harness_withdraw_scan_failed: "D1065",
   harness_withdraw_read_failed: "D1066",
   harness_withdraw_tail_notice: "D1067",
+  harness_withdraw_copy_exists: "D1088",
   vault_not_open: "D159",
   vault_list_failed: "D160",
   config_home_unknown: "D161",
