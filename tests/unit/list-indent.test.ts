@@ -141,6 +141,8 @@ test("引用内列表：插入 / 删除点在最内层 `>` 与其分隔空白之
   moved(caret("> > - a\n> >   - b\n", 2, 8), "outdent", "> > - a\n> > - b\n", "嵌套引用凸排");
   // 引用行本身（`>` 与其后一个分隔空格）不可删
   moved(caret("> - a\n", 1, 4), "outdent", null, "该层已是顶层");
+  // 单个 `> - a` 是该列表的首项：TAB 无操作（与正文首项同判，P1 的钉子）
+  moved(caret("> - a\n", 1, 4), "indent", null, "引用内单首项");
 });
 
 // ---------------------------------------------------------------------------
@@ -201,9 +203,26 @@ test("用户截图形态：6 行嵌套选区逐行凸排，首行与未选中的
 
 test("混合列表 / 非列表选区：只处理列表行", () => {
   moved(selection("para\n- a\n- b\n", 1, 0, 3, 3), "indent", "para\n- a\n  - b\n", "段落不写、首项不动");
+  // 区分度：head 在段落行（反向选区）。旧 head 模型会因「head 不在列表项内」整体 no-op。
+  moved(selection("para\n- a\n- b\n", 3, 3, 1, 0), "indent", "para\n- a\n  - b\n", "head 在段落行也处理列表行");
   // 选区把代码块行也包进来：代码块行跳过，列表行照常
   const doc = "- a\n- b\n\n```\ncode\n```\n- c\n";
   moved(selection(doc, 2, 0, 5, 4), "indent", "- a\n  - b\n\n```\ncode\n```\n- c\n", "代码块行跳过");
+});
+
+test("禁区优先于列表归属：列表项内的表格行 / 缩进代码块行不写", () => {
+  // 表格在列表项内（真 lezer：TableDelimiter < Table < ListItem）
+  const table = "- a\n- b\n  | h1 | h2 |\n  | -- | -- |\n  | v1 | v2 |\n";
+  moved(caret(table, 4, 4), "indent", null, "表格行单独");
+  moved(selection(table, 2, 0, 4, 3), "indent", "- a\n  - b\n  | h1 | h2 |\n  | -- | -- |\n  | v1 | v2 |\n", "选区含表格行：只缩 b");
+  // 缩进代码块在列表项内（CodeText < CodeBlock < ListItem）
+  const code = "- a\n- b\n\n      code line\n";
+  moved(caret(code, 4, 7), "indent", null, "缩进代码块行单独");
+  moved(selection(code, 2, 0, 4, 7), "indent", "- a\n  - b\n\n      code line\n", "选区含代码块行：只缩 b");
+  // HTML 形态：当前 markdown 配置把块级 HTML 解析成 Document 级 Element / Comment（不是 HTMLBlock），
+  // 因此它同样不属于任何 ListItem ⇒ 不写；HTMLBlock 仍留在禁区集合里，与 lists.ts / block-geometry.ts 同口径。
+  const html = "- a\n- b\n  <!-- c -->\n";
+  moved(caret(html, 3, 4), "indent", null, "列表项内的 HTML 注释行");
 });
 
 test("纯空白行不写：空行不产生行尾空格", () => {

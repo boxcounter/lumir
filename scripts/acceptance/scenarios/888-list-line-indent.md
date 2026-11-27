@@ -117,6 +117,8 @@ steps:
         file: { path: list-line-indent-block.md, has: "/^  - echo$/" }
       - label: hotel 回到 2 空格
         file: { path: list-line-indent-block.md, has: "/^  - hotel$/" }
+      - label: 撤销后与原始基线逐字节相同（本文件无见证字符，undo 应完全回到起点）
+        file: { path: list-line-indent-block.md, unchangedSince: 原始基线 }
       - label: 撤销真的写了一次盘（与凸排后基线不同——凸排从未落盘时这条会红）
         file: { path: list-line-indent-block.md, changedSince: 凸排后基线 }
       - shot: 一次撤销后
@@ -134,6 +136,12 @@ steps:
     expect:
       - label: 焦点在编辑器正文里
         ax: { focused: "AXTextArea" }
+
+  - name: 记下反向 fixture 的原始基线（收尾必须与它逐字节比较）
+    do: record
+    as: 反向基线
+    file: list-line-indent-block-reverse.md
+
   - name: 光标下移到第 8 行并到行尾（⌃N ×7 + ⌃E）
     do: keys
     keys:
@@ -192,8 +200,12 @@ steps:
         file: { path: list-line-indent-block-reverse.md, has: "/^  - golf$/" }
       - label: hotel 凸一层
         file: { path: list-line-indent-block-reverse.md, has: "/^- hotel$/" }
-      - label: 未选中的 alpha / bravo / india 逐字节不动
+      - label: 未选中的首行 alpha 逐字节不动
         file: { path: list-line-indent-block-reverse.md, has: "/^- alpha$/" }
+      - label: 未选中的 bravo 逐字节不动（首行下的子项不受牵连）
+        file: { path: list-line-indent-block-reverse.md, has: "/^  - bravo$/" }
+      - label: 未选中的末行 india 逐字节不动
+        file: { path: list-line-indent-block-reverse.md, has: "/^- india$/" }
       - shot: 反向选区-逐行凸排
 
   - name: 一次 ⌘Z + ⌘S 把反向凸排还原，收尾文件回到原始形态
@@ -209,19 +221,13 @@ steps:
         file: { path: list-line-indent-block-reverse.md, has: "/^    - golf$/" }
       - label: hotel 回到 2 空格
         file: { path: list-line-indent-block-reverse.md, has: "/^  - hotel$/" }
-      - label: 全文件与原始形态一致（首行 alpha 与末行 india 仍在原位）
-        file: { path: list-line-indent-block-reverse.md, has: "/^- alpha$/" }
-      - label: 末行 india 未动
-        file: { path: list-line-indent-block-reverse.md, has: "/^- india$/" }
+      - label: 撤销后反向 fixture 与反向基线逐字节相同
+        file: { path: list-line-indent-block-reverse.md, unchangedSince: 反向基线 }
 teardown:
-  - label: 收尾：文件回到原始形态（charlie / golf 4 空格、echo / foxtrot / hotel 2 空格）
-    file: { path: list-line-indent-block-reverse.md, has: "/^    - charlie$/" }
-  - label: 收尾：delta 4 空格
-    file: { path: list-line-indent-block-reverse.md, has: "/^    - delta$/" }
-  - label: 收尾：echo 2 空格
-    file: { path: list-line-indent-block-reverse.md, has: "/^  - echo$/" }
-  - label: 收尾：foxtrot 2 空格
-    file: { path: list-line-indent-block-reverse.md, has: "/^  - foxtrot$/" }
+  - label: 收尾：正向 fixture 与原始基线逐字节相同
+    file: { path: list-line-indent-block.md, unchangedSince: 原始基线 }
+  - label: 收尾：反向 fixture 与反向基线逐字节相同
+    file: { path: list-line-indent-block-reverse.md, unchangedSince: 反向基线 }
 ---
 
 # 列表行缩进的行模型：多行选区（change rework-list-tab-line-model-nov27）
@@ -238,11 +244,16 @@ WKWebView 的 Tab keydown，M240 三路归因），所以本场景与场景 43 �
 
 1. **6 行选区逐行凸排**（用户截图形态）：第 3–8 行各按归属项的结构步长删前导空白；
    charlie / delta / golf 从 4 空格回到 2，echo / foxtrot / hotel 从 2 空格回到 0。
-2. **未选中的行逐字节不动**：首行 `- alpha`、首行下的 `  - bravo`、末行 `- india` 全程保持原样——
-   旧项 / 子树模型会「顺手」带走未选中的续行与子项，行模型 MUST NOT。
-3. **正向 / 反向选区同一结果**：第二次从第 8 行向第 3 行反向扩选，凸排后的磁盘形态与正向逐字节相同。
-4. **一次撤销还原**：多行编辑是单次 dispatch，⌘Z 一次回到按键前；场景用「凸排后基线」的
-   `changedSince` 堵死「撤销只在内存里、没写盘」的空过。
+2. **未选中的行逐字节不动**：首行 `- alpha`、首行下的 `  - bravo`、末行 `- india` 的 `has` 是行模型
+   的边界断言。如实登记：本场景的 head 在末行 hotel（无子项），旧 head 模型也只改 hotel 一项，所以
+   这三条**不足以单独区分旧模型**；「不带子树」的区分度由 `tests/unit/list-indent.test.ts` 与
+   chromium 的 bravo + child 用例提供，不要把本场景读成那条回归的唯一防线。
+3. **正向 / 反向选区同一结果**：第二次从第 8 行向第 3 行反向扩选，凸排后的磁盘形态与正向逐字节
+   相同。两份 fixture 内容逐字节相同——反向用例的增量是**选区方向 + 新会话的干净光标状态**，
+   不是新的文档形态。
+4. **一次撤销还原**：多行编辑是单次 dispatch，⌘Z 一次回到按键前；撤销后与「原始基线 / 反向基线」
+   逐字节比较（`unchangedSince`），并用「凸排后基线」的 `changedSince` 堵死「撤销只在内存里、
+   没写盘」的空过。
 
 **不验**：逐像素观感（行首空白的渲染跟随归视觉门禁与 Alex 手感）；`Tab` / `Shift-Tab` 的默认
 绑定链路（chromium 覆盖）；「选区尾落在行首不计入」的精确边界（AX 读不到选区，归
@@ -255,7 +266,7 @@ WKWebView 的 Tab keydown，M240 三路归因），所以本场景与场景 43 �
 | 逐行写回（每行缩进量） | **落盘后的 vault 文件**（行锚点正则） | 编辑器 AX 读数是**渲染后**文本：列表 marker 被 widget 替换、行首空白不进 AX——源码级判据只能从磁盘取 |
 | 命令真的被注入落实 | 每个操作步后的**配对的磁盘正向断言**（`^  - charlie$` 等） | 文件变了且变成期望形态，说明扩选与 ⌘⇧J 都落了地；⌘S 丢键会让正向断言直接红 |
 | [keys] 覆盖本身生效 | 隔离 `config.json` 的内容 | 覆盖没写进去时所有按键空转，文件断言会「恰好保持原样」伪装成 PASS——先读回配置再开跑 |
-| 未选行不动 | 全文件的行锚点 `has`（alpha / bravo / india） | 只看被改行会漏掉「顺手带走未选行」的回归；这三行的 `has` 是行模型的边界判据 |
+| 未选行不动 | 行锚点 `has`（alpha / bravo / india）+ 撤销后的 `unchangedSince` 基线 | 只看被改行会漏掉「顺手带走未选行」的回归；这三行的 `has` 是边界判据——「不带子树」的旧模型区分度由单测 / chromium 的 bravo + child 用例承担，本场景不独自承担 |
 | 一次撤销 | `changedSince: 凸排后基线` + 还原形态 | 只判形态会在「从未落盘」时空过（M256 现场）；先记凸排后基线再比 |
 | 焦点是否仍在编辑器 | `ax: { focused: "AXTextArea" }` | 命令命中即消费的直接后果；焦点跑了说明按键落到别处 |
 

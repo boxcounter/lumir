@@ -108,14 +108,15 @@ marker 列 = `ListMark.from - 行首`；内容列 = marker 宽 + 其后空格。
 
 一律不改写。切断 D2c 的两种理由同时成立：重排原分组会改**未选中**的兄弟项（违反「未触及行
 逐字节不动」）；只重排选中行会制造重复 / 跳号且仍要改写 marker（超出「只写空白」的最小写回面）。
-显示编号由 `src/preview/lists.ts:260` 的 `orderedItemLabel` 按组序计算，不读源码数字，因此渲染
+显示编号由 `src/preview/lists.ts:270` 的 `orderedItemLabel` 按组序计算，不读源码数字，因此渲染
 不会因源码编号不连续而错位；源码与显示在缩进后可能不一致，是行模型的既定代价（proposal 已登记）。
 
 **④ 引用前缀**
 
 插入 / 删除点仍取「最内层 `>` 及其后强制分隔空白之后」，由 `linePrefixEnd` /
-`lineEditablePrefix` 保证：`> - a` TAB 得 `>   - a`，SHIFT+TAB 回到 `> - a`；`> > - a` 同理。
-引用前缀本身（`>` 与它后面的一个分隔空格）MUST NOT 被删除。
+`lineEditablePrefix` 保证：`> - a\n> - b` 的第二项 TAB 得 `> - a\n>   - b`，SHIFT+TAB 回到
+原样；`> > - a\n> > - b` 的第二项同理。引用前缀本身（`>` 与它后面的一个分隔空格）MUST NOT
+被删除；引用内的单个首项与正文首项同判——TAB 无操作（§3.3 ①）。
 
 **⑤ 纯空白行**
 

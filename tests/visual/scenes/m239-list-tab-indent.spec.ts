@@ -226,6 +226,18 @@ test("混合列表 / 非列表选区：只处理列表行（段落逐字节不�
   await expect.poll(() => readDocument(page)).toBe("para\n- alpha\n  - bravo\n");
 });
 
+test("混合列表 / 非列表选区：head 在段落行（反向选区）也照常处理列表行", async ({ page }) => {
+  // 区分度：旧 head 模型只看 `selection.main.head`，head 在段落上会整体 no-op；行模型按行集处理。
+  const doc = "para\n- alpha\n- bravo\n";
+  await openFile(page, { "doc.md": doc }, "doc.md");
+  await setSelection(page, lineEnd(doc, 3), lineStart(doc, 1));
+  await expect.poll(() => activeElementClass(page)).toContain("cm-content");
+
+  await page.keyboard.press("Tab");
+
+  await expect.poll(() => readDocument(page)).toBe("para\n- alpha\n  - bravo\n");
+});
+
 test("单次 dispatch：多行选区一次 ⌘Z 还原整次编辑", async ({ page }) => {
   await openFile(page, { "doc.md": BLOCK }, "doc.md");
   await setSelection(page, lineStart(BLOCK, 3), lineEnd(BLOCK, 8));
