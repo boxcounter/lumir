@@ -47,6 +47,15 @@
 - [x] 4.2 恢复后三格分别复跑全绿（`green-*.log`），全量 8 个 test 亦全绿；红 / 绿读数只落
       `.local/`，不留在代码里。
 - [x] 4.3 记录矩阵发现的**新**产品缺陷：只给最小复现与现状读数，不在本 change 修复。
+      —— 两项，均保留为后续独立处理（本 change 不夹修、不改产品）：
+      ① **表格 cell 内 Enter 拆行**：`| a | b |\n| --- | --- |\n| c | d |\n`，折叠 caret 在
+      `c` 之后按 Enter → `…| c\n| d |\n`（数据行被拆成两行）；选区 `[26,30)` + Enter →
+      `| \nd |\n`。无合同条款覆盖，矩阵按 N/A 记录理由（`tests/unit/editor-transition-matrix.ts`
+      的 N/A 表首条）。
+      ② **只读列表内容起点 Backspace 的选区移动**：上游 markdown 键位算出删 marker 的事务，
+      `changeFilter` 拒收文档改动后只剩选区落到 marker 起点（文档 / 历史不变；同位置 Delete /
+      Enter 不动、非列表行行首 Backspace 也不动）。spec 的只读 Scenario 已按位置与动作显式圈定
+      该例外，未扩成「只读允许移动选区」。
 
 ## 5. 验证
 
@@ -64,4 +73,5 @@
       `red-*.log` / `green-*.log` / `red-no-nativeEditGate.log` / `red-settle-mutation.log`）。
       WebKit 未登记：逐格 `view.setState` 复位在 Playwright WebKit 下会让 Enter 多出一个空行
       （同一文档不做 setState 时与模型一致），差异来自复位手法而非产品行为，见场景头注记。
-- [ ] 5.5 节点 2 / 归档由 tower 执行，本 change 不自行归档
+- [x] 5.5 节点 2 五要件与归档：本分支完成归档（提交 `7ee04ee6`）与 `--archived` 审计 PASS；
+      merge / push 按本批禁令留 tower。

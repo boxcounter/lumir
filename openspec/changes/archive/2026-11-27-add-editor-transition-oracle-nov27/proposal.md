@@ -8,6 +8,28 @@
 > 节点 1：Alex 已采纳 2026-11-27 编辑器治理复盘的最小下一层防线 P0「编辑状态迁移矩阵 + 独立
 > oracle」；tower 派发本 change 时记录「节点 1 已批准」。本 proposal 把该裁决落成可执行的
 > 制品清单与不变量条款，不新增产品行为。
+> 节点 2（归档放行，2026-11-27）：**机器 + 独立评审放行**（`docs/process/openspec-workflow.md` 五要件）。
+> 1. **方案已批准**：节点 1 Alex 已采纳复盘 P0；K3 两轮返修（needs-changes）只收紧断言与覆盖
+>    （保存载荷、settle 完成信号、组合提交、只读族 18 格），无产品行为、无 scope 扩张。
+> 2. **独立 reviewer clean/merge**：K3（2026-11-27）结论 clean/merge，无 P1 / P2，绑定
+>    `5d713146`；本批 rebase 到 `df149f94` 后 `git range-diff a959986e..5d713146 df149f94..eaafe0a6`
+>    显示五个提交逐项等价，新 tip `eaafe0a6`。
+> 3. **tasks 完成**：22/22（5.5 归档已在本分支完成；merge / push 按本批禁令留 tower）。
+> 4. **门禁与证据**（证据落 `.local/missions/add-editor-transition-oracle-nov27/`）：
+>    - 目标 Chromium 矩阵 8/8（`green-restored.log`；rebase 后复跑 16.4s）；矩阵 Node 10/10；
+>      全量前端 2167/2167；
+>    - quick `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0（`gate-quick-pre-archive.log`）；
+>    - docs-check PASS（`docs-check-pre-archive.log`）；`validate --all --strict` 39 passed / 0 failed
+>      （`validate-pre-archive.log`）；
+>    - 本 change 无真机判定面（测试层 + 文档）；未动视觉基线。
+> 5. **规格对账（归档前）**：`openspec-archive-check.mjs` 门禁模式 PASS（9 份 delta / 7 条 MODIFIED /
+>    对比 109 段 / 无静默丢段；`archive-check-pre.log`）；`docs/backlog.md` 80/80 且本 change 有且
+>    仅有一条归档队列条目。
+> **归档完成（2026-11-27）**：归档提交 `7ee04ee6`；包装器 `openspec archive` 输出
+> `Totals: + 1, ~ 0, - 0, → 0`，修链 0 处，`openspec-links` PASS（711 条全可达）；
+> `node scripts/openspec-archive-check.mjs --archived add-editor-transition-oracle-nov27`
+> **PASS**（0 条 MODIFIED / 对比 0 段 / 人工恢复 0 段 / 声明认领 0 段；`archived-audit.log`）。
+> 归档目录 `openspec/changes/archive/2026-11-27-add-editor-transition-oracle-nov27/`。
 
 ## Why
 

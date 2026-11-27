@@ -57,12 +57,12 @@
 - **`vault-open-ignore-set` 未完成项**（M327）：7.2 / 9.3①②⑤ 真机反向验证、10.4 visual 门禁、8.3 残余档复采；下一动作：并成一个小验收 mission。
 - **UX 重做批（攒批）**：demo 探针栏去留、宽表横向溢出裁切是否预期、Emacs 档 3 与全产品键位、会话名钮可发现性；下一动作：随 UX 重做会话一起做。
 - **dogfood 性能专项（攒批）**：内存合同存量超标（218–222MB vs <200MB，门禁 250MB）、`open-1mb-file` 端点仍是占位口径、vault 打开 / 切换仍同步；下一动作：专项立项时拍板。
-
 ## 待真机验收（未收口；场景清单与 item 编号见 COVERAGE.md）
 - `02-math-click`（item 2）→ 下一动作：真机判定「公式后 ⌃B 是否 1–2 次」（AX 不暴露光标 / 选区）。
 - 左栏拖拽（场景 159）→ 下一动作：Alex 手拖复验根落点（M538）。
 - `M455 收尾复跑`（138/140/144/145 与 hover 族 76/87/131/132/133/134）→ 下一动作：真机复跑并登记读数（145 的 `mod+z` 同族观察留给 change 属主裁）。
 ## 归档跟踪队列（oct24 批剩余；口径见 `docs/process/openspec-workflow.md`）
+- **`add-editor-transition-oracle-nov27`**（已归档 2026-11-27，提交 `7ee04ee6`；`--archived` PASS：0 条 MODIFIED / 对比 0 段，纯 ADDED 预期读数）：节点 1 Alex 已采纳 11-27 编辑器治理复盘 P0「编辑状态迁移矩阵 + 独立 oracle」；K3 clean/merge 绑 `5d713146`（rebase 到 `df149f94` 后 `range-diff` 五提交全等价，tip `eaafe0a6`）；quick / 场景 / validate / docs 读数见 proposal 节点 2 块；delta = editor-live-preview 1 条 ADDED（65 格 / 55 高风险 / 87-87 可行对）；无真机面（测试层 + 文档）；两项产品 finding（表格 cell Enter 拆行、只读列表起点 Backspace 选区移动）只登记在归档后的 tasks 4.3，未夹修。
 - **`register-replace-widget-contracts-nov27`**（已归档 2026-11-27，提交 `612a3e7b`；`--archived` PASS：0 条 MODIFIED / 0 段，纯 ADDED 预期读数）：节点 1 Alex「采纳建议，请你安排」；K3 clean/merge 绑 `db6093cd`（rebase 到 `b7d55311` 后 `range-diff` 内容等价，tip `8a5ffb41`）；quick / 全量 / validate / docs 读数见 proposal 节点 2 块；delta = editor-live-preview 1 条 ADDED；无真机面（静态治理 + 文档）。
 - **`govern-editor-evidence-state-nov27`**（归档 2026-11-27，提交 `36c01688`；`--archived` PASS：无 `specs/` 增量，纯文档 skip_specs 零 delta）：节点 1 Alex 2026-11-27 采纳四项合同（五态 / 四类 / 反向必红 / 老证据限定），无扩 scope；独立 reviewer clean/merge 绑 `b4d6a145`（rebase 后内容不变，tip `ff288793`；`.local/reviews/govern-editor-evidence-state-nov27/verdict.md`）；quick `GATE RESULT: 12/12 PASS（SKIP 1）`（日志 `.local/missions/govern-editor-evidence-state-nov27/gate-quick.log`）；validate 39/39（归档后 38/38）、docs-check PASS；delta = 无（纯文档，`.openspec.yaml` 的 `skip_specs: true`）；tasks 17/18（4.2 merge / push 留 tower）；包装器与 `--archived` 读数见 proposal 节点 2 块。
 - **`improve-keybindings-lookup-oct24`**（M715）：delta = keymap-commands 1 条 MODIFIED（键位面板行模型）+ 3 条 ADDED（查找/捕获/详情、非自指入口、命令元数据与字形单一来源），节点 2 走人肉；实现批附带新增真机场景 235 / 236 / 237（查询 / 捕获 / 键盘）与 m133 视觉场景重写——**像素基线待 Alex 过目后重截**（未经过目不得 `--update`）；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
