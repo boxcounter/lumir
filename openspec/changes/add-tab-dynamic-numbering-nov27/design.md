@@ -8,9 +8,9 @@
 
 ## 2. 活跃 pane 边界
 
-`TabsDeps` 新增 `isActivePane(): boolean` 只读注入，装配层以 `paneLayout.active().id === paneId` 实现。每个实例收到窗口事件后都重算自己的 class，但仅活跃文档 pane 可显示；活跃 pane 变化后既有 `syncActiveDocument → renderAllTabStrips` 会同步两侧。harness pane 没有 Tabs 实例；harness 持焦时活跃文档 pane 的口径与既有 `⌘1–9` 一致。
+`TabsDeps` 新增 `isActivePane(): boolean` 只读注入，装配层以 `activeDocPane().id === paneId` 实现，与既有 `⌘1–9` 经 `activeTabs()` 选择命令目标的口径一致。每个实例收到窗口事件后都重算自己的 class，但仅命令目标文档 pane 可显示；活跃 pane 变化后既有 `syncActiveDocument → renderAllTabStrips` 会同步两侧。harness pane 没有 Tabs 实例；harness 持焦时 `activeDocPane()` 回退到文档 pane，序号不得熄灭。
 
-不通过焦点是否落在标签上、DOM 顺序或全局可变「当前标签条」推断活跃 pane。多实例监听各自可销毁，不共享可变单例，不跨 pane 串号。
+不通过焦点是否落在标签上、DOM 顺序或全局可变「当前标签条」推断活跃 pane。输入状态按 window 共享且引用计数可销毁；活跃 pane 与标签状态不共享，不跨 pane 串号。
 
 ## 3. 序号生成
 
@@ -41,5 +41,5 @@
 - 单元层：左右 Meta 与双 Meta、重复事件、松开、blur、visibility、destroy、重建、活跃 pane 隔离、1–9 顺序和 >9 无号；监听解绑后不得响应。
 - 浏览器层：真实 `page.keyboard.down/up("Meta")`，显示/隐藏、ARIA/读屏名不变、标签宽度与滚动零变化、正文与文档不变；⌘1 仍恰好切到第一个，序号不消费事件。
 - 每条新增断言先以明确的错误输入/退化实现实测红，再恢复实测绿；红绿日志落 `.local/reviews/tab-dynamic-numbering-nov27/`。
-- 真机场景用 CGEvent 的按住/松开动作留 WKWebView 截图；通道在异常路径也必须尝试复位 Command，禁止留下系统级卡键。真机由主会话串行运行，本任务只更新场景、覆盖表与静态/自测。
+- 真机场景用 CGEvent 的按住/松开动作留 WKWebView 截图；down 在调用前登记 pending/held 侧别，使回执缺失或进程包装失败等「可能已投递」异常也进入 finally，同侧 up 确认成功后才清状态。禁止留下系统级卡键。真机由主会话串行运行，本任务只更新场景、覆盖表与静态/自测。
 - 完整像素 visual 由主会话串行执行；新增候选不是正式基线，不执行 `--update`。

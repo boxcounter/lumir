@@ -26,3 +26,9 @@
 - [ ] 4.4 完整 visual 由主会话串行执行（本任务不并行启动）；正式基线仍待 Alex 过目
 - [ ] 4.5 真机 14-tabs 由主会话统一执行并留存 PASS 证据；本任务不启动真机
 - [ ] 4.6 节点 2 记录按 proposal 五态表填写 implemented / released / machine PASS / native PASS / archived；独立 K3 评审、完整视觉、真机与归档均不提前宣称完成
+
+## 5. 独立 K3 返修（tip a7b60f25 的两项 P2）
+
+- [x] 5.1 Harness 持焦改用 `activeDocPane()` 命令目标口径；真实装配用例覆盖先持焦后按住、按住后开关面板、⌘1 与焦点不变，旧红/新绿落 `review-fixes/`
+- [x] 5.2 CGEvent down 调用前登记侧别；执行器故障注入证明丢回执后 finally 仍发同侧 up，旧红/新绿落 `review-fixes/`
+- [x] 5.3 复跑相关单测、浏览器、验收执行器/驱动与 quick，更新 rebased-readiness 与最终 tip；独立 K3 复核、完整视觉与真机仍归后续

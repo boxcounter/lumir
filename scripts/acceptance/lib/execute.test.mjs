@@ -46,7 +46,9 @@ function stubCtx(root, opts = {}) {
   const records = [];
   return {
     cu: opts.cu ?? {},
-    pid: 0,
+    injectModifierCGEvent: opts.injectModifierCGEvent,
+    readFrontmostPid: opts.readFrontmostPid,
+    pid: opts.pid ?? 0,
     repoRoot: repoRoot(),
     foregroundNote: undefined,
     evidence: {
@@ -3376,6 +3378,24 @@ test("modifier：释放成功才清状态；失败保留侧别供 finally 重试
   assert.equal(out, "modifier keycode=54 phase=up");
   assert.deepEqual(calls, [["right", "up"]]);
   assert.equal(vars.__heldMetaSide, null);
+});
+
+test("modifier：down 已尝试但回执失败时，finally 仍必须尝试同侧 up 并保留 INVALID", async () => {
+  const root = tmpRoot("modifier-down-lost-receipt");
+  useTmpEnv(root);
+  const calls = [];
+  const injectModifierCGEvent = (side, phase) => {
+    calls.push([side, phase]);
+    if (phase === "down") throw new InfraError("模拟 down 已投递但回执缺失");
+    return "modifier keycode=54 phase=up commandDown=false";
+  };
+  await assert.rejects(
+    drive(root, {
+      steps: [{ name: "右侧 down 后丢回执", do: "modifier", side: "right", phase: "down" }],
+    }, { injectModifierCGEvent, readFrontmostPid: () => 0 }),
+    (error) => error instanceof InfraError && /回执缺失/.test(error.message),
+  );
+  assert.deepEqual(calls, [["right", "down"], ["right", "up"]], "可能已投递的 down MUST 进入 finally 复位");
 });
 
 // ── `$runTag`（M752）：跨运行唯一的占位符 ────────────────────────────────────

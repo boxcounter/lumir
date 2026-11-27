@@ -2103,8 +2103,8 @@ export function channelSpecProblem(step) {
  *  其妙地红；读不到前台（lsappinfo 失败）同样不算通过（REVIEW.md「读不到当成空」条）。两类都按
  *  环境项 `InfraError` 报——`noteIfFocusLost` 已经在键盘动作前尽力抢过一次前台。
  *  `do: keys` 与 `do: key` 共用这一份判定（M768 起）。 */
-function requireFrontmostForChords(pid, chords) {
-  const front = frontmostPid();
+function requireFrontmostForChords(pid, chords, readFrontmost = frontmostPid) {
+  const front = readFrontmost();
   if (front === pid) return;
   throw new InfraError(
     `cgevent 通道要求 Lumir 在前台（HID tap 的键盘事件投给前台 app，不按 pid 寻址）：` +
@@ -3255,7 +3255,7 @@ export async function runScenario(ctx, scenario) {
   } finally {
     if (vars.__heldMetaSide) {
       try {
-        const out = releaseModifier(vars);
+        const out = releaseModifier(vars, ctx.injectModifierCGEvent ?? injectModifierCGEvent);
         evidence.record({ kind: "note", text: `场景收尾复位 Command（异常安全兜底）｜${out}` });
       } catch (error) {
         evidence.record({ kind: "assert", ok: false, label: "[运行环境无效] Command 复位", detail: error.message });
@@ -3291,7 +3291,7 @@ export async function runScenario(ctx, scenario) {
  *  M478：抢回的**手段与失败原因**一并留痕——`foregroundNote` 把 AXRaise 与 System Events
  *  两条通道的尝试记录成一行（此前只写「已尽力抢回，前台 pid=…」，看不出是两条通道都投过）。 */
 async function noteIfFocusLost(ctx, pid) {
-  if (frontmostPid() === pid) return;
+  if ((ctx.readFrontmostPid ?? frontmostPid)() === pid) return;
   const fg = await tryForeground(ctx.cu, pid, { retries: 2 });
   ctx.foregroundNote =
     "键盘注入前复检：前台焦点中途丢失（已按 AXRaise → System Events 两条通道尽力抢回）——" +
@@ -3921,11 +3921,13 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       const problem = modifierSpecProblem(step) ?? modifierTransitionProblem(step, vars.__heldMetaSide ?? null);
       if (problem) throw new StepError(problem);
       await noteIfFocusLost(ctx, p);
-      requireFrontmostForChords(p, [`meta-${step.side}-${step.phase}`]);
-      const out = step.phase === "down"
-        ? injectModifierCGEvent(step.side, "down")
-        : releaseModifier(vars);
+      requireFrontmostForChords(p, [`meta-${step.side}-${step.phase}`], ctx.readFrontmostPid ?? frontmostPid);
+      const inject = ctx.injectModifierCGEvent ?? injectModifierCGEvent;
+      // down 在调用前就登记：回执缺失 / 包装失败也可能发生在事件已经投递之后，finally 必须见得到。
       if (step.phase === "down") vars.__heldMetaSide = step.side;
+      const out = step.phase === "down"
+        ? inject(step.side, "down")
+        : releaseModifier(vars, inject);
       evidence.record({ kind: "note", text: `Meta ${step.side} ${step.phase}（cgevent flagsChanged）｜${out}` });
       return out;
     }

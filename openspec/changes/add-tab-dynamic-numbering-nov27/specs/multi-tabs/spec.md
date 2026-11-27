@@ -27,3 +27,8 @@
 
 - **WHEN** 双文档 pane 中按住 Command，再切换活跃 pane、开关 pane 或增减标签
 - **THEN** 仅最新活跃 pane 按最新可见标签顺序显示序号，另一 pane 不显示；关闭动态 pane 后其监听与状态一并销毁
+
+#### Scenario: Harness 持焦时仍显示命令目标文档 pane
+
+- **WHEN** 文档 pane 有可见标签，Harness composer 持焦后按住 Command，或按住 Command 后打开 Harness
+- **THEN** 序号继续显示在既有 `⌘1–9` 实际作用的文档 pane；切换标签与开关 Harness 不改变既有焦点语义

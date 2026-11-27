@@ -238,8 +238,8 @@ export interface TabsDeps {
    *  而标签模块没有、也不该有树的句柄——与 `syncActiveDocument` 同一条接线模式（闭包在动作
    *  发生时读，不在装配时读）。 */
   revealInTree: (path: string) => void;
-  /** 本标签条是否属于当前活跃 pane（按住 Command 的序号只落在活跃 pane）。真源由装配层
-   *  的 paneLayout 提供；窗口事件会到每个实例，MUST NOT 各自显示或另存一份活跃指针。 */
+  /** 本标签条是否属于标签命令的目标 pane（按住 Command 的序号只落在该 pane）。真源由装配层
+   *  的 activeDocPane 提供；Harness 持焦时与 ⌘1–9 一样回退文档 pane，MUST NOT 另存活跃指针。 */
   isActivePane: () => boolean;
   /** 空槽占位（M316 双 pane）：双栏时**没有可见标签的 pane 的标签槽也必须占位**——两槽
    *  宽度比例与 pane 分隔条同源，空槽一 hidden，另一槽的比例就跟着漂。返回 true 时空态

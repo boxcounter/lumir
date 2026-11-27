@@ -177,3 +177,31 @@ test("Command 动态序号：按住时开关/切换 pane，只有当前 pane 出
   await expect(page.locator(".tab-cmd-index:visible")).toHaveText(["1", "2"]);
   await page.keyboard.up("Meta");
 });
+
+test("Command 动态序号：Harness composer 持焦时仍显示命令目标文档 pane；开关面板不改焦点/快捷键语义", async ({ page }) => {
+  await boot(page);
+  await openTabs(page, 2);
+  await page.locator(".lumir-hp-toggle").click();
+  const composer = page.locator(".lumir-hp-composer .cm-content");
+  await expect(composer).toBeFocused();
+
+  await page.keyboard.down("Meta");
+  await expect(page.locator(".tab-cmd-index:visible")).toHaveText(["1", "2"]);
+  await page.keyboard.press("1");
+  await expect(page.locator(".tab.is-active .tab-name")).toHaveText(LONG_NAME);
+  await expect(composer).toBeFocused();
+
+  await page.keyboard.up("Meta");
+  await expect(page.locator(".tab-cmd-index:visible")).toHaveCount(0);
+  await page.keyboard.down("Meta");
+  await expect(page.locator(".tab-cmd-index:visible")).toHaveText(["1", "2"]);
+  await page.keyboard.press("Shift+A");
+  await expect(page.locator(".lumir-hp-composer")).toHaveCount(0);
+  await expect(page.locator(".tab-cmd-index:visible")).toHaveText(["1", "2"]);
+
+  await page.keyboard.press("Shift+A");
+  await expect(composer).toBeFocused();
+  await expect(page.locator(".tab-cmd-index:visible")).toHaveText(["1", "2"]);
+  await page.keyboard.up("Meta");
+  await expect(page.locator(".tab-cmd-index:visible")).toHaveCount(0);
+});

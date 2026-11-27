@@ -755,7 +755,7 @@ function createPaneTabs(paneId: PaneId, handle: EditorHandle, stripEl: HTMLEleme
     // tabs.ts 的交互漏斗里（它的 DOM 监听自己绑），**不是**在这里覆写对外方法——覆写挡不住
     // DOM 点击路径，那正是「点非活跃 pane 的标签不装载内容」的成因。
     activatePane: (options) => activatePane(paneId, options),
-    isActivePane: () => paneLayout.active().id === paneId,
+    isActivePane: () => activeDocPane().id === paneId,
     // 树是下面 `let tree` 绑定的单例，赋值在 createPaneTabs 首次调用之后——闭包在动作
     // 发生时读，装配期不读，因此没有时序问题（与 M149 起就有的那条注释同款模式）。
     revealInTree: (path) => tree.revealPath(path),
