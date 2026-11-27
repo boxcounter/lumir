@@ -67,3 +67,77 @@
 - **放宽到「只要 marker 恢复」**：失去「4s 后不取消、转 250ms」的唯一判据。
 - **同时改 1045 的 60ms 预算**：独立机制（settle 回调墙钟切片），既有 A/B 证明干净
   master 也越界；本 change 不扩面。
+
+## 6. 358：state 树陈旧前提与后台 parse worker 的竞态（2026-11-28 追加）
+
+### 6.1 现场
+
+CI run `46024536448`（master `2de2f4ef`）在 `[chromium]` 首跑与 retry 双红于
+`editing-oracle.spec.ts:386 expect(probe.stateNodes).not.toContain("BulletList")`。
+Received string 是整篇 2000 个 `Paragraph` 加末尾
+`BulletList(ListItem(ListMark,Paragraph))`——不是局部树，说明 state 字段树已经是当前新树。
+
+### 6.2 机制
+
+用例的 12KB 文档在 `openBody` / `setBodyCaret` / marker 等待窗口内就能被后台 parse
+worker 解析到末尾。探针读数（`14-chromium-358-probe.log`）：
+
+| 时刻 | viewport | treeLen | state 树 |
+|---|---|---|---|
+| open 后 0ms | 0–142（顶部） | 3000 | 仅初始化视口 |
+| open 后 100ms | 0–142（顶部） | 12005（= docLen） | 已到末尾 |
+
+此后 `view.dispatch` 触发 `LanguageState.apply`：
+
+```
+upto = this.context.treeLen == tr.startState.doc.length ? undefined : ...
+if (!newCx.work(20, upto)) newCx.takeTree()
+```
+
+`treeLen == docLen` ⇒ `upto=undefined` ⇒ 20ms 内解析整篇新文档 ⇒ `takeTree()` 把 state
+树同步成含 `BulletList` 的新树。测试在同一个同步块里读 `lang.tree`，因此必然读到新树。
+CI 的整篇 received string 与这条路径逐项吻合。
+
+父提交 `3f20855c` 的临时 worktree 用同一探针复跑，`PRE-100 treeLen=12005`、
+`DISPATCH stateNodesHasList=true` 完全相同（`22-parent-3f20855c-358-probe.log`）；
+合并 diff 中 `src/editor.ts` 的 md 模板逐字符未变（只有 code 模式 `gridTemplateColumns`
+与 `main.ts` 的阅读手柄可见性变化）。**结论：pre-existing oracle 竞态，不是本次合并回归。**
+
+### 6.3 为什么原断言是假绿
+
+即使某次运行在 dispatch 后读到陈旧树，compositionend 的 effect transaction 也会触发
+`LanguageState.apply`：context 已 done 时 `work` 走 `isDone → takeTree`，新 state 的
+`tree` 直接等于 context 树。`settleStep` 在 timer 里读的是**这个新 state**，所以
+「state 陈旧」从来不是 settle 首拍的真实输入；386 只检查了一个转瞬即逝的 setup 条件。
+这与 test 393 的注释（“compositionend 的 effect dispatch / parse worker 在 Chromium 上
+会顺带同步 state，无法稳定复现 WKWebView 的 stale 快照”）互相印证。
+
+### 6.4 修法
+
+在 compositionend 的 settle 首拍被调度时（`beginSettle` 已排 0ms `settleStep`、回调尚未
+执行），把当前 `LanguageState.tree` 显式置回 dispatch 前的旧树，并记录：
+
+1. `forced.done`：hook 确实命中；
+2. `forced.hasList` / `installedLen`：置回的是不含 `BulletList` 的旧树；
+3. 包装插件的 `build`，记录 settle 期间每次 build 时 `plugin.tree` 是否含 `BulletList`；
+   断言**第一次** build 已含（即用的是 `ensureSyntaxTree` 的 context 树，不是 state 快照）。
+
+这样既构造了产品要防的形态，又让「用哪棵树」成为可判据，而不是观察竞态。
+
+### 6.5 反向必红
+
+- **产品变异体**：`settleStep` available 分支把 `ensureSyntaxTree(view.state, to, 0)` 换成
+  `syntaxTree(view.state)`，重建 dist → 3/3 红在「settle 首拍 build 必须用已到行末的
+  context 树」（`17-chromium-358-product-mutant.log`）。证明新断言能区分错误实现。
+- **oracle 变异体 A**：hook 条件恒假 → 红在 `__forcedStale.done` 轮询（`18`）。
+- **oracle 变异体 B**：hook 命中但不置旧树 → 红在「settle 首拍前 state 树 MUST 陈旧」（`19`）。
+- 恢复后双引擎各 20/20 绿（`20`/`21`），整份 spec chromium 66 passed、webkit 56 passed /
+  10 skipped（`23`/`24`）。
+
+### 6.6 被否决的方案
+
+- **再等久一点**：只是把竞态窗口推远，CI 的 parse worker 完成时间没有上界。
+- **加大文档**：仍受 parse worker 与 20ms apply 预算两个变量影响；且 context done 后
+  effect transaction 会把 state 树同步成 context 树，stale 在 settle 时不可达。
+- **删掉 386 断言**：丢掉「state 陈旧」这一覆盖前提，违反 REVIEW.md「假绿」条。
+- **改产品**：产品路径（`ensureSyntaxTree` context 树）在 CI 失败样本中行为正确；无产品缺陷。
