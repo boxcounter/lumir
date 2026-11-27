@@ -397,8 +397,11 @@ export class BodyOracle {
       this.head = this.anchor;
       return;
     }
+    // 非空选区的 Enter 是「用换行替换选区」：两引擎probe（2026-11-27）实测
+    // `alpha beta` 的 [2,6) → `al\nbeta`，不额外吞掉选区之外的尾随空白。尾随空白并入换行
+    // 只适用于折叠 caret（`foo   |` → `foo\n`）。
     let cutTo = to;
-    while (cutTo < line.to && /\s/.test(this.doc[cutTo])) cutTo++;
+    if (from === to) while (cutTo < line.to && /\s/.test(this.doc[cutTo])) cutTo++;
     this.replace(from, cutTo, "\n");
   }
 
@@ -410,6 +413,13 @@ export class BodyOracle {
   enter(): void {
     const from = Math.min(this.anchor, this.head);
     const to = Math.max(this.anchor, this.head);
+    // 非空选区的 Enter 一律是「用换行替换选区」：两引擎 probe（2026-11-27）实测
+    // `alpha beta` 的 [2,6) → `al\nbeta`、`- a\n- b` 的 [2,4) → `- \n- b`、
+    // 表格 cell 选区 [26,30) → `| \nd |`——列表续行 / 重编号 / 表格钳制都只在折叠 caret 上生效。
+    if (from !== to) {
+      this.replace(from, to, "\n");
+      return;
+    }
     const line = lineSpanAt(this.doc, this.head);
     const marker = markerTextAt(this.doc.slice(line.from, line.to), line.from);
     // 行尾无空白的 `2.`：只有真实列表块里才是空项；`p\n2.` 的空项不能打断段落，
@@ -1394,4 +1404,269 @@ export function formatOracleFailure(failure: OracleFailure): string {
     `expected: ${failure.expected}`,
     `actual  : ${failure.actual}`,
   ].join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// 编辑状态迁移模型（change add-editor-transition-oracle-nov27）
+// ---------------------------------------------------------------------------
+//
+// 复盘（2026-11-27 编辑器治理）的 P0：编辑器缺陷的高发形态不是同一个 bug 复发，而是「同一操作
+// 换一个上下文 / 状态就漏」。既有 BodyOracle 只有 idle 一条路径（正文）与组合一条路径
+// （composer），没有「状态」这一维。本段补的是**状态机**：把 idle / composing / settling /
+// readOnly 四态与折叠 / 非空选区、上下文、动作组合起来，期望值仍全部由模型算出。
+//
+// 纪律与文件头一致：不 import 生产代码。上下文是**输入**而不是从文档反推的判据——矩阵声明每格
+// 属于哪个上下文，模型只据此给期望；装饰是否在场由执行层断言（见 matrix 模块的 widget 选择器）。
+// 动作是否应被生产闸门消费（`consumed`）同理：它取决于上下文（表格 cell 才接管折叠键入），
+// 因此由矩阵的 case 声明，模型不猜。
+//
+// 已知边界（如实登记，不在本模型里假装覆盖）：
+// - 组合期的撤销语义归 IME 提交事件（CM 把 `input.type.compose` 并入上一笔 changes），合成
+//   通道无法忠实复现「组合前 → 组合后」的历史粒度；composing 的 `history.steps` 因此是 null
+//   （不判），对应格只断言源码 / 选区 / 保存载荷。
+// - 组合中的 Enter（候选确认）与指针（会结束组合）无法在合成通道上确定复现，矩阵标 N/A。
+
+export type EditState = "idle" | "composing" | "settling" | "readOnly";
+export type SelectionShape = "collapsed" | "range";
+export type EditContext = "plain" | "inline-replace" | "block-replace" | "list-marker" | "table-cell";
+export type EditActionKind = "type" | "deleteBackward" | "deleteForward" | "enter" | "paste" | "pointer";
+
+export interface EditAction {
+  kind: EditActionKind;
+  /** 键入 / 粘贴的文本。 */
+  text?: string;
+  /** 指针动作点击的源码位置。 */
+  at?: number;
+}
+
+export interface TransitionSnapshot {
+  doc: string;
+  anchor: number;
+  head: number;
+}
+
+export interface TransitionHistory {
+  /** 期望新增的撤销步数；null = 本通道无法忠实复现撤销语义，执行层不判这一列。 */
+  steps: 0 | 1 | null;
+  /** steps > 0 时，一次 undo 应恢复的源码与选区。 */
+  restores: TransitionSnapshot | null;
+}
+
+export interface TransitionExpectation extends TransitionSnapshot {
+  history: TransitionHistory;
+  /** 动作触及的源码行（1 基闭区间）；null = 源码未变。 */
+  touched: { fromLine: number; toLine: number } | null;
+  /** settling 态：动作后是否仍有未结算的组合收尾。 */
+  settle: "none" | "pending" | "resolved";
+}
+
+/** 两个文档之间真正变化的行区间（1 基闭区间）。用于「非目标行不变」的**失败定位**：
+ *  期望值本身来自模型，这里的区间只把「哪几行该变」显式化，不改判据。 */
+export function changedLineRange(before: string, after: string): { fromLine: number; toLine: number } | null {
+  if (before === after) return null;
+  let prefix = 0;
+  const limit = Math.min(before.length, after.length);
+  while (prefix < limit && before[prefix] === after[prefix]) prefix += 1;
+  let suffix = 0;
+  while (
+    suffix < limit - prefix &&
+    before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  const lineOf = (doc: string, pos: number): number => {
+    let line = 1;
+    const end = Math.min(pos, doc.length);
+    for (let index = 0; index < end; index += 1) if (doc[index] === "\n") line += 1;
+    return line;
+  };
+  return {
+    fromLine: lineOf(before, prefix),
+    toLine: lineOf(after, Math.max(prefix, after.length - suffix)),
+  };
+}
+
+interface BodyCompositionState {
+  /** 组合开始时的 caret（折叠）与全文快照；提交只把 marked 文本写回这一位置。 */
+  start: number;
+  marked: string;
+  base: TransitionSnapshot;
+}
+
+/** 四态状态机：在 `BodyOracle` 的 idle 语义之上叠加组合 / 结算 / 只读三态。
+ *
+ *  `apply(action)` 一步一压（既改内部状态又返回期望）；`expect(action)` 在副本上算一次，不改
+ *  自身。两者的返回形状相同，调用方不需要区分。 */
+export class TransitionOracle {
+  readonly body: BodyOracle;
+  state: EditState;
+  private composition: BodyCompositionState | null = null;
+  private settlePending = false;
+
+  constructor(doc: string, caret = doc.length, state: EditState = "idle") {
+    this.body = new BodyOracle(doc, caret);
+    this.state = state;
+  }
+
+  get composing(): boolean {
+    return this.composition !== null;
+  }
+
+  get pendingSettle(): boolean {
+    return this.settlePending;
+  }
+
+  snapshot(): TransitionSnapshot {
+    return { doc: this.body.doc, anchor: this.body.anchor, head: this.body.head };
+  }
+
+  /** 组合开始：只在折叠 caret 上，起点 = 当前 head；marked 从空串开始。 */
+  startComposition(): void {
+    if (this.state !== "composing" && this.state !== "settling") {
+      throw new Error(`oracle: ${this.state} 态不能开始组合`);
+    }
+    if (this.composition !== null) return;
+    if (this.body.anchor !== this.body.head) this.body.setSelection(this.body.head);
+    this.composition = { start: this.body.head, marked: "", base: this.snapshot() };
+  }
+
+  /** 组合更新：把 marked 整段换成新串（IME 的 compositionupdate 语义）。 */
+  compositionSetMarked(marked: string): void {
+    if (this.composition === null) throw new Error("oracle: compositionupdate 前必须先 startComposition");
+    this.composition.marked = marked;
+    this.renderComposition();
+  }
+
+  /** 组合中 Backspace：只删 marked 区的最后一个字素簇，绝不越过 committed 文本。 */
+  compositionDelete(): void {
+    if (this.composition === null) throw new Error("oracle: 组合中删除前必须先 startComposition");
+    this.composition.marked = this.composition.marked.slice(
+      0,
+      graphemeBefore(this.composition.marked, this.composition.marked.length),
+    );
+    this.renderComposition();
+  }
+
+  /** 组合结束（提交 marked）。提交后进入 settling：组合收尾的装饰重建还没跑完。 */
+  endComposition(): void {
+    if (this.composition === null) return;
+    this.composition = null;
+    this.state = "settling";
+    this.settlePending = true;
+  }
+
+  /** 结算回调完成：源码与选区 MUST NOT 因此改变（只允许装饰重建）。 */
+  flushSettle(): void {
+    this.settlePending = false;
+    if (this.state === "settling") this.state = "idle";
+  }
+
+  private renderComposition(): void {
+    const composition = this.composition;
+    if (composition === null) return;
+    const { base } = composition;
+    const caret = composition.start + composition.marked.length;
+    this.body.doc =
+      base.doc.slice(0, composition.start) + composition.marked + base.doc.slice(composition.start);
+    this.body.setSelection(caret);
+  }
+
+  private clone(): TransitionOracle {
+    const copy = new TransitionOracle(this.body.doc, 0, this.state);
+    copy.body.setSelection(this.body.anchor, this.body.head);
+    copy.composition = this.composition === null ? null : { ...this.composition, base: { ...this.composition.base } };
+    copy.settlePending = this.settlePending;
+    return copy;
+  }
+
+  /** 当前状态下动作的期望值；不改内部状态。 */
+  expect(action: EditAction): TransitionExpectation {
+    const probe = this.clone();
+    return probe.apply(action);
+  }
+
+  /** 执行动作并返回期望。 */
+  apply(action: EditAction): TransitionExpectation {
+    const before = this.snapshot();
+    if (this.state === "readOnly") {
+      // 只读拒收的是**编辑**，不是选区：指针点击仍会移动 caret（C5 只要求不改写文档）。
+      const at = action.kind === "pointer"
+        ? Math.max(0, Math.min(action.at ?? this.body.head, this.body.doc.length))
+        : null;
+      return {
+        ...before,
+        ...(at === null ? {} : { anchor: at, head: at }),
+        history: { steps: 0, restores: null },
+        touched: null,
+        settle: "none",
+      };
+    }
+    if (this.composition !== null) return this.runComposing(action, before);
+    const settle: TransitionExpectation["settle"] =
+      this.state === "settling" ? (this.settlePending ? "pending" : "resolved") : "none";
+    switch (action.kind) {
+      case "type":
+      case "paste":
+        this.body.insert(action.text ?? "");
+        break;
+      case "deleteBackward":
+        this.body.deleteBackward();
+        break;
+      case "deleteForward":
+        this.body.deleteForward();
+        break;
+      case "enter":
+        this.body.enter();
+        break;
+      case "pointer": {
+        const at = Math.max(0, Math.min(action.at ?? this.body.head, this.body.doc.length));
+        this.body.setSelection(at);
+        break;
+      }
+    }
+    return this.finish(before, settle);
+  }
+
+  private runComposing(action: EditAction, before: TransitionSnapshot): TransitionExpectation {
+    switch (action.kind) {
+      case "type":
+        this.compositionSetMarked(this.composition!.marked + (action.text ?? ""));
+        break;
+      case "deleteBackward":
+        this.compositionDelete();
+        break;
+      default:
+        throw new Error(`oracle: 组合态不支持动作 ${action.kind}（矩阵应标 N/A）`);
+    }
+    return {
+      ...this.snapshot(),
+      history: { steps: null, restores: null },
+      touched: changedLineRange(before.doc, this.body.doc),
+      settle: "none",
+    };
+  }
+
+  private finish(before: TransitionSnapshot, settle: TransitionExpectation["settle"]): TransitionExpectation {
+    const after = this.snapshot();
+    const changed = before.doc !== after.doc;
+    return {
+      ...after,
+      history: changed ? { steps: 1, restores: before } : { steps: 0, restores: null },
+      touched: changedLineRange(before.doc, after.doc),
+      settle,
+    };
+  }
+}
+
+export function describeEditAction(action: EditAction): string {
+  switch (action.kind) {
+    case "type":
+      return `type(${JSON.stringify(action.text ?? "")})`;
+    case "paste":
+      return `paste(${JSON.stringify(action.text ?? "")})`;
+    case "pointer":
+      return `pointer(at=${action.at ?? "?"})`;
+    default:
+      return action.kind;
+  }
 }
