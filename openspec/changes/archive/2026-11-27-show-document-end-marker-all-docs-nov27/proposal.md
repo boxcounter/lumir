@@ -87,7 +87,7 @@ Alex 已采纳统一：**所有已完成布局的 md 文档都显示 END**；视
 |---|---|---|
 | implemented | 是 | `2abc3a3d`（END 统一）、`ca7c5473`（指针命中面 / 绝对定位）、`d6e85033`（27 oracle）、`17c6587a`（审阅收口）、`bc597b3c`（4 张基线 + 归档记录）；均在本分支 |
 | released | 否 | 本批不打包；无 release 产物 |
-| machine PASS | 是（附 flake 证据） | quick `GATE RESULT: 13/13 PASS（SKIP 0）`；完整 visual `GATE RESULT: 14/15 PASS（SKIP 0），exit 1；visual-regression 1936 passed / 2 failed / 13 skipped，2 failed 为既有 webkit-realua editing-oracle IME 计时用例，隔离复跑 2/2×2 PASS`；docs-check / validate / archive-check 见下 |
+| machine PASS | 是 | quick `GATE RESULT: 13/13 PASS（SKIP 0）`；完整 visual **最终（第三次）`GATE RESULT: 15/15 PASS（SKIP 0）` exit 0**，visual-regression 1369s / 1938 passed / 0 failed / 13 skipped（`evidence/gate-visual-final-15of15-summary.log`、`evidence/gate-visual-regression-final-15of15.log`）；前两次 14/15 作为历史保留，见「完整 visual 历史」；docs-check / validate / archive-check 见下 |
 | native PASS | 是 | 场景 27 `03-final-pass` **PASS 23 断言**（`.local/acceptance/2026-11-27-end-marker-all-docs/03-final-pass/`）；首轮 oracle FAIL 与反向 FAIL 分列同目录 `README.md` |
 | archived | 是 | `bc597b3c`；`--archived` PASS（1 条 MODIFIED / 10 段） |
 
@@ -96,8 +96,18 @@ Alex 已采纳统一：**所有已完成布局的 md 文档都显示 END**；视
 1. **方案已批准**：Alex 2026-11-27 原话「批准 END 的 4 张基线」；combo4 换图后再次原话「批准 END 的第 4 张新基线」。节点 1 口径（所有已完成布局的 md 文档显示 END）已由 Alex 采纳；无静默扩 scope。
 2. **独立 reviewer clean / merge**：K3 `k3-verdict-r2.md` **clean/merge**，绑定 `17c6587a`；combo4 新候选另有 `k3-combo4-verdict.md` **clean**，绑定同一 tip。两文件均在 `.local/reviews/end-marker-all-docs-nov27/`。
 3. **tasks 完成**：`tasks.md` 全部勾选（无放弃项）；含 P3 收口、27 oracle、基线更新、完整 visual 与归档记录。
-4. **门禁与真机证据**：quick `GATE RESULT: 13/13 PASS（SKIP 0）`（`evidence/gate-quick-review-clean.log`）；完整 visual `GATE RESULT: 14/15 PASS（SKIP 0），exit 1；visual-regression 1936 passed / 2 failed / 13 skipped，2 failed 为既有 webkit-realua editing-oracle IME 计时用例，隔离复跑 2/2×2 PASS`（`evidence/gate-visual-final.log`）；真机 27 最终 PASS 23 断言（上述 `03-final-pass`）。
+4. **门禁与真机证据**：quick `GATE RESULT: 13/13 PASS（SKIP 0）`（`evidence/gate-quick-review-clean.log`）；完整 visual **最终 15/15 PASS（SKIP 0）exit 0**（`evidence/gate-visual-final-15of15-summary.log`；前两次 14/15 历史见下）；真机 27 最终 PASS 23 断言（上述 `03-final-pass`）。
 5. **规格对账无丢段**：`openspec validate --all --strict` 39/39；`node scripts/openspec-archive-check.mjs` PASS；`docs/backlog.md` 归档队列本 change 唯一一条。
+
+### 完整 visual 历史（不掩盖前两次红）
+
+| 次序 | 结果 | 失败 / 说明 | 证据 |
+|---|---|---|---|
+| 第一次 | `GATE RESULT: 14/15 PASS（SKIP 0）` exit 1；1936 passed / 2 failed / 13 skipped | webkit-realua `editing-oracle` 1045 / 1143 | `evidence/gate-visual-final.log`、`gate-visual-regression-full.log` |
+| 第二次 | `GATE RESULT: 14/15 PASS（SKIP 0）` exit 1；1937 passed / 1 failed / 13 skipped | 1045 `settleSliceMaxMs=60`（断言 `<60`） | `evidence/gate-visual-regression-second.log` |
+| 第三次（最终） | **`GATE RESULT: 15/15 PASS（SKIP 0）` exit 0**；1938 passed / 0 failed / 13 skipped；visual-regression 1369s | — | `evidence/gate-visual-final-15of15-summary.log`、`evidence/gate-visual-regression-final-15of15.log` |
+
+前两次不是产品回归：交错 A/B（候选 `087f0fc7` 40 样本 40 PASS，min 47 / median 50 / max 58ms；master `9f872e8f` 40 样本 37 PASS，3 FAIL 61/63/80ms）见 `evidence/ab-settle-oracle.md` 与 `evidence/ab-settle/`。该用例的本地 60ms 预算是既有负载敏感 oracle；未修改无关测试或放宽阈值。
 
 ### combo4 基线换图原因（Alex 第二次批准）
 
@@ -107,7 +117,7 @@ Alex 已采纳统一：**所有已完成布局的 md 文档都显示 END**；视
 
 ### 归档前后
 
-- **归档前**：四张基线已按上述 SHA 写入；完整 visual 1936 passed / 2 failed / 13 skipped，2 failed 为既有 webkit IME flake（隔离 2/2×2 PASS），`GATE RESULT: 14/15 PASS（SKIP 0）` exit 1；`validate` / `archive-check` / `docs-check` PASS；队列唯一条目。
+- **归档前**：四张基线已按上述 SHA 写入；当时完整 visual 为 14/15（历史，见上节；归档后第三次为 15/15）；`validate` / `archive-check` / `docs-check` PASS；队列唯一条目。
 - **归档提交**：`bc597b3c`（含归档目录、living spec、4 张基线、`tasks` / `proposal` / `backlog`）。
 - **包装器**：`node scripts/openspec-archive.mjs show-document-end-marker-all-docs-nov27` 输出 `openspec-archive: +1 added / ~1 modified / -1 removed`，归档为 `2026-11-27-show-document-end-marker-all-docs-nov27`；`openspec-links` PASS（713 条可达）；修链 `0 处（扫过 4 篇 Markdown / 2 条相对链接）`。
 - **归档后审计**：`node scripts/openspec-archive-check.mjs --archived show-document-end-marker-all-docs-nov27` → `PASS（1 条 MODIFIED，对比 10 段；人工恢复 0，声明认领 0）`。
