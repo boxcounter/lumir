@@ -1061,3 +1061,201 @@ fn withdraw_from_a_restored_session_refuses_when_the_source_has_derived_sessions
     assert!(fixture.session_file(&a_id).exists());
     assert_eq!(fixture.session_files().len(), 2, "拒绝时不得创建 B");
 }
+
+/// 写一份只有首行的会话留存（祖先链 / 派生检测的素材）。
+fn write_bare_session_open(fixture: &Fixture, id: &str, restored_from: &str) {
+    let payload = serde_json::json!({
+        "kind": "session_open",
+        "session_id": id,
+        "vault_root": fixture.scope.key(),
+        "opened_from": "restore",
+        "restored_from": restored_from,
+        "system": "S",
+    });
+    std::fs::write(
+        fixture.session_file(id),
+        format!(
+            "{{\"ts\":1,\"payload\":{}}}\n",
+            serde_json::to_string(&payload).unwrap()
+        ),
+    )
+    .unwrap();
+}
+
+/// 改写 A 首行 `session_open` 的若干字段（造链式恢复前提；不改任何记录行）。
+fn patch_session_open(fixture: &Fixture, id: &str, patch: serde_json::Value) {
+    let path = fixture.session_file(id);
+    let content = std::fs::read_to_string(&path).unwrap();
+    let (first, rest) = content.split_once('\n').unwrap();
+    let mut record: serde_json::Value = serde_json::from_str(first).unwrap();
+    for (key, value) in patch.as_object().unwrap() {
+        record["payload"][key] = value.clone();
+    }
+    std::fs::write(
+        &path,
+        format!("{}\n{rest}", serde_json::to_string(&record).unwrap()),
+    )
+    .unwrap();
+}
+
+/// K3 P1-2：恢复件撤回**失败后不得释放自身占用**——否则独立 Runtime 可以趁隙恢复并删掉
+/// 来源，本会话之后再用内存里的旧历史发布，撤回被复活。删除失败、发布失败、双故障各覆盖
+/// 一次，并断言「失败后 R 仍占着 A、外来恢复的撤回被拒；drop R 后才放行」。
+#[test]
+fn failed_restored_withdraw_keeps_own_resume_claim() {
+    let fixture = Fixture::new("restore-claim-kept");
+    fixture.seed_turn("q1-ALPHA");
+    let a_id = fixture.current_id();
+    let a_path = fixture.session_file(&a_id);
+
+    // R：交互运行时从 A 惰性恢复，撤回在 unlink 一步失败。
+    let r = fixture.restore(&a_id);
+    assert!(r.withdrawable);
+    super::FAIL_NEXT_SOURCE_UNLINK.store(true, std::sync::atomic::Ordering::SeqCst);
+    let error = fixture
+        .runtime
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect_err("删除失败必须报错");
+    assert_eq!(error.code, "harness_withdraw_delete_failed");
+    assert_eq!(
+        session::resume_claim_count(&a_id),
+        1,
+        "失败后 R 必须继续占着恢复来源（K3 P1-2）"
+    );
+
+    // C：另一 Runtime 从 A 恢复，撤回必须被 R 的占用拦住（R 尚未发布，扫描看不到它）。
+    let c = Runtime::isolated();
+    let resumed = c
+        .resume_session(&fixture.scope, &fixture.config, &a_id)
+        .expect("C 可以恢复");
+    assert!(resumed.withdrawable);
+    let blocked = c
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect_err("R 的占用仍在，C 不得撤回");
+    assert_eq!(blocked.code, "harness_withdraw_resume_in_flight");
+    assert!(a_path.exists(), "被拦时来源留存不动");
+
+    // drop R（切走 = 丢弃内存态）：占用释放，C 才被放行。
+    fixture.runtime.new_session(&fixture.scope).unwrap();
+    assert_eq!(
+        session::resume_claim_count(&a_id),
+        1,
+        "此时只剩 C 自己那一份"
+    );
+    let done = c
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect("R 释放后 C 可撤回");
+    assert!(done.info.is_some());
+    assert!(!a_path.exists(), "C 撤回删除的是恢复来源 A");
+}
+
+/// K3 P1-2：发布 B 失败时 R 仍是当前会话，占用必须仍在（失败路径天然保留）。
+#[test]
+fn failed_restore_publish_keeps_own_resume_claim() {
+    let fixture = Fixture::new("restore-claim-publish");
+    fixture.seed_turn("q1-ALPHA");
+    let a_id = fixture.current_id();
+    let a_path = fixture.session_file(&a_id);
+    fixture.restore(&a_id);
+
+    super::jsonl::FAIL_NEXT_RESTORE_PUBLISH.store(true, std::sync::atomic::Ordering::SeqCst);
+    let error = fixture
+        .runtime
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect_err("发布失败必须报错");
+    assert_eq!(error.code, "harness_withdraw_publish_failed");
+    assert_eq!(
+        session::resume_claim_count(&a_id),
+        1,
+        "发布失败后 R 的占用必须仍在"
+    );
+    assert!(a_path.exists());
+    assert_eq!(fixture.session_files(), vec![a_path], "失败不留下 B");
+}
+
+/// K3 P1-2：删除失败且清理 B 也失败（双故障）时，占用同样必须仍在。
+#[test]
+fn double_fault_keeps_own_resume_claim() {
+    let fixture = Fixture::new("restore-claim-double");
+    fixture.seed_turn("q1-ALPHA");
+    let a_id = fixture.current_id();
+    let a_path = fixture.session_file(&a_id);
+    fixture.restore(&a_id);
+
+    super::FAIL_NEXT_SOURCE_UNLINK.store(true, std::sync::atomic::Ordering::SeqCst);
+    super::FAIL_NEXT_CLEANUP.store(true, std::sync::atomic::Ordering::SeqCst);
+    let error = fixture
+        .runtime
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect_err("双故障必须报错");
+    assert_eq!(error.code, "harness_withdraw_rollback_incomplete");
+    assert_eq!(
+        session::resume_claim_count(&a_id),
+        1,
+        "双故障后 R 的占用必须仍在"
+    );
+    assert!(a_path.exists(), "A 保留");
+}
+
+/// K3 P2：祖先链出现环时无法枚举剩余链路 ⇒ 必须 fail closed，不能当作「扫完为空」删来源。
+#[test]
+fn ancestor_cycle_fails_closed() {
+    let fixture = Fixture::new("restore-ancestor-cycle");
+    fixture.seed_turn("q1-ALPHA");
+    let a_id = fixture.current_id();
+    let a_path = fixture.session_file(&a_id);
+    // A → cycle-b → A：首行互指成环（不改任何记录行）。
+    patch_session_open(
+        &fixture,
+        &a_id,
+        serde_json::json!({ "restored_from": "s1700000000000-cycle-b" }),
+    );
+    write_bare_session_open(&fixture, "s1700000000000-cycle-b", &a_id);
+
+    let resumed = fixture.restore(&a_id);
+    assert!(resumed.withdrawable);
+    let error = fixture
+        .runtime
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect_err("祖先链成环必须拒绝");
+    assert_eq!(error.code, "harness_withdraw_scan_failed");
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("ancestor cycle")
+    );
+    assert!(a_path.exists(), "拒绝时来源留存不动");
+}
+
+/// K3 P2：祖先链超过深度上限时同样 fail closed（枚举不完 = 不能证明没有副本）。
+#[test]
+fn ancestor_depth_limit_fails_closed() {
+    let fixture = Fixture::new("restore-ancestor-depth");
+    fixture.seed_turn("q1-ALPHA");
+    let a_id = fixture.current_id();
+    let a_path = fixture.session_file(&a_id);
+    // A → d1 → d2 → … → d257（全部在盘上，链不提前断开 ⇒ 只能靠深度上限收口）。
+    const DEPTH: usize = 257;
+    let id = |n: usize| format!("s1700000000000-depth-{n:03}");
+    patch_session_open(
+        &fixture,
+        &a_id,
+        serde_json::json!({ "restored_from": id(1) }),
+    );
+    for n in 1..=DEPTH {
+        let parent = if n == DEPTH { String::new() } else { id(n + 1) };
+        write_bare_session_open(&fixture, &id(n), &parent);
+    }
+
+    let resumed = fixture.restore(&a_id);
+    assert!(resumed.withdrawable);
+    let error = fixture
+        .runtime
+        .withdraw_last_turn(&fixture.scope, &fixture.config, true)
+        .expect_err("祖先链超深必须拒绝");
+    assert_eq!(error.code, "harness_withdraw_scan_failed");
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("ancestor depth exceeded")
+    );
+    assert!(a_path.exists(), "拒绝时来源留存不动");
+}

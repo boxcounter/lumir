@@ -52,10 +52,14 @@ MUST NOT 被当作撤回。
 MUST NOT 猜一条目标，MUST NOT 给旧记录补写标记。
 
 恢复件上的撤回 SHALL 删除**恢复来源 A 的留存**——恢复本身尚未发布任何轮次，当前会话没有自己的
-文件；B 的 `restored_from` SHALL 指向 A。删除前 SHALL 先释放本会话对 A 的恢复占用，再按既有栅栏与
-派生检测复核。删除前 SHALL 沿 A 的 `restored_from` 祖先链逐项比对，确认没有更早的留存仍包含被撤回
-的那一条消息；命中时撤回 MUST 被拒绝（`harness_withdraw_copy_exists`）并点名那些留存，MUST NOT
-静默留下副本；祖先不可读按扫描失败 fail closed。
+文件；B 的 `restored_from` SHALL 指向 A。恢复占用检查 SHALL **排除本会话自己登记的那一份**，且
+MUST NOT 在撤回成功换出之前释放它（发布时间 / 删除失败 / 派生或祖先链拒绝 / 回滚失败等任何失败
+路径都必须保留该占用——否则外部 Runtime 可趁隙恢复并删除来源，本会话之后发布的派生文件会复活被
+撤回的消息）；占用只 SHALL 在旧会话被换出（丢弃）时随之释放。随后按既有栅栏与派生检测复核。
+删除前 SHALL 沿 A 的 `restored_from` 祖先链逐项比对，确认没有更早的留存仍包含被撤回的那一条消息；
+命中时撤回 MUST 被拒绝（`harness_withdraw_copy_exists`）并点名那些留存，MUST NOT 静默留下副本；
+祖先不可读、祖先链出现环或超过深度上限时 MUST 按扫描失败 fail closed（`harness_withdraw_scan_failed`），
+MUST NOT 当作「已扫完、没有副本」继续删除；只有祖先文件在盘上正常缺失才允许终止扫描。
 
 派生检测 MUST 与「恢复」共享同一把进程级栅栏：恢复在读取源文件之前 SHALL 登记占用，撤回从
 「检查占用 / 扫描派生」到「删除 A」MUST 全程持有该栅栏；有会话正在从 A 恢复（包括尚未发布的
@@ -127,6 +131,19 @@ provider wire 前整体剥除），旧记录缺完整原名时 SHALL 回落展�
   会话
 - **THEN** 快照的 `withdrawable` 为 false；撤回被拒绝（`harness_withdraw_not_applicable`）；文件与
   会话均不变，MUST NOT 按正文文本猜目标、MUST NOT 给旧记录补写标记
+
+#### Scenario: 恢复件撤回失败后占用不释放
+
+- **WHEN** 恢复出来的会话撤回在发布 / 删除 / 回滚任一步失败
+- **THEN** 该会话对恢复来源的占用保留：另一 Runtime 从该来源恢复后尝试撤回被拒
+  （`harness_withdraw_resume_in_flight`），直到失败撤回的会话被丢弃（新会话 / 换会话）才放行；
+  来源留存不被删除
+
+#### Scenario: 祖先链成环或超深时 fail closed
+
+- **WHEN** 恢复来源的 `restored_from` 祖先链出现环，或超过深度上限
+- **THEN** 撤回被拒绝（`harness_withdraw_scan_failed`，点名当前路径与原因）；来源留存不删除、
+  不创建 B
 
 #### Scenario: 恢复件的尾部后台通知不被当成目标
 

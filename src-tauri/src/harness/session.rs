@@ -1076,18 +1076,23 @@ impl Session {
         self.restored_withdraw_target
     }
 
-    /// 释放本会话对 `source` 的恢复占用（恢复件撤回的删除目标是来源文件时调用）。
+    /// 除本会话之外，还有多少个会话正在从 `source` 恢复（撤回的占用闸）。
     ///
-    /// 调用方 MUST 持有恢复栅栏：释放后到删除之间的窗口里，别的恢复 / 撤回插不进来。
-    /// 释放只取占用表锁、不取栅栏（`ResumeClaim::drop` 的既有约定，这里再取栅栏会自锁）。
-    pub(crate) fn release_resume_claim(&mut self, source: &str) {
-        if self
+    /// 恢复件撤回删的是自己的恢复来源，本会话自己就登记在占用表里——先释放再检查会打开
+    /// 「失败后保护丢失」的窗口（K3 P1-2）：撤回中途失败（派生 / 祖先链 / 发布 / 删除 / 回滚）
+    /// 时本会话仍在用内存里的旧历史，它 MUST 继续占着来源，否则独立 Runtime 能趁隙恢复并
+    /// 撤回删除来源，之后本会话再发布就把被撤回的消息复活。因此占用**不提前释放**：这里只
+    /// 把总数减掉自己那一份，其余照旧拒绝；成功换出（旧 `Session` 被 drop）时才由
+    /// [`ResumeClaim`] 的 `Drop` 释放。
+    ///
+    /// 调用方 MUST 持有恢复栅栏：`claim_resume` 也要取栅栏，检查期间不会有新占用插进来
+    ///（别的会话 drop 只会让计数变小，不影响「有外来占用即拒绝」的判定）。
+    pub(crate) fn foreign_resume_claim_count(&self, source: &str) -> usize {
+        let own = self
             .resume_claim
             .as_ref()
-            .is_some_and(|claim| claim.source == source)
-        {
-            self.resume_claim = None;
-        }
+            .is_some_and(|claim| claim.source == source);
+        resume_claim_count(source).saturating_sub(usize::from(own))
     }
 
     /// 接上「从某源恢复」的占用（`resume_session` 成功换入时调用一次）。

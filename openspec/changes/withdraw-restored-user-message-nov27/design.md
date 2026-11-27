@@ -89,9 +89,11 @@ delete_id = match source {
 B.restored_from = delete_id        // 谱系指向真实存在过的那份文件
 ```
 
-- 删除前在栅栏内**释放本会话对 A 的恢复占用**（`ResumeClaim`）：否则 `resume_claim_count(A)` 会数到
-  自己（恢复时登记的），把撤回拦成 `harness_withdraw_resume_in_flight`。释放只取占用表锁、不取栅栏
-  （`ResumeClaim::drop` 的既有约定）；释放后仍持栅栏，别的恢复 / 撤回插不进来。
+- 占用检查在栅栏内**排除本会话自己那一份**（`Session::foreign_resume_claim_count`），MUST NOT 提前
+  释放自身的 `ResumeClaim`（K3 P1-2）：撤回中途失败（发布 / 删除 / 派生 / 祖先链 / 回滚）时本会话
+  仍可能用内存里的旧历史发布派生文件，提前释放会让独立 Runtime 趁隙恢复并删掉来源，随后本会话
+  把被撤回的消息复活。占用保留到成功换出（旧 `Session` 被 drop）为止——失败路径因此天然保留保护，
+  不需要逐个错误出口重新登记。
 - 派生检测、发布 B、删除 A、失败回滚全部沿用既有实现（含 fail-closed 扫描与双故障终态）。
 
 ## 6. 复活边界：祖先链副本检测
@@ -102,7 +104,10 @@ B.restored_from = delete_id        // 谱系指向真实存在过的那份文件
 1. 沿 A 的 `restored_from` 链逐层读留存（深度上限 256、`visited` 防环，与派生检测同一手法）；
 2. 对每一层的 `llm_request.messages` 做**逐项深比较**，命中被撤回项即「更早留存仍含该消息」；
 3. 命中 ⇒ 拒绝（`harness_withdraw_copy_exists`，参数 `sessions` 点名那些留存），A 不删、B 不建；
-4. 任一祖先首行 / 记录不可读 ⇒ `harness_withdraw_scan_failed`（fail closed，不跳过）。
+4. 任一祖先首行 / 记录不可读 ⇒ `harness_withdraw_scan_failed`（fail closed，不跳过）；
+5. 链出现环或超过深度上限 ⇒ **同样** `harness_withdraw_scan_failed`（参数 `reason` 为
+   `ancestor cycle` / `ancestor depth exceeded`）：剩余链路枚举不完就无法证明没有副本，MUST NOT
+   当作「扫完为空」继续删来源（K3 P2）；祖先文件在盘上正常缺失才允许终止（那份留存已不存在）。
 
 逐项深比较而不是正文匹配：比较的是**同一条项**（含 content parts 交错与本地字段），不是「文本
 里出现过这串字」。常见情形（A 的最后一条交互消息是 A 自己发的）天然无命中，检查零成本放过。
@@ -140,19 +145,33 @@ B.restored_from = delete_id        // 谱系指向真实存在过的那份文件
   7. 恢复来源有派生会话：既有派生拒绝照常；
   8. 恢复回执 `withdrawable=true`；
   9. 交互入队项带标记、cron 入队项不带（turn 层单测）；
-  10. wire 不含 `lumir_user_origin`（attachments 单测）。
+  10. wire 不含 `lumir_user_origin`（attachments 单测）；
+  11. 恢复件撤回失败后占用仍在（删除失败 / 发布失败 / 双故障各一条）；外来 Runtime 在失败后
+      恢复并撤回被拒（`harness_withdraw_resume_in_flight`），失败会话被丢弃后才放行（K3 P1-2）；
+  12. 祖先链成环 / 超过深度上限：`harness_withdraw_scan_failed` + `reason` 区分，来源不删（K3 P2）。
 - 前端：`resumeSession` 落地 `withdrawable`（源码断言测试，与既有的恢复接线条同法）。
 - 真机场景 887：恢复 → 撤回 → 再见（见 `scripts/acceptance/scenarios/887-*.md`）。
 - 门禁：`gate.sh quick`。
 
 ## 10. 风险与已知边界
 
-1. **旧会话不可撤回**：本 change 之前写下的留存没有标记，恢复后没有目标——这是「不伪造旧记录」的
-   代价，明确拒绝而不是猜。会话在升级后发过一条消息，那条新消息本身带标记（可撤回），更早的消息
-   仍不可。
+1. **0.20 存量会话不可撤回，且范围未裁（merge 阻断）**：本 change 之前写下的留存没有标记，恢复后
+   没有目标。现有记录不足以安全自动区分真人发言与 cron / 子运行注入，三条候选路线（严格范围 /
+   用户显式认领 / 非破坏性分叉）见 `proposal.md` 的「未裁阻断」一节——由 Alex 裁决前不得 merge，
+   本实现只作为「严格来源标记」路线的基础，MUST NOT 被读成已满足存量需求。
 2. **祖先链拒绝会让少数链式恢复无法撤回**：宁可拒绝并点名留存，也不静默留副本；用户可先删除那些
    旧留存再撤回。
 3. **恢复件的撤回是「在来源会话里撤回」**：来源 A 被删除、B 接替；清单里不会同时留着同一段对话的
    旧副本（这正是本 change 要堵的复活口）。
 4. **通知 / 自动唤醒仍不可撤回**：与既有语义一致——它们的 user 项不带标记，且恢复后一旦跑过这类
    轮次，来源闸直接拒绝。
+
+## 11. K3 终审返修（2026-11-27）
+
+| 评审项 | 处置 |
+|---|---|
+| P1-1 0.20 存量不可撤回、现有记录不足 | **未裁阻断**：不改实现范围，proposal 新增「未裁阻断」一节列出三条候选路线与「不得 merge」结论；节点 2 标阻断；design §10.1 同步。 |
+| P1-2 失败后永久释放自身恢复占用 | 改为「占用检查排除自己那一份」（`foreign_resume_claim_count`），不提前释放；成功换出时由 `ResumeClaim::Drop` 释放。新增 3 条回归（删除失败 / 发布失败 / 双故障）+ 1 条外来 Runtime 交错用例。 |
+| P2 祖先链环 / 深度上限失败开放 | 两种情况改返回 `harness_withdraw_scan_failed`（`ancestor cycle` / `ancestor depth exceeded`），新增 2 条用例；祖先文件正常缺失仍允许终止。 |
+| P3 前端过时注释 | `src/harness-panel.ts` 两处「历史恢复不挂撤回钮」改为当前口径。 |
+| 集成编号冲突 | rebase 到 `1f0d6556`；验收 item/场景改 **887**、错误文案改 **D1088**（保留 Web 886/886b 与 D1076–D1087）。 |

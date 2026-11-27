@@ -1227,14 +1227,14 @@ impl Runtime {
             .and_then(first_paragraph_text);
 
         // 栅栏从「检查恢复占用 / 派生」一直持到「删除 A」：与 `resume_session` 的登记互斥，
-        // 独立 Runtime 的恢复因此不可能落在两次扫描之间（K3 P1-3）。释放放在换入 B 之前
-        // （换入会 drop A，A 若本身是恢复出来的会话会在 Drop 里释放占用）。
+        // 独立 Runtime 的恢复因此不可能落在两次扫描之间（K3 P1-3）。本会话自己的占用不在
+        // 这里释放——成功换入 B 时旧 `Session` 被 drop，占用才随之释放（失败路径必须保留）。
         let fence = session::lock_resume_fence();
-        // 恢复件撤回：被删的就是本会话的恢复来源——先释放自己那份占用，否则占用计数会数到
-        // 自己、把撤回拦成「另一个会话正在从它恢复」。释放只取占用表锁，别的恢复 / 撤回仍被
-        // 栅栏挡在外面。
-        session.release_resume_claim(&delete_id);
-        if session::resume_claim_count(&delete_id) > 0 {
+        // 恢复件撤回：本会话自己也登记着从来源恢复的占用——**不释放**，只按「除自己之外」的
+        // 占用拒绝（K3 P1-2）：撤回中途失败时本会话仍可能用内存里的旧历史发布派生文件，
+        // 提前释放会让独立 Runtime 趁隙恢复并删掉来源，撤回被复活。成功换出（旧 Session 被
+        // drop）时占用才由 `ResumeClaim` 释放，失败路径因此天然保留保护。
+        if session.foreign_resume_claim_count(&delete_id) > 0 {
             return Err(CommandError::new(
                 "harness_withdraw_resume_in_flight",
                 "有另一个会话正在从它恢复（如 cron 专用会话）；请等这次运行结束后再撤回",
@@ -1590,14 +1590,30 @@ fn ancestor_copy_ids(
     let mut current = restored_from_of(&source_open, source);
     let mut depth = 0;
     while let Some(id) = current {
-        if depth >= MAX_DEPTH || !visited.insert(id.clone()) {
-            break;
-        }
-        depth += 1;
         let path = jsonl::vault_sessions_path(&scope.vault_id)?.join(format!("{id}.jsonl"));
         if !path.exists() {
+            // 链在盘上断开：这份祖先已不存在，没有可读的副本面。
             break;
         }
+        // 环或超深：剩余链路枚举不完，就**无法证明没有副本**——fail closed，不当作「扫完
+        // 了为空」继续删来源（K3 P2）。
+        if depth >= MAX_DEPTH || !visited.insert(id.clone()) {
+            let reason = if depth >= MAX_DEPTH {
+                "ancestor depth exceeded"
+            } else {
+                "ancestor cycle"
+            };
+            return Err(CommandError::new(
+                "harness_withdraw_scan_failed",
+                format!(
+                    "无法确认更早的留存里是否还有这条消息（祖先恢复链出现环或超过深度上限 {MAX_DEPTH}），撤回已取消：{}",
+                    path.display()
+                ),
+            )
+            .param("path", path.display().to_string())
+            .param("reason", reason));
+        }
+        depth += 1;
         let file = jsonl::read_session_file(&path).map_err(|error| {
             CommandError::new(
                 "harness_withdraw_scan_failed",
