@@ -39,6 +39,7 @@ declare module "node:assert/strict" {
 
 // 用例读仓内文本 fixture（如 文案-Copy.md 的 deck 表格行）用到的两个读点。
 declare module "node:fs" {
+  export function existsSync(path: URL | string): boolean;
   export function readFileSync(path: URL | string, encoding: "utf8"): string;
   export function readdirSync(path: URL | string): string[];
   export function statSync(path: URL | string): { isDirectory(): boolean };
