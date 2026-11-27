@@ -13,6 +13,23 @@
 > K3 评审（2026-11-27）：**needs-changes**，无 P1。P2-1（不支持参数形态静默误分类）、P2-2（几何 owner /
 > nativeEdit 锚点 / 符号锚点三处字段判据缺口）、P2-3（人读文档失效测试路径）、P3（元素访问边界文档与实现相反）
 > 已逐项返修并补反向必红用例，见 tasks §8。
+> 节点 2（归档放行，2026-11-27）：**机器 + 独立评审放行**（`docs/process/openspec-workflow.md` 五要件）。
+> 1. **方案已批准**：节点 1 Alex 原话「采纳建议，请你安排」；K3 返修只收紧判据与文档边界，无产品行为或 scope 扩张。
+> 2. **独立 reviewer clean/merge**：K3（2026-11-27）结论 clean/merge，无 P1 / P2 / P3，绑定 `db6093cd`；本批 rebase 到
+>    `b7d55311` 后 `git range-diff a959986e..db6093cd b7d55311..8a5ffb41` 显示两个提交逐项等价，新 tip `8a5ffb41`。
+> 3. **tasks 完成**：28/28（7.1 归档已在本分支完成；merge / push 按本批禁令留 tower）。
+> 4. **门禁与证据**（证据落 `.local/reports/replace-widget-registry-nov27/`）：
+>    - 目标注册表 10/10（`green-target-rebased.log`）；全量前端 2176/2176（`unit-full-rebased.log`）；
+>    - quick `GATE RESULT: 12/12 PASS（SKIP 1）`，退出码 0（`gate-quick-post-archive.log`；SKIP = `tsc-visual`，`tests/visual` 依赖未装）；
+>    - docs-check PASS（`docs-check-post-archive.log`）；`validate --all --strict` 38 passed / 0 failed（`validate-post-archive.log`）；
+>    - 本 change 无真机判定面（静态注册表 + 文档）；未跑真机、未动视觉基线。
+> 5. **规格对账（归档前）**：`openspec-archive-check.mjs` 门禁模式 PASS（9 份 delta / 7 条 MODIFIED / 对比 109 段 / 无静默丢段；
+>    `archive-check-pre.log`）；`docs/backlog.md` 80/80 行且本 change 有且仅有一条归档队列条目（`backlog-check-post-archive.log`）；
+>    validate 38/0（归档后读数，`validate-post-archive.log`）。
+> **归档完成（2026-11-27）**：归档提交 `612a3e7b`；包装器 `openspec archive` 输出 `Totals: + 1, ~ 0, - 0, → 0`，修链 0 处，
+> `openspec-links` PASS（711 条全可达）；`node scripts/openspec-archive-check.mjs --archived register-replace-widget-contracts-nov27`
+> **PASS**（0 条 MODIFIED / 对比 0 段 / 人工恢复 0 段 / 声明认领 0 段；`archived-audit.log`）。归档目录
+> `openspec/changes/archive/2026-11-27-register-replace-widget-contracts-nov27/`。
 
 ## Why
 

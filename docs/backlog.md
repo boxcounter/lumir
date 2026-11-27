@@ -1,6 +1,5 @@
 # Backlog — findings 与待裁决队列
 唯一的积压载体。**一条 = 一个可关闭单元**：只留结论 gist + 证据指针 + 出口 / 下一动作；叙述与过程状态进 git 历史、`.tower/comms/`、`.local/`。场景清单见 [COVERAGE.md](../scripts/acceptance/COVERAGE.md)，长期口径与已裁暂缓见 [standing-decisions.md](specs/standing-decisions.md)，运行纪律见 [scripts/acceptance/README.md](../scripts/acceptance/README.md)。维护规则：`#decide` 只收价值取舍 / 产品语义（客观可核的由 tower 裁并记录）；**已裁项不留在 `#decide`**——裁决结论随实施条目走（工作项点名裁决与日期），长期口径迁 standing-decisions；`#fix` 客观可核；`#probe` 需实验；`#check` 证据不足；`#hygiene` 已定案的小收尾。**核销即删除、不留索引**（2026-10-12 Alex 裁决），**修复 PR 同批删除对应条目、reviewer 合并前核对**（2026-10-24）；含长期口径时迁 standing-decisions，不留在本文件。**只记改变未来动作的信息**（2026-10-16 Alex 裁决）；**体量红线 80 行**（Alex 2026-10-24，自 300 下调），不为压行数删活条目；引用用主题关键词锚，MUST NOT 用编号或行号；finding 落账率由批次收尾核对（`.tower/comms/findings/` 新增数 = 新增条目数）。出口由 `scripts/backlog-check.mjs` 机器判定（完成标记 / 缺出口 / 重复或死 finding 指针 / 记录在案无 canonical 居所 / 80 行硬上限，无 ratchet、无既有豁免；随 docs-check 跑）。
-
 ## 待 Alex 裁决（`#decide`，一行一题）
 - **「末尾之后」空段落 / 卡片两子档的呈现**（M457/M473）：末尾空段落是否渲染成可键入的空行、卡片两子档的模型语义——口径草案见 `docs/specs/harness-composer.md` 的 HC3，需 Alex 定表现。
 - **「未保存新文档」是否提供创建入口**（M416）：当前无路径产生「无路径、可编辑」文档；做不做、做成什么形态，待 Alex 定义。
@@ -64,6 +63,7 @@
 - 左栏拖拽（场景 159）→ 下一动作：Alex 手拖复验根落点（M538）。
 - `M455 收尾复跑`（138/140/144/145 与 hover 族 76/87/131/132/133/134）→ 下一动作：真机复跑并登记读数（145 的 `mod+z` 同族观察留给 change 属主裁）。
 ## 归档跟踪队列（oct24 批剩余；口径见 `docs/process/openspec-workflow.md`）
+- **`register-replace-widget-contracts-nov27`**（已归档 2026-11-27，提交 `612a3e7b`；`--archived` PASS：0 条 MODIFIED / 0 段，纯 ADDED 预期读数）：节点 1 Alex「采纳建议，请你安排」；K3 clean/merge 绑 `db6093cd`（rebase 到 `b7d55311` 后 `range-diff` 内容等价，tip `8a5ffb41`）；quick / 全量 / validate / docs 读数见 proposal 节点 2 块；delta = editor-live-preview 1 条 ADDED；无真机面（静态治理 + 文档）。
 - **`govern-editor-evidence-state-nov27`**（归档 2026-11-27，提交 `36c01688`；`--archived` PASS：无 `specs/` 增量，纯文档 skip_specs 零 delta）：节点 1 Alex 2026-11-27 采纳四项合同（五态 / 四类 / 反向必红 / 老证据限定），无扩 scope；独立 reviewer clean/merge 绑 `b4d6a145`（rebase 后内容不变，tip `ff288793`；`.local/reviews/govern-editor-evidence-state-nov27/verdict.md`）；quick `GATE RESULT: 12/12 PASS（SKIP 1）`（日志 `.local/missions/govern-editor-evidence-state-nov27/gate-quick.log`）；validate 39/39（归档后 38/38）、docs-check PASS；delta = 无（纯文档，`.openspec.yaml` 的 `skip_specs: true`）；tasks 17/18（4.2 merge / push 留 tower）；包装器与 `--archived` 读数见 proposal 节点 2 块。
 - **`improve-keybindings-lookup-oct24`**（M715）：delta = keymap-commands 1 条 MODIFIED（键位面板行模型）+ 3 条 ADDED（查找/捕获/详情、非自指入口、命令元数据与字形单一来源），节点 2 走人肉；实现批附带新增真机场景 235 / 236 / 237（查询 / 捕获 / 键盘）与 m133 视觉场景重写——**像素基线待 Alex 过目后重截**（未经过目不得 `--update`）；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`overlay-width-contract-oct24`**（M702，34/37）：节点 1 追认材料已备（D1–D5 落地 + 证据 + 否决回改面，见 proposal）；真机 231/232 PASS（5 + 11 断言，`.local/acceptance/2026-10-24-m711/`）；残留：0.3 / 0.4 待 Alex 追认、9.1 归档期执行；delta = ui-design-system 1 条 ADDED，归档前后各跑 `node scripts/openspec-archive-check.mjs`。

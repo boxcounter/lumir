@@ -42,7 +42,7 @@
 
 ## 7. 移交（本批显式禁止，不勾）
 
-- [ ] 7.1 merge / push / 归档：本批明确禁止，由 tower 后续批次处理；`tasks.md` 因此不是全勾状态，docs-check 的归档队列判据不要求本 change 先落 `docs/backlog.md` 跟踪条目
+- [x] 7.1 归档：本分支已完成 archive（提交 `612a3e7b`）与 `--archived` 审计；merge / push 按本批禁令由 tower 后续执行
 
 ## 8. K3 返修（needs-changes，2026-11-27）
 
