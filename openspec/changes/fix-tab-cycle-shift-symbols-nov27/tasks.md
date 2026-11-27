@@ -69,11 +69,15 @@
          `docs/backlog.md` 有唯一队列条目，而 tasks 刚全勾、条目尚未补（本条已随后补上）。
       3. 第 3 次（补条目后）：`unit-tests` PASS（2196/2196）；visual-regression 1944 passed /
          **1 failed** / 13 skipped——失败为 `editing-oracle.spec.ts:1143`（IME 组合结束 4s 后
-         250ms 低频恢复），与首轮旧基失败同一用例；该用例在 rebase 后隔离复跑 4/4 PASS，且第
-         1 / 2 次完整 visual 均通过；`docs/backlog.md` 的 END 归档条记录 master 侧同一 oracle
-         的 A/B（候选 40/40 vs master 37/40），属既有 flaky oracle。
-      **结论：按「仍有红不归档」纪律，本 change 未归档**（节点 2 未放行）；三次红均不在本
-      change 的键位代码 / 场景面，分类与证据如上，交由主会话决定是否再跑一轮或按既有 flake 判定。
+         250ms 低频恢复），与首轮旧基失败同一用例。
+      4. 第 4 次（确认机器空闲、隔离端口 4297 重跑）：`unit-tests` PASS（2196/2196）、
+         visual-regression 1944 passed / **1 failed** / 13 skipped——同一 `editing-oracle`
+         用例再失败。该用例在 rebase 后隔离复跑 4/4 PASS，第 1 / 2 次完整 visual 通过；`docs/backlog.md`
+         的 END 归档条记录 master 侧同一 oracle 的 A/B（候选 40/40 vs master 37/40），属既有
+         flaky oracle（全量串行下约半数失败）。
+      **结论：四次完整 visual 均为 `14/15`，未取得单次全绿 ⇒ 按「仍有红不归档」纪律，本 change
+      未归档**（节点 2 未放行）。四次红均不在本 change 的键位代码 / 场景面（外负载 / 流程条目 /
+      既有 flaky oracle），分类与原始日志如上，交由主会话决定是否再跑或按既有 flake 判定。
 - [x] 最终 `scripts/gate.sh quick`（独立审查在低负载下重跑）：`GATE RESULT: 13/13 PASS（SKIP 0）`，
       退出码 0；前端单测 `tests 2193 / pass 2193 / fail 0`。证据
       `.local/reviews/tab-navigation-keys-nov27/evidence/gate-quick-final.log`（作者先前的
