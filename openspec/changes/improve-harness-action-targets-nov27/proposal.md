@@ -91,6 +91,21 @@ pointer / focus 双激活源，tail notice 在场时整段不预览。本 change
 每个新增 / 修改真机断言均做了反向必红与恢复绿；8 份红日志在
 `.local/reviews/harness-action-targets-nov27/logs/native-reverse-*.log`。最终跑批与 success 复核路径见下方状态表。
 
+## 独立评审处理（两项 P2，待复审）
+
+原独立 K3 verdict 为 `findings`（绑定 `1687220d`，`.local/reviews/harness-action-targets-nov27/independent-review.md`），
+两项均为测试 / 证据缺口，不是已复现的产品回归：
+
+- **P2-1 已补持久覆盖**：目标 spec 以共享七点矩阵覆盖引用 ×、图片 @ / × 的中心、四边与近角真实点击；
+  每个点位独立判定移除 / 插入副作用。zh / en success 共用同一测试，英文 `✓ Copied` 的动态宽度、撤回让位、
+  布局稳定与超时恢复均入仓。目标由 14 条增至 33 条，不依赖 reviewer 的 git 外探针。
+- **P2-2 已修正反例**：相邻间距拆出不依赖 `readHits` 的真实矩形用例；disabled 零副作用独立成用例，
+  反例红分别在 `horizontalGap >= 2` 与实际 `withdrawCalls`，不再被 misses / focus opacity 提前截断。
+  英文宽度、让位、超时恢复与布局分别新增反例。其余既有红日志逐项核对了失败点，未发现另一例同类提前失败。
+
+本轮生产行为与 native 场景均未改变，既有 3/3 native 证据仍对应当前行为。目标 33/33、相关 49/49；
+最终 K3 复核与 clean/merge verdict **待主会话 resume reviewer**，此处不预写通过。
+
 ## 节点 2：归档记录（实现完成后填写）
 
 口径见 [OpenSpec 流程](../../../docs/process/openspec-workflow.md)「状态分列」与「失败与 finding 归类」；

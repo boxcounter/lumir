@@ -50,7 +50,8 @@
 - [x] 3.4 断言既有 accessible name、inline SVG 不产生额外读屏控件、composer Tab 序及文档 / 选区 / history 不变
 - [x] 3.5 **每条新增 / 修改断言逐条做反向必红**：分别注入 16 / 20px 尺寸、相邻重叠、祖先裁切、正文覆盖、
       移除 × 冒泡隔离、错误 accessible name / Tab 序等必红输入，实测对应断言 FAIL；逐项恢复后 PASS。
-      红 / 绿原始日志落 `.local/reviews/harness-action-targets-nov27/logs/`（16 类反例 + 最终恢复绿），
+      红 / 绿原始日志落 `.local/reviews/harness-action-targets-nov27/logs/`；独立评审后新增七点真实点击反例
+      （移除 14/14 红、@ 7/7 红）、英文宽度 / 让位 / 恢复 / 布局反例，以及修正后的 overlap / disabled 目标红；
       不得以整组曾红替代逐条证据
 
 ## 4. 视觉候选与 Alex 基线裁决
@@ -84,7 +85,8 @@
       原始日志 `.local/reviews/harness-action-targets-nov27/logs/quick-r1.log`
 - [ ] 6.3 完整 `scripts/gate.sh visual` 通过，报告照抄 `GATE RESULT` 原文行与退出码；CI 结构层不得替代本地像素层
 - [ ] 6.4 独立 K3 reviewer 对当前 tip 做代码与视觉终审，结论 clean / merge 并绑定最终 tip；核验真实几何 / 命中、
-      逐条反向证据及并排图。tip 后续有改动则重新评审
+      逐条反向证据及并排图。原 verdict 两项 P2 已处理并写入 proposal，最终复核待主会话 resume agent-538；
+      不预写 clean。tip 后续有改动则重新评审
 - [x] 6.5 证据路径在写入报告时实际可 `ls`；报告与 proposal 节点 2 分列视觉候选、implemented、machine PASS、
       native PASS、released、archived，分别附证据或「否 / 不适用 + 原因」，失败按四类归因
 
