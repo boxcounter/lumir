@@ -10,8 +10,8 @@
 # 2. composer 面：同一条文本出现在 `AXTextArea` 的值里（撤回前是 present:false——空 composer）；
 # 3. 上下文面：撤回后改发另一句，盘上最新会话文件里**没有**被撤回的文本、且带
 #    `opened_from":"withdraw"`；会话目录里只剩一份 JSONL（A 已物理删除）。
-# 撤回钮 hover 才显形（读屏名 D1052「撤回」）；本场景走套件的 AXPress 点击通道，hover 的视觉
-# 形态不在判据内（属手感，归 Alex）。
+# 撤回钮 hover 才显形（读屏名 D1052「撤回这一轮」，悬停提示 D1089 说明完整后果；本场景走套件
+# 的 AXPress 点击通道，hover 的视觉形态不在判据内——预览另留一张截图，形态归 Alex）。
 id: "882-harness-withdraw-message"
 item: 882
 tier: full
@@ -69,11 +69,20 @@ steps:
         node: { role: AXStaticText, name: "q882-WITHDRAW", present: true }
       - label: 撤回前：composer 是空的（同一条文本不在 AXTextArea 里）
         node: { role: AXTextArea, name: "q882-WITHDRAW", present: false }
+      - label: 撤回入口的悬停提示说明完整后果（AX help=；change clarify-harness-withdraw-scope-nov27）
+        ax: { has: 'help="撤回这条消息和它引发的回答、工具记录；原文回到输入框"' }
       - shot: 02-撤回前
+
+  # 悬停入口 = 预览：本条消息 + 它的回答应被共同高亮（截图证据；像素形态归 Alex，套件不判）。
+  - name: 悬停撤回入口（预览将被移除的那一段）
+    do: hover
+    target: { role: AXButton, name: "^撤回这一轮$" }
+    expect:
+      - shot: 02b-撤回预览
 
   - name: 点最后一条用户消息上的「撤回」
     do: click
-    target: { role: AXButton, name: "^撤回$" }
+    target: { role: AXButton, name: "^撤回这一轮$" }
 
   - name: 等新会话文件发布（B 的 opened_from=withdraw）
     do: waitForFile

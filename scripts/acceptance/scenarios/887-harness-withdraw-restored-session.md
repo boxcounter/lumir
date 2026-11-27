@@ -12,8 +12,8 @@
 # 3. 复活层：切走再从清单恢复 B，被撤回的那句既不在面板上、也不在盘上——恢复件撤回删的是
 #    **恢复来源**（恢复是惰性发布，当前会话没有自己的文件），来源不删就会在这一步复活。
 #
-# 撤回钮 hover 才显形（读屏名 D1052「撤回」）；本场景走套件的 AXPress 点击通道，hover 的视觉
-# 形态不在判据内（属手感，归 Alex；按钮可发现性不在本 change 的 scope）。
+# 撤回钮 hover 才显形（读屏名 D1052「撤回这一轮」）；本场景走套件的 AXPress 点击通道，hover 的
+# 视觉形态不在判据内（属手感，归 Alex；预览证据由 882 的 hover 截图承担）。
 id: "887-harness-withdraw-restored-session"
 item: 887
 tier: full
@@ -141,7 +141,7 @@ steps:
 
   - name: 点最后一条用户消息上的「撤回」（回执的 withdrawable 驱动钮的可见性——点不到即红）
     do: click
-    target: { role: AXButton, name: "^撤回$" }
+    target: { role: AXButton, name: "^撤回这一轮$" }
 
   - name: 等新会话文件发布（B 的 opened_from=withdraw）
     do: waitForFile
