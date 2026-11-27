@@ -37,4 +37,4 @@
 
 - [x] 5.1 **0.20 存量会话范围已裁**：节点 1 补充批准（2026-11-27）——采纳「只允许升级后的新消息」，0.20 及更早无 `lumir_user_origin` 标记的存量会话恢复后仍不可撤回；不采用显式认领、不采用非破坏性分叉。记录见 `proposal.md` 的「评审记录 / 节点 1 补充批准」与「范围裁决」一节。
 - [x] 5.2 节点 2 五要件与归档记录（见 `proposal.md` 的「节点 2：归档记录」）：方案批准 / K3 clean-merge 绑 `0589fa09` / tasks 全勾 / 门禁与真机 887 PASS / 规格对账，逐条落账。
-- [ ] 5.3 `node scripts/openspec-archive.mjs withdraw-restored-user-message-nov27` 归档 + 提交 + `--archived` 审计 PASS（读数回填 proposal 的「节点 2 / 归档后」）。
+- [x] 5.3 `node scripts/openspec-archive.mjs withdraw-restored-user-message-nov27` 归档 + 提交 + `--archived` 审计 PASS（读数回填 proposal 的「节点 2 / 归档后」）。
