@@ -33,7 +33,7 @@
 - [x] 4.4 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过。
 - [x] 4.5 `node scripts/openspec-archive-check.mjs` 门禁模式 PASS（8 条 MODIFIED / 156 段，无静默丢段）。
 
-## 5. 未裁阻断与归档（本 mission 均不执行）
+## 5. 范围裁决与归档（本 mission 不执行 merge / 归档）
 
-- [ ] 5.1 **0.20 存量会话（无来源标记）的可撤回范围送 Alex 裁决**——阻断 merge，agent 不得代裁；三条候选路线与结论见 `proposal.md` 的「未裁阻断」一节。
-- [ ] 5.2 节点 2 五要件与归档记录（见 `proposal.md` 的「节点 2：归档记录」）——**本 mission 不执行**：由 tower 在 5.1 裁决 + 真机 887 PASS 后按五要件办理。
+- [x] 5.1 **0.20 存量会话范围已裁**：节点 1 补充批准（2026-11-27）——采纳「只允许升级后的新消息」，0.20 及更早无 `lumir_user_origin` 标记的存量会话恢复后仍不可撤回；不采用显式认领、不采用非破坏性分叉。记录见 `proposal.md` 的「评审记录 / 节点 1 补充批准」与「范围裁决」一节。
+- [ ] 5.2 节点 2 五要件与归档记录（见 `proposal.md` 的「节点 2：归档记录」）——**本 mission 不执行**：剩余缺口只有真机 887 的 PASS 证据，由 tower 在真机 PASS 后按五要件办理。
