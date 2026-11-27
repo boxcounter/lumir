@@ -2,7 +2,7 @@
 id: "43-list-tab-indent"
 item: 43
 tier: full
-title: 列表项缩进命令的真机链路——经 [keys] 绑到通道可达的 ⌘J / ⌘⇧J：缩进的源码写回（有序列表按新归属重排序号）、到顶 / 非列表 / 非 md 会话无操作、一次撤销还原
+title: 列表行缩进命令的真机链路——经 [keys] 绑到通道可达的 ⌘J / ⌘⇧J：缩进的源码写回（行模型：有序列表只动空白、不改编号）、到顶 / 非列表 / 非 md 会话无操作、一次撤销还原
 fixtures: [list-indent-bullet.md, list-indent-ordered.md, list-indent-quote.md, list-indent-nested.md, list-indent-paragraph.md, code-outline.js]
 open: list-indent-bullet.md
 marker: "alpha"
@@ -90,7 +90,7 @@ steps:
       - label: 保存闭环 ⇒ dirty 收窄
         ax: { not: "（未保存）" }
 
-  - name: 按 ⌘J：整项缩进一层（步长 = 上一同级项 alpha 的内容列 2）
+  - name: 按 ⌘J：光标所在行缩进一层（步长 = 上一同级项 alpha 的内容列 2）
     do: key
     key: "cmd+j"
     expect:
@@ -113,7 +113,7 @@ steps:
         file: { path: list-indent-bullet.md, has: "/^  - bravoq$/" }
       - label: 反向：原来那一行不再存在（判据带行锚点，不是子串互含）
         file: { path: list-indent-bullet.md, not: "/^- bravoq$/" }
-      - label: 上一同级项 alpha 逐字节未动（只动归属项）
+      - label: 上一同级项 alpha 逐字节未动（只动光标所在行）
         file: { path: list-indent-bullet.md, has: "/^- alpha$/" }
       - shot: bravo-缩进写回
 
@@ -163,23 +163,23 @@ steps:
       - label: q 落在 dos 这一行 ⇒ 落点已钉住
         editor: { has: "dosq" }
 
-  - name: 按 ⌘J：步长 3（`2. ` 的内容列）且源码编号按新归属重排为 `1.`
+  - name: 按 ⌘J：步长 3（`2. ` 的内容列）且源码编号保持字面 `2.`（行模型切断 D2c 重排）
     do: key
     key: "cmd+j"
   - name: 按 ⌘S 落盘（⌘S 发两次换一次丢键的容错）
     do: keys
     keys: ["cmd+s", "cmd+s"]
-  - name: 落盘后核对缩进与编号重排
+  - name: 落盘后核对缩进与编号不动
     do: sleep
     ms: 1200
     expect:
-      - label: dos 成为 uno 的子项且编号重排为本组第 1 项（`   1. dosq`，3 空格 = `1. ` 的内容列宽）
-        file: { path: list-indent-ordered.md, has: "/^   1\\. dosq$/" }
+      - label: dos 成为 uno 的子项且源码编号保持 `2.`（`   2. dosq`，3 空格 = `1. ` 的内容列宽）
+        file: { path: list-indent-ordered.md, has: "/^   2\\. dosq$/" }
       - label: 反向：原来的 `2. dosq` 不再存在
         file: { path: list-indent-ordered.md, not: "/^2\\. dosq$/" }
-      - label: 原分组第一项 `1. uno` 逐字节未动（编号重排只落受影响的分组）
+      - label: 原分组第一项 `1. uno` 逐字节未动（行模型不改写任何编号）
         file: { path: list-indent-ordered.md, has: "/^1\\. uno$/" }
-      - shot: dos-缩进与编号重排
+      - shot: dos-缩进与编号不动
 
   - name: 换文件：引用内的列表（`> - echo` / `> - foxtrot`）
     do: open
@@ -281,7 +281,7 @@ steps:
       - label: q 落在 charlie 这一行 ⇒ 落点已钉住
         editor: { has: "charlieq" }
 
-  - name: 按 ⌘J：嵌套项再缩一层（步长 = 上一同级项 bravo 的内容列 4 − 本项 marker 列 2 = 2）
+  - name: 按 ⌘J：嵌套行再缩一层（步长 = 上一同级项 bravo 的内容列 4 − 本行 marker 列 2 = 2）
     do: key
     key: "cmd+j"
   - name: 按 ⌘S 落盘（⌘S 发两次换一次丢键的容错）
@@ -295,7 +295,7 @@ steps:
         file: { path: list-indent-nested.md, has: "/^    - charlieq$/" }
       - label: 反向：原来的那一行不再存在
         file: { path: list-indent-nested.md, not: "/^  - charlieq$/" }
-      - label: 只动归属项：前面的兄弟项 bravo 逐字节未动
+      - label: 只动光标所在行：前面的兄弟项 bravo 逐字节未动
         file: { path: list-indent-nested.md, has: "/^  - bravo$/" }
       - shot: 嵌套项-再缩一层
 
@@ -339,8 +339,8 @@ steps:
 teardown:
   - label: 收尾：bravo 已由一次撤销还原（`- bravoq`）
     file: { path: list-indent-bullet.md, has: "/^- bravoq$/" }
-  - label: 收尾：有序列表的 dos 停在缩进 + 重排后的形态
-    file: { path: list-indent-ordered.md, has: "/^   1\\. dosq$/" }
+  - label: 收尾：有序列表的 dos 停在缩进、编号未重排的形态
+    file: { path: list-indent-ordered.md, has: "/^   2\\. dosq$/" }
   - label: 收尾：引用内列表停在 `>   - foxtrotq`
     file: { path: list-indent-quote.md, has: "/^>   - foxtrotq$/" }
   - label: 收尾：嵌套列表里 charlie 停在再缩一层的形态
@@ -349,11 +349,12 @@ teardown:
     file: { path: list-indent-paragraph.md, has: "/^这一行是普通段落。$/" }
 ---
 
-# 列表项缩进命令的真机链路（change list-tab-indent / M239；M249 收口）
+# 列表行缩进命令的真机链路（change list-tab-indent / M239；M249 收口；行模型见
+# change rework-list-tab-line-model-nov27）
 
 ## 这个场景验什么、不验什么（先读这段）
 
-Alex 节点 1 裁决（D1a / D2c / D3a / D4a / D5a）把 `Tab` / `Shift-Tab` 绑给列表项缩进。**但 KimiCU 的
+Alex 节点 1 裁决（D1a / D2c / D3a / D4a / D5a）把 `Tab` / `Shift-Tab` 绑给列表行缩进。**但 KimiCU 的
 键盘注入落不下 `Tab`**：M240 三路归因（单独复跑仍红 → 不是丢键抖动；把 `src/` 整体回到实现前仍红 →
 不是后续 change 引入；chromium 探针里 Tab / Shift+Tab 行为正常 → 不是产品缺陷）证明边界在注入通道，
 不是命令实现（现场见 finding `20260926-worker-impl-table-fs-bug-tab-shift-tab-wkwebview-m239-43-master.md`
@@ -364,15 +365,17 @@ Alex 节点 1 裁决（D1a / D2c / D3a / D4a / D5a）把 `Tab` / `Shift-Tab` 绑
 上走一遍「按键 → 键位层分发 → 语法树归属判定 → 源码写回 → 落盘」——**验的是命令本身与它下游的一切**。
 
 **`Tab` / `Shift-Tab` 这个键本身的链路在真机上未验**（`press_key("tab")` 不落 WKWebView），它的判据
-落在 chromium：`tests/visual/scenes/m239-list-tab-indent.spec.ts`（真 CM + 真键位层，八条用例，含一条
-`[keys]` 解绑 Tab 的反向对照）。两层合起来才等于「D1a–D4a 全部落地」——**不要把本场景的 PASS 读成
+落在 chromium：`tests/visual/scenes/m239-list-tab-indent.spec.ts`（真 CM + 真键位层，14 条用例：单行 / 引用 /
+有序 / 首项 / 不带子树 / 多行选区（正向 + 反向）/ 尾落行首 / 混合选区 / 多行撤销 / `[keys]` 解绑
+Tab 的反向对照）。两层合起来才等于「D1a–D4a 全部落地」——**不要把本场景的 PASS 读成
 「Tab 也验过了」**（REVIEW.md 「覆盖声明超出真实验证」条）。
 
 1. **无序列表缩进**：`- bravo`（第二项）按 ⌘J 变 `  - bravoq`（步长 2 = 上一同级项的内容列）。
 2. **一次撤销**：同一现场按一次 ⌘Z，源文件回到 `- bravoq`（单次 dispatch = 一步撤销）。
-3. **有序列表缩进 + 编号重排（D2c）**：`2. dos` 变 `   1. dosq`——3 空格是 `2. ` 的内容列宽（固定 2
-   空格在有序列表上**嵌不进去**，实测见 change 的 design §3），且源码编号按新归属重排为新分组的第 1
-   项；原分组第一项 `1. uno` 逐字节不动。
+3. **有序列表缩进、编号不改写**：`2. dos` 变 `   2. dosq`——3 空格是 `2. ` 的内容列宽（固定 2
+   空格在有序列表上**嵌不进去**，实测见旧 change 的 design §3）；行模型（change
+   rework-list-tab-line-model-nov27）切断 D2c 的分组重排，源码编号保持字面 `2.`，原分组第一项
+   `1. uno` 逐字节不动。显示编号由渲染层按组序计算，不读源码数字。
 4. **引用内列表**：`> - foxtrot` 变 `>   - foxtrotq`（2 空格加在最内层 `>` 之后）。
 5. **嵌套列表再缩一层**：`  - charlie`（与 bravo 同层）变 `    - charlieq`，兄弟项 bravo 逐字节不动。
 6. **无操作三形态**：列表第一项 ⌘J（没有可嵌套的父项）、顶层项 ⌘⇧J（D3a）、非列表行 ⌘J / ⌘⇧J
@@ -385,7 +388,7 @@ Alex 节点 1 裁决（D1a / D2c / D3a / D4a / D5a）把 `Tab` / `Shift-Tab` 绑
 
 | 要判的东西 | 通道 | 为什么不是别的 |
 |---|---|---|
-| 源码写回（缩进量、编号重排） | **落盘后的 vault 文件**（行锚点正则） | 编辑器内容的 AX 读数 = **渲染后**文本：列表标记被 widget 替换、行首空白不进 AX（README「已知边界」）——源码级判据只能从磁盘取 |
+| 源码写回（缩进量、编号不动） | **落盘后的 vault 文件**（行锚点正则） | 编辑器内容的 AX 读数 = **渲染后**文本：列表标记被 widget 替换、行首空白不进 AX（README「已知边界」）——源码级判据只能从磁盘取 |
 | 写盘时机 | **用户的 ⌘S（发两次换一次丢键的容错）+ 等 1200ms** | M278 起写盘只由用户的显式动作触发（自动保存整条移除），⌘S 是唯一通道。旧写法的顾虑是「⌘S 丢键会让负向断言假绿」——现在由**配对的磁盘断言**兜住：保存那一步同时断言正向内容在场（丢键即红），负向断言的同一步里因此不可能空过（REVIEW.md 「断言等价于子串 / 读不到当成空」条的两条纪律） |
 | 命令是否真的被注入落实 | **每个用例先键入见证字符 `q` 并回读**（`bravoq` / `dosq` / `foxtrotq` / `charlieq`） | `keys` 的可打印序列走「回读 + 只在字节未变时重试」，落地即被证实；q 落在正确的行才说明定位键（⌃N / ⌃E）也落了地。**这条同时是后面文件断言的正观测**（REVIEW.md 「断言等价于子串」条：负向断言必须有配对的活观测） |
 | dirty 是否被点亮 | **标签读屏名里的「（未保存）」（D90）** | 套件读不到 dirty 位；标签 aria-label 是它唯一的可读出口。且只在**从未被编辑过**的文件上断言（fresh fixture），断言才有区分度 |
@@ -443,9 +446,9 @@ M240 那轮登记的红是**通道**问题（`Tab` 不落地，已由 M249 改�
   那条红 ⇒ 焦点没在编辑器里，先看 `clickEditor` 是否生效。
 - **不做手感判定**：缩进的观感（列表标记与悬挂缩进的跟随）归 Alex，本场景只留截图证据。
 - **不覆盖**：① 选区随 change mapping 的平移（AX 读不到选区）；② `Tab` / `Shift-Tab` 的默认绑定
-  链路（见上，归 chromium）；③ 多行项（**续行** + 子树）的整块平移在真机上只由
-  `^- alpha$` / `^1\. uno$` / `^> - echo$` 这些邻居行的逐字节断言间接覆盖——整块平移由
-  `tests/unit/list-indent.test.ts` 的多行用例钉死；④ 见证字符 `q` 会留在 fixture 里（验收 vault 每次
+  链路（见上，归 chromium）；③ 多行选区（行模型的核心场景）不在本场景里——单行 / 引用 / 有序 / 非列表的**命令链路**由本场景守，
+   多行选区与「未选行不动」归真机场景 888（`888-list-line-indent`）与
+  `tests/unit/list-indent.test.ts`、chromium 场景 `m239-list-tab-indent.spec.ts`；④ 见证字符 `q` 会留在 fixture 里（验收 vault 每次
   运行都从 fixtures/ 重置，且本场景的收尾断言按含 `q` 的形态写）。
 - **`state.readOnly` 提前返回这一层在真机上验不到（也已无入口）**：`src/editor.ts` 的
   `applyListIndent` 只读时提前返回，但 editable-non-md-files（M231）之后凡能进编辑器的文件类都可

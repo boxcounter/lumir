@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：311
-- 验收项（不同 item 编号）：278
-- 分档：core 32 / full 269 / bundle 5 / evidence 5（full 批 = 全部 311 个，含其余各档）
+- 场景：312
+- 验收项（不同 item 编号）：279
+- 分档：core 32 / full 270 / bundle 5 / evidence 5（full 批 = 全部 312 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -76,7 +76,7 @@
 | 40 | `40-table-fullscreen-view` | 表格放大全屏查看：命令打开遮罩、快照在场、Esc 关闭焦点回编辑器、降级表无入口、不改写源文件 | full |
 | 41 | `41-editable-non-md-files` | 非 md 文本文件可编辑——键入 / dirty / ⌘S 落盘 / 撤销收窄，外部修改走同一组冲突双逃生口 | full |
 | 42 | `42-non-md-edit-guardrails` | 非 md 可编辑的护栏矩阵——二进制仍「暂不支持预览」、非 UTF-8 打开即拒、文本类不受牵连 | core |
-| 43 | `43-list-tab-indent` | 列表项缩进命令的真机链路——经 [keys] 绑到通道可达的 ⌘J / ⌘⇧J：缩进的源码写回（有序列表按新归属重排序号）、到顶 / 非列表 / 非 md 会话无操作、一次撤销还原 | full |
+| 43 | `43-list-tab-indent` | 列表行缩进命令的真机链路——经 [keys] 绑到通道可达的 ⌘J / ⌘⇧J：缩进的源码写回（行模型：有序列表只动空白、不改编号）、到顶 / 非列表 / 非 md 会话无操作、一次撤销还原 | full |
 | 44 | `44-theme-live-switch` | 主题运行期切换：⌘⇧T 与 modeline 钮三档循环、逐档写回 config.json、重启后首帧持久 | full |
 | 45 | `45-tab-cycle-keys` | 标签循环键——⌃⇥ / ⌃⇧⇥ 的真机循环语义（末端 / 首端回卷、单标签无操作）＋ ⌘} / ⌘{ 的通道限制登记 | full |
 | 46 | `46-dotfile-jsonc-highlight` | dotfile 与 JSONC 高亮——.gitignore / .gitattributes / x.jsonc 逐字节回读与语言登记，.secret 对照组仍纯文本；三类可编辑（编辑 → 回读 → ⌘S 落盘） | full |
@@ -296,3 +296,4 @@
 | 885 | `885-no-tab-empty-state` | 无 TAB 空态：单 pane scratch 无行号但可输入；分栏空 pane 无行号、键入无效、引导在场 | full |
 | 886 | `886-harness-web-mode-unsupported`<br>`886b-harness-web-no-fabricated-evidence` | Web 不支持的模式失败关闭：web_mode_unsupported、无批准卡、无徽标、零读数<br>Web 失败不伪造证据读数：未配置 provider 无徽标、五字段不渲染 | full<br>full |
 | 887 | `887-harness-withdraw-restored-session` | 恢复旧会话后撤回最近一条用户消息：删的是恢复来源、再恢复不复活 | full |
+| 888 | `888-list-line-indent` | 列表行缩进的行模型——6 行多选 Shift+Tab 逐行凸排（正向 / 反向同一结果）、未选中的首行与子项逐字节不动、一次撤销还原 | full |
