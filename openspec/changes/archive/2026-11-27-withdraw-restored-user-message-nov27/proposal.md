@@ -152,4 +152,17 @@
    8 条 MODIFIED / 156 段，0 静默丢段）；`validate --all --strict` 39 passed / 0 failed；
    归档跟踪队列有且仅有一条本 change 条目（`docs/backlog.md` 的「归档跟踪队列」）。
 
-**归档后（2026-11-27）**：待归档提交后填写。
+**归档后（2026-11-27）**：
+
+- 归档提交：`907c8bb0`（`chore(openspec): archive withdraw-restored-user-message-nov27`）。
+- 包装器输出：`Totals: + 0, ~ 1, - 0, → 0`；
+  `Change 'withdraw-restored-user-message-nov27' archived as '2026-11-27-withdraw-restored-user-message-nov27'.`
+  （包装器运行时 5.3 尚为未勾，故提示 `Task status: 23/24 tasks`；5.3 就是归档动作本身，已在
+  归档提交内勾选，归档后 tasks 24/24。）
+- 修链：归档后修链 **0 处**（扫过 4 篇 Markdown / 0 条相对链接）；
+  `openspec-links: PASS（校验 710 条相对链接，全部可达）`。
+- `node scripts/openspec-archive-check.mjs --archived withdraw-restored-user-message-nov27`：
+  `PASS（openspec/changes/archive/2026-11-27-withdraw-restored-user-message-nov27：1 条 MODIFIED，
+  对比 47 段；人工恢复 0 段，声明认领 0 段）`（2026-11-27）。
+- `validate --all --strict`：`Totals: 38 passed, 0 failed`（归档后；归档前 39 项含本 change）；
+  `docs-check` PASS。
