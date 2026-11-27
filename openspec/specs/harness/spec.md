@@ -5520,6 +5520,21 @@ Skill 内容引发的 `cli_run`；invocation policy MUST NOT 替代或放宽权�
 原文回到 composer 供编辑。只把消息从显示面移除 MUST NOT 被当作撤回——模型上下文由会话 `input`
 决定，显示面只是它的投影。
 
+撤回入口 SHALL 是**小型图标钮**（不放大入口、不常驻显示）：只在最后一条用户消息悬停或入口获得
+键盘焦点时显形；读屏名 SHALL 为「撤回这一轮」，悬停提示 SHALL 完整说明后果——撤回该消息及其
+引发的回答与工具记录、原文回到 composer，MUST NOT 用「后续回答」一类含糊措辞暗示只移除用户
+文字。悬停或键盘聚焦撤回入口时，面板 SHALL 对**将被移除的那一段**（该用户消息、其后的 assistant
+回答与工具记录）施加共同的轻微轮廓 / 高亮预览；预览 MUST NOT 改变布局。指针悬停与键盘焦点
+SHALL 作为**两个独立激活源**分别跟踪：任一仍成立时 MUST NOT 清除预览，只有两者都退出、或
+Escape / 在途状态变化 / 会话切换 / 面板摘除 / 撤回动作开始时才强制清除并复位两个激活源，
+MUST NOT 留下常驻装饰或额外跳动。该轮之后存在后台通知时（后端会以
+`harness_withdraw_tail_notice` 拒绝整个撤回），面板 MUST NOT 显示任何预览——预览只描述**实际
+可执行**的撤回，MUST NOT 仅把通知排除出高亮后继续暗示其余内容将被移除；预览期间到达这类通知
+SHALL 立即撤下已显示的预览。撤回动作与既有后端错误语义 SHALL 保持不变（入口不静默禁用、不
+另造拒绝判据）。撤回成功的提示 SHALL 按同一口径说明消息与回答被撤回、原文回到 composer。
+工具副作用不回滚的二次确认 SHALL 保留，其说明 SHALL 同时给出本轮已执行的工具名与「这些操作
+不会撤销」。
+
 撤回 SHALL 创建新逻辑会话 B：`session_open` 记 `opened_from=withdraw` 与 `restored_from=<原会话
 A>`，`system` / `assembly` 沿用 A，标题按 `session_title inherit` 继承，读数与子运行种子随首行
 落账。B SHALL 在撤回动作内**立即发布**（不等首条真实请求），初始记录 SHALL 含

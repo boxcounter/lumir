@@ -110,6 +110,7 @@ async function setup(
           w.__afterWithdraw = true;
           return receipt;
         }
+        if (cmd === "harness_new_session") return null;
         if (cmd === "harness_list_sessions") return [];
         if (cmd === "harness_skills_list") return [];
         if (cmd === "harness_draft_get") return null;
@@ -164,6 +165,9 @@ test("撤回：本轮执行过工具时先出确认条（列出工具名），�
   await expect(confirmRow).toBeVisible();
   await expect(confirmRow).toContainText("vault_patch");
   await expect(confirmRow).toContainText("cli_run");
+  // 二次确认的说明同时给出「撤回会带走什么」与「工具副作用不回撤」——后者不得被新口径冲掉。
+  await expect(confirmRow).toContainText("撤回这条消息和它引发的回答、工具记录");
+  await expect(confirmRow).toContainText("这些操作不会撤销");
   // 确认前只有预览那一次调用，消息还在。
   expect(await calls(page)).toEqual([{ confirm: false }]);
   await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(1);
@@ -172,6 +176,11 @@ test("撤回：本轮执行过工具时先出确认条（列出工具名），�
   await expect.poll(() => calls(page)).toEqual([{ confirm: false }, { confirm: true }]);
   await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(0);
   await expect(page.locator(".lumir-hp-composer .cm-content")).toContainText(MARKER);
+  // 成功 toast 同口径：消息与回答被撤回、原文回 composer（不是只删用户文字）。
+  const toast = page.locator(".lumir-toast");
+  await expect(toast).toContainText("已撤回这条消息");
+  await expect(toast).toContainText("回答");
+  await expect(toast).toContainText("原文已回到输入框");
 });
 
 test("撤回被拒（派生会话）：如实上错误行，消息与 composer 都不变", async ({ page }) => {
@@ -296,4 +305,222 @@ test("撤回回执前 B 的写失败事件先到：回执不得退役 B 的 toke
   await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(0);
   await expect(note).toBeVisible({ timeout: 5000 });
   await expect(note).toContainText("此前部分记录也未能保存");
+});
+
+// ── change clarify-harness-withdraw-scope-nov27：入口的后果可感知性 ─────────────────────
+// 这一组判的是撤回入口「读得到 / 看得到会失去什么」：小型图标 + 读屏名「撤回这一轮」、
+// 悬停提示完整后果、hover / 键盘聚焦时对将被移除的那一轮做共同高亮预览、以及预览的清理与
+// 零布局影响。像素形态（轮廓是否好看）归视觉基线 / Alex，这里只判结构、类名与计算属性。
+
+test("撤回入口：小型图标 + 读屏名「撤回这一轮」+ 悬停提示说明完整后果", async ({ page }) => {
+  await setup(page, "direct");
+  await page.locator(".lumir-hp-msg-user").hover();
+  const btn = page.locator(".lumir-hp-withdraw");
+  await expect(btn).toBeVisible();
+  // 图标而非文字：可见文本为空，唯一子节点是 aria-hidden 的 svg。
+  await expect(btn).toHaveText("");
+  await expect(btn.locator("svg")).toHaveCount(1);
+  await expect(btn).toHaveAttribute("aria-label", "撤回这一轮");
+  await expect(btn).toHaveAttribute("title", "撤回这条消息和它引发的回答、工具记录；原文回到输入框");
+  // 不放大入口：维持原按钮高度，宽度不超过旧文字钮（24px）。
+  const box = await btn.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.height).toBeLessThanOrEqual(20);
+  expect(box!.width).toBeLessThanOrEqual(24);
+});
+
+test("撤回预览：用户消息 + 回答 + 工具记录共同高亮，前缀不亮且不改变布局", async ({ page }) => {
+  const messages: Array<Record<string, unknown>> = [
+    { role: "user", text: "PREVIEW-PREFIX" },
+    { role: "assistant", text: "前缀答复。" },
+    { role: "user", text: MARKER },
+    { role: "assistant", text: "本轮的答复。" },
+    { role: "tool", name: "vault_patch", summary: "notes/a.md" },
+  ];
+  await setup(page, "direct", { messages });
+  const lastUser = page.locator(".lumir-hp-msg-user").last();
+  await lastUser.hover();
+  const btn = page.locator(".lumir-hp-withdraw");
+  await expect(btn).toBeVisible();
+
+  const layout = () =>
+    page.evaluate(() => {
+      const tr = document.querySelector(".lumir-hp-transcript") as HTMLElement;
+      const rects = Array.from(tr.children).map((el) => {
+        const r = el.getBoundingClientRect();
+        return [r.x, r.y, r.width, r.height];
+      });
+      return { rects, scrollHeight: tr.scrollHeight, scrollTop: tr.scrollTop };
+    });
+  const before = await layout();
+
+  await btn.hover();
+  await expect(lastUser).toHaveClass(/is-withdraw-preview/);
+  const assistant = page.locator(".lumir-hp-msg-assistant").last();
+  await expect(assistant).toHaveClass(/is-withdraw-preview/);
+  // 工具记录在被高亮的回答消息里（恢复路径把工具块挂进 lastAssistantEl）。
+  await expect(assistant.locator(".lumir-hp-tool-row")).toHaveCount(1);
+  const toolCovered = await assistant
+    .locator(".lumir-hp-tool-row")
+    .evaluate((el) => el.closest(".is-withdraw-preview") !== null);
+  expect(toolCovered).toBe(true);
+  // 前缀那一轮不动：预览只覆盖将被移除的最后一段。
+  await expect(page.locator(".lumir-hp-msg-user").first()).not.toHaveClass(/is-withdraw-preview/);
+  await expect(page.locator(".lumir-hp-msg-assistant").first()).not.toHaveClass(/is-withdraw-preview/);
+  // 轮廓是预览的可见承载体（outline 不参与布局）。
+  expect(await lastUser.evaluate((el) => getComputedStyle(el).outlineStyle)).toBe("dashed");
+  expect(await assistant.evaluate((el) => getComputedStyle(el).outlineStyle)).toBe("dashed");
+
+  // 零布局变化：预览前后每个 transcript 子节点的几何与滚动读数逐值相同。
+  const after = await layout();
+  expect(after).toEqual(before);
+});
+
+// P2-2（K3 终审）反例：尾部后台通知在场时后端会拒绝整个撤回（harness_withdraw_tail_notice），
+// 预览 MUST NOT 把通知排除出虚线框后继续暗示其余内容会消失——这种轮次整段不预览；按钮与
+// 后端错误语义不变（点击仍发起同一条命令，由后端给出既有错误）。
+test("撤回预览：尾部后台通知在场时整段不预览（后端会拒绝此次撤回）", async ({ page }) => {
+  const messages: Array<Record<string, unknown>> = [
+    { role: "user", text: "PREFIX-Q1" },
+    { role: "assistant", text: "前缀答复。" },
+    { role: "user", text: MARKER },
+    { role: "assistant", text: "本轮的答复。" },
+    { role: "tool", name: "vault_patch", summary: "notes/a.md" },
+    // 解析不出 run 行的通知走 appendNoticePlain → `.lumir-hp-notice`；后端把目标之后的
+    // user 项（通知）视为 tail notice 并拒绝撤回。
+    { role: "notice", text: "TAIL-NOTICE-882" },
+  ];
+  await setup(page, "direct", { messages });
+  const lastUser = page.locator(".lumir-hp-msg-user").last();
+  await lastUser.hover();
+  const btn = page.locator(".lumir-hp-withdraw");
+  await expect(btn).toBeVisible();
+
+  await btn.hover();
+  const notice = page.locator(".lumir-hp-notice");
+  await expect(notice).toHaveCount(1);
+  await expect(page.locator(".is-withdraw-preview")).toHaveCount(0);
+  await expect(notice).not.toHaveClass(/is-withdraw-preview/);
+  await expect(lastUser).not.toHaveClass(/is-withdraw-preview/);
+
+  // 入口与动作语义未被改写：按钮仍在且可用，悬停提示仍是完整后果，点击仍发起 confirm=false
+  // （后端在真实会话里以 harness_withdraw_tail_notice 拒绝，前端不另造判据、不静默禁用）。
+  await expect(btn).toBeEnabled();
+  await expect(btn).toHaveAttribute("title", "撤回这条消息和它引发的回答、工具记录；原文回到输入框");
+  await btn.click();
+  await expect.poll(() => calls(page)).toEqual([{ confirm: false }]);
+});
+
+test("撤回预览：预览期间到达尾部通知立即撤下", async ({ page }) => {
+  await setup(page, "direct");
+  const lastUser = page.locator(".lumir-hp-msg-user").last();
+  await lastUser.hover();
+  const btn = page.locator(".lumir-hp-withdraw");
+  await btn.hover();
+  await expect(lastUser).toHaveClass(/is-withdraw-preview/);
+
+  // 预览已显示的当口，后台通知到达：后端从此会拒绝撤回（tail notice），预览必须立即撤下
+  // （不是等下一次 hover 才消失）。
+  await page.evaluate(() => {
+    (window as unknown as { __fireHarnessEvent: (p: unknown) => void }).__fireHarnessEvent({
+      type: "notice",
+      vault: "/tmp/lumir-withdraw-panel",
+      runs: [
+        {
+          run_id: "tail-notice-run",
+          agent: "research",
+          description: "后台任务",
+          status: "done",
+          summary: "结论",
+        },
+      ],
+    });
+  });
+  await expect(page.locator(".lumir-hp-notice")).toHaveCount(1);
+  await expect(lastUser).not.toHaveClass(/is-withdraw-preview/);
+  await expect(page.locator(".is-withdraw-preview")).toHaveCount(0);
+});
+
+test("撤回预览清理：移出 / 失焦 / Escape / 在途状态变化", async ({ page }) => {
+  await setup(page, "direct");
+  const lastUser = page.locator(".lumir-hp-msg-user").last();
+  await lastUser.hover();
+  const btn = page.locator(".lumir-hp-withdraw");
+  await expect(btn).toBeVisible();
+
+  // 指针移出入口 → 清除。
+  await btn.hover();
+  await expect(lastUser).toHaveClass(/is-withdraw-preview/);
+  await page.locator(".lumir-hp-composer").hover();
+  await expect(lastUser).not.toHaveClass(/is-withdraw-preview/);
+
+  // 键盘聚焦入口 → 出现；失焦 → 清除。
+  await btn.focus();
+  await expect(lastUser).toHaveClass(/is-withdraw-preview/);
+  await page.locator(".lumir-hp-composer").click();
+  await expect(lastUser).not.toHaveClass(/is-withdraw-preview/);
+
+  // Escape → 只清预览、面板不收（预览是 escape 层栈的顶层）。
+  await btn.focus();
+  await expect(lastUser).toHaveClass(/is-withdraw-preview/);
+  await page.keyboard.press("Escape");
+  await expect(lastUser).not.toHaveClass(/is-withdraw-preview/);
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+
+  // 在途状态变化 → 清除并置灰（撤回入口只在 idle 可用）。事件用真实的
+  // `auto_turn_started`：面板的记账映射只认它（`turn_started` 是 store 内部相位名，不是事件名）。
+  await btn.hover();
+  await expect(lastUser).toHaveClass(/is-withdraw-preview/);
+  await page.evaluate(() => {
+    (window as unknown as { __fireHarnessEvent: (p: unknown) => void }).__fireHarnessEvent({
+      type: "auto_turn_started",
+      vault: "/tmp/lumir-withdraw-panel",
+    });
+  });
+  await expect(lastUser).not.toHaveClass(/is-withdraw-preview/);
+  await expect(btn).toBeDisabled();
+});
+
+test("撤回预览的两个激活源：任一退出不清，全部退出才清", async ({ page }) => {
+  await setup(page, "direct");
+  const lastUser = page.locator(".lumir-hp-msg-user").last();
+  await lastUser.hover();
+  const btn = page.locator(".lumir-hp-withdraw");
+  await expect(btn).toBeVisible();
+
+  // 顺序一：先聚焦、再悬停；指针移出（焦点仍在）→ 预览保留；随后失焦 → 清除。
+  await btn.focus();
+  await btn.hover();
+  await expect(lastUser).toHaveClass(/is-withdraw-preview/);
+  await page.locator(".lumir-hp-composer").hover();
+  await expect(lastUser).toHaveClass(/is-withdraw-preview/, { timeout: 2000 });
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await expect(lastUser).not.toHaveClass(/is-withdraw-preview/);
+
+  // 顺序二：先悬停、再聚焦；失焦（指针仍在）→ 预览保留；随后指针移出 → 清除。
+  await btn.hover();
+  await btn.focus();
+  await expect(lastUser).toHaveClass(/is-withdraw-preview/);
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await expect(lastUser).toHaveClass(/is-withdraw-preview/, { timeout: 2000 });
+  await page.locator(".lumir-hp-composer").hover();
+  await expect(lastUser).not.toHaveClass(/is-withdraw-preview/);
+});
+
+test("撤回预览清理：切换会话后不残留预览层（Escape 仍归面板）", async ({ page }) => {
+  await setup(page, "direct");
+  const lastUser = page.locator(".lumir-hp-msg-user").last();
+  await lastUser.hover();
+  const btn = page.locator(".lumir-hp-withdraw");
+  await btn.focus();
+  await expect(lastUser).toHaveClass(/is-withdraw-preview/);
+
+  // 合成点击（不移动真实指针）：避免 pointerleave 抢先清理——这里要验的是视图换代这条清理路径。
+  await page.evaluate(() => {
+    (document.querySelector(".lumir-hp-seg-new") as HTMLElement).click();
+  });
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  // 预览层若残留，第一下 Escape 只会清预览、面板不动；清理干净后 Escape 归面板（关面板）。
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".lumir-harness")).toBeHidden();
 });

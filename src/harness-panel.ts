@@ -4456,7 +4456,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  writeTextScale）：css 的全部 font-size 声明 calc 乘该变量（缺省 1 = 零缩放，逐字节
    *  不改基线观感）。运行期态、不落盘、不回写 config。 */
   let hpScale = 1;
-  // ── 撤回最近一条用户消息（change add-harness-message-withdraw-nov26）───────────────
+  // ── 撤回最近一条用户消息（change add-harness-message-withdraw-nov26；
+  //    clarify-harness-withdraw-scope-nov27 补入口图标、完整后果提示与预览）───────────────
   /** 最近一条用户消息的 DOM：撤回钮的宿主（清面 / 换会话时置空）。 */
   let lastUserMessageEl: HTMLElement | null = null;
   let withdrawButtonEl: HTMLButtonElement | null = null;
@@ -4468,6 +4469,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   let withdrawable = false;
   /** 撤回命令在途：连点 / 确认后重复触发只发一次（后端幂等，但第二次会回「不可撤回」的错误行）。 */
   let withdrawInFlight = false;
+  /** 撤回预览（change clarify-harness-withdraw-scope-nov27）：hover / 键盘聚焦入口时，对
+   *  **将被移除的那一段**（最后一条用户消息 + 其后的回答 / 工具块 / 错误行）标的顶层节点。
+   *  只作视觉预览，不参与撤回判定；清理挂点见 [`clearWithdrawPreview`] 的调用方。
+   *
+   *  两个激活源**分别跟踪**（K3 终审 P2-1）：指针悬停与键盘焦点各自独立，任一仍成立就保留
+   *  预览；只有两者都退出、或强制清理（Escape / 在途 / 视图换代 / 动作开始）才撤。 */
+  let withdrawPreviewEls: HTMLElement[] = [];
+  let withdrawPreviewActive = false;
+  let withdrawPreviewPointer = false;
+  let withdrawPreviewFocus = false;
   /** 合并选择器状态（config_get 宽容提取的 HarnessSelection；null = 未配置/读不到——
    *  桩环境 / 旧配置 / 读取失败不伪造读数，chip 隐藏）。 */
   let selSelection: HarnessSelection | null = null;
@@ -5748,11 +5759,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     relabelRetryActions();
     // 待决批准项是交互中的 UI（不是历史记录）：随语言重渲按钮与标题，输入框内容保留。
     for (const pending of pendingApprovals.values()) relabelApproval(pending);
-    // 撤回钮 / 确认条同属交互中的 UI：读屏名、悬停提示与按钮文字随语言重取。
+    // 撤回钮 / 确认条同属交互中的 UI：读屏名、悬停提示与按钮文字随语言重取。按钮是图标
+    // （无可见文字），只重取可访问名与提示——MUST NOT 写 textContent（会清掉 svg）。
     if (withdrawButtonEl !== null) {
-      withdrawButtonEl.textContent = t("D1052");
       withdrawButtonEl.setAttribute("aria-label", t("D1052"));
-      withdrawButtonEl.title = withdrawButtonEl.disabled ? t("D1053") : t("D1052");
+      withdrawButtonEl.title = withdrawButtonEl.disabled ? t("D1053") : t("D1089");
     }
     if (withdrawConfirmEl !== null) relabelWithdrawConfirm(withdrawConfirmEl);
     // 已决策的终态记录同口径：结果词 / 原因句 / 详情摘要重取文案（正文性质的时间戳由
@@ -7025,36 +7036,123 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     el.append(btn);
   }
 
-  // ── 撤回最近一条用户消息（change add-harness-message-withdraw-nov26）──────────────
+  // ── 撤回最近一条用户消息（change add-harness-message-withdraw-nov26；
+  //    clarify-harness-withdraw-scope-nov27 补入口图标、完整后果提示与预览）──────────────
+  /** 预览目标：最后一条用户消息 + transcript 中其后的全部内容节点（该轮的回答 / 工具块 /
+   *  错误行）。进度行与空态提示不属于将被移除的内容，跳过。
+   *
+   *  **尾部后台通知 = 不预览**（K3 终审 P2-2）：目标之后存在 `.lumir-hp-notice` 时，后端会以
+   *  `harness_withdraw_tail_notice` 拒绝整个撤回（`harness.rs` 对目标后的 user 项检查，含
+   *  blocked / 触顶分支与自动唤醒通知）。这种通知不是「将消失的内容」——此时返回空表，MUST
+   *  NOT 只把通知排除出虚线框后继续暗示其余内容会撤回。撤回动作与后端错误语义不变，由用户
+   *  点击后看到既有错误行。 */
+  function withdrawPreviewTargets(): HTMLElement[] {
+    const host = lastUserMessageEl;
+    if (host === null || !transcript.contains(host)) return [];
+    const targets: HTMLElement[] = [host];
+    for (let node = host.nextElementSibling; node !== null; node = node.nextElementSibling) {
+      if (node === progress || node === emptyHint) continue;
+      if (!(node instanceof HTMLElement)) continue;
+      if (node.classList.contains("lumir-hp-notice")) return [];
+      targets.push(node);
+    }
+    return targets;
+  }
+
+  /** 按两个激活源重算预览：任一仍成立就保持 / 建立，两个都退出才清。在途 / 不可撤回 /
+   *  目标不可预览（尾部通知）时不标——此时点击也只会得到既有拒绝或「先停止」的提示。 */
+  function updateWithdrawPreview(): void {
+    if (!withdrawPreviewPointer && !withdrawPreviewFocus) {
+      clearWithdrawPreview();
+      return;
+    }
+    if (withdrawPreviewActive || !withdrawable) return;
+    if (withdrawButtonEl === null || withdrawButtonEl.disabled) return;
+    const targets = withdrawPreviewTargets();
+    if (targets.length === 0) return;
+    withdrawPreviewEls = targets;
+    withdrawPreviewActive = true;
+    for (const el of targets) el.classList.add("is-withdraw-preview");
+    // 预览也是 Escape 的一层：清预览只关这一层，面板与其它浮层不动。
+    registerEscapeLayer("harness-withdraw-preview", clearWithdrawPreview);
+  }
+
+  /** 强制清除预览（幂等）：Escape / 在途变化 / 视图换代 / 面板摘除 / 撤回动作开始 / 通知追加
+   *  都走这一条出口。两个激活源一并复位——此后要重新悬停或聚焦才会再次出现。 */
+  function clearWithdrawPreview(): void {
+    withdrawPreviewPointer = false;
+    withdrawPreviewFocus = false;
+    if (!withdrawPreviewActive) return;
+    withdrawPreviewActive = false;
+    for (const el of withdrawPreviewEls) el.classList.remove("is-withdraw-preview");
+    withdrawPreviewEls = [];
+    unregisterEscapeLayer("harness-withdraw-preview");
+  }
+
   /** 撤回钮与确认条的重施（相位 / 可撤回性 / 最后一条用户消息变化时调用）。
    *  `renderActivity` 会被每个流式分片走到——已有钮且宿主未变时只更新可用性，MUST NOT 重建。 */
   function syncWithdrawButton(): void {
     const host = withdrawable ? lastUserMessageEl : null;
     if (host === null) {
+      clearWithdrawPreview();
       withdrawButtonEl?.remove();
       withdrawButtonEl = null;
       dismissWithdrawConfirm();
       return;
     }
+    const busy = currentActivity().phase !== "idle" || withdrawInFlight;
     if (withdrawButtonEl !== null && withdrawButtonEl.parentElement === host) {
-      const busy = currentActivity().phase !== "idle" || withdrawInFlight;
+      // 在途 / 撤回命令在飞：预览先撤（按钮此刻也点不动）。
+      if (busy) clearWithdrawPreview();
       if (withdrawButtonEl.disabled !== busy) {
         withdrawButtonEl.disabled = busy;
-        withdrawButtonEl.title = busy ? t("D1053") : t("D1052");
+        withdrawButtonEl.title = busy ? t("D1053") : t("D1089");
       }
       return;
     }
+    clearWithdrawPreview();
     withdrawButtonEl?.remove();
     withdrawButtonEl = null;
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "lumir-hp-withdraw";
-    btn.disabled = withdrawInFlight;
-    btn.textContent = t("D1052");
     btn.setAttribute("aria-label", t("D1052"));
-    const busy = currentActivity().phase !== "idle";
+    // 小型撤销图标（change clarify-harness-withdraw-scope-nov27）：可见文字退场，图标
+    // aria-hidden；后果说明走 title（AX 通道上的 help=），读屏名只报动作。
+    const icon = document.createElementNS(SVG_NS, "svg");
+    icon.setAttribute("width", "12");
+    icon.setAttribute("height", "12");
+    icon.setAttribute("viewBox", "0 0 12 12");
+    icon.setAttribute("fill", "none");
+    icon.setAttribute("stroke", "currentColor");
+    icon.setAttribute("stroke-width", "1.4");
+    icon.setAttribute("stroke-linecap", "round");
+    icon.setAttribute("stroke-linejoin", "round");
+    icon.setAttribute("aria-hidden", "true");
+    const head = document.createElementNS(SVG_NS, "path");
+    head.setAttribute("d", "M4.5 2.5 2 5l2.5 2.5");
+    const tail = document.createElementNS(SVG_NS, "path");
+    tail.setAttribute("d", "M2 5h5a3 3 0 0 1 0 6H4");
+    icon.append(head, tail);
+    btn.append(icon);
     btn.disabled = busy;
-    btn.title = busy ? t("D1053") : t("D1052");
+    btn.title = busy ? t("D1053") : t("D1089");
+    btn.addEventListener("pointerenter", () => {
+      withdrawPreviewPointer = true;
+      updateWithdrawPreview();
+    });
+    btn.addEventListener("pointerleave", () => {
+      withdrawPreviewPointer = false;
+      updateWithdrawPreview();
+    });
+    btn.addEventListener("focus", () => {
+      withdrawPreviewFocus = true;
+      updateWithdrawPreview();
+    });
+    btn.addEventListener("blur", () => {
+      withdrawPreviewFocus = false;
+      updateWithdrawPreview();
+    });
     btn.addEventListener("click", (event) => {
       event.stopPropagation();
       if (currentActivity().phase !== "idle") {
@@ -7075,6 +7173,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /** 撤回（两段式）：`confirmed=false` 先问后端本轮有没有工具；有则出确认条，无则直接执行。 */
   async function withdrawTurn(confirmed: boolean): Promise<void> {
     if (withdrawInFlight) return;
+    // 动作一开始就撤预览：async 往返期间不再声称「这些还在」，也避免高亮残留到回执落地。
+    clearWithdrawPreview();
     const actionVault = currentVault;
     const actionToken = viewGeneration;
     // 旧会话身份在**发起时**定格：回执落地时水位可能已被 B 的事件推进，退役必须只针对旧值。
@@ -7122,6 +7222,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /** 工具确认条：插在最后一条用户消息下方，列出本轮已执行的工具（副作用不回滚）。 */
   function showWithdrawConfirm(toolNames: readonly string[]): void {
     dismissWithdrawConfirm();
+    clearWithdrawPreview();
     const host = lastUserMessageEl;
     if (host === null) return;
     withdrawConfirmTools = toolNames;
@@ -9903,6 +10004,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     wakeNotice.text.textContent = text;
     wakeNotice.button.textContent = t("D491");
     wakeNotice.button.hidden = wakeContinued || autoWake.blocked === null;
+    // 触顶提示也是目标之后的自动唤醒通知（后端按 user 项拒绝撤回，见 withdrawPreviewTargets）：
+    // 提示在场时撤回预览不得再显示。
+    clearWithdrawPreview();
   }
 
   /** 后台完成通知上屏（tasks §10.4）：与用户消息视觉区分（左侧色条 + 标签），多条合并成
@@ -9934,6 +10038,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     appendTranscriptNode(el);
     syncEmptyHint();
     follow.contentGrew(); // 分流表 #12：后台完成通知不拽视口
+    // 目标之后到达的通知会让撤回被后端拒绝（`harness_withdraw_tail_notice`）：已显示的
+    // 撤回预览立即撤下，不继续声称这些内容会消失。
+    clearWithdrawPreview();
   }
 
   /** 通知正文无法还原成 run 行时的兜底上屏（原文照登，不丢内容）。 */
@@ -9947,6 +10054,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     appendTranscriptNode(el);
     syncEmptyHint();
     follow.contentGrew(); // 分流表 #13：同上（兜底上屏）
+    // 同 `appendNotice`：尾部通知 = 后端拒绝撤回，预览随之撤下。
+    clearWithdrawPreview();
   }
 
   /** 事件 → store 记账输入（只有生命周期事件进记录；分片 / 工具行 / `notice` / 审批不动它）。 */
@@ -10913,6 +11022,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    * 「新会话」后切到 B，回包到达时清 B 会把 B 的未读 / 在途清掉。
    */
   function resetView(options: { clearActivityFor: string | null }): void {
+    // 视图换代：预览标记随旧渲染面一起作废（元素即将被移除，留着标记只会在新会话里变成
+    // 一组悬空引用；ESC 层也必须先注销）。
+    clearWithdrawPreview();
     resetSkillCatalog();
     // **视图换代 ⇒ 所有在途快照作废**（推进 `snapshotSeq`）：`resetView` 之后到达的回包属于
     // 上一代视图，落地时会把旧会话的 messages 重放进刚清空的渲染面。新建会话是这条交错最容易
@@ -11733,6 +11845,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // ── 唤起 / 收起（装配层执行；面板只维护挂载态与派生表现）───────────────────
   function attachTo(mount: HTMLElement | null): void {
     if (mount === mountEl) return;
+    // 面板换挂载点（收起 / 重开）：预览的锚点不再成立，先撤标记与 ESC 层。
+    clearWithdrawPreview();
     mountEl = mount;
     // 显示门（design §4.1）：面板 DOM 挂进 harness pane = 当前 vault 的 transcript 在屏幕上。
     panePresent = mount !== null;

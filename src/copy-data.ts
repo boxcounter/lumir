@@ -3034,24 +3034,24 @@ const COPY_TABLE = {
   // 并发 / 重复触发保存全部：前一次屏障还在跑，第二次不开新代次（单飞），给一条中性提示。
   D1051: { zh: "正在保存全部更改", en: "Saving all changes" },
   D1052: {
-    zh: "撤回",
-    en: "Withdraw",
+    zh: "撤回这一轮",
+    en: "Withdraw this turn",
   },
   D1053: {
     zh: "先停止本轮，再撤回",
     en: "Stop this turn first, then withdraw",
   },
   D1054: {
-    zh: "本轮已执行：{tools}；撤回不会撤销这些操作。",
-    en: "This turn ran: {tools}. Withdrawing will not undo them.",
+    zh: "撤回这条消息和它引发的回答、工具记录；本轮已执行：{tools}，这些操作不会撤销。",
+    en: "Withdraw this message, the reply and tool records it triggered. This turn ran: {tools}; those actions will not be undone.",
   },
   D1055: {
     zh: "确认撤回",
     en: "Withdraw anyway",
   },
   D1056: {
-    zh: "已撤回；原文已回到输入区，可编辑后重新发送",
-    en: "Withdrawn; the message is back in the composer for editing",
+    zh: "已撤回这条消息及它引发的回答、工具记录；原文已回到输入框，可编辑后重新发送",
+    en: "Withdrew this message, the reply and tool records it triggered; the original text is back in the composer for editing",
   },
   D1057: {
     zh: "该会话还有派生出来的会话（{sessions}），不能撤回；请先处理这些会话后再试",
@@ -3146,6 +3146,12 @@ const COPY_TABLE = {
   D1088: {
     zh: "这条消息还留在更早的会话留存（{sessions}）里，撤回会留下副本；请先处理这些留存后再试",
     en: "This message also exists in earlier session records ({sessions}), so withdrawing would leave a copy; handle those records first",
+  },
+  // 撤回入口的完整后果提示（change clarify-harness-withdraw-scope-nov27）：悬停提示说明
+  // 「消息 + 它引发的回答 / 工具记录」都会被带走、原文回 composer；读屏名只说动作（D1052）。
+  D1089: {
+    zh: "撤回这条消息和它引发的回答、工具记录；原文回到输入框",
+    en: "Withdraw this message, the reply and tool records it triggered; the original text returns to the composer",
   },
 
 } satisfies Record<string, CopyEntry>;
