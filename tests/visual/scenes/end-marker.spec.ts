@@ -5,8 +5,10 @@ import { stubTauri } from "./tauri-stub";
 import { copyFresh, readDocument } from "./parity-checks";
 import { SCROLL_SETTLE_TIMEOUT } from "./poll-budgets";
 
-// 正文末尾的「END」标记（change document-end-marker）：
-//   判据 = 不含标记的内容高度 > 可用视口高度（静态、重算型、MUST NOT 读滚动位置）；
+// 正文末尾的「END」标记（change document-end-marker；change show-document-end-marker-all-docs-nov27 起
+// 扩大到所有已完成布局的 md 文档）：
+//   判据 = 可用视口高度 > 0（静态、只判布局是否完成；MUST NOT 比较内容高度、MUST NOT 读滚动位置）；
+//   纵向位置 = 正文自然末尾之下（内容盒底边），短文档 MUST NOT 被 min-height 推到视口底部；
 //   形态 = 短线夹字（--border-soft 发丝线 + --text-3 弱化字），MUST NOT 与作者手写的通栏分隔线同形；
 //   硬约束 = 不进 EditorState.doc / 不进保存字节 / 不被 ⌘A 带出 / 不被 ⌘F 命中 /
 //            滚动高度在所有滚动位置逐像素恒定 / 纵向间距用 padding 不用 margin /
@@ -17,7 +19,8 @@ import { SCROLL_SETTLE_TIMEOUT } from "./poll-budgets";
 const FIXTURES = {
   "end-marker-long.md": readFileSync(new URL("../fixtures/end-marker/long.md", import.meta.url), "utf8"),
   "end-marker-short.md": readFileSync(new URL("../fixtures/end-marker/short.md", import.meta.url), "utf8"),
-  "end-marker-band.md": readFileSync(new URL("../fixtures/end-marker/band.md", import.meta.url), "utf8"),
+  "end-marker-short-fm.md": readFileSync(new URL("../fixtures/end-marker/short-fm.md", import.meta.url), "utf8"),
+  "end-marker-empty.md": "",
   "end-marker-code-long.txt": readFileSync(new URL("../fixtures/end-marker/code-long.txt", import.meta.url), "utf8"),
 } as const;
 const NOTE = "end-marker-note.txt";
@@ -37,7 +40,8 @@ const ACCENT = "rgb(58, 95, 205)"; // --accent（新色板的链接色：标记 
 const NEEDLE_FOR: Record<string, string> = {
   "end-marker-long.md": "结束标记场景（长文）",
   "end-marker-short.md": "结束标记场景（短文）",
-  "end-marker-band.md": "结束标记场景（临界带）",
+  "end-marker-short-fm.md": "结束标记场景（带 frontmatter 的短文）",
+  "end-marker-empty.md": "",
   "end-marker-code-long.txt": "普通文本 fixture",
   [NOTE]: "纯文本没有 live preview",
 };
@@ -123,7 +127,36 @@ async function readMarker(page: Page) {
   });
 }
 
-test("一屏装不下时显示、装得下时不显示（配对正观测）", async ({ page }) => {
+/** 短文几何：END 是否在正文自然末尾之下、离窗口底多远、短文是否因此产生滚动余量。 */
+async function shortGeometry(page: Page) {
+  return page.evaluate(() => {
+    const scroller = document.querySelector(".cm-scroller") as HTMLElement;
+    const content = document.querySelector(".cm-content") as HTMLElement;
+    const marker = document.querySelector(".cm-lp-end-marker") as HTMLElement;
+    const lines = [...content.querySelectorAll<HTMLElement>(".cm-line")];
+    const last = lines[lines.length - 1];
+    const text = marker.querySelector(".cm-lp-end-marker-text") as HTMLElement;
+    const m = marker.getBoundingClientRect();
+    const c = content.getBoundingClientRect();
+    const l = last.getBoundingClientRect();
+    const t = text.getBoundingClientRect();
+    const s = scroller.getBoundingClientRect();
+    return {
+      markerTop: m.top,
+      markerBottom: m.bottom,
+      markerTextTop: t.top,
+      contentBottom: c.bottom,
+      lastLineBottom: l.bottom,
+      viewportBottom: s.bottom,
+      contentPaddingBottom: Number.parseFloat(getComputedStyle(content).paddingBottom),
+      markerPaddingTop: Number.parseFloat(getComputedStyle(marker).paddingTop),
+      scrollHeight: scroller.scrollHeight,
+      clientHeight: scroller.clientHeight,
+    };
+  });
+}
+
+test("长文与短文都显示；短文 END 在末行之下、不在窗口底（配对正观测）", async ({ page }) => {
   await stub(page);
   await page.goto("/");
 
@@ -148,47 +181,79 @@ test("一屏装不下时显示、装得下时不显示（配对正观测）", as
   expect(Math.abs(box.centerX - box.contentCenterX)).toBeLessThan(1);
   expect(box.top).toBeGreaterThanOrEqual(box.contentBottom - 1);
 
-  // 短文：没有标记（渲染盒为零 —— 不读 scrollHeight 的判据在临界带之外的两端都要成立）
+  // 短文：同样在场（旧判据在这一步是 0 —— 本 change 的行为翻转点），且在末行之下、不在窗口底
   await open(page, "end-marker-short.md");
-  await expect(marker(page)).toHaveCount(0);
-  const shortNatural = await naturalContentHeight(page);
-  const shortViewport = await scroller(page).evaluate((el) => el.clientHeight);
-  expect(shortNatural).toBeLessThan(shortViewport);
-
-  // 配对正观测：把同一份短文压矮到装不下 → 标记出现（「不显示」不是恒真）
-  await setClientHeight(page, shortNatural - 40);
   await expect(marker(page)).toHaveCount(1);
+  const short = await shortGeometry(page);
+  // 标记盒顶边 = 正文内容盒底边（±1px）：它跟在自然内容之后，不是被 1fr / min-height 推下去的
+  expect(Math.abs(short.markerTop - short.contentBottom)).toBeLessThanOrEqual(1);
+  // 末行到标记盒的间距 = 正文下内边距；标记文字再下移自己的上内边距 —— 现有 20 + 20 = 40px 的阶梯
+  expect(Math.abs(short.markerTop - short.lastLineBottom - short.contentPaddingBottom)).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(short.markerTextTop - short.lastLineBottom - (short.contentPaddingBottom + short.markerPaddingTop)),
+  ).toBeLessThanOrEqual(2);
+  // **不在窗口底**：短文整体落在视口内、且离视口底有明确空白
+  expect(short.viewportBottom - short.markerBottom).toBeGreaterThan(100);
+  // 短文没有因 END 产生滚动余量（scrollHeight == clientHeight）
+  expect(short.scrollHeight).toBe(short.clientHeight);
 
-  // 反向配对：把视口放回很高 → 标记消失（判据是重算型，视口变化即重算）
-  await setClientHeight(page, shortNatural + 200);
-  await expect(marker(page)).toHaveCount(0);
+  // 视口高度变化三档（矮 / 原 / 高）：标记的纵向位置只由内容决定，MUST NOT 随视口高度移动
+  const baseViewport = short.clientHeight;
+  await setClientHeight(page, baseViewport - 150);
+  await expect(marker(page)).toHaveCount(1);
+  expect(Math.abs((await shortGeometry(page)).markerTop - short.markerTop)).toBeLessThanOrEqual(1);
+  await setClientHeight(page, baseViewport + 150);
+  await expect(marker(page)).toHaveCount(1);
+  expect(Math.abs((await shortGeometry(page)).markerTop - short.markerTop)).toBeLessThanOrEqual(1);
+  await setClientHeight(page, baseViewport);
+  await expect(marker(page)).toHaveCount(1);
+  expect(Math.abs((await shortGeometry(page)).markerTop - short.markerTop)).toBeLessThanOrEqual(1);
 });
 
-test("临界带：内容高度落在（视口 − 标记高度, 视口] 内不显示", async ({ page }) => {
+test("空 md 文档也显示 END（内容盒底边 = 标记顶边）", async ({ page }) => {
   await stub(page);
   await page.goto("/");
-
-  // 标记自身的渲染盒高度先从长文量出来（临界带的宽度就是它）
-  await open(page, "end-marker-long.md");
+  await page.locator('.ft-row[title="end-marker-empty.md"]').click();
+  await expect(page.locator(".cm-content")).toBeAttached();
   await expect(marker(page)).toHaveCount(1);
-  const markerHeight = await marker(page).evaluate((el) => el.getBoundingClientRect().height);
-  expect(markerHeight).toBeGreaterThan(4);
+  const empty = await shortGeometry(page);
+  expect(Math.abs(empty.markerTop - empty.contentBottom)).toBeLessThanOrEqual(1);
+  expect(Math.abs(empty.markerTop - empty.lastLineBottom - empty.contentPaddingBottom)).toBeLessThanOrEqual(1);
+});
 
-  // 临界带 fixture：把可用视口高度钉到「内容高度 + 8」——内容落在带内，
-  // 且带内文档**只因标记自身的高度**变成「装不下」（自我指涉的实现会在这里显示标记）
-  await open(page, "end-marker-band.md");
-  await expect(marker(page)).toHaveCount(0);
-  const natural = await naturalContentHeight(page);
-  await setClientHeight(page, natural + 8);
-  const viewport = await scroller(page).evaluate((el) => el.clientHeight);
-  // 先证明 fixture 真的落在带内（不是「明显装得下」的第三端）
-  expect(natural).toBeGreaterThan(viewport - markerHeight);
-  expect(natural).toBeLessThanOrEqual(viewport);
-  await expect(marker(page)).toHaveCount(0);
-
-  // 配对正观测：再压矮到明确装不下 → 标记出现
-  await setClientHeight(page, natural - 120);
+test("带 frontmatter 的短文：END 仍贴正文内容盒底边", async ({ page }) => {
+  await stub(page);
+  await page.goto("/");
+  await open(page, "end-marker-short-fm.md");
+  // 正观测：确实走 frontmatter 折叠面（没有 document-top 的独立 title 行）
+  await expect(page.locator(".cm-lp-frontmatter")).toHaveCount(1);
   await expect(marker(page)).toHaveCount(1);
+  const fm = await shortGeometry(page);
+  expect(Math.abs(fm.markerTop - fm.contentBottom)).toBeLessThanOrEqual(1);
+  expect(Math.abs(fm.markerTop - fm.lastLineBottom - fm.contentPaddingBottom)).toBeLessThanOrEqual(1);
+});
+
+test("视口为 0：标记离场；恢复布局后回到正文末尾（负向断言配正观测）", async ({ page }) => {
+  await stub(page);
+  await page.goto("/");
+  await open(page, "end-marker-short.md");
+  await expect(marker(page)).toHaveCount(1);
+
+  // 尚未布局 / 被完全遮挡的等价读数：可用视口高度为 0。
+  // `display: none` 要带 important——CM theme 的 `display: grid !important` 会压过普通内联样式。
+  await page.evaluate(() => {
+    (document.querySelector(".cm-scroller") as HTMLElement).style.setProperty("display", "none", "important");
+  });
+  await expect.poll(() => scroller(page).evaluate((el) => el.clientHeight)).toBe(0);
+  await expect(marker(page)).toHaveCount(0);
+
+  // 恢复布局 → 回场（证明上一条「不存在」不是恒真空转）
+  await page.evaluate(() => {
+    (document.querySelector(".cm-scroller") as HTMLElement).style.removeProperty("display");
+  });
+  await expect(marker(page)).toHaveCount(1);
+  const restored = await shortGeometry(page);
+  expect(Math.abs(restored.markerTop - restored.contentBottom)).toBeLessThanOrEqual(1);
 });
 
 test("判据不随滚动位置变化，滚动高度在所有滚动位置恒定", async ({ page }) => {
@@ -395,7 +460,7 @@ test("标记字号跟随内容字号（基准 = --editor-font-size，不再是�
 });
 
 // ---------------------------------------------------------------------------
-// M238：标记恒贴在正文内容盒之下（不变量：正文行的尺寸口径与标记在场无关）
+// M238：标记恒贴在正文内容盒之下（不变量：正文行的尺寸与标记在场无关）
 //
 // 缺陷现场（Alex 2026-09-26 截图，蓝箭头）：标记显示在**正文中部**而不是末尾。机理两条，
 // 一条是几何耦合、一条是落地时机：
@@ -412,6 +477,11 @@ test("标记字号跟随内容字号（基准 = --editor-font-size，不再是�
 //      即正文自然高，行永不被压；上界 1fr 保住「点正文下方空白仍落在 .cm-content 内」），并把
 //      patch 推迟到测量周期之外落地（`src/preview/endMarker.ts` 的**单帧**——一帧即离开测量周期；
 //      双帧实测会把阅读位置恢复推离 13px，源码注释里已写「别改回双帧」）。
+//
+// **change show-document-end-marker-all-docs-nov27（2026-11-27）**：END 对所有已完成布局的 md
+// 文档显示后，1fr 上界会把短文档的标记推到视口底（合同禁止），正文行因此再收成 `max-content`、
+// `.cm-content` 的 min-height 在 md 内解除。标记位置不变量（恒贴内容盒底边）与单帧落地不变；
+// 「点正文下方空白」的代价记在 change design §3 A。
 //
 // 断言一律落几何读数（正文盒 / 子节点 / 标记矩形的相对关系），不读 class、不读 grid 声明
 //（REVIEW.md 「断言等价于子串」条）。
@@ -438,7 +508,7 @@ async function contiguity(page: Page) {
   });
 }
 
-test("M238：内容跨一屏判据的两个方向翻转后，标记都贴在正文内容盒之下", async ({ page }) => {
+test("M238：视口跨一屏变化两方向翻转后，标记始终贴在正文内容盒之下", async ({ page }) => {
   await stub(page);
   await page.goto("/");
   await open(page, "end-marker-long.md");
@@ -455,16 +525,14 @@ test("M238：内容跨一屏判据的两个方向翻转后，标记都贴在正�
   await record("滚到底");
   await scrollTo(page, "middle");
   await record("滚到中段");
-  // 压矮视口：内容仍超一屏（判据不变），标记必须原地不动
+  // 压矮视口：内容包括标记仍超一屏，标记必须原地不动
   await setClientHeight(page, natural - 120);
   await record("视口压矮");
-  // 放高到装得下：标记该离场（判据是重算型）——离场后正文盒仍要装得下自己的内容
+  // 放高到整篇装得下：标记**仍在场**（在场判据只看布局是否完成），且仍贴内容盒底边
   await setClientHeight(page, natural + 200);
-  await expect(marker(page)).toHaveCount(0);
-  const detached = await contiguity(page);
-  expect(detached.deepestChildBottom).toBeLessThanOrEqual(detached.contentBottom + 1);
-  expect(detached.markerTop).toBeNull();
-  // 再压回装不下：标记经**推迟落地**那条路回来（这次附加走 M238 新增的「延后一帧落地」路径）
+  await expect(marker(page)).toHaveCount(1);
+  await record("视口放高到装得下");
+  // 再压回装不下：标记位置不随视口变化
   await setClientHeight(page, natural - 120);
   await expect(marker(page)).toHaveCount(1);
 
@@ -523,7 +591,7 @@ test("M238 回归探针：正文行的尺寸口径不得由滚动容器的 class
 // 为什么必须用**矩阵属性测试**而不是再加一条 case：判据侧的单条用例（本文件上面那条
 // 「code 模式没有标记」）走的路径里没有在途测量，照旧绿（REVIEW.md 「容差吞掉真实变化」条同族：判据看着有
 // 覆盖、实际不判这一类输入）。这条测试扫的输入维度是**切换历史**：源模式 × 目标模式 × 打开
-// 方式（单击 / 双击树行——M254 起两者同义），并断言不变量本身——「元素在场 ⇔ 当前是 md 模式且判据成立」，
+// 方式（单击 / 双击树行——M254 起两者同义），并断言不变量本身——「元素在场 ⇔ 当前是 md 模式」，
 // 在场时另判两条几何（与正文同列、落在正文内容盒之下）。
 // ---------------------------------------------------------------------------
 
@@ -551,37 +619,29 @@ interface MarkerReading {
    *  两种模式都可能是「有 gutter」或「没有 gutter」——拿它判模式两端会同时为假。 */
   mode: "md" | "code";
   count: number;
-  /** 判据的实测值（不含标记的内容高度 > 可用视口高度）。 */
-  criterion: boolean;
   marker: { left: number; width: number; top: number } | null;
   content: { left: number; width: number; bottom: number };
 }
 
 async function readMarkerState(page: Page): Promise<MarkerReading> {
-  const contentHeight = await naturalContentHeight(page);
-  return page.evaluate(
-    (natural) => {
-      const content = document.querySelector(".cm-content") as HTMLElement;
-      const el = document.querySelector(".cm-scroller") as HTMLElement;
-      const markers = [...document.querySelectorAll<HTMLElement>(".cm-lp-end-marker")];
-      const contentRect = content.getBoundingClientRect();
-      const markerRect = markers[0]?.getBoundingClientRect();
-      const preview = content.classList.contains("cm-lp-codeblock-nowrap");
-      return {
-        mode: preview ? "md" : "code",
-        count: markers.length,
-        criterion: natural > el.clientHeight,
-        marker: markerRect
-          ? { left: markerRect.left, width: markerRect.width, top: markerRect.top }
-          : null,
-        content: { left: contentRect.left, width: contentRect.width, bottom: contentRect.bottom },
-      };
-    },
-    contentHeight,
-  );
+  return page.evaluate(() => {
+    const content = document.querySelector(".cm-content") as HTMLElement;
+    const markers = [...document.querySelectorAll<HTMLElement>(".cm-lp-end-marker")];
+    const contentRect = content.getBoundingClientRect();
+    const markerRect = markers[0]?.getBoundingClientRect();
+    const preview = content.classList.contains("cm-lp-codeblock-nowrap");
+    return {
+      mode: preview ? "md" : "code",
+      count: markers.length,
+      marker: markerRect
+        ? { left: markerRect.left, width: markerRect.width, top: markerRect.top }
+        : null,
+      content: { left: contentRect.left, width: contentRect.width, bottom: contentRect.bottom },
+    };
+  });
 }
 
-/** 三种 fixture 恰好覆盖「md 长文（判据成立）/ md 短文（判据不成立）/ 非 md 长文」三态。 */
+/** 三种 fixture 恰好覆盖「md 长文 / md 短文 / 非 md 长文」三态；前两者都应显示标记。 */
 const MATRIX_FILES = [
   "end-marker-long.md",
   "end-marker-short.md",
@@ -601,7 +661,7 @@ const MATRIX_SEQUENCES: readonly (readonly (typeof MATRIX_FILES)[number][])[] = 
   [NOTE, "end-marker-long.md", "end-marker-code-long.txt", NOTE],
 ];
 
-test("M251 属性：任意切换历史下车，标记在场恒等于「当前是 md 且判据成立」", async ({ page }) => {
+test("M251 属性：任意切换历史下车，标记在场恒等于「当前是 md 模式」", async ({ page }) => {
   await stub(page);
   await page.goto("/");
 
@@ -611,7 +671,6 @@ test("M251 属性：任意切换历史下车，标记在场恒等于「当前是
   const anchor = await readMarkerState(page);
   expect(anchor.mode).toBe("md");
   expect(anchor.count).toBe(1);
-  expect(anchor.criterion).toBe(true);
 
   for (const via of ["click", "dblclick"] as const) {
     for (const sequence of MATRIX_SEQUENCES) {
@@ -625,21 +684,14 @@ test("M251 属性：任意切换历史下车，标记在场恒等于「当前是
         const where = `${via} ${sequence.join(" → ")} @ ${file}`;
 
         for (const read of [first, second]) {
-          // 判据本身的自洽：长文 / 短文两态必须各自对上判据，否则下面那条等价式没有输入。
-          if (file === "end-marker-long.md") expect(read.criterion, `${where}：长文该超一屏`).toBe(true);
-          if (file === "end-marker-short.md" || file === NOTE) {
-            expect(read.criterion, `${where}：短文不该超一屏`).toBe(false);
-          }
           expect(read.mode, `${where}：模式`).toBe(file.endsWith(".md") ? "md" : "code");
-          // **不变量**：元素在场 ⇔ 当前是 md 且判据成立。code 模式下恒为 0，与历史无关。
-          expect(read.count, `${where}：标记在场数`).toBe(read.mode === "md" && read.criterion ? 1 : 0);
+          // **不变量**：元素在场 ⇔ 当前是 md 模式（md 短文同样在场）。code 模式下恒为 0，与历史无关。
+          expect(read.count, `${where}：标记在场数`).toBe(read.mode === "md" ? 1 : 0);
           if (read.count === 1 && read.marker !== null) {
             // 几何：标记不漂出内容列（左右缘与正文对齐）、且落在正文内容盒之下。
             expect(Math.abs(read.marker.left - read.content.left), `${where}：标记左缘`).toBeLessThanOrEqual(1);
             expect(Math.abs(read.marker.width - read.content.width), `${where}：标记宽度`).toBeLessThanOrEqual(1);
-            expect(read.marker.top, `${where}：标记在正文内容盒之上`).toBeGreaterThanOrEqual(
-              read.content.bottom - 1,
-            );
+            expect(Math.abs(read.marker.top - read.content.bottom), `${where}：标记未贴在正文内容盒之下`).toBeLessThanOrEqual(1);
           }
         }
       }

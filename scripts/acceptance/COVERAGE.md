@@ -61,7 +61,7 @@
 | 22 | `22-wrap-toggle` | 折行开关运行期翻转（[keys] 绑定后生效、两轴独立、不落盘） | full |
 | 23 | `23-image-first-open-width` | 图片显示宽度不依赖加载时序（首开 vs 切走切回两态收敛到栏宽） | full |
 | 26 | `26-svg-scroll-stability` | 倒序滚动经过大尺寸 svg 图：图渲染完整、终态无自发位移（替换区尺寸的会话内一致性，M187） | full |
-| 27 | `27-document-end-marker` | 正文末尾的结束标记（文档超过一屏时显示、装得下时不显示） | full |
+| 27 | `27-document-end-marker` | 正文末尾的结束标记（所有已完成布局的 md 文档都显示；视口 0 不显示） | full |
 | 28 | `28-remember-reading-position` | 记住文档阅读位置：重启后再次打开同一文件从上次位置继续 | full |
 | 29 | `29-typography-and-zoom` | 排版与字号步进：配置字号端到端生效、⌘= / ⌘− / ⌘0 / ⌘⇧= 的可见结果、config.json 与源文件逐字节不变 | full |
 | 30 | `30-code-outline` | 代码文件的符号大纲：⌘⇧O 展开符号条目、跳转到声明、惰性解析（没按过 ⌘⇧O 就不解析、不出指示段）、两条新空态提示 | full |

@@ -41,7 +41,7 @@
 |---|---|
 | 链接形态矩阵（相对路径非 md / 纯锚点 / 带锚点 md） | `openspec/specs/editor-live-preview/spec.md` 的 `classifyLinkTarget` 五类与 `↗︎` 口径 |
 | composer「一步必有位移」豁免档 | `docs/specs/harness-composer.md` 的 HC3 已知边界 |
-| A2 · 结束标记维持短双线 | `openspec/specs/editor-live-preview/spec.md`「正文末尾的结束标记」 |
+| A2 · 结束标记维持短双线 | `openspec/specs/editor-live-preview/spec.md`「正文末尾的结束标记（所有已完成布局的 md 文档）」 |
 | C6 · 代码块头部条维持围栏行 | `openspec/specs/editor-live-preview/spec.md` 的块级复制 / 全屏口径 |
 | `config.json` 解绑 ≠ 关闭能力 | `openspec/specs/keymap-commands/spec.md` 的原生选择器例外 |
 | `scrollbar-gutter: stable` 禁则 | `openspec/specs/ui-design-system/spec.md`「滚动条分档与滚动容器注册表」 |
