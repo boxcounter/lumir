@@ -117,4 +117,8 @@ selection / focus / IME 都不改变任何行的行盒；语义变化（标题 /
 
 ### 归档后
 
-（归档执行后在本块追加：归档提交 hash、包装器输出、修链读数与 `--archived` PASS。）
+- **归档提交**：`57c4fc39`（归档目录 + living spec + 本记录）。
+- **包装器输出**：`openspec-archive: 已归档到 openspec/changes/archive/2026-11-27-fix-empty-line-height-stability-nov27/`；
+  `归档后修链 0 处（扫过 4 篇 Markdown / 0 条相对链接）`；
+  `openspec-links: PASS（校验 711 条相对链接，全部可达）`；`openspec-archive: PASS`。
+- **`--archived` 审计（2026-11-27）**：`openspec-archive-check: PASS（openspec/changes/archive/2026-11-27-fix-empty-line-height-stability-nov27：1 条 MODIFIED，对比 8 段；人工恢复 0 段，声明认领 0 段）`。
