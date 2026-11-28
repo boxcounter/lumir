@@ -133,6 +133,11 @@ test("单 pane：关闭最后一个标签回到空工作区（不可输入、无
   await expect(pane.locator(".cm-content")).toBeFocused();
   await page.keyboard.type("ALSO-MUST-NOT-LAND");
   await expect(pane.locator(".cm-content")).toHaveText("");
+  // ⌥G 是 editor 作用域命令：正文被程序聚焦时命令可达，但真正空工作区没有可跳转文档 ⇒
+  // MUST NOT 打开输入条，也不得把焦点交给浮层（根因：占位会话曾被 goto-line 当编辑器目标）。
+  await page.keyboard.press("Alt+g");
+  await expect(page.locator(".lumir-goto")).toBeHidden();
+  await expect(pane.locator(".cm-content")).toBeFocused();
   await open.focus();
   await expect(open).toBeFocused();
 

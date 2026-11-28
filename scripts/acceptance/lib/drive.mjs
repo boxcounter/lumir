@@ -647,6 +647,17 @@ export function isChordSpec(key) {
   return typeof key === "string" && key.includes("+");
 }
 
+/** 单个**命名键**（`escape` / `tab` / `return` / `left` …，不含 `+`、不是单字符）是否在真键盘
+ *  通道的键表里。用于 `channel: cgevent` 的命名键放行：单字符（`y` / `a`）仍走 KimiCU，
+ *  不引入 keycode 的键盘布局依赖；命名键没有字符语义，只有物理键码，正是这条通道的适用面。
+ *  M885 的 Esc 步实证：KimiCU 的 `press_key("escape")` 连续两轮零事件，而同键的 CGEvent
+ *  注入一次即关闭浮层——所以它需要 opt-in 的 cgevent 通道。 */
+export function isNamedKeySpec(key) {
+  if (typeof key !== "string" || key === "" || key.includes("+")) return false;
+  if (key.length === 1) return false;
+  return CHORD_KEYCODES.has(key.toLowerCase());
+}
+
 /** `ctrl+a` 这类规格 → `{ keycode, flags }`（flags = CGEventFlags 原始值）。没有修饰键时 flags = 0。
  *
  *  未知主键 / 未知修饰键 / 空段一律抛 `StepError`——`execute.mjs` 的 `--check` 与真机运行期调的是

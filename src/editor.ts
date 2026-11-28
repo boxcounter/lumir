@@ -2951,6 +2951,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     // （`syncActiveDocument`）收起它且不跳转——落点行号只对打开时那份文档有意义。
     "editor.goto-line": () => {
       if (gotoLinePrompt === null) return;
+      // 真正空工作区（无路径占位会话）没有行可跳：不打开输入条（change
+      // make-no-tab-empty-workspace-nov28）。有路径文档——含 vault 外只读 / 尚未装载等
+      // 异常会话——行为不变；本门 MUST NOT 扩到它们。
+      if (active.path === undefined) return;
       gotoLinePrompt.open(view.state.doc.lineAt(view.state.selection.main.head).number, view.state.doc.lines);
     },
   };

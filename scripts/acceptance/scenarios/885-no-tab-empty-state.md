@@ -48,6 +48,18 @@ steps:
         ax: { focused: { role: "AXButton", name: "打开笔记…" } }
       - shot: 02-空工作区
 
+  - name: 空工作区按 ⌥G（主操作持焦）：不打开跳转输入条
+    do: key
+    key: "alt+g"
+    expect:
+      # 可观察形态：输入条总会显示「共 N 行」；「跳转到行」是输入框读屏名，预填非空时
+      # WKWebView 只暴露值（M507 的已知边界），不能当唯一判据。
+      - label: 跳转输入条不打开（可观察形态：没有「共 N 行」）
+        ax: { not: "共 1 行" }
+      - label: 焦点仍在空工作区主操作
+        ax: { focused: { role: "AXButton", name: "打开笔记…" } }
+      - shot: 05-空工作区-altg-主操作持焦
+
   - name: 在空工作区正文里键入（结构性只读宿主）
     do: typeInNode
     target: { role: AXTextArea, name: ".*", nth: 0 }
@@ -70,15 +82,15 @@ steps:
         ax: { not: "没有打开的文件" }
       - shot: 04-空工作区-cmd-s
 
-  - name: 空工作区按 ⌥G：键位作用域是 editor，主操作持焦时不打开输入条
+  - name: 正文持焦时按 ⌥G：真正空工作区没有可跳转文档，产品门仍不打开输入条
     do: key
     key: "alt+g"
     expect:
-      - label: 跳转输入条不打开（空工作区没有编辑器目标）
-        ax: { not: "跳转到行" }
-      - label: 焦点仍在空工作区主操作
-        ax: { focused: { role: "AXButton", name: "打开笔记…" } }
-      - shot: 05-空工作区-altg
+      - label: 跳转输入条不打开（可观察形态：没有「共 N 行」）
+        ax: { not: "共 1 行" }
+      - label: 焦点没有被浮层夺走（仍在只读正文）
+        ax: { focused: "AXTextArea" }
+      - shot: 05b-空工作区-altg-正文持焦
 
   - name: 重新打开文档：空工作区离场
     do: open
@@ -114,6 +126,10 @@ steps:
   - name: Esc 取消：不打开任何文件，焦点回空工作区主操作
     do: key
     key: "escape"
+    # KimiCU 的 press_key("escape") 在本状态连续两轮零事件（真机 885 证据：按后 AX 仍是
+    # 同一个 focused AXComboBox）；同键的 CGEvent 注入一次即关闭浮层。命名键因此 opt-in
+    # 真键盘通道（scripts/acceptance/lib/drive.mjs 的 isNamedKeySpec）。
+    channel: cgevent
     expect:
       - label: 浮层收起
         ax: { not: "按路径快速打开文件" }

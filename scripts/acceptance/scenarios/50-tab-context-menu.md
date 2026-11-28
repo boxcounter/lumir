@@ -87,9 +87,12 @@ steps:
 
   - name: 再开一个标签并弄脏（M278 起 dirty 由构造就持久：写盘只由显式动作触发）
     do: click
-    target: { role: AXButton, name: "^tabs-b\\.md$" }
+    # 手势 → 意图的唯一判据在 src/tree.ts 的 treeOpenIntent：单击 = 当前标签就地打开，
+    # ⌘-单击 = 新开标签（change improve-file-open-harness-affordance-nov26）。旧场景按
+    # M254 的「单击即新标签」写，已被该 change 改准；这里用 ⌘-单击才是「再开一个」。
+    target: { role: AXButton, name: "^tabs-b\\.md$", modifiers: ["cmd"] }
     expect:
-      - label: 单击开出一个新标签（M254：单击即正式标签，不再有预览态）
+      - label: ⌘-单击开出一个新标签（保留当前标签；M254 起新标签即正式标签，不再有预览态）
         ax: { count: { pattern: "关闭 ", exact: 2 } }
       - label: 新标签成为前台
         ax: { has: "/AXRadioButton \\(tabs-b\\.md\\) Value: true/" }
@@ -178,17 +181,17 @@ steps:
   # ② 放弃 ≠ 写盘、保存才落盘；③ 全关完之后的空态与焦点落点（真机层的唯一判据）。
   # -------------------------------------------------------------------------
 
-  - name: 「关闭全部标签」起点——重开 tabs-b（磁盘版是 DISK-VERSION）
+  - name: 「关闭全部标签」起点——⌘-单击重开 tabs-b（磁盘版是 DISK-VERSION）
     do: click
-    target: { role: AXButton, name: "^tabs-b\\.md$" }
+    target: { role: AXButton, name: "^tabs-b\\.md$", modifiers: ["cmd"] }
     expect:
-      - label: 第二个标签出现
+      - label: ⌘-单击后第二个标签出现（保留当前标签）
         ax: { count: { pattern: "关闭 ", exact: 2 } }
       - label: 新标签成为前台
         ax: { has: "/AXRadioButton \\(tabs-b\\.md\\) Value: true/" }
-  - name: 再开 tabs-long——三个标签，前台是 tabs-long
+  - name: 再 ⌘-单击开 tabs-long——三个标签，前台是 tabs-long
     do: click
-    target: { role: AXButton, name: "^tabs-long\\.md$" }
+    target: { role: AXButton, name: "^tabs-long\\.md$", modifiers: ["cmd"] }
     expect:
       - label: 三个标签都在
         ax: { count: { pattern: "关闭 ", exact: 3 } }

@@ -34,6 +34,15 @@ editor.setSessionEditable(
 
 原先的 `paneBlocksInput(split, hasTabs, foregroundDirty)` 三个维度全部失效：单 pane 也封锁、dirty 的无路径草稿不再可能。`src/pane-layout.ts` 的 `paneBlocksInput` / `emptyPaneGuideVisible` 随之删除——留着一个「只在分栏态成立」的判据就是第二处真源。
 
+### 1.2 空工作区没有 goto-line 目标
+
+`editor.goto-line` 是 editor 作用域命令，但空工作区的正文仍有 `tabindex=0`（结构性只读宿主），
+命令因此可达。占位会话此前被它当成一份可跳转的文档：⌥G 会打开输入条（真机 885 的 AXTextField
+「1」即此）。本 change 在 `editor.goto-line` 的入口加门：`active.path === undefined` 时直接返回，
+不打开输入条、不动焦点。有路径文档——含 vault 外只读、尚未装载等异常会话——行为不变。
+
+回归：结构层「正文持焦 + ⌥G 不打开」；native 885 用真实 ⌥G 键位复验。
+
 ## 2. 空工作区表面
 
 每个 doc pane 在 `createPaneHandle` 里建一个常驻、初态 `hidden` 的元素（沿用 `pane-empty-guide` 的挂载位置，类名改为 `pane-empty-workspace`）：

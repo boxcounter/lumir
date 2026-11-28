@@ -23,7 +23,7 @@ Alex 2026-11-28 明确裁决：**无 Tab 就是空工作区，不能输入，不
 
 1. **无 Tab 状态统一为结构性只读空工作区**
    - 任一文档 pane 没有带路径标签时，该 pane SHALL 呈空工作区：无正文焦点、无输入、无 dirty、无保存目标。
-   - 无路径会话只作为内部占位（打开文件时就地复用，MUST NOT 让空会话堆积），MUST NOT 可编辑、MUST NOT 画插入光标、MUST NOT 显示行号。
+   - 无路径会话只作为内部占位（打开文件时就地复用，MUST NOT 让空会话堆积），MUST NOT 可编辑、MUST NOT 画插入光标、MUST NOT 显示行号；`⌥G`（`editor.goto-line`）在空工作区没有可跳转文档，MUST NOT 打开输入条。
    - Close All、关闭最后一个 Tab、`reset()`、分栏、首启等所有到达「无 Tab」的路径 SHALL 落在同一形态；首启 tips 在场时 tips 是该 pane 的空态表面，空工作区动作隐藏。
 2. **空工作区的呈现与两个动作**
    - 显示简洁的「没有打开的文档」，提供「打开笔记…」与「新建笔记」。
@@ -73,11 +73,11 @@ Alex 2026-11-28 明确裁决：**无 Tab 就是空工作区，不能输入，不
 | implemented | 是 | 本分支 tip（实现提交；待合并后补 merge hash） |
 | released | 不适用 | 本批不打包 |
 | machine PASS | 是 | 实现批最终读数 `GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0。同一 change 的实现过程中另有两轮因 master 既有抖动 `unit-tests` 的 `link-suggest.test.ts`「万文件过滤」时序预算（17.75 / 31.75ms > 16ms）读出 `GATE RESULT: 12/13 PASS（SKIP 0）` exit 1；隔离复跑 `pnpm test` 2205/2205 PASS。返修后：`GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0；结构层视觉目标批 126 scene PASS（11 个 spec，`LUMIR_VISUAL_STRUCTURAL=1`）、`pnpm test` 2205/2205 PASS、`execute.test.mjs` 134 PASS、docs-check / openspec validate PASS、`git diff --check` PASS；P2-1 / P2-2 各一轮旧红新绿 |
-| native PASS | 否 | 本批不跑真机（主会话串行）；native 复跑清单 = **885 + 263 + 50 + 79**（50/79 因 P2-3 同步后必须纳入；877 可选），均只做 `--check` 静态 |
+| native PASS | 是 | 返修 tip 串行复跑：**885 PASS（36 断言）/ 50 PASS（79 断言）**；同 change 上一轮 **263 PASS（37）/ 79 PASS（29）**（改动面不涉 ⌥G，行为未变）。证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-28-no-tab-empty-workspace-r2/evidence/` 与上一轮 `.../2026-11-28-no-tab-empty-workspace/evidence/`；877 未跑（可选） |
 | archived | 否 | 待独立评审与归档 |
 
 五要件现状（归档前由 tower 复核）：方案已批准（节点 1，Alex 2026-11-28）；tasks 全部勾选；
-机器门禁与目标批视觉结构层通过；规格对账（docs-check 的归档对账）PASS；真机证据待主会话安排。
+机器门禁与目标批视觉结构层通过；规格对账（docs-check 的归档对账）PASS；真机 885 / 50 已串行复跑 PASS（263 / 79 上一轮 PASS）。
 独立评审首轮（K3，绑定 `aa4634a4`）为 needs-changes（P1=0 / P2=3 / P3=4），已按报告逐项返修：
 P2-1 vault 切换器焦点接统一入口、P2-2 tips 覆盖判据收窄到宿主 pane、P2-3 同步 native 50/79；
 P3-1 `ax.focused` 支持 `{ role, name }`、P3-2 Quick Open 双 pane scenario 改准、P3-3 旧文案 /

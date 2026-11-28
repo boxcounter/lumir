@@ -78,3 +78,12 @@
 - [x] 7.7 P3-4：清三个 delta 的 EOF blank line，`git diff --check` 通过。
 - [x] 7.8 清理 keymap「行号 gutter 右键复制」与 file-tree「默认名其他创建链路」两处不可达旧表述（新增 MODIFIED 增量）。
 - [x] 7.9 候选补「首启收起 harness 再分栏」一张，五张全量重生成。
+
+## 8. 真机首轮返修（885 / 50）
+
+- [x] 8.1 根因：空工作区的占位会话仍被 `editor.goto-line` 当成编辑器目标（真机 885 的 AXTextField「1」）。`editor.goto-line` 在 `active.path === undefined` 时直接返回；有路径文档（含只读 / 未装载异常会话）行为不变。
+- [x] 8.2 885 oracle：`ax.not "跳转到行"` 在预填非空时不可观察（输入框只暴露值）；改用输入条必显的「共 N 行」，并补「主操作持焦」与「正文持焦」两档真实 ⌥G 断言。
+- [x] 8.3 50 oracle：Close Other 后「单击开新标签」与 `treeOpenIntent`（单击 = current、⌘-单击 = new，change improve-file-open-harness-affordance-nov26）冲突；三处开新标签改 ⌘-单击并改准 label。
+- [x] 8.4 结构回归：正文持焦 + ⌥G 不打开输入条、焦点不被夺；旧红（去掉 goto 门）实测。
+- [x] 8.5 native 串行复跑 885 + 50（不并行）→ 2/2 PASS；证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-28-no-tab-empty-workspace-r2/evidence/`（885 36 断言 / 50 79 断言，含 263/79 上一轮 PASS 的索引）。
+- [x] 8.6 885 的 Esc 步：KimiCU `press_key("escape")` 连续两轮零事件（同状态 CGEvent keycode 53 一次即关闭）⇒ `channel: cgevent` 在 `do: key` 单数形态放行命名键（escape / tab / return …），885 改走该通道；`do: keys` 列表里的命名键与普通字符仍走 KimiCU（100 的逐键分工不变），判据自测同步。

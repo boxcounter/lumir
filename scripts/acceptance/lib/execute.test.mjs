@@ -3285,7 +3285,8 @@ test("cgevent chord 回归面：不写 channel 的 step 全走 KimiCU；写了 c
   const chorded = { do: "keys", channel: "cgevent", keys: ["ctrl+a", "y"] };
   assert.equal(keyChannel(chorded, "ctrl+a"), "cgevent");
   assert.equal(keyChannel(chorded, "y"), "kimicu", "channel 只作用于 chord 键，普通字符不引入 keycode 的布局依赖");
-  assert.equal(keyChannel(chorded, "escape"), "kimicu", "无 + 的键名不算 chord");
+  assert.equal(keyChannel(chorded, "escape"), "kimicu", "do: keys 列表里的命名键仍走 KimiCU（100 的逐键分工不变）");
+  assert.equal(keyChannel({ do: "key", channel: "cgevent", key: "escape" }, "escape"), "cgevent", "do: key 单数形态的命名键 opt-in 真键盘通道（M885 的 Esc 丢键实证）");
   // 未知 channel 值在运行期也抛：真机跑批不重跑 checkScenario，静默退回 KimiCU 就是 M766 的假红/假绿形态。
   assert.throws(
     () => keyChannel({ do: "keys", channel: "kimicu", keys: ["ctrl+a"] }, "ctrl+a"),
@@ -3343,10 +3344,19 @@ test("channel: cgevent 的 `do: key` 单数形态（M768）：117 / 150 的 ⌃A
     "单数步的 channel 值拼错必须判红",
   );
   assert.ok(
-    errs([{ name: "非 chord", do: "key", key: "return", channel: "cgevent" }]).some((p) =>
-      p.includes("key「return」不是 chord"),
+    errs([{ name: "无 chord / 命名键", do: "key", key: "y", channel: "cgevent" }]).some((p) =>
+      p.includes("key「y」不是 chord"),
     ),
-    "单数步写了 channel 但键不是 chord 必须判红（与 keys 的「没有 chord」同一口径）",
+    "单数步写了 channel 但键既不是 chord 也不是命名键必须判红（与 keys 的「没有 chord」同一口径）",
+  );
+  // 命名键（escape / return / tab …）放行：它们是物理键码、没有字符语义；M885 的 Esc 步实证
+  // KimiCU 的 press_key("escape") 会零事件，需要 opt-in 这条通道。
+  assert.deepEqual(errs([{ name: "Esc 取消", do: "key", key: "escape", channel: "cgevent" }]), []);
+  assert.ok(
+    errs([{ name: "keys 列表命名键", do: "keys", channel: "cgevent", keys: ["escape", "y"] }]).some((p) =>
+      p.includes("没有 chord"),
+    ),
+    "do: keys 列表里的命名键不放行（只有 chord 能路由；与 100 的既有逐键分工一致）",
   );
   assert.ok(
     errs([{ name: "主键不认识", do: "key", key: "ctrl+f13", channel: "cgevent" }]).some((p) =>
@@ -3356,7 +3366,9 @@ test("channel: cgevent 的 `do: key` 单数形态（M768）：117 / 150 的 ⌃A
   );
   // 单一真源：静态校验与运行期共用 `channelSpecProblem`——同一形态两处给出同一句话。
   assert.equal(channelSpecProblem({ do: "key", key: "ctrl+a", channel: "cgevent" }), null);
-  assert.match(channelSpecProblem({ do: "key", key: "return", channel: "cgevent" }), /不是 chord/);
+  assert.equal(channelSpecProblem({ do: "key", key: "escape", channel: "cgevent" }), null);
+  assert.equal(channelSpecProblem({ do: "key", key: "return", channel: "cgevent" }), null);
+  assert.match(channelSpecProblem({ do: "key", key: "y", channel: "cgevent" }), /不是 chord/);
   assert.match(channelSpecProblem({ do: "key", key: "ctrl+a", channel: "kimicu" }), /只支持 "cgevent"/);
   assert.match(channelSpecProblem({ do: "keys", channel: "cgevent", keys: ["y"] }), /没有 chord/);
 });
@@ -3369,11 +3381,11 @@ test("`do: key` + channel 的运行期守卫（M768）：写错的形态在真�
   useTmpEnv(root);
   const bad = await drive(root, {
     steps: [
-      { name: "单数步写了 channel 但键不是 chord", do: "key", key: "return", channel: "cgevent" },
+      { name: "单数步写了 channel 但键不是 chord / 命名键", do: "key", key: "y", channel: "cgevent" },
     ],
   });
-  assert.equal(bad.status, "FAIL", "非 chord 的单数步必须判 FAIL（不静默退回 KimiCU）");
-  assert.match(bad.records[0].label, /单数步写了 channel 但键不是 chord/);
+  assert.equal(bad.status, "FAIL", "无 chord / 命名键的单数步必须判 FAIL（不静默退回 KimiCU）");
+  assert.match(bad.records[0].label, /不是 chord/);
   assert.match(bad.records[0].detail ?? "", /不是 chord/);
 
   const typo = await drive(root, {

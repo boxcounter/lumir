@@ -38,6 +38,7 @@ import {
   injectModifierCGEvent,
   injectWheel,
   isChordSpec,
+  isNamedKeySpec,
   openFile,
   parseChordSpec,
   pressKey,
@@ -2071,7 +2072,12 @@ export function keyChannel(step, key) {
       `do=${step.do} 的 channel 只支持 ${[...KEY_CHANNELS].join(" / ")}（真键盘事件通道），实际 ` +
         `${JSON.stringify(step.channel)}——不静默退回 KimiCU press_key`,
     );
-  return isChordSpec(key) ? "cgevent" : "kimicu";
+  // chord（含 +）走 cgevent；**命名键**（escape / tab / return …）只在 `do: key` 单数形态
+  // 放行（M885 的 Esc 丢键实证），`do: keys` 列表里的命名键仍走 KimiCU——既有 100 等场景
+  // 的「chord 走真键盘、同一行普通键 / return 走 KimiCU」逐键分工保持不变。单字符始终走 KimiCU
+  //（不引入物理键码的布局依赖）。放行口径见 drive.mjs 的 `isNamedKeySpec`。
+  const singleNamed = step.do === "key" && isNamedKeySpec(key);
+  return isChordSpec(key) || singleNamed ? "cgevent" : "kimicu";
 }
 
 /** 一步的 `channel` 形态问题（M767；M768 扩到 `do: key`）：合法返回 `null`，否则返回问题串。
@@ -2080,9 +2086,10 @@ export function keyChannel(step, key) {
  *  必须同样判红（run.mjs 的正常路径不重跑 `checkScenario`），两处各写一遍判定就会在下一次改口径时
  *  只改到一处（REVIEW.md「同一语义两处真源」条）。
  *
- *  **`do: key` 单数多一条判据**：`keys` 里 chord 与普通字符可以共存（通道只接 chord 那一半），
- *  而单数步只有一个键——它不是 chord 时通道无事可做、运行期会退回 KimiCU，与「以为在验应用自己的
- *  键位」正好相反，故按静默失效挡掉。
+ *  **`do: key` 单数多一条判据**：`keys` 里 chord 与普通字符可以共存（通道只接 chord 那一半；
+ *  列表里的命名键仍走 KimiCU，保持既有逐键分工），而单数步只有一个键——它既不是 chord 也不是
+ *  命名键时通道无事可做、运行期会退回 KimiCU，与「以为在验应用自己的键位」正好相反，故按
+ *  静默失效挡掉。
  */
 export function channelSpecProblem(step) {
   if (step.channel === undefined) return null;
@@ -2096,14 +2103,16 @@ export function channelSpecProblem(step) {
     );
   const list =
     step.do === "keys" ? (Array.isArray(step.keys) ? step.keys : []) : typeof step.key === "string" ? [step.key] : [];
-  const chords = list.filter(isChordSpec);
-  if (chords.length === 0)
+  const routable = list.filter(
+    (k) => isChordSpec(k) || (step.do === "key" && isNamedKeySpec(k)),
+  );
+  if (routable.length === 0)
     return (
       `${doName} 写了 channel: ${JSON.stringify(step.channel)}，但 ` +
-      (step.do === "keys" ? "keys 里没有 chord（含 + 的键）" : `key「${step.key}」不是 chord（含 + 的键）`) +
+      (step.do === "keys" ? "keys 里没有 chord（含 + 的键）" : `key「${step.key}」不是 chord（含 + 的键）或命名键（escape / tab / return …）`) +
       "——通道不会生效（普通键仍走 KimiCU press_key）"
     );
-  for (const k of chords) {
+  for (const k of routable) {
     try {
       parseChordSpec(k);
     } catch (e) {
