@@ -72,8 +72,8 @@ Alex 2026-11-28 明确裁决：**无 Tab 就是空工作区，不能输入，不
 |---|---|---|
 | implemented | 是 | 本分支 tip（实现提交；待合并后补 merge hash） |
 | released | 不适用 | 本批不打包 |
-| machine PASS | 是（quick 与定向静态/结构检查） | 主会话 quick：`GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0，证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/no-tab-empty-workspace-nov28/redesign/verification/gate-quick-main.log`。完整 visual 已跑但为 `GATE RESULT: 14/15 PASS（SKIP 0）`，exit 1；仅七张已获 Alex 选择的 A 形态基线待更新后复跑，不预写全绿 |
-| native PASS | 未验 | 本批按 Alex 要求不跑 native；重设计前 885/50/263/79 的 PASS 只属旧实现，不能覆盖当前 region/inert。待主会话按本次交付清单复跑 |
+| machine PASS | 是（quick 与定向静态/结构检查） | 最新 quick：`GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0，证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/no-tab-empty-workspace-nov28/redesign/verification/gate-quick-native-r1.log`。完整 visual 已跑但为 `GATE RESULT: 14/15 PASS（SKIP 0）`，exit 1；仅七张已获 Alex 选择的 A 形态基线待更新后复跑，不预写全绿 |
+| native PASS | 是（16/16） | 既有 10 个场景见 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-28-no-tab-empty-workspace-redesign/evidence/`；六项返修复跑见 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-28-no-tab-empty-workspace-redesign-r1/evidence/`，6/6 PASS、232 断言。完整 visual 状态同上行，不混作全绿 |
 | archived | 否 | 待独立评审与归档 |
 
 空态重设计补记（2026-11-28，未归档）：候选 A / B 各 11 张在
@@ -81,14 +81,14 @@ Alex 2026-11-28 明确裁决：**无 Tab 就是空工作区，不能输入，不
 正式基线未更新。新 spec 12/12、相邻结构 171/171、focus-created 13/13、前端 2206/2206、
 OpenSpec 39/39、验收静态 313/313 通过；五类反向变异均先构建成功再命中目标失败并恢复。
 主会话 quick 为 `GATE RESULT: 13/13 PASS（SKIP 0）` exit 0（`gate-quick-main.log`）。
-完整 visual 已跑但为 `GATE RESULT: 14/15 PASS（SKIP 0）`，exit 1，七张获批 A 基线待更新后复跑；16 个 native 场景正在主会话串行执行，尚未取得最终结论；merge / archive 未执行。早期 quick
+完整 visual 已跑但为 `GATE RESULT: 14/15 PASS（SKIP 0）`，exit 1，七张获批 A 基线待更新后复跑；16 个 native 场景已全部 PASS（首轮 10 + 返修 6，返修证据 232 断言，目录见 native PASS 行）；merge / archive 未执行。早期 quick
 12/13 的 `link-suggest` 时序抖动只作历史记录，不替代主会话这次全绿结果。终审返修后另有
 静态 313/313、drive 31/31、execute 137/137 与 quick 13/13（`gate-quick-acceptance-sync.log`）；
 主会话 native 的 16 个完整场景清单见 tasks 10.4。
 
 五要件现状（归档前由 tower 复核）：方案已批准（节点 1，Alex 2026-11-28）；tasks 全部勾选；
 quick 与目标批静态/结构检查通过；规格对账（docs-check 的归档对账）PASS。完整 visual 已跑但为 `GATE RESULT: 14/15 PASS（SKIP 0）`，exit 1，七张获批 A 基线待更新后复跑；
-当前重设计的 native 未验，885/50/263/79 的旧 native 结果不列入当前放行证据。
+当前重设计的 native 16/16 已通过（首轮 10 + 返修 6，返修证据 232 断言）。
 独立评审首轮（K3，绑定 `aa4634a4`）为 needs-changes（P1=0 / P2=3 / P3=4），已按报告逐项返修：
 P2-1 vault 切换器焦点接统一入口、P2-2 tips 覆盖判据收窄到宿主 pane、P2-3 同步 native 50/79；
 P3-1 `ax.focused` 支持 `{ role, name }`、P3-2 Quick Open 双 pane scenario 改准、P3-3 旧文案 /

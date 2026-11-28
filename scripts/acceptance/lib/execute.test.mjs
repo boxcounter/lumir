@@ -3764,98 +3764,24 @@ test("matcher：230d 的 ⌘A 值判据对 z 判绿，对 zabc / abcz 都判红"
   );
 });
 
-test("do:keys allowNoLanding：静态校验接受布尔负向注入，拒绝非布尔与 verify 混用", () => {
-  const base = { id: "keys-no-landing", item: 0, title: "负向注入", file: "keys-no-landing.md" };
-  assert.deepEqual(
-    checkScenario({ ...base, steps: [{ name: "region 键入", do: "keys", keys: ["N"], allowNoLanding: true }] }),
-    [],
+test("typeInNode channel：只允许显式 cgevent，其它值不得静默退回 type_text", () => {
+  assert.equal(channelSpecProblem({ do: "typeInNode", channel: "cgevent" }), null);
+  assert.match(
+    channelSpecProblem({ do: "typeInNode", channel: "kimicu" }) ?? "",
+    /channel 参数只属于 do=keys \/ do=key/,
   );
-  const wrongType = checkScenario({
-    ...base,
-    steps: [{ name: "region 键入", do: "keys", keys: ["N"], allowNoLanding: "true" }],
-  });
-  assert.ok(wrongType.some((p) => p.includes("allowNoLanding 需要布尔值")), JSON.stringify(wrongType));
-  const conflict = checkScenario({
-    ...base,
-    steps: [{ name: "矛盾口径", do: "keys", keys: ["N"], allowNoLanding: true, verify: { pattern: "N" } }],
-  });
-  assert.ok(conflict.some((p) => p.includes("allowNoLanding 与 verify 互斥")), JSON.stringify(conflict));
 });
 
-test("do:keys allowNoLanding：region 未变只发一次；partial 仍判败且不重叠注入", async () => {
-  const root = tmpRoot("keys-no-landing");
-  const value = { current: "region" };
-  const snapshot = () => [
-    "# Lumir App State",
-    "```text",
-    '- [0] AXApplication "Lumir"',
-    '  - [1] AXWindow "Lumir" @0,0 1200×800',
-    `    - [40] AXGroup (开始使用) Value: ${value.current} @10,20 100×24 (focused)`,
-    "```",
-  ].join("\n");
-  const calls = [];
-  const cu = {
-    state: async () => ({ text: snapshot(), image: null }),
-    pressKey: async (_pid, key) => {
-      calls.push(key);
-      return { json: { ok: true } };
-    },
-  };
-  const ctx = stubCtx(root, { cu, readFrontmostPid: () => 0 });
-  const { status } = await runScenario(ctx, {
-    id: "keys-no-landing-pass",
-    item: 0,
-    title: "region 负向注入",
-    file: "keys-no-landing-pass.md",
-    steps: [{
-      name: "当前 region 发真实键",
-      do: "keys",
-      keys: ["N", "O"],
-      allowNoLanding: true,
-      expect: [{ label: "焦点仍在 region", ax: { focused: { role: "AXGroup", name: "开始使用" } } }],
-    }],
-  });
-  assert.equal(status, "PASS", JSON.stringify(ctx.evidence.records));
-  assert.deepEqual(calls, ["N", "O"], "未变时只发一次完整序列，不做三次重试");
-  assert.ok(
-    ctx.evidence.records.some((r) => r.kind === "note" && r.text.includes("allowNoLanding=true")),
-    "证据必须记录负向注入的接受口径",
-  );
+test("29 / 877 的 native oracle 反例：节点换行与合法 vault 入口都不得造成误判", () => {
+  const chapter = '- [213] AXTextArea = "# 第 1 章 概览\\n第 1 章概览正文。"';
+  assert.equal(matcher("第 1 章概览正文。").test(chapter), true, "当前正文节点应命中");
+  assert.equal(matcher("第 1 章 概览 第 1 章概览正文。").test(chapter), false, "旧空格拼接在当前 AX 上必须判红");
+  assert.equal(matcher("第 3 章概览正文。").test(chapter), false, "不存在的章节正文不得假绿");
 
-  const partialRoot = tmpRoot("keys-partial-landing");
-  const partialCalls = [];
-  const partialSnapshot = () => [
-    "# Lumir App State",
-    "```text",
-    '- [0] AXApplication "Lumir"',
-    '  - [1] AXWindow "Lumir" @0,0 1200×800',
-    `    - [40] AXGroup = "${value.current}" help="开始使用" @10,20 100×24 (focused)`,
-    "```",
-  ].join("\n");
-  const partialCu = {
-    state: async () => ({ text: partialSnapshot(), image: null }),
-    pressKey: async (_pid, key) => {
-      partialCalls.push(key);
-      value.current = "regionX";
-      return { json: { ok: true } };
-    },
-  };
-  const partialCtx = stubCtx(partialRoot, { cu: partialCu, readFrontmostPid: () => 0 });
-  const before = keysTarget(await readAx(partialCu, 0));
-  assert.equal(before?.value, "region", `partial 前置目标必须可读：${JSON.stringify(before)}`);
-  const { status: partialStatus } = await runScenario(partialCtx, {
-    id: "keys-no-landing-partial",
-    item: 0,
-    title: "region 内容被改变",
-    file: "keys-no-landing-partial.md",
-    steps: [{ name: "partial 必须失败", do: "keys", keys: ["N"], allowNoLanding: true }],
-  });
-  assert.equal(partialStatus, "FAIL", JSON.stringify({ records: partialCtx.evidence.records, calls: partialCalls }));
-  assert.ok(
-    partialCtx.evidence.records.some((r) => r.kind === "assert" && r.ok === false && r.detail?.includes("按键部分落地")),
-    `证据应包含 partial 失败原因：${JSON.stringify(partialCtx.evidence.records)}`,
-  );
-  assert.deepEqual(partialCalls, ["N"], "partial 不得再注入第二次");
+  const vaultEntry = '- [29] AXPopUpButton (vault：lumir-m102-acceptance-b（点击查看全部 vault）)';
+  assert.equal(matcher("默认键位 · ⌘/ 查看全部").test(vaultEntry), false, "合法 vault 入口不含旧脚注");
+  assert.equal(matcher("查看全部").test(vaultEntry), true, "旧的宽泛 not 会把合法入口误判成脚注");
+  assert.equal(matcher("默认键位 · ⌘/ 查看全部").test('- [9] AXStaticText = "默认键位 · ⌘/ 查看全部"'), true, "旧脚注本身仍可被负向判据捕捉");
 });
 
 // ── keysTarget / resolveKeysTarget：候选行抢走 focused，回读仍钉住注入前的输入框（230d 现场）──

@@ -5,8 +5,9 @@
 # 按钮、无通用快捷键。静态 region 承接焦点，被覆盖编辑器宿主 inert，不为留焦点伪造按钮。
 # 本场景验真机 WKWebView 上可观察的：不可输入 / 无 dirty / 无保存目标、⌥G 无目标、region
 # 焦点归还、双 pane 不串焦。chromium 另验程序 focus 无法进入 inert 正文与完整读屏列表语义。
-# 键入负例走 do: keys + allowNoLanding：向当前 focused region 发真实字符，目标未变才接受且
-# 不重试，不再调用要求 AXTextArea 的 do:type/typeInEditor；partial / target-lost 仍失败。
+# 键入负例走 do: typeInNode + channel:cgevent + allowNoLanding：向当前 focused region
+# 注入真实 Unicode，目标未变才接受且不重试，不再调用 do:type/typeInEditor/type_text；
+# partial / target-lost 仍失败。
 id: "885-no-tab-empty-state"
 item: 885
 tier: full
@@ -58,10 +59,14 @@ steps:
         ax: { focused: { role: "AXGroup", name: "开始使用" } }
       - shot: 03-空工作区-altg
 
-  - name: 向当前聚焦 region 发真实字符（不定位 inert 正文；未变才接受且不重试）
-    do: keys
-    keys: ["N", "O", "-", "T", "A", "B", "-", "L", "A", "N", "D"]
+  - name: 向当前聚焦 region 注入文本（不定位 inert 正文；未变才接受且不重试）
+    # 已持焦的 region 不需要也不允许点击。type_text 会拒绝静态 region，press_key 序列又会
+    # 误开 vault 浮层；显式 cgevent 复用真实 Unicode 注入，目标值未变才接受，partial / target-lost 仍失败。
+    do: typeInNode
+    target: { role: AXGroup, name: "开始使用", nth: 0 }
+    text: "NO-TAB-LAND"
     allowNoLanding: true
+    channel: cgevent
     expect:
       - label: 键入没有落进任何文档
         ax: { not: "NO-TAB-LAND" }

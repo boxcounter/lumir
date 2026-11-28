@@ -48,6 +48,7 @@ steps:
       - label: 树里有 aab-tab.md
         ax: { has: "aab-tab.md" }
 
+  # macOS 会把 /tmp 规范化为 /private/tmp；复制结果与 $vault 是同一目录，精确断言取规范化绝对路径。
   - name: 反向铺底：先把剪贴板置成**另一个**文件的绝对路径（下面 aaa-menu.md 的正向断言因此有区分度）
     do: click
     target: { role: AXButton, name: "^aab-tab.md$", button: right }
@@ -59,7 +60,7 @@ steps:
     target: { any: "复制完整路径" }
     expect:
       - label: 剪贴板变成 aab-tab.md 的绝对路径（**in-run 对照**：不依赖跨 run 的剪贴板残留——上一轮 run 结束时剪贴板里是 aaa-menu.md 的路径，对不上就红）
-        clipboard: { exact: "$vault/aab-tab.md" }
+        clipboard: { exact: "/private/tmp/lumir-m102-acceptance/aab-tab.md" }
 
   - name: 右键文件行 → 菜单出现且含文件项集（四项、不含新建项）
     do: click
@@ -158,7 +159,7 @@ steps:
     target: { any: "复制完整路径" }
     expect:
       - label: 剪贴板是 vault 根 + 相对路径（绝对路径，裁决点 4）
-        clipboard: { exact: "$vault/aaa-menu.md" }
+        clipboard: { exact: "/private/tmp/lumir-m102-acceptance/aaa-menu.md" }
       - label: 给出成功提示
         ax: { has: "已复制完整路径" }
       - shot: 复制完整路径之后

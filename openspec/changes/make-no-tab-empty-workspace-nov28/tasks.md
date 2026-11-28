@@ -116,3 +116,22 @@
       （`redesign/verification/gate-quick-acceptance-sync.log`）通过；主会话 native 全清单 16 个：
       885 / 263 / 50 / 79 / 877，以及 17 / 18 / 29 / 47a / 47b / 47c / 47d / 49 / 60 / 67 / 107。
       不跑完整 visual / native / merge / archive / 基线。
+
+## 11. Native 六项失败逐项返修（2026-11-28）
+
+- [x] 11.1 263：旧 oracle 把 vault 根角色写死为 AXButton，实际为 AXPopUpButton；改角色后
+      右键新建全链 PASS（40 断言）。
+- [x] 11.2 29：AXTextArea.value 保留节点内换行，旧「标题 + 空格 + 正文」假红；改匹配真实
+      正文节点，保留第 1 章正例与第 3 章字号正反变化，并补旧拼接必红（32 断言）。
+- [x] 11.3 47a：macOS 将 /tmp 规范化为 /private/tmp；精确断言改取同一规范化绝对路径，
+      in-run 对照保留（46 断言）。
+- [x] 11.4 60：typeInEditor 只落下「M283 」、中文丢失；改 typeInNode 注入，写盘段与
+      恢复全链 PASS（39 断言）。
+- [x] 11.5 877：宽泛 not「查看全部」误伤合法 vault 入口；负向收窄到完整旧脚注，并补
+      合法入口反例与旧脚注可检测对照（39 断言）。
+- [x] 11.6 885：press_key 序列误开 vault 浮层，type_text 又拒绝静态 region，导致焦点
+      AXStaticText 与重开超时；改 typeInNode + channel:cgevent 的真实 Unicode 注入，目标未变
+      且 region 持焦、重开与双 pane 全链 PASS（36 断言）。
+- [x] 11.7 六项 native 证据：`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-28-no-tab-empty-workspace-redesign-r1/evidence/`，
+      6/6 PASS、232 断言；静态 313/313、drive 31/31、execute 137/137、quick 13/13。
+      未发现需改产品代码的缺陷；完整 visual / merge / archive / 基线仍不执行。

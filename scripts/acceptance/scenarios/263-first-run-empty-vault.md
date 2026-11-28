@@ -90,7 +90,7 @@ steps:
 
   - name: 右键 vault 根，进入既有「新建文件…」菜单
     do: click
-    target: { role: AXButton, name: "vault：lumir-m102-acceptance-b（点击查看全部 vault）", button: right }
+    target: { role: AXPopUpButton, name: "vault：lumir-m102-acceptance-b（点击查看全部 vault）", button: right }
     expect:
       - label: 既有新建文件入口在场
         ax: { has: "新建文件…" }

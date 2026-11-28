@@ -769,7 +769,7 @@ export function injectModifierCGEvent(side, phase, { run = runKeySwiftOnce } = {
   return raw.stdout;
 }
 
-export async function typeInNode(cu, pid, { resolve, text, retries = 3, label = "", replace = false } = {}) {
+export async function typeInNode(cu, pid, { resolve, text, retries = 3, label = "", replace = false, channel } = {}) {
   if (typeof resolve !== "function") throw new StepError("typeInNode：缺少 resolve(ax) 目标解析函数");
   const countOf = (v) => (text ? v.split(text).length - 1 : 0);
 
@@ -794,7 +794,10 @@ export async function typeInNode(cu, pid, { resolve, text, retries = 3, label = 
       await cu.click(pid, { index: targetNow.index });
       await sleep(500);
     }
-    const nativeInput = targetNow && (targetNow.role === "AXTextField" || targetNow.role === "AXComboBox");
+    // 显式 cgevent 也服务静态 region：type_text 要求 web editor 稳定焦点，静态 region
+    // 会被工具拒绝；真实 Unicode 注入只落当前焦点，不点击、不改产品 inert 合同。
+    const nativeInput =
+      channel === "cgevent" || (targetNow && (targetNow.role === "AXTextField" || targetNow.role === "AXComboBox"));
     if (replace) {
       if (nativeInput) injectChordCGEvent("cmd+a");
       else await pressKey(cu, pid, "cmd+a");

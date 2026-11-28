@@ -80,8 +80,8 @@ steps:
         ax: { has: "知识链接" }
       - label: 通用快捷键与查看全部脚注不回流
         ax: { not: "快速打开文件" }
-      - label: 查看全部脚注不回流
-        ax: { not: "查看全部" }
+      - label: 旧「默认键位 · ⌘/ 查看全部」脚注不回流（vault 入口的“点击查看全部 vault”是合法文案）
+        ax: { not: "默认键位 · ⌘/ 查看全部" }
       - label: harness pane 默认在场（不抢焦点也可见）
         ax: { has: "与当前文档对话" }
       - label: 不再有打开 / 新建按钮
