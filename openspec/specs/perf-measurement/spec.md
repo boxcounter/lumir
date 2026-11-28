@@ -2,7 +2,7 @@
 
 ## Purpose
 
-为 ADR 0002 第 6 条性能合同的四个数字（冷启动 <300ms、keypress-to-paint <16ms、打开 1MB Markdown <100ms、常驻内存 <200MB）定义测量方法学与 CI 门禁口径。各 requirement 的完整方法学定义（端点、工具链、采样口径、fixture 规格的逐条细节）以 [docs/specs/perf-measurement.md](../../../docs/specs/perf-measurement.md) 为权威文本；本 spec 在 requirement 级别引用对应小节，不复制全文。首个 capability 基线，由 change `add-perf-measurement-methodology` 归档并入（2026-09-05，归档时含 M13 一次性校准后的门禁口径）。**2026-09-18 M174 判据修正**（未走 change 提案，与 2026-09-05 的 M37/M38 口径修正同例）：相对回归的容忍线逐指标化并随窗口散布浮动、新增 `minRuns` 薄基线降级、基线改逐指标推进（修掉「整轮全绿才写」的冻结死锁）；其中常驻内存的 **CI 门禁阈值**由 200MB 改为 **250MB**（见「常驻内存测量」requirement），该条改动了 ADR 0002 §6 的数字之一，ADR 文本修订登记为 follow-up。
+为 ADR 0002 第 6 条性能合同的四个数字（冷启动 <300ms、keypress-to-paint <16ms、打开 1MB Markdown <100ms、常驻内存 <200MB）定义测量方法学与 CI 门禁口径。各 requirement 的完整方法学定义（端点、工具链、采样口径、fixture 规格的逐条细节）以 [docs/specs/perf-measurement.md](../../../docs/specs/perf-measurement.md) 为权威文本；本 spec 在 requirement 级别引用对应小节，不复制全文。首个 capability 基线，由 change `add-perf-measurement-methodology` 归档并入（2026-09-05，归档时含 M13 一次性校准后的门禁口径）。**2026-11-28 外来 helper 判别修正**（Alex 裁决的内存测量修复；未走 change 提案，与 M174 同例）：常驻内存的差集归因新增「late + app 退出后存活」双证据剔除外部 WKWebView 客户端，`maxHelpers=3` 与门禁阈值不动，详见「常驻内存测量」requirement。**2026-09-18 M174 判据修正**（未走 change 提案，与 2026-09-05 的 M37/M38 口径修正同例）：相对回归的容忍线逐指标化并随窗口散布浮动、新增 `minRuns` 薄基线降级、基线改逐指标推进（修掉「整轮全绿才写」的冻结死锁）；其中常驻内存的 **CI 门禁阈值**由 200MB 改为 **250MB**（见「常驻内存测量」requirement），该条改动了 ADR 0002 §6 的数字之一，ADR 文本修订登记为 follow-up。
 
 ## Requirements
 
@@ -59,12 +59,19 @@ keypress-to-paint SHALL 定义为页面内 `keydown` 事件派发时刻到其后
 
 ### Requirement: 常驻内存测量
 
-常驻内存 SHALL 定义为 app 全进程树的 RSS 合计（含按基线差集规则归因的 `com.apple.WebKit.*` XPC 进程），「常驻」为 ready 信号后 idle 10 秒进入采样窗口，取 5 个样本，细节见 docs/specs/perf-measurement.md 第 4 节。门禁比较值 SHALL 取 max（内存是峰值敏感指标，p95 会漏掉单调爬升——这是 p95 总约定的唯一例外）。RSS 含 shared pages 重复计数、读数系统性偏高的缺陷 MUST 在 spec 中显式声明；若发现该口径把门禁阈值顶死，允许经 OpenSpec 循环修订为 phys_footprint 口径，此修订 MUST NOT 占用 ADR 0002 的一次性数字校准额度。**CI 门禁阈值（2026-09-18 M174）SHALL 为 250MB**（`tests/perf/thresholds.json` 的 `resident-memory.threshold`），依据为实测稳态（9 次 master run 9/9 超阈、读数 206.50–215.28MB，而 2026-09-05 校准实测约 110MB）；该阈值改动了 ADR 0002 §6 的数字之一，故 ADR 0002 §6 的文本修订 MUST 作为独立 follow-up 落地；落地前「ADR 合同值（200MB）」与「CI 门禁阈值（250MB）」在该项上不相等，artifact 的 `contract` 字段仍记合同值、实际门禁阈值记在 `.local/perf/gate-status.json`。
+常驻内存 SHALL 定义为 app 全进程树的 RSS 合计（含按基线差集规则归因的 `com.apple.WebKit.*` XPC 进程），「常驻」为 ready 信号后 idle 10 秒进入采样窗口，取 5 个样本，细节见 docs/specs/perf-measurement.md 第 4 节。**外来 WKWebView 客户端判别（2026-11-28）**：差集候选只有同时满足「`lstart` 晚于 app 启动 + max(3s, ready+1s)」与「kill app 后 5s 仍存活」才判为外来，从 RSS 与 helper 计数中剔除并落 `foreignHelperPids` / `foreignHelpers` 诊断；早到但存活判污染（不洗绿），late 但随 app 退出照常计数；分类/扣减/stale 等待 MUST 按 `pid + lstart` 身份对匹配（pid 复用不得误扣/误等），`lstart` 解析失败 MUST 无条件判污染；`maxHelpers=3` 与门禁阈值 MUST NOT 因此放宽。门禁比较值 SHALL 取 max（内存是峰值敏感指标，p95 会漏掉单调爬升——这是 p95 总约定的唯一例外）。RSS 含 shared pages 重复计数、读数系统性偏高的缺陷 MUST 在 spec 中显式声明；若发现该口径把门禁阈值顶死，允许经 OpenSpec 循环修订为 phys_footprint 口径，此修订 MUST NOT 占用 ADR 0002 的一次性数字校准额度。**CI 门禁阈值（2026-09-18 M174）SHALL 为 250MB**（`tests/perf/thresholds.json` 的 `resident-memory.threshold`），依据为实测稳态（9 次 master run 9/9 超阈、读数 206.50–215.28MB，而 2026-09-05 校准实测约 110MB）；该阈值改动了 ADR 0002 §6 的数字之一，故 ADR 0002 §6 的文本修订 MUST 作为独立 follow-up 落地；落地前「ADR 合同值（200MB）」与「CI 门禁阈值（250MB）」在该项上不相等，artifact 的 `contract` 字段仍记合同值、实际门禁阈值记在 `.local/perf/gate-status.json`。
 
 #### Scenario: WebKit XPC 进程归因
 
 - **WHEN** 采样常驻内存
 - **THEN** RSS 合计 = app 的 ppid 子孙进程 ∪（当前 `com.apple.WebKit.*` 进程 − 启动前基线快照）
+
+#### Scenario: 外部 WKWebView 客户端在测量窗口内启动
+
+- **WHEN** 测量窗口内出现非本 app 的 WebKit helper（晚于 earlyWindow 创建、且 app 被杀后仍存活）
+- **THEN** 其 RSS 与 helper 计数被剔除，pid/lstart/comm 落进 `foreignHelpers` 诊断；本 app 的 helper 计数与集合稳定性照常判定，`maxHelpers=3` 不变
+- **AND** 若外来 helper 在 earlyWindow 内出现且存活（无法判别归属），整轮 SHALL 判污染（`helper-survived-app`），不得静默剔除
+- **AND** 若 helper 的 `lstart` 解析失败（时间证据不可用），无论其是否存活，整轮 SHALL 判污染（`helper-lstart-unparsable`），不得静默剔除
 
 #### Scenario: 峰值敏感指标取 max
 
