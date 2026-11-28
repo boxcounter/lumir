@@ -23,9 +23,9 @@
 - [x] 4.1 目标单元与浏览器测试通过，`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [x] 4.2 `scripts/gate.sh quick` 全绿，照抄 `GATE RESULT` 原文与退出码并留存日志
 - [x] 4.3 新增/修改断言逐条做反向必红实测；红绿读数落 `.local/reviews/tab-dynamic-numbering-nov27/`
-- [ ] 4.4 完整 visual 由主会话串行执行（本任务不并行启动）；正式基线仍待 Alex 过目
-- [ ] 4.5 真机 14-tabs 由主会话统一执行并留存 PASS 证据；本任务不启动真机
-- [ ] 4.6 节点 2 记录按 proposal 五态表填写 implemented / released / machine PASS / native PASS / archived；独立 K3 评审、完整视觉、真机与归档均不提前宣称完成
+- [x] 4.4 主会话完整 visual `GATE RESULT: 15/15 PASS（SKIP 0）`、退出码 0；Alex 原话「按候选」，无正式基线更新
+- [x] 4.5 主会话真机 14-tabs PASS 60 断言，证据 `.local/acceptance/2026-11-28-tab-dynamic-numbering/evidence/14-tabs/status.txt`
+- [x] 4.6 节点 2 按 proposal 五态表填写；K3 final clean/merge（P1/P2/P3=0）绑 `c7f9a3de`，归档后另跑 `--archived` 审计
 
 ## 5. 独立 K3 返修（tip a7b60f25 的两项 P2）
 

@@ -6,7 +6,7 @@
 
 ## 节点 1：提案批准
 
-Alex 已对「按住 ⌘ 时在既有标签上叠加小号序号」方案明确回复「做」。本 change 只实施该已批准方向；具体像素候选仍须 Alex 过目，不据此自行更新正式视觉基线。
+Alex 已对「按住 ⌘ 时在既有标签上叠加小号序号」方案明确回复「做」。本 change 只实施该已批准方向。候选完成后 Alex 明确回复「按候选」，批准三主题、窄 pane、长名称、1/9/>9 标签与双 pane 的候选形态；未更新正式视觉基线。
 
 ## Why
 
@@ -39,8 +39,16 @@ Alex 已对「按住 ⌘ 时在既有标签上叠加小号序号」方案明确�
 
 | 状态 | 值 | 证据指针 |
 |---|---|---|
-| implemented | 是：实现已提交，未合并 | `8e4966821cd68c31c3b61f72cbfe69bf62c57b51` |
+| implemented | 是：实现已提交，未合并 | 最终 `c7f9a3de8afd023fb7764fddecc6decb8a737bc0` |
 | released | 否：本批不打包 | 不适用 |
-| machine PASS | 是：目标测试与 quick 通过 | `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0；前端 2200/2200、相关浏览器结构 17/17、验收执行器 131/131、驱动 27/27、OpenSpec 39/39；日志 `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/tab-dynamic-numbering-nov27/` |
-| native PASS | 否：真机由主会话统一执行 | 待 14-tabs 的 status.txt |
-| archived | 否：待归档 | 本任务不归档 |
+| machine PASS | 是：quick 与完整 visual 通过 | quick `GATE RESULT: 13/13 PASS（SKIP 0）`、退出码 0；完整 visual `GATE RESULT: 15/15 PASS（SKIP 0）`、退出码 0（`gate-visual-final-r2.log`）；前端 2201/2201、相关浏览器 37/37、验收执行器/驱动 159/159、OpenSpec 39/39 |
+| native PASS | 是：14-tabs PASS 60 断言 | `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-28-tab-dynamic-numbering/evidence/14-tabs/status.txt`；`evidence/summary.md` 记录 60 断言 / 0 失败 |
+| archived | 否：待归档 | 包装器归档与 `--archived` 审计待执行 |
+
+### 归档前五要件
+
+1. **方案已批准**：节点 1 Alex 原话「做」；视觉候选原话「按候选」。实现期两项 K3 P2、监听合同 P3 与视觉合同返修均未扩范围。
+2. **独立 reviewer clean / merge**：`independent-review-final-p3.md` 对最终 `c7f9a3de8afd023fb7764fddecc6decb8a737bc0` 判 clean/merge，P1/P2/P3=0。
+3. **tasks 完成**：实现、返修、完整 visual 与真机项全部勾选；归档及 `--archived` 审计在本记录后续执行。
+4. **门禁与真机证据**：quick 13/13、完整 visual 15/15、native 14-tabs 60 断言，均退出码 0；证据路径见五态表。
+5. **规格对账**：delta 仅 `multi-tabs` 1 条 ADDED；归档前 `node scripts/openspec-archive-check.mjs`、OpenSpec strict validate 与归档队列唯一性检查通过。`docs/backlog.md` 保持 80 行，队列仅一条本 change 记录。
