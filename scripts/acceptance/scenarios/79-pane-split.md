@@ -29,10 +29,12 @@ steps:
         ax: { has: "分隔条" }
       - label: 新 pane 成为活跃 pane——空 pane 无前台文件 ⇒ modeline 回「无当前文件」（原文案 D207）
         ax: { has: "无当前文件" }
-      - label: 空 pane 是统一空工作区（标题 + 两个动作）
-        ax: { has: "没有打开的文档" }
-      - label: 空工作区的主操作在场（走既有 Quick Open）
-        ax: { has: "/AXButton[^\\n]*打开笔记…/" }
+      - label: 空 pane 显示同一组共享 tips
+        ax: { has: "开始使用" }
+      - label: 不再有打开 / 新建按钮
+        ax: { not: "/AXButton[^\\n]*(新建笔记|打开笔记…)/" }
+      - label: 焦点在空 pane 的静态 region
+        ax: { focused: { role: "AXGroup", name: "开始使用" } }
       - label: 标签没有被复制到新 pane（原标签仍在，只此一个）
         ax: { count: { pattern: "关闭 ", exact: 1 } }
 
@@ -94,7 +96,7 @@ steps:
       - label: 分隔条消失（回到单 pane 常态）
         ax: { not: "分隔条" }
       - label: 空工作区随之离场（单 pane 有文档 ⇒ 标题不在）
-        ax: { not: "没有打开的文档" }
+        ax: { not: "开始使用" }
       - label: 标签仍在（收起是并入，不丢标签）
         ax: { count: { pattern: "关闭 ", exact: 1 } }
       - label: 单 pane 有当前文件
@@ -111,8 +113,8 @@ WKWebView + 真实键盘下才成立的事：
 1. **默认键位**：`⌥S` 分栏、`⌥O` 切活跃、`⌥W` 收起——三条经真机键盘注入落地（它们是 M319 的
    键位指配，见 `src/keys.ts` 的 `Alt-KeyS` / `Alt-KeyO` / `Alt-KeyW`）。
 2. **分栏的可见结果**：分隔条出现（`role=separator` + 读屏名 D368）、新 pane 为活跃且空
-   （modeline 读「无当前文件」）、空 pane 呈统一空工作区（标题「没有打开的文档」+ 主操作
-   「打开笔记…」；change make-no-tab-empty-workspace-nov28 起不再有 D369 水印），收起后随之离场。
+   （modeline 读「无当前文件」）、空 pane 显示共享四条 tips，焦点在静态 region；不再有
+   D369 水印或 Open / New 按钮，收起后随之离场。
 3. **`pane.other` 往返**：活跃 pane 在两侧之间切换，modeline 跟随活跃 pane 的**前台**换源。
 4. **上限二无操作**：已是双 pane 时 `⌥S` 不产生第三个 pane。
 5. **跨 pane 打开已开文件是移动**：活跃 pane 为右（空）时从树里打开已在左 pane 的文件，

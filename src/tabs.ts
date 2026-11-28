@@ -210,7 +210,7 @@ export interface TabsDeps {
    *  `options` 由激活链透传（见 {@link DocumentSwitchOptions}），缺省 = 既有行为。 */
   syncActiveDocument: (options?: DocumentSwitchOptions) => void;
   /** 把焦点交给这个 pane 的入口（装配层按「有没有标签」解析：有文档 → 正文；
-   *  空工作区 → 主操作「打开笔记…」）。
+   *  空工作区 → 静态 region）。
    *
    *  消费者是「关闭全部标签」的批量收尾：**全关完与中途停手都要动一次焦点**——确认浮条的
    *  动作钮随答复从 DOM 移除，浏览器会把焦点送回 body（review r1 P2-1）；全关完时前台是
@@ -602,7 +602,7 @@ export function createTabs(deps: TabsDeps): TabsHandle {
     const wasTab = session.path !== undefined;
     await resolveClose(session);
     // 单条关闭（⌘W / ×）关掉最后一个可见标签 = 该 pane 回到空工作区：正文不是焦点落点
-    //（change make-no-tab-empty-workspace-nov28），交还给空工作区主操作。批量关闭不在这里
+    //（change make-no-tab-empty-workspace-nov28），交还给空工作区静态 region。批量关闭不在这里
     // 交还——它的收尾自己调一次 focusEditor（避免同一次动作动两遍焦点）。
     if (wasTab && visibleTabs().length === 0) focusEditor();
   }
@@ -713,7 +713,7 @@ export function createTabs(deps: TabsDeps): TabsHandle {
         // pane MUST NOT 接管焦点：
         //   - 还有带路径标签的文档会话 → 编辑器正文（M280 口径不改变阅读位置；保存冲突 /
         //     写失败的提示是非模态浮条，既有合同就是「不夺焦」）；
-        //   - 全关完（空工作区）→ 主操作「打开笔记…」（正文不是焦点落点）；
+        //   - 全关完（空工作区）→ 静态 region（正文不是焦点落点）；
         //   - 图片会话（编辑器是哨兵只读面）→ 那一条标签的按钮。
         const active = editor.activeSession();
         if (isDocSession(active)) focusEditor();

@@ -1262,7 +1262,7 @@ export interface EditorSession {
    *    「结构性」只读，本标志对它们恒假；结构只读只是 `editable === false` 的一个子集。
    *  - 本标志只服务**呈现**：结构性只读前台不画 CM 插入光标（`modeExtensions` 在
    *    `.cm-editor` 上挂 `lumir-structural-readonly`，样式隐藏 `.cm-cursorLayer`）。
-   *    正文不是焦点落点（空工作区经装配层的 `focusDocPaneEntry` 落到主操作）。
+   *    正文不是焦点落点（空工作区经装配层的 `focusDocPaneEntry` 落到静态 region，宿主 inert）。
    *  - 创建点（`makeSession`）对无路径会话直接置真；值另由装配层在唯一同步点
    *    `renderAllTabStrips` 经 `setSessionEditable` 的第三参重算；打开文档后的恢复在同一
    *    条写入路径上，不存在第二处改判。

@@ -10,7 +10,7 @@ import { applyKeyOverrides, BLOCK_SCROLL_CLASS, COMPOSER_TEXT_COMMAND_IDS, cover
 import type { CommandId, CommandRunner, CommandRuntime, EditorCommandId, KeyBinding, KeyOverrides } from "./keys";
 import { selectAllOf } from "./overlay-select";
 import { DEFAULT_SPLIT_RATIO, clampSplitRatio, createDividerDrag, createPaneLayout } from "./pane-layout";
-import { createFirstRunTips } from "./first-run-tips";
+import { createWorkspaceTips } from "./workspace-tips";
 import { createFirstRunClaim } from "./first-run-claim";
 import type { DividerDrag, PaneId, PaneKind } from "./pane-layout";
 import { DEFAULT_AUTO_INDENT } from "./enter-indent";
@@ -297,14 +297,18 @@ function activeEditor(): EditorHandle {
 const paneAssemblies = new Map<PaneId, PaneAssembly>();
 
 /** 把焦点交给某个 doc pane 的**入口**（change make-no-tab-empty-workspace-nov28）：
- *  空工作区在场 ⇒ 「打开笔记…」（正文 MUST NOT 成为焦点落点）；否则 ⇒ 正文的
- *  `focusPreservingReadingPosition()`（M280 口径不变）。所有「交还焦点给文档 pane」的路径
- *  都走这里——浮层 / 面板关闭、分栏 / 切 pane / 收起 pane、Close All 收尾、复合句柄的同名方法。 */
+ *  首启 / 空工作区 ⇒ 静态 tips region（tabindex=-1，不进 Tab 序，也不冒充按钮）；
+ *  有文档 ⇒ 正文的 `focusPreservingReadingPosition()`（M280 口径不变）。
+ *  所有「交还焦点给文档 pane」的路径都走这里。 */
 function focusDocPaneEntry(paneId: PaneId): void {
   const assembly = paneAssemblies.get(paneId);
   if (assembly !== undefined && assembly.handle.kind === "doc") {
+    if (tipsCoversPane(assembly)) {
+      firstRunTipsEl?.focus();
+      return;
+    }
     if (assembly.emptyEl !== null && !assembly.emptyEl.hidden) {
-      assembly.emptyEl.querySelector<HTMLElement>(".pane-empty-open")?.focus();
+      assembly.emptyEl.focus();
       return;
     }
     assembly.handle.editor.focusPreservingReadingPosition();
@@ -392,13 +396,6 @@ let dividerDrag: DividerDrag | null = null;
  *（design §5.2 的不变量：挂载后无法重写的语言相关文本 MUST NOT 存在）。 */
 const SPLITTER_LABEL = (): string => t("D368");
 
-/** 空工作区的上屏文案（change make-no-tab-empty-workspace-nov28）：标题与两个动作名。
- *  元素常驻 mountEl（`hidden` 切换在场 / 离场），语言切换由下方 onRelabel 重写（同
- *  SPLITTER_LABEL 的 design §5.2 不变量：挂载后无法重写的语言相关文本 MUST NOT 存在）。 */
-const EMPTY_WORKSPACE_TITLE = (): string => t("D1090");
-const EMPTY_WORKSPACE_OPEN = (): string => t("D1091");
-const EMPTY_WORKSPACE_NEW = (): string => t("D882");
-
 const paneLayout = createPaneLayout<EditorSession, PaneHandle>({
   createHandle: (paneId, kind) => createPaneHandle(paneId, kind),
   disposeHandle: (handle) => disposePaneHandle(handle),
@@ -455,38 +452,12 @@ function createPaneHandle(paneId: PaneId, kind: PaneKind): PaneHandle {
   // 创建后注入会为启动文档里已渲染的图片多读一次字节（见 EditorCreateOptions 的注释）。
   const editor = createEditor(mountEl, undefined, undefined, { quoteImage: quoteImageFromImageButton });
   const handle: PaneHandle = { kind: "doc", editor };
-  // 空工作区（change make-no-tab-empty-workspace-nov28）：常驻 mountEl 的完整表面（初态必隐
-  // ——显示与否由 renderAllTabStrips 的同一读数决定，root pane 与动态 pane 同一形态）。它覆盖
-  // 整个 pane 并承接点击：正文 MUST NOT 成为焦点落点；标题与两个动作都在里面。两个动作先把
-  // **所属 pane** 翻成活跃 pane 再进入各自链路（非活跃空 pane 的动作不串 pane）。
-  // 不加 mousedown preventDefault（REVIEW.md「标题栏 preventDefault」条：不挂容器级元素）。
-  const emptyEl = document.createElement("div");
-  emptyEl.className = "pane-empty-workspace";
+  // 空工作区与首启共用同一块静态 tips（Alex 2026-11-28 重设计）：没有 Open / New 按钮。
+  // region 以 tabindex=-1 承接焦点，点击与浮层归还都不会落到被覆盖的正文；文件树既有打开 /
+  // 右键新建链路不变。root 与动态 pane 只改挂载点，不复制内容。
+  const emptyEl = createWorkspaceTips(`workspace-pane-${paneId}`);
+  emptyEl.classList.add("pane-empty-workspace");
   emptyEl.hidden = true;
-  emptyEl.setAttribute("role", "group");
-  const emptyTitle = document.createElement("p");
-  emptyTitle.className = "pane-empty-title";
-  emptyTitle.textContent = EMPTY_WORKSPACE_TITLE();
-  const emptyActions = document.createElement("div");
-  emptyActions.className = "pane-empty-actions";
-  const emptyOpen = document.createElement("button");
-  emptyOpen.type = "button";
-  emptyOpen.className = "editor-notice-action pane-empty-open";
-  emptyOpen.textContent = EMPTY_WORKSPACE_OPEN();
-  emptyOpen.addEventListener("click", () => {
-    activatePane(paneId);
-    quickOpen.toggle();
-  });
-  const emptyNew = document.createElement("button");
-  emptyNew.type = "button";
-  emptyNew.className = "editor-notice-action pane-empty-new";
-  emptyNew.textContent = EMPTY_WORKSPACE_NEW();
-  emptyNew.addEventListener("click", () => {
-    activatePane(paneId);
-    tree.beginCreate("", "file");
-  });
-  emptyActions.append(emptyOpen, emptyNew);
-  emptyEl.append(emptyTitle, emptyActions);
   mountEl.append(emptyEl);
   const assembly: PaneAssembly = { mountEl, stripEl, handle, emptyEl, tabs: undefined, unsubs: [] };
   paneAssemblies.set(paneId, assembly);
@@ -597,7 +568,7 @@ function focusSourcePane(paneId: PaneId | undefined): void {
     targetAssembly.emptyEl !== null &&
     !targetAssembly.emptyEl.hidden
   ) {
-    // 目标 pane 是空工作区：正文不是焦点落点，直接交还主操作；下面的选区兜底没有对象。
+    // 目标 pane 是空工作区：正文不是焦点落点，直接交还静态 region；下面的选区兜底没有对象。
     focusDocPaneEntry(targetPaneId);
     return;
   }
@@ -754,10 +725,12 @@ function updateEmptyWorkspace(assembly: PaneAssembly, hasTabs?: boolean): void {
   // notice 只覆盖它当前的宿主 pane（placeNotice 把元素移进 mountEl），别的 pane 的空工作区
   // 照常可用；隐藏的是「被覆盖的那一个」，不是全部。
   const coveredByNotice = !notice.hidden && notice.parentElement === assembly.mountEl;
-  assembly.emptyEl.hidden = paneHasTabs || tipsCoversPane(assembly) || coveredByNotice;
-  // 未装载 vault 时树里没有可用的根，内联新建会静默落空——按钮显式禁用，不给死按钮。
-  const newButton = assembly.emptyEl.querySelector<HTMLButtonElement>(".pane-empty-new");
-  if (newButton !== null) newButton.disabled = !vaultLoaded;
+  const tipsVisible = tipsCoversPane(assembly);
+  const emptyVisible = !paneHasTabs && !tipsVisible && !coveredByNotice;
+  assembly.emptyEl.hidden = !emptyVisible;
+  // 被 tips 覆盖的编辑器不是文档表面：同时移出 Tab 序、程序焦点与读屏树；有文档后同一
+  // 同步点恢复。inert 比仅改 tabindex 更强，杜绝「程序 focus 隐藏 cm-content」的旁路。
+  assembly.handle.editor.view.dom.inert = emptyVisible || tipsVisible;
 }
 
 /** notice / tips 状态变化后重算全部 pane 的空工作区在场（幂等；不重跑标签重绘与 gutter）。 */
@@ -822,7 +795,7 @@ function createPaneTabs(paneId: PaneId, handle: EditorHandle, stripEl: HTMLEleme
     showEditor: () => showEditor(),
     syncActiveDocument: (options) => syncActiveDocument(options),
     // 「关闭全部标签」把标签全关完后没有标签可归还焦点：交给该 pane 的入口（有文档 → 正文；
-    // 空工作区 → 主操作），见 focusDocPaneEntry（M280 口径：不裸 view.focus()）。
+    // 空工作区 → 静态 region），见 focusDocPaneEntry（M280 口径：不裸 view.focus()）。
     focusEditor: () => focusDocPaneEntry(paneId),
     // 标签条交互（点标签 / 点关闭钮）先把这个 pane 翻成活跃 pane（M329，bug 1）。调用点在
     // tabs.ts 的交互漏斗里（它的 DOM 监听自己绑），**不是**在这里覆写对外方法——覆写挡不住
@@ -976,7 +949,7 @@ function addPane(kind: PaneKind = "doc"): boolean {
  *  tasks 1.3）——split() 的 null 回落天然成立。 */
 function splitActivePane(): void {
   if (!addPane()) return;
-  // 新 pane 是空工作区：焦点落它的主操作，不落正文。
+  // 新 pane 是空工作区：焦点落它的静态 region，不落正文。
   focusDocPaneEntry(paneLayout.active().id);
   syncActiveDocument();
 }
@@ -1250,7 +1223,7 @@ const editor: EditorHandle = {
   applyLoadedScrollPosition: (position) =>
     activeEditor().applyLoadedScrollPosition(position),
   applyScrollPosition: (position) => activeEditor().applyScrollPosition(position),
-  // 各浮层 / 面板关闭后的统一交还口：空工作区落主操作，有文档落正文（M280 口径）。
+  // 各浮层 / 面板关闭后的统一交还口：空工作区落静态 region，有文档落正文（M280 口径）。
   focusPreservingReadingPosition: () => focusActiveDocPaneEntry(),
   isDirty: () => activeEditor().isDirty(),
   // 订阅全部经注册表（现存 + 未来 pane 都挂上；退订全局摘除）。onScroll / onDocChanged
@@ -1663,7 +1636,7 @@ const quickOpen = createQuickOpen({
   },
   openExternalPath: (path, line) => openExternalText(path, line),
   notice: (text) => showNotice(text),
-  // 取消 / 收起：空工作区回主操作，有文档回正文（change make-no-tab-empty-workspace-nov28）。
+  // 取消 / 收起：空工作区回静态 region，有文档回正文（change make-no-tab-empty-workspace-nov28）。
   restoreFocus: () => focusActiveDocPaneEntry(),
 });
 
@@ -1865,10 +1838,12 @@ function showNotice(text: string) {
 /** 首启 tips 的 DOM 重绘（语言切换走 relabelNotice；不重开 harness、不改 flag）。 */
 function renderFirstRunTips(): void {
   if (!firstRunTipsVisible) return;
-  const next = createFirstRunTips();
+  const hadFocus = firstRunTipsEl === document.activeElement;
+  const next = createWorkspaceTips("first-run-workspace");
   if (firstRunTipsEl === null) shell.editorPane.append(next);
   else firstRunTipsEl.replaceWith(next);
   firstRunTipsEl = next;
+  if (hadFocus) next.focus();
 }
 
 /** 首启空态：tips 挂 root doc pane（不是 editorRow 的 .editor-notice，后者会盖住 harness）。
@@ -1880,6 +1855,7 @@ function showFirstRunTips(): void {
   widthDrag.setVisible(false);
   relabelNotice = renderFirstRunTips;
   renderAllTabStrips();
+  firstRunTipsEl?.focus();
 }
 
 /** 阅读手柄只服务 Markdown；root 宿主与活跃 doc 会话必须同型，覆盖层 / tips / 空工作区优先隐藏。 */
@@ -2464,7 +2440,7 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
   // 直接写 scrollDOM.scrollTop 会被滚动锚点维护改掉（M149 实测差 242px）。
   readingPosition: () => editor.view.scrollSnapshot(),
   restoreReadingPosition: (snapshot) => editor.view.dispatch({ effects: snapshot }),
-  // 收起浮层交还焦点走统一入口：空工作区落主操作，有文档落正文（M186 的阅读位置快照
+  // 收起浮层交还焦点走统一入口：空工作区落静态 region，有文档落正文（M186 的阅读位置快照
   // 仍由 vault-switcher 的 handOffFocus 在前后取 / 写，见其注释）。
   focusEditor: () => focusActiveDocPaneEntry(),
   getSession: (vaultId) => vaultSessionGet(vaultId),
@@ -2510,7 +2486,7 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
   onEmptyVault: () => {
     // 一个标签都没恢复出来时的落点。两种到达方式（M283 起）：
     //   1. 会话里没有任何可用条目（或本来就没有历史）⇒ 标签栏本来就空（没有会话就一个壳都
-    //      不建），正文呈统一**空工作区**（「没有打开的文档」+ 打开笔记… / 新建笔记）——空
+    //      不建），正文呈统一**空工作区**（与首启共享四条产品特有 tips，无按钮）——空
     //      vault 与普通无 Tab 是同一个状态，不再有 D107 覆盖层这一套第二表面；
     //   2. 壳建出来了、但激活项与全部退化候选的正文都读不出来（例如会话里只有超过读取上限的
     //      大文件）⇒ 标签栏里确实有标签，**不说「还没有打开的文件」这句假话**，只撤下覆盖层
@@ -4546,17 +4522,17 @@ onRelabel(() => {
   shell.widthHandles.right.setAttribute("aria-label", handleLabel);
   // 分隔条的读屏名（M319，D368）：只在分栏态在场（dividerEl 非 null），切换语言时同样要重写。
   if (dividerEl !== null) dividerEl.setAttribute("aria-label", SPLITTER_LABEL());
-  // 空工作区的标题与动作名（change make-no-tab-empty-workspace-nov28）：元素常驻 mountEl
-  //（hidden 切换在场 / 离场），在场与不在场一并重写（同 design §5.2 的不变量）。
-  for (const assembly of paneAssemblies.values()) {
+  // 普通 / 双 pane 空态与首启共享同一文案源：原位重建全部常驻 region，保留 hidden 与焦点。
+  for (const [paneId, assembly] of paneAssemblies) {
     const emptyEl = assembly.emptyEl;
     if (emptyEl === null) continue;
-    const title = emptyEl.querySelector<HTMLElement>(".pane-empty-title");
-    const open = emptyEl.querySelector<HTMLElement>(".pane-empty-open");
-    const create = emptyEl.querySelector<HTMLElement>(".pane-empty-new");
-    if (title !== null) title.textContent = EMPTY_WORKSPACE_TITLE();
-    if (open !== null) open.textContent = EMPTY_WORKSPACE_OPEN();
-    if (create !== null) create.textContent = EMPTY_WORKSPACE_NEW();
+    const next = createWorkspaceTips(`workspace-pane-${paneId}`);
+    next.classList.add("pane-empty-workspace");
+    next.hidden = emptyEl.hidden;
+    const hadFocus = emptyEl === document.activeElement;
+    emptyEl.replaceWith(next);
+    assembly.emptyEl = next;
+    if (hadFocus) next.focus();
   }
 });
 

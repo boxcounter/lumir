@@ -448,18 +448,19 @@ test("零标签时 ⌘W 无操作：空工作区不是标签（reviewer r1 P2-1 
   await page.goto("/");
   await expect(page.locator(".tabstrip")).toBeHidden();
   const surface = page.locator(".pane-empty-workspace");
-  const open = surface.locator(".pane-empty-open");
   await expect(surface).toBeVisible();
-  await expect(surface.locator(".pane-empty-title")).toHaveText("没有打开的文档");
+  await expect(surface.locator(".workspace-tips-title")).toHaveText("开始使用");
 
-  // 禁止输入：把焦点以程序方式放进正文（正文仍有 tabindex=0），键入也不落字——不是
-  // 「焦点不在所以没落」的假绿。
-  await page.locator(".cm-content").focus();
+  // 被覆盖编辑器整体 inert：即使显式尝试程序聚焦也到不了正文，键入仍不落字。
+  await expect(page.locator(".cm-editor")).toHaveJSProperty("inert", true);
+  await page.locator(".cm-content").evaluate((el) => el.focus());
+  await expect(page.locator(".cm-content")).not.toBeFocused();
+  await surface.focus();
   await page.keyboard.type("Z");
   const before = await readDocument(page);
   expect(before).toBe("");
 
-  // ⌘W（global 命令，焦点在正文）：没有标签可关 ⇒ 空工作区与内容原样，焦点不动，无确认浮条。
+  // ⌘W（global 命令，焦点在静态 region）：没有标签可关 ⇒ 空工作区与内容原样，焦点不动。
   await page.keyboard.press("Meta+w");
   expect(await readDocument(page)).toBe(before);
   await expect(page.locator(".tabstrip")).toBeHidden();
@@ -467,11 +468,10 @@ test("零标签时 ⌘W 无操作：空工作区不是标签（reviewer r1 P2-1 
   await expect(page.locator(".modeline-path")).toHaveText("无当前文件");
   await expect(page.locator(".lumir-toast")).toHaveCount(0);
 
-  // 焦点在主操作上再按一次：同样无操作（防「第一次把空态换掉、第二次才稳定」的假绿）。
-  await open.focus();
-  await expect(open).toBeFocused();
+  // 再按一次同样无操作（防「第一次把空态换掉、第二次才稳定」的假绿）。
+  await expect(surface).toBeFocused();
   await page.keyboard.press("Meta+w");
-  await expect(open).toBeFocused();
+  await expect(surface).toBeFocused();
   expect(await readDocument(page)).toBe("");
   await expect(surface).toBeVisible();
   await expect(page.locator(".lumir-toast")).toHaveCount(0);

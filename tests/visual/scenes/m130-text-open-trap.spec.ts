@@ -207,7 +207,7 @@ test("binary 仍不进编辑器：点击给「暂不支持预览」，不产生�
   await stubTauri(page, VAULT);
   await page.goto("/");
   // 装载 vault 但一个标签都没有 = 统一空工作区（change make-no-tab-empty-workspace-nov28）
-  await expect(page.locator(".pane-empty-title")).toHaveText("没有打开的文档");
+  await expect(page.locator(".pane-empty-workspace .workspace-tips-title")).toHaveText("开始使用");
 
   for (const path of NON_EDITOR) {
     await page.locator(`.ft-row[title="${path}"]`).click();

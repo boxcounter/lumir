@@ -110,10 +110,10 @@ test("分栏双 pane：双标签槽 + 分隔条 + 右簇退让（整页 + 标题
   // 右簇退让与几何不变量。
   await expectChromeRetreat(page);
   await expectSplitGeometry(page);
-  // 焦点落右 pane 的入口（pane.split 的用户动作落点）：右 pane 是空工作区，正文不是焦点
-  // 落点，焦点在主操作「打开笔记…」上（change make-no-tab-empty-workspace-nov28）。
+  // 焦点落右 pane 的静态空态 region（pane.split 的用户动作落点），正文与被覆盖编辑器
+  // 都不是焦点落点；region 只是程序焦点容器，不是伪按钮。
   const rightSurface = page.locator(".editor-pane").nth(1).locator(".pane-empty-workspace");
-  await expect(rightSurface.getByRole("button", { name: "打开笔记…" })).toBeFocused();
+  await expect(rightSurface).toBeFocused();
   await expect(page.locator(".editor-pane").nth(1).locator(".cm-content")).toHaveText("");
   // 零标签的右 pane 空工作区在场，有标签的左 pane 不在场。
   await expect(rightSurface).toBeVisible();
@@ -149,7 +149,7 @@ test("空右 pane 形态 + 收拢复原单 pane（整页 + 标题栏元素级基
   await expect(rightContent).toHaveText("");
   const surface = page.locator(".editor-pane").nth(1).locator(".pane-empty-workspace");
   await expect(surface).toBeVisible();
-  await expect(surface.locator(".pane-empty-title")).toHaveText("没有打开的文档");
+  await expect(surface.locator(".workspace-tips-title")).toHaveText("开始使用");
   await expect(page.locator(".editor-pane").nth(0).locator(".pane-empty-workspace")).toBeHidden();
   await expect(page.locator(".editor-pane").nth(0).locator(".cm-content")).toContainText("Alpha 的第一段");
   await expectChromeRetreat(page);

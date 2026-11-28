@@ -91,7 +91,7 @@ test("文件行右键：菜单四项、无新建项，且不改上下文", async
   // 右键不改上下文：没有打开任何文件（仍是统一空工作区，不再是 D107 覆盖层）、标签栏为空
   await expect(page.locator(".tab")).toHaveCount(0);
   await expect(page.locator(".pane-empty-workspace")).toBeVisible();
-  await expect(page.locator(".pane-empty-title")).toHaveText("没有打开的文档");
+  await expect(page.locator(".pane-empty-workspace .workspace-tips-title")).toHaveText("开始使用");
   await expect(page.locator(".editor-notice")).toBeHidden();
 
   await expectScreenshot(menu, "context-menu-file.png");

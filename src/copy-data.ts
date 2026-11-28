@@ -2390,13 +2390,8 @@ const COPY_TABLE = {
     zh: "{segments} 段",
     en: "{segments} segments",
   },
-  // D882：空工作区的「新建笔记」动作名（M851 的首入态入口并入统一空工作区：change
-  // make-no-tab-empty-workspace-nov28）。与右键根菜单的「新建文件…」（D129）走同一条
-  // tree 内联命名命令；标签按「笔记」命名，因为无扩展名输入默认落 .md。
-  D882: {
-    zh: "新建笔记",
-    en: "New note",
-  },
+  // D882 的空态「新建笔记」按钮已随 Alex 2026-11-28 空态重设计删除，编号不复用；
+  // 既有 vault 右键「新建文件…」（D129）与内联命名链路不变。
   // D883–D885：设置面板 provider id 校验的三条字段级错误（M852，首次安装新建 provider 时
   // 最常撞上的那批）。取号接 D882（M851 的「新建笔记」）的末位——M851 先合并，本批让号。
   // 消费点 `src/settings-panel.ts` 的 `mapFieldErrors`
@@ -2988,23 +2983,15 @@ const COPY_TABLE = {
     en: "Kept {count} results · text {size} · truncated",
     enOne: "Kept {count} result · text {size} · truncated",
   },
-  // D1034–D1047：首启引导（change add-first-run-onboarding-nov25）。首启模式按钮只在
-  // `last_vault === null` 的启动面上出现；tips 的键位字形从 KEY_BINDINGS 派生，这里只存
-  // 可见标签 / 标题 / 脚注 / 区域读屏名，不存 `⌘P` 一类键位字符串。
+  // D1034–D1047：首启与共享空态引导。D1036 / D1037 / D1039 / D1041 / D1044 / D1047
+  // 的通用快捷键、查看全部与右键新建提示已按 Alex 2026-11-28 裁决删除，编号不复用。
   D1034: { zh: "添加 vault", en: "Add vault" },
   D1035: { zh: "开始使用", en: "Get started" },
-  D1036: { zh: "快速打开文件", en: "Quick open a file" },
-  D1037: { zh: "文件内查找", en: "Find in the current file" },
   D1038: { zh: "大纲", en: "Outline" },
-  D1039: { zh: "切换或新增 vault", en: "Switch or add a vault" },
-  D1040: { zh: "打开或收起对话", en: "Open or hide the chat pane" },
-  D1041: { zh: "设置", en: "Settings" },
-  D1042: { zh: "插入双链", en: "Insert a wikilink" },
+  D1040: { zh: "Harness 面板", en: "Harness pane" },
+  D1042: { zh: "知识链接", en: "Knowledge links" },
   D1043: { zh: "摘录到对话", en: "Quote to chat" },
-  D1044: { zh: "默认键位 · ⌘/ 查看全部", en: "Defaults · press ⌘/ for all shortcuts" },
-  D1045: { zh: "首次使用提示", en: "Getting started tips" },
   D1046: { zh: "选中文本", en: "Select text" },
-  D1047: { zh: "右键左栏 vault 名", en: "Right-click the vault name" },
   // 保存全部（change add-acceptance-installed-app-pause）：D1048 是命令标签（键位面板 / 菜单
   // 对应的人类标签），D1049 是屏障全绿后的正向完成信号（必须是一条**正**观测——验收通道
   // 据此判「保存链路真的跑完」，不得以「没有错误提示」代替），D1050 是任一步失败时的终态提示。
@@ -3136,17 +3123,23 @@ const COPY_TABLE = {
     zh: "撤回这条消息和它引发的回答、工具记录；原文回到输入框",
     en: "Withdraw this message, the reply and tool records it triggered; the original text returns to the composer",
   },
-  // D1090–D1091：无 Tab 的空工作区表面（change make-no-tab-empty-workspace-nov28）。
-  // 标题一句 + 主操作名；次操作复用 D882「新建笔记」。消费者是装配层
-  // `src/main.ts` 的 `EMPTY_WORKSPACE_TITLE` / `EMPTY_WORKSPACE_OPEN`（建元素时写、
-  // `onRelabel` 重写）。「打开笔记…」走既有 Quick Open，不新增打开链路。
-  D1090: {
-    zh: "没有打开的文档",
-    en: "No document open",
+  // D1090–D1091 的空态标题 / Open note 按钮已删除，编号不复用。
+  // D1092–D1095：首启与所有无 Tab pane 共享的四条产品特有说明（唯一消费者 workspace-tips）。
+  D1092: {
+    zh: "按标题浏览并跳转到当前文档的章节。",
+    en: "Jump between headings in the current document.",
   },
-  D1091: {
-    zh: "打开笔记…",
-    en: "Open note…",
+  D1093: {
+    zh: "选中文本，连同来源一起送入对话。",
+    en: "Send selected text to a conversation, with its source attached.",
+  },
+  D1094: {
+    zh: "在编辑器里连接相关笔记，让上下文彼此可达。",
+    en: "Connect related notes without leaving the editor.",
+  },
+  D1095: {
+    zh: "在笔记旁运行 AI 工作会话。",
+    en: "Keep an AI working session beside your notes.",
   },
 
 } satisfies Record<string, CopyEntry>;

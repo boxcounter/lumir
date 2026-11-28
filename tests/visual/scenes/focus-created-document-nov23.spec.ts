@@ -49,7 +49,7 @@ const VAULT: VaultFixture = {
   },
 };
 
-/** 合成空 vault（统一空工作区 + 可见「新建笔记」入口）。 */
+/** 合成空 vault（共享 tips 无按钮；新建走既有 vault 右键入口）。 */
 const EMPTY_VAULT: VaultFixture = {
   root: "/Users/alex/focus-empty-vault",
   vault_id: "focus-empty-vault",
@@ -581,7 +581,7 @@ test("文件树点击既有文件：焦点不进入编辑器（反向判据）",
 });
 
 // ---------------------------------------------------------------------------
-// 5）入口覆盖：根级菜单与空 vault 的「新建笔记」走同一条链路
+// 5）入口覆盖：根级菜单与空 vault 的右键新建走同一条链路
 // ---------------------------------------------------------------------------
 
 test("vault 根级菜单新建文件：打开成功后焦点同样落正文首行", async ({ page }) => {
@@ -604,14 +604,15 @@ test("vault 根级菜单新建文件：打开成功后焦点同样落正文首�
   await expectFocusOnlyAfterSourceReady(page, "root-note.md");
 });
 
-test("空 vault「新建笔记」：打开成功后焦点同样落正文首行", async ({ page }) => {
+test("空 vault 右键新建：打开成功后焦点同样落正文首行", async ({ page }) => {
   await stubTauri(page, EMPTY_VAULT);
   await installRecorder(page);
   await page.goto("/");
 
-  const newNote = page.getByRole("button", { name: "新建笔记" });
-  await expect(newNote).toBeVisible();
-  await newNote.click();
+  await expect(page.locator(".pane-empty-workspace .workspace-tips-title")).toHaveText("开始使用");
+  await expect(page.locator(".pane-empty-workspace button")).toHaveCount(0);
+  await page.locator(".ft-vault").click({ button: "right" });
+  await page.locator(".ft-menu .ft-menu-item", { hasText: "新建文件…" }).click();
   await expect(page.locator(".ft-item.is-new .ft-edit")).toBeFocused();
   // 无扩展名输入 → 实际落盘名是 note.md（与 M851 的既有口径一致）
   await submitInlineCreate(page, "note");

@@ -8,10 +8,10 @@ import type { VaultFixture } from "./tauri-stub";
 //   1. **真正首次启动**（启动快照 last_vault === null）：启动态进入首启模式——只有唯一
 //      「添加 vault」主操作，整窗居中，无骨架 / 产品标记 / 阶段行 / 树空态；#app inert，
 //      命令闸门阻断设置 / harness / 键位面板（含原生菜单来源）。
-//   2. **首启空工作区**（首个 vault 无标签）：content pane 出 tips + 默认 harness；统一空工作区
-//      的标题与两个动作让位；打开首个文档后 tips 消失，编辑器恢复可编辑。
-//   3. **非首启空 vault**（老用户）：统一空工作区（「没有打开的文档」+ Open note… / New note）；
-//      新建默认 .md、显式扩展名保留。判据取后端收到的实际创建路径，不是输入框里的文本。
+//   2. **首启空工作区**（首个 vault 无标签）：content pane 出共享 tips + 默认 harness；
+//      打开首个文档后 tips 消失，编辑器恢复可编辑。
+//   3. **非首启空 vault**（老用户）：与首启共用四条产品特有 tips，无 Open / New 按钮；
+//      vault 右键新建默认 .md、显式扩展名保留。判据取后端实际创建路径。
 //
 // 判据落点一律是「用户可见文本 / 后端调用参数」：前者在 DOM 上直接读，后者读桩的
 // `__fsMutations` / `__documentWrites` 记录。没有新增像素基线（「保持视觉合同」= 既有整页
@@ -79,23 +79,22 @@ for (const theme of ["light", "dark", "eink"] as const) {
     ).toBeGreaterThanOrEqual(4.5);
   });
 
-  // 老用户空 vault 的「New note」（`.editor-notice-action`）与首启按钮同根因：只设背景不设
-  // 前景，深色下同样落 UA buttontext 近黑。两处各判一次，避免修复只覆盖其中一个入口。
-  pageTest(`老用户空 vault（${theme}）：New note 按钮文字对底色达 WCAG AA 4.5:1`, async (page) => {
+  // 空态没有按钮后，对比度合同直接落到共享标题与描述；两档正文都按 4.5:1 判。
+  pageTest(`老用户空 vault（${theme}）：tips 标题与描述对底色均达 WCAG AA 4.5:1`, async (page) => {
     await stubTauri(page, { ...EMPTY_VAULT, config: { language: "en", theme } });
     await page.goto("/");
 
-    const newNote = page.getByRole("button", { name: "New note" });
-    await expect(newNote).toBeVisible();
-    const colors = await newNote.evaluate((el) => {
-      const cs = getComputedStyle(el);
-      return { color: cs.color, backgroundColor: cs.backgroundColor };
-    });
-    const ratio = contrastRatio(colors.color, colors.backgroundColor);
-    expect(
-      ratio,
-      `${theme}: 文字 ${colors.color} / 底色 ${colors.backgroundColor} 对比 ${ratio.toFixed(2)}:1 低于 4.5:1`,
-    ).toBeGreaterThanOrEqual(4.5);
+    const surface = page.locator(".pane-empty-workspace");
+    await expect(surface).toBeVisible();
+    const background = await surface.evaluate((el) => getComputedStyle(el).backgroundColor);
+    for (const selector of [".workspace-tips-title", ".workspace-tips-description"]) {
+      const color = await surface.locator(selector).first().evaluate((el) => getComputedStyle(el).color);
+      const ratio = contrastRatio(color, background);
+      expect(
+        ratio,
+        `${theme} ${selector}: 文字 ${color} / 底色 ${background} 对比 ${ratio.toFixed(2)}:1 低于 4.5:1`,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
   });
 }
 
@@ -216,22 +215,25 @@ pageTest("首启空工作区：tips + 默认 harness，空工作区标题与动�
   await stubTauri(page, FIRST_RUN_VAULT);
   await page.goto("/");
 
-  const tips = page.locator(".first-run-tips");
+  const tips = page.locator(".workspace-tips:not(.pane-empty-workspace)");
   await expect(tips).toBeVisible();
   await expect(tips).toContainText("Get started");
-  await expect(tips).toContainText("Quick open a file");
-  await expect(tips).toContainText("press ⌘/ for all shortcuts");
+  await expect(tips.locator(".workspace-tips-item")).toHaveCount(4);
+  await expect(tips).toContainText("Knowledge links");
+  await expect(tips).toContainText("Send selected text to a conversation, with its source attached.");
+  await expect(tips).not.toContainText("Quick open a file");
+  await expect(tips).not.toContainText("press ⌘/ for all shortcuts");
   await expect(page.locator(".lumir-harness")).toBeVisible();
   await expect(page.locator(".pane-divider")).toHaveCount(1);
   await expect(page.locator(".editor-notice")).toBeHidden();
   expect(await page.evaluate(() => document.querySelector<HTMLElement>("#app")?.inert)).toBe(false);
   await expect(page.locator(".pane-empty-workspace")).toBeHidden();
   await expect(tips).not.toContainText("No document open");
-  await expect(tips).not.toContainText("Open note…");
+  await expect(tips.locator("button")).toHaveCount(0);
 
   // tips 只覆盖 root doc pane；harness 是另一个 pane，不被 tips 盖住。
   const structure = await page.evaluate(() => {
-    const tipsEl = document.querySelector<HTMLElement>(".first-run-tips");
+    const tipsEl = document.querySelector<HTMLElement>(".workspace-tips:not(.pane-empty-workspace)");
     const harness = document.querySelector<HTMLElement>(".lumir-harness");
     const tipsPane = tipsEl?.closest<HTMLElement>(".editor-pane");
     const harnessPane = harness?.closest<HTMLElement>(".editor-pane");
@@ -278,39 +280,39 @@ pageTest("首 vault restore 延迟、第二空 vault 先完成：第二不继承
 
   // 第二个空 vault 先完成空态：资格仍属于第一个 vault，第二个不得继承 tips / harness。
   // 先判 tips / harness（本用例的核心），再判空工作区；首个 restore 的迟到结果不遮盖这条判据。
-  await expect(page.locator(".first-run-tips")).toHaveCount(0);
+  await expect(page.locator(".workspace-tips:not(.pane-empty-workspace)")).toHaveCount(0);
   await expect(page.locator(".pane-divider")).toHaveCount(0);
   await expect(page.locator(".pane-empty-workspace")).toBeVisible({ timeout: 10_000 });
-  await expect(page.locator(".pane-empty-title")).toHaveText("No document open", { timeout: 10_000 });
+  await expect(page.locator(".pane-empty-workspace .workspace-tips-title")).toHaveText("Get started", { timeout: 10_000 });
 
   // 等过第一个 restore 的延迟窗：迟到的首个 restore 也不得把 tips / harness 补到第二个。
   await page.waitForTimeout(2400);
-  await expect(page.locator(".first-run-tips")).toHaveCount(0);
+  await expect(page.locator(".workspace-tips:not(.pane-empty-workspace)")).toHaveCount(0);
   await expect(page.locator(".pane-divider")).toHaveCount(0);
 });
 
-pageTest("老用户空 vault：统一空工作区 + 可见 New note；新建默认 .md、显式扩展名保留", async (page) => {
+pageTest("老用户空 vault：共享 tips 无按钮；vault 右键新建默认 .md、显式扩展名保留", async (page) => {
   await stubTauri(page, EMPTY_VAULT);
   await page.goto("/");
 
   await expect(page.locator(".ft-vault-name")).toHaveText("empty-vault");
 
-  // 空 vault 正文空态：统一空工作区（标题 + 两个动作），不再有 D107 覆盖层。
+  // 空 vault 与普通无 Tab、首启共用同一组四条 tips；不再提供 Open / New 按钮。
   const surface = page.locator(".editor-pane").first().locator(".pane-empty-workspace");
   await expect(surface).toBeVisible();
-  await expect(surface.locator(".pane-empty-title")).toHaveText("No document open");
+  await expect(surface.locator(".workspace-tips-title")).toHaveText("Get started");
+  await expect(surface.locator(".workspace-tips-item")).toHaveCount(4);
+  await expect(surface.locator("button")).toHaveCount(0);
   await expect(page.locator(".editor-notice")).toBeHidden();
-  const newNote = surface.getByRole("button", { name: "New note" });
-  await expect(newNote).toBeVisible();
-  await expect(surface.getByRole("button", { name: "Open note…" })).toBeVisible();
 
   // 旧病串（SAMPLE 的 frontmatter / 错误附件占位）不得出现在可见正文面。
   for (const junk of ["i18n-exempt", "Attachment not found", "Image read failed", "标题一"]) {
     await expect(surface, `空态正文不得含 ${junk}`).not.toContainText(junk);
   }
 
-  // 入口开始同一套行内新建（tree.beginCreate("")）：输入框落在树里并持焦点。
-  await newNote.click();
+  // 新建仍从既有 vault 右键菜单进入同一套行内新建；tips 不重复提供通用创建提示。
+  await page.locator(".ft-vault").click({ button: "right" });
+  await page.locator(".ft-menu-item", { hasText: "New file" }).click();
   const input = page.locator(".ft-row.is-editing input");
   await expect(input).toHaveAttribute("aria-label", "New file name");
   await expect(input).toBeFocused();

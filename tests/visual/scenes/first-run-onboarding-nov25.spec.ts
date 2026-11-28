@@ -7,8 +7,8 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 //      `expectStartupScreenshot`（不等启动面撤下）；
 //   2. 首启空工作区（tips + 默认 harness）：启动面已撤下，走 `expectScreenshot` 的撤下门与
 //      chrome 就绪门；
-//   3. 老用户空 vault（统一空工作区 + New note）：同走 `expectScreenshot`。
-// 三主题各一张；判据面（唯一按钮、tips 文案、空工作区 / New note、命令闸门等）在
+//   3. 老用户空 vault（与首启共享四条 tips，无按钮）：同走 `expectScreenshot`。
+// 三主题各一张；判据面（唯一按钮、tips 文案、空工作区、命令闸门等）在
 // `first-run-empty-state.spec.ts`，本文件只冻结像素。
 const THEMES = ["light", "dark", "eink"] as const;
 
@@ -21,7 +21,7 @@ const FIRST_RUN_VAULT: VaultFixture = {
   lastVault: null,
 };
 
-/** 老用户空 vault：`last_vault` 非 null（非首启），条目为空 → 统一空工作区 + New note。 */
+/** 老用户空 vault：`last_vault` 非 null（非首启），条目为空 → 同一组共享 tips。 */
 const EMPTY_VAULT: VaultFixture = {
   root: "/Users/alex/empty-vault",
   vault_id: "empty-vault",
@@ -42,17 +42,18 @@ for (const theme of THEMES) {
   test(`首启 tips（${theme}）：tips + 默认 harness`, async ({ page }) => {
     await stubTauri(page, { ...FIRST_RUN_VAULT, config: { language: "en", theme } });
     await page.goto("/");
-    await expect(page.locator(".first-run-tips")).toBeVisible();
+    await expect(page.locator(".workspace-tips:not(.pane-empty-workspace)")).toBeVisible();
     await expect(page.locator(".lumir-harness")).toBeVisible();
     await expect(page.locator("#startup")).toHaveCount(0);
     await expectScreenshot(page, `tips-${theme}.png`);
   });
 
-  test(`老用户空 vault（${theme}）：空工作区 + New note`, async ({ page }) => {
+  test(`老用户空 vault（${theme}）：同一组共享 tips，无按钮`, async ({ page }) => {
     await stubTauri(page, { ...EMPTY_VAULT, config: { language: "en", theme } });
     await page.goto("/");
-    await expect(page.locator(".pane-empty-title")).toHaveText("No document open");
-    await expect(page.getByRole("button", { name: "New note" })).toBeVisible();
+    await expect(page.locator(".pane-empty-workspace .workspace-tips-title")).toHaveText("Get started");
+    await expect(page.locator(".pane-empty-workspace .workspace-tips-item")).toHaveCount(4);
+    await expect(page.locator(".pane-empty-workspace button")).toHaveCount(0);
     await expect(page.locator("#startup")).toHaveCount(0);
     await expectScreenshot(page, `old-user-empty-${theme}.png`);
   });

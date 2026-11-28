@@ -1,0 +1,159 @@
+/* 候选 A：编辑部式编号清单。首启与所有无 Tab pane 共用同一 DOM / token，不用卡片、插画或营销版式。 */
+.workspace-tips {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: safe center;
+  padding: var(--sp-10);
+  background: var(--content-bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  cursor: default;
+  container-type: inline-size;
+}
+
+.workspace-tips[hidden] {
+  display: none;
+}
+
+.workspace-tips:focus-visible {
+  outline: 1px solid var(--text-3);
+  outline-offset: calc(-1 * var(--sp-1));
+}
+
+.workspace-tips-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  inline-size: min(100%, var(--layout-doc-measure));
+  min-inline-size: 0;
+}
+
+.workspace-tips-title {
+  margin: 0;
+  padding-block-end: var(--sp-5);
+  border-block-end: 1px solid var(--border);
+  color: var(--text);
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-medium);
+  line-height: var(--lh-review-title);
+}
+
+.workspace-tips-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workspace-tips-item {
+  display: grid;
+  grid-template-columns: var(--sp-11) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-5);
+  min-inline-size: 0;
+  padding-block: var(--sp-5);
+  border-block-end: 1px solid var(--border-soft);
+}
+
+.workspace-tips-item:last-child {
+  border-block-end: 0;
+}
+
+.workspace-tips-index {
+  align-self: start;
+  padding-block-start: var(--sp-1);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+.workspace-tips-copy {
+  min-inline-size: 0;
+}
+
+.workspace-tips-label {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-ui);
+  font-weight: var(--fw-emphasis);
+  line-height: var(--lh-ui);
+}
+
+.workspace-tips-description {
+  margin: var(--sp-1) 0 0;
+  color: var(--text-2);
+  font-size: var(--fs-ui-s);
+  line-height: var(--lh-ui);
+  overflow-wrap: anywhere;
+}
+
+.workspace-tips-token {
+  justify-self: end;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-regular);
+  white-space: nowrap;
+}
+
+kbd.workspace-tips-token {
+  font-family: var(--font-mono);
+}
+
+.workspace-tips-gesture {
+  font-family: var(--font-sans);
+}
+
+@container (inline-size < 32rem) {
+  .workspace-tips-item {
+    grid-template-columns: var(--sp-9) minmax(0, 1fr);
+    align-items: start;
+    gap: var(--sp-2) var(--sp-4);
+  }
+
+  .workspace-tips-token {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+
+@container (inline-size < 22rem) {
+  .workspace-tips {
+    padding: var(--sp-7);
+  }
+
+  .workspace-tips-item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workspace-tips-index {
+    display: none;
+  }
+
+  .workspace-tips-token {
+    grid-column: 1;
+  }
+}
+
+@media (max-height: 640px) {
+  .workspace-tips {
+    padding: var(--sp-6);
+  }
+
+  .workspace-tips-body {
+    gap: var(--sp-3);
+  }
+
+  .workspace-tips-title {
+    padding-block-end: var(--sp-3);
+  }
+
+  .workspace-tips-item {
+    padding-block: var(--sp-3);
+  }
+}

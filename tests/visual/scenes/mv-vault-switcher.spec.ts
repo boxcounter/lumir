@@ -230,7 +230,7 @@ test("Enter 切到目标 vault：目标装载 + 切换前把当前 vault 的会�
   await expect(page.locator('.ft-row[title="inbox.md"]')).toBeVisible();
   await expect(page.locator('.ft-row[title="README.md"]')).toHaveCount(0);
   // 目标没有会话历史 → 统一空工作区（不伪造内容）
-  await expect(page.locator(".pane-empty-title")).toHaveText("没有打开的文档");
+  await expect(page.locator(".pane-empty-workspace .workspace-tips-title")).toHaveText("开始使用");
   await expect(page.locator(".tab")).toHaveCount(0);
 
   // 切换前 flush：会话按**稳定 id** 落盘，内容是有序的固定标签 + 激活项

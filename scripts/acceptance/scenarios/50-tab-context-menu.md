@@ -293,8 +293,8 @@ steps:
         node: { role: AXRadioButton, name: "tabs-long\\.md", present: false }
       - label: 回到空态：modeline 无当前文件
         ax: { has: "无当前文件" }
-      - label: 焦点交给空工作区主操作「打开笔记…」（不掉回 body）
-        ax: { focused: { role: "AXButton", name: "打开笔记…" } }
+      - label: 焦点交给空工作区静态 region（不掉回 body / 正文）
+        ax: { focused: { role: "AXGroup", name: "开始使用" } }
       - label: 放弃 ≠ 写盘：tabs-b 仍是冲突时写下的那一版
         file: { path: tabs-b.md, has: "DISK-VERSION" }
       - label: 保存的那一份落盘了
@@ -357,14 +357,14 @@ M254（change `tab-strip-context-menu`）新增的标签右键菜单在**真实 
   （名字不锚 D90 后缀）——标签数归零但残留一条同名节点的形态同样判红。
 - **放弃 ≠ 写盘 / 保存才落盘**：末两步分别断言 tabs-b 仍是 `DISK-VERSION`、tabs-long 里有
   `ALL-GGG`；这是 chromium 桩给不出的真实文件系统读数。
-- **空态与焦点**：全关完后 `ax: { focused: { role: "AXButton", name: "打开笔记…" } }` 是本场景的
-  **新判据**（change make-no-tab-empty-workspace-nov28）——批量关闭没有标签可归还焦点，产品把
-  焦点交给空工作区主操作，MUST NOT 落进被空工作区覆盖的只读正文；真机层只有这一条能验。
+- **空态与焦点**：全关完后 `ax: { focused: { role: "AXGroup", name: "开始使用" } }` 是本场景的
+  判据——批量关闭没有标签可归还焦点，产品把焦点交给空工作区静态 region，MUST NOT 落进
+  inert 正文，也不为留焦点伪造按钮。
 - **停手焦点（review r1 P2-1）**：确认浮条的动作钮在答复那一刻随浮条从 DOM 移除，浏览器会把
   焦点送回 `body`；产品的归还口径是「收尾（全关完或停手）→ 当前前台标签的编辑器正文；全关完
-  → 空工作区主操作」。本段在「取消」之后（仍有标签，`focused: AXTextArea`）与全关之后
-  （无标签，`focused: AXButton 打开笔记…`）各有一条焦点判据——真机层只有这两条能判实际焦点
-  归属（chromium 层的四条 `document.activeElement` 回归见 tab-menu.spec.ts）。
+  → 空工作区静态 region」。本段在「取消」之后（仍有标签，`focused: AXTextArea`）与全关之后
+  （无标签，`focused: AXGroup 开始使用`）各有一条焦点判据；chromium 另由 `document.activeElement`
+  与 inert 反向断言防旁路（tab-menu.spec.ts）。
 - **多脏形态的构造边界**：运行期只有「打开多个文件后再逐个键入」这一条路能造出多个 dirty
   标签；无路径的空工作区占位会话不是标签，批量目标集按 `visibleTabsOf` 口径排除它——这一条由
   单测 `closeAllTargets` 的负向用例钉住，真机不可达（空工作区结构性只读、不能产生 dirty；

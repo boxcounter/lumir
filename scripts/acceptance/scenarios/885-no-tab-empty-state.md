@@ -1,20 +1,14 @@
 ---
 # 885（change make-no-tab-empty-workspace-nov28）：无 TAB 统一为空工作区。
 #
-# 本场景覆盖真机 WKWebView 上**行为可观测**的四条：
-#   ① 关掉最后一个标签后是空工作区：标题 + 两个动作在场，focus 落在主操作，正文结构性只读；
-#   ② 空工作区不能产生内容：负向键入不落字、无「（未保存）」、⌘S 不弹「不可保存」；
-#   ③ ⌥G 在空工作区没有编辑器目标（输入条不打开）；
-#   ④ 分栏空 pane 同合同：右 pane 空工作区、Quick Open 取消后焦点回主操作、左 pane 文档不受影响。
-# 行号 gutter 与插入光标的**像素**判据在 screenshot 留证（chromium 结构断言在
-# tests/visual/scenes/no-tab-empty-workspace-nov28.spec.ts）；本场景不伪造首启状态。
-#
-# 2026-11-27 的旧版本（fix-no-tab-empty-state-nov27）验的是「单 pane scratch 仍可输入」；
-# 该形态已被 Alex 2026-11-28 裁决取消，本场景同步改判为「空工作区不可输入」。
+# Alex 2026-11-28 空态重设计：首启 / 普通 / 双 pane 共用四条 Lumir 特有 tips；无 Open / New
+# 按钮、无通用快捷键。静态 region 承接焦点，被覆盖编辑器宿主 inert，不为留焦点伪造按钮。
+# 本场景验真机 WKWebView 上可观察的：不可输入 / 无 dirty / 无保存目标、⌥G 无目标、region
+# 焦点归还、双 pane 不串焦。chromium 另验程序 focus 无法进入 inert 正文与完整读屏列表语义。
 id: "885-no-tab-empty-state"
 item: 885
 tier: full
-title: 无 TAB 空工作区：不可输入、无 dirty / 保存目标、两个动作与焦点落点；分栏同合同
+title: 无 TAB 空工作区：共享四条 tips、不可输入、region 焦点与分栏 Quick Open 归还
 fixtures: [goto-line-long.md]
 open: goto-line-long.md
 marker: "段一"
@@ -26,71 +20,61 @@ steps:
     expect:
       - label: 文档已装载（正观测）
         editor: { has: "第 2 行：填充段落" }
-      - label: 有文档时没有空工作区标题
-        ax: { not: "没有打开的文档" }
+      - label: 有文档时没有共享空态标题
+        ax: { not: "开始使用" }
       - shot: 01-有文档
 
-  - name: 关掉最后一个标签，回到空工作区
+  - name: 关掉最后一个标签，回到共享空工作区
     do: key
     key: "cmd+w"
     expect:
-      - label: 正文标题点明空工作区
-        ax: { has: "没有打开的文档" }
-      - label: 主操作在场（走既有 Quick Open）
-        ax: { has: "/AXButton[^\\n]*打开笔记…/" }
-      - label: 次操作在场（走既有内联命名）
-        ax: { has: "/AXButton[^\\n]*新建笔记/" }
+      - label: 共享 tips 标题在场
+        ax: { has: "开始使用" }
+      - label: 四条中的大纲与知识链接在场
+        ax: { has: "大纲" }
+      - label: 知识链接在场
+        ax: { has: "知识链接" }
+      - label: 不再有打开笔记按钮
+        ax: { not: "/AXButton[^\\n]*打开笔记…/" }
+      - label: 不再有新建笔记按钮
+        ax: { not: "/AXButton[^\\n]*新建笔记/" }
+      - label: 通用快速打开提示不回流
+        ax: { not: "快速打开文件" }
       - label: modeline 显示无当前文件
         ax: { has: "无当前文件" }
-      - label: 旧的水印引导不再出现
-        ax: { not: "在左栏选一个文件" }
-      - label: 焦点落在主操作（不是正文 / body）
-        ax: { focused: { role: "AXButton", name: "打开笔记…" } }
+      - label: 焦点落在命名静态 region（不是正文 / body / 伪按钮）
+        ax: { focused: { role: "AXGroup", name: "开始使用" } }
       - shot: 02-空工作区
 
-  - name: 空工作区按 ⌥G（主操作持焦）：不打开跳转输入条
+  - name: 空工作区按 ⌥G（region 持焦）：不打开跳转输入条
     do: key
     key: "alt+g"
     expect:
-      # 可观察形态：输入条总会显示「共 N 行」；「跳转到行」是输入框读屏名，预填非空时
-      # WKWebView 只暴露值（M507 的已知边界），不能当唯一判据。
       - label: 跳转输入条不打开（可观察形态：没有「共 N 行」）
         ax: { not: "共 1 行" }
-      - label: 焦点仍在空工作区主操作
-        ax: { focused: { role: "AXButton", name: "打开笔记…" } }
-      - shot: 05-空工作区-altg-主操作持焦
+      - label: 焦点仍在空工作区 region
+        ax: { focused: { role: "AXGroup", name: "开始使用" } }
+      - shot: 03-空工作区-altg
 
-  - name: 在空工作区正文里键入（结构性只读宿主）
-    do: typeInNode
-    target: { role: AXTextArea, name: ".*", nth: 0 }
+  - name: 在空工作区键入（region 持焦；inert 正文不是落点）
+    do: type
     text: "NO-TAB-LAND"
-    allowNoLanding: true
     expect:
       - label: 键入没有落进任何文档
         ax: { not: "NO-TAB-LAND" }
       - label: 没有未保存修改标记
         ax: { not: "（未保存）" }
-      - shot: 03-空工作区-键入无效
+      - shot: 04-空工作区-键入无效
 
   - name: 空工作区按 ⌘S：没有保存目标
     do: key
     key: "cmd+s"
     expect:
-      - label: 不弹「无法保存 / 没有打开文件」类提示
+      - label: 不弹「无法保存」类提示
         ax: { not: "无法保存" }
       - label: 不出现「没有打开的文件」的不可保存提示
         ax: { not: "没有打开的文件" }
-      - shot: 04-空工作区-cmd-s
-
-  - name: 正文持焦时按 ⌥G：真正空工作区没有可跳转文档，产品门仍不打开输入条
-    do: key
-    key: "alt+g"
-    expect:
-      - label: 跳转输入条不打开（可观察形态：没有「共 N 行」）
-        ax: { not: "共 1 行" }
-      - label: 焦点没有被浮层夺走（仍在只读正文）
-        ax: { focused: "AXTextArea" }
-      - shot: 05b-空工作区-altg-正文持焦
+      - shot: 05-空工作区-cmd-s
 
   - name: 重新打开文档：空工作区离场
     do: open
@@ -100,43 +84,40 @@ steps:
       - label: 文档回到前台
         editor: { has: "第 2 行：填充段落" }
       - label: 空工作区标题离场
-        ax: { not: "没有打开的文档" }
+        ax: { not: "开始使用" }
       - shot: 06-重开文档
 
-  - name: 分栏得到空的右 pane（产品默认 ⌥S；场景 79 同一条真机路径）
+  - name: 分栏得到空的右 pane（同一组共享 tips）
     do: key
     key: "alt+s"
     expect:
       - label: 分栏已发生（分隔条在场）
         ax: { has: "分隔条" }
-      - label: 空 pane 是同一空工作区（标题 + 动作）
-        ax: { has: "没有打开的文档" }
-      - label: 空 pane 的旧水印文案不再出现
-        ax: { not: "在左栏选一个文件" }
+      - label: 空 pane 显示同一组 tips
+        ax: { has: "开始使用" }
+      - label: 焦点在右 pane 的静态 region
+        ax: { focused: { role: "AXGroup", name: "开始使用" } }
       - shot: 07-分栏空工作区
 
-  - name: 点右 pane 的「打开笔记…」：先激活所属 pane，再打开 Quick Open
-    do: click
-    target: { any: "/^打开笔记…$/" }
+  - name: 经既有 ⌘P 在右 pane 打开 Quick Open
+    do: key
+    key: "cmd+p"
     expect:
       - label: 快速打开浮层已打开（输入框读屏名）
         ax: { has: "按路径快速打开文件" }
-      - shot: 08-空工作区-打开笔记浮层
+      - shot: 08-空工作区-QuickOpen
 
-  - name: Esc 取消：不打开任何文件，焦点回空工作区主操作
+  - name: Esc 取消：不打开任何文件，焦点回右 pane 的 region
     do: key
     key: "escape"
-    # KimiCU 的 press_key("escape") 在本状态连续两轮零事件（真机 885 证据：按后 AX 仍是
-    # 同一个 focused AXComboBox）；同键的 CGEvent 注入一次即关闭浮层。命名键因此 opt-in
-    # 真键盘通道（scripts/acceptance/lib/drive.mjs 的 isNamedKeySpec）。
     channel: cgevent
     expect:
       - label: 浮层收起
         ax: { not: "按路径快速打开文件" }
       - label: 空工作区标题仍在
-        ax: { has: "没有打开的文档" }
-      - label: 焦点回主操作（不落正文 / 不串到左 pane）
-        ax: { focused: { role: "AXButton", name: "打开笔记…" } }
+        ax: { has: "开始使用" }
+      - label: 焦点回静态 region（不落正文 / 不串到左 pane）
+        ax: { focused: { role: "AXGroup", name: "开始使用" } }
       - label: 左 pane 的文档原样在场
         editor: { has: "第 2 行：填充段落" }
       - shot: 09-空工作区-取消回焦点

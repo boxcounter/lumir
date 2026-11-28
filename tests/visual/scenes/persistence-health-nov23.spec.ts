@@ -849,7 +849,7 @@ test("V5 横幅与空工作区同场：空工作区从横幅下缘开始，不�
   const surface = page.locator(".pane-empty-workspace");
   await expect(banner).toBeVisible();
   await expect(surface).toBeVisible();
-  await expect(surface.locator(".pane-empty-title")).toHaveText("没有打开的文档");
+  await expect(surface.locator(".workspace-tips-title")).toHaveText("开始使用");
   const boxes = await page.evaluate(() => {
     const bannerEl = document.querySelector(".recovery-banner") as HTMLElement;
     const surfaceEl = document.querySelector(".pane-empty-workspace") as HTMLElement;
