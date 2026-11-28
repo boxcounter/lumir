@@ -30,6 +30,12 @@ interface Options {
 interface WindowReading {
   left: number;
   right: number;
+  textLeft: number;
+  textRight: number;
+  clipPath: string;
+  layerClipPath: string;
+  paddingLeft: string;
+  paddingRight: string;
   rawLeft: number;
   rawRight: number;
   visibleLeft: number;
@@ -111,6 +117,10 @@ async function readWindow(page: Page, paneIndex = 0): Promise<WindowReading> {
     if (!line) throw new Error("long line is not rendered");
     const box = (el: Element | null) => el ? el.getBoundingClientRect() : null;
     const contentBox = content.getBoundingClientRect();
+    const contentStyle = getComputedStyle(content);
+    const inset = contentStyle.clipPath === "none" ? 0 : Number.parseFloat(contentStyle.paddingLeft);
+    const textLeft = contentBox.left + inset;
+    const textRight = contentBox.right - inset;
     const clip = (rect: DOMRect, start: Element): { left: number; right: number } => {
       let left = rect.left, right = rect.right;
       let current: Element | null = start;
@@ -120,6 +130,10 @@ async function readWindow(page: Page, paneIndex = 0): Promise<WindowReading> {
           const ancestor = current.getBoundingClientRect();
           left = Math.max(left, ancestor.left);
           right = Math.min(right, ancestor.right);
+        }
+        if (current === content && contentStyle.clipPath !== "none") {
+          left = Math.max(left, textLeft);
+          right = Math.min(right, textRight);
         }
         current = current.parentElement;
       }
@@ -143,16 +157,19 @@ async function readWindow(page: Page, paneIndex = 0): Promise<WindowReading> {
     endRange.setStart(textNode, textNode.textContent!.indexOf(args.end));
     endRange.setEnd(textNode, textNode.textContent!.indexOf(args.end) + args.end.length);
     const endBox = endRange.getBoundingClientRect();
-    const endVisible = clip(endBox, textNode.parentElement ?? line);
     const title = box(pane.querySelector(".cm-lp-doc-title-outer"));
     const endMarker = box(pane.querySelector(".cm-lp-end-marker"));
     const gutter = box(pane.querySelector(".cm-gutters"));
     const handle = box(pane.querySelector(".content-width-handle-right"));
+    const layer = pane.querySelector(".cm-layer");
     const result = {
-      left: contentBox.left, right: contentBox.right,
+      left: contentBox.left, right: contentBox.right, textLeft, textRight,
+      clipPath: contentStyle.clipPath,
+      layerClipPath: layer ? getComputedStyle(layer).clipPath : "none",
+      paddingLeft: contentStyle.paddingLeft, paddingRight: contentStyle.paddingRight,
       rawLeft: Math.min(...raw.map(r => r.left)), rawRight: Math.max(...raw.map(r => r.right)),
       visibleLeft: Math.min(...visible.map(r => r.left)), visibleRight: Math.max(...visible.map(r => r.right)),
-      endLeft: endVisible.left, endRight: endVisible.right,
+      endLeft: endBox.left, endRight: endBox.right,
       innerX: content.scrollLeft, innerMax: content.scrollWidth - content.clientWidth,
       outerX: scroller.scrollLeft, outerMax: scroller.scrollWidth - scroller.clientWidth,
       overflowX: getComputedStyle(content).overflowX,
@@ -165,7 +182,9 @@ async function readWindow(page: Page, paneIndex = 0): Promise<WindowReading> {
       scrollTop: scroller.scrollTop,
     };
     if (args.mutation === "glyph") result.visibleRight = result.right + 2;
-    if (args.mutation === "end") result.endRight = result.right + 2;
+    if (args.mutation === "inset-left") result.visibleLeft = result.textLeft - 1;
+    if (args.mutation === "inset-right") result.visibleRight = result.textRight + 1;
+    if (args.mutation === "end") result.endRight = result.textRight + 2;
     if (args.mutation === "chrome" && result.titleLeft !== null) result.titleLeft += 2;
     return result;
   }, { mutation: MUTATION, end: END });
@@ -173,12 +192,16 @@ async function readWindow(page: Page, paneIndex = 0): Promise<WindowReading> {
 
 function expectVisibleWindow(reading: WindowReading, wrap: boolean): void {
   const where = JSON.stringify(reading);
-  expect(reading.visibleLeft, `glyph 左缘越出 X：${where}`).toBeGreaterThanOrEqual(reading.left - 0.51);
-  expect(reading.visibleRight, `glyph 右缘越出 X：${where}`).toBeLessThanOrEqual(reading.right + 0.51);
+  expect(reading.visibleLeft, `glyph 左缘越出文字窗口：${where}`).toBeGreaterThanOrEqual(reading.textLeft - 0.51);
+  expect(reading.visibleRight, `glyph 右缘越出文字窗口：${where}`).toBeLessThanOrEqual(reading.textRight + 0.51);
   expect(reading.outerX, `外层不应承接正文横滚：${where}`).toBe(0);
   expect(reading.scrollport).toBe(!wrap);
   expect(reading.overflowX).toBe(wrap ? "visible" : "auto");
   if (!wrap) {
+    expect(reading.textLeft, `左侧 44px 留白必须始终存在：${where}`).toBe(reading.left + 44);
+    expect(reading.textRight, `右侧 44px 留白必须始终存在：${where}`).toBe(reading.right - 44);
+    expect(reading.clipPath, `文字层必须按双侧留白裁切：${where}`).not.toBe("none");
+    expect(reading.layerClipPath, `caret/selection 层必须共用内缩裁切：${where}`).toContain("44px");
     expect(reading.innerMax, `自然长行应在 inner 产生横滚：${where}`).toBeGreaterThan(0);
     expect(reading.outerMax, `自然长行不应再撑大 outer：${where}`).toBe(0);
   }
@@ -195,8 +218,8 @@ function expectVisibleWindow(reading: WindowReading, wrap: boolean): void {
 
 function expectEndReachable(reading: WindowReading): void {
   expect(reading.innerX).toBe(reading.innerMax);
-  expect(reading.endLeft).toBeGreaterThanOrEqual(reading.left - 0.51);
-  expect(reading.endRight).toBeLessThanOrEqual(reading.right + 0.51);
+  expect(reading.endLeft).toBeGreaterThanOrEqual(reading.textLeft - 0.51);
+  expect(reading.endRight).toBeLessThanOrEqual(reading.textRight + 0.51);
 }
 
 test("行为矩阵：wrap/nowrap × 三横滚位 × 行号 × 单双 pane × 宽窄窗 × 三主题", async ({ page }) => {
@@ -256,10 +279,10 @@ test("caret、键入、undo、粘贴、选区与全选复制都使用 inner scro
   expect(atEnd.doc).toBe(DOC);
   expect(atEnd.top).toBe(0);
   const cursor = await page.locator(".cm-cursor").boundingBox();
-  const content = await page.locator(".cm-content").boundingBox();
-  if (!cursor || !content) throw new Error("caret/content geometry is unavailable");
-  expect(cursor.x).toBeGreaterThanOrEqual(content.x - 1);
-  expect(cursor.x + cursor.width).toBeLessThanOrEqual(content.x + content.width + 1);
+  const text = await readWindow(page);
+  if (!cursor) throw new Error("caret geometry is unavailable");
+  expect(cursor.x).toBeGreaterThanOrEqual(text.textLeft - 1);
+  expect(cursor.x + cursor.width).toBeLessThanOrEqual(text.textRight + 1);
 
   await page.keyboard.type("-EDIT");
   expect((await state()).doc).toBe(`${DOC.slice(0, endPos)}-EDIT${DOC.slice(endPos)}`);
@@ -286,10 +309,10 @@ test("caret、键入、undo、粘贴、选区与全选复制都使用 inner scro
     const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width };
   }).filter(r => r.width > 0));
   expect(selection.length).toBeGreaterThan(0);
-  if (MUTATION === "selection") selection[0].right = content.x + content.width + 2;
+  if (MUTATION === "selection") selection[0].right = text.textRight + 2;
   for (const rect of selection) {
-    expect(rect.left).toBeGreaterThanOrEqual(content.x - 1);
-    expect(rect.right).toBeLessThanOrEqual(content.x + content.width + 1);
+    expect(rect.left).toBeGreaterThanOrEqual(text.textLeft - 1);
+    expect(rect.right).toBeLessThanOrEqual(text.textRight + 1);
   }
   expect((await state()).doc).toBe(DOC);
 
@@ -312,10 +335,10 @@ test("搜索行尾匹配后 query 不变、匹配进入 X", async ({ page }) => 
   await page.waitForTimeout(100);
   if (MUTATION === "search") await page.locator(".cm-content").evaluate(el => { el.scrollLeft = 0; });
   const match = await page.locator(".cm-searchMatch-selected").boundingBox();
-  const content = await page.locator(".cm-content").boundingBox();
-  if (!match || !content) throw new Error("search match/content geometry is unavailable");
-  expect(match.x + match.width).toBeLessThanOrEqual(content.x + content.width + 1);
-  expect(match.x).toBeGreaterThanOrEqual(content.x - 1);
+  const text = await readWindow(page);
+  if (!match) throw new Error("search match geometry is unavailable");
+  expect(match.x + match.width).toBeLessThanOrEqual(text.textRight + 1);
+  expect(match.x).toBeGreaterThanOrEqual(text.textLeft - 1);
   await expect(input).toHaveValue(END);
   expect((await readWindow(page)).innerX).toBeGreaterThan(0);
 });
@@ -396,13 +419,15 @@ async function activeHead(page: Page) {
     range.setStart(at.node, at.offset); range.collapse(true);
     const head = range.getBoundingClientRect();
     const box = content.getBoundingClientRect();
-    return { anchor: main.anchor, head: main.head, x: content.scrollLeft, max: content.scrollWidth - content.clientWidth, left: box.left, right: box.right, headLeft: head.left, headRight: head.right, fontSize: getComputedStyle(content).fontSize };
+    const style = getComputedStyle(content);
+    const inset = style.clipPath === "none" ? 0 : Number.parseFloat(style.paddingLeft);
+    return { anchor: main.anchor, head: main.head, x: content.scrollLeft, max: content.scrollWidth - content.clientWidth, left: box.left, right: box.right, textLeft: box.left + inset, textRight: box.right - inset, headLeft: head.left, headRight: head.right, fontSize: style.fontSize };
   });
 }
 
 function expectActiveHeadVisible(reading: Awaited<ReturnType<typeof activeHead>>): void {
-  expect(reading.headLeft).toBeGreaterThanOrEqual(reading.left - 1);
-  expect(reading.headRight).toBeLessThanOrEqual(reading.right + 1);
+  expect(reading.headLeft).toBeGreaterThanOrEqual(reading.textLeft - 1);
+  expect(reading.headRight).toBeLessThanOrEqual(reading.textRight + 1);
 }
 
 test("宽正向选区按 active head 保右端；字号调整沿用同一真实消费者", async ({ page }) => {
@@ -423,7 +448,7 @@ test("宽正向选区按 active head 保右端；字号调整沿用同一真实�
   expectActiveHeadVisible(scaled);
 });
 
-test("宽反向选区按 active head 保左端并遵守 5px 揭示边距", async ({ page }) => {
+test("宽反向选区按 active head 保左端并保留起点留白", async ({ page }) => {
   await boot(page);
   const lineStart = DOC.indexOf("Visible window probe");
   const lineEnd = DOC.indexOf(END) + END.length;
@@ -433,8 +458,8 @@ test("宽反向选区按 active head 保左端并遵守 5px 揭示边距", async
   await setSelectionRange(page, lineEnd, lineStart, true);
   const after = await activeHead(page);
   expectActiveHeadVisible(after);
-  expect(after.headLeft).toBeCloseTo(after.left + 5, 1);
-  expect(after.x).toBe(before.headLeft - (after.left + 5));
+  expect(after.headLeft).toBeCloseTo(after.textLeft, 1);
+  expect(after.x, "横滚起点不能为制造 xMargin 而变成负数").toBe(0);
 });
 
 test("真实原点捕获 → 装载恢复：纵向早退不吞 inner x，交还焦点同样保留", async ({ page }) => {

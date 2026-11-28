@@ -2,9 +2,10 @@
 
 ## 1. 四个量的合同
 
-- `X`：grid 中列的 border-box 宽，等于 `min(token,pane−48)`；包含既有左右各 44px padding。
+- `X`：grid 中列的 border-box 宽，等于 `min(token,pane−48)`；包含既有左右各 44px padding，也是 contentDOM 横向 scrollport 的外框。
+- `T`：文字可见窗口，等于 X 左右各内缩 44px。文字 glyph、caret、selection 的可见部分必须始终落在 T 内；这 44px 双侧留白在起点、中段、最右都不得消失。
 - 自然宽：nowrap 行盒/文本的 intrinsic inline 长度，可大于 X，不因本 change 改小。
-- 可见窗口：Markdown nowrap 的 `.cm-content` padding box。文字 Range 的**可见交集**必须落在该区间；原始 Range 可超出，超出由 overflow clip 裁掉。
+- 裁切与可达：contentDOM 的 `clip-path: inset(0 44px)` 只裁文字，不改 scrollWidth；caret/selection layer 在既有 X 裁切之外再内缩同一 44px。非代码块行尾的空伪元素提供 44px 可滚空间，避免最右内容永久被裁掉；它不进入文档文本、不缩代码块可用宽度，也不改变 outer 的横向所有权。
 - 横滚容器：正文是 contentDOM；代码块/宽表是各自块级容器；code 文件仍是外层 scrollDOM。
 
 wrap 时装 `EditorView.lineWrapping`，contentDOM 不启用横向 auto。Markdown nowrap 才装专用 class 与主题 `overflow-x:auto`。外层 grid、行模板和 content width 不改。
@@ -16,10 +17,10 @@ wrap 时装 `EditorView.lineWrapping`，contentDOM 不启用横向 auto。Markdo
 CM 6.43.15 的 `scrollRectIntoView(scrollDOM,…)` 从外层向祖先遍历，不会下潜 contentDOM；仅加 CSS 时 caret 0/行尾揭示都未改变 inner x=4215。故实现新增公开 `EditorView.scrollHandler`：
 
 1. 仅在专用 Markdown nowrap class 在场时接管水平分量。
-2. 用公开 `view.domAtPos` 加折叠 DOM Range 读取 head/anchor 的实际 glyph 坐标，按 `nearest/start/end/center` 与 xMargin 计算 contentDOM 的水平增量。测量周期内 MUST NOT 改回 `coordsAtPos`——它会再次触发 `readMeasured()` 并被 CM 拒绝。nearest 必须带 `range.head < range.anchor ? -1 : 1`；宽矩形按 CM 原分支在首次端点对齐后做第二次方向修正，且保留 xMargin（显式 reveal 实测为 5px），不得把 active head 留在另一端越界。
+2. 用公开 `view.domAtPos` 加折叠 DOM Range 读取 head/anchor 的实际 glyph 坐标，以 contentDOM 的实际 padding 把外框 X 内缩成 T，再按 `nearest/start/end/center` 与 xMargin 计算水平增量。测量周期内 MUST NOT 改回 `coordsAtPos`——它会再次触发 `readMeasured()` 并被 CM 拒绝。nearest 必须带 `range.head < range.anchor ? -1 : 1`；宽矩形按 CM 原分支在首次端点对齐后做第二次方向修正，且保留 xMargin（显式 reveal 实测为 5px），不得把 active head 留在另一端越界。浏览器不允许负 scrollLeft，因此原点处不能为制造 margin 再向左移动。
 3. 返回 `false`，让 CM 默认路径继续处理外层纵向；handler 不发起编辑器 update、不改文档/selection state。
 
-CM 的 caret/selection layer 是 scrollDOM 的绝对定位子树，也会在自然长行上制造 outer overflow。Markdown nowrap 的专用 editor class 给图层 `inline-size:100% + overflow:hidden + clip-path`，使 outer overflow 归 0 并把绘制裁到 X；公开 ViewPlugin 用「caret 的实际 DOM Range 坐标 − marker 内联 left」计算同一水平补偿量，在 selection/geometry/docView/content-scroll 后更新。补偿对尚未刷新和已刷新 marker 都成立，不复制 CM 的选区矩形算法，也不回退到原生选区。探针/正式场景同时读 selection layer 与 caret，防止只看文字不看自绘层。
+CM 的 caret/selection layer 是 scrollDOM 的绝对定位子树，也会在自然长行上制造 outer overflow。Markdown nowrap 的专用 editor class 给图层 `inline-size:100% + overflow:hidden + clip-path`，使 outer overflow 归 0 并把绘制裁到 T；公开 ViewPlugin 用「caret 的实际 DOM Range 坐标 − marker 内联 left」计算同一水平补偿量，在 selection/geometry/docView/content-scroll 后更新。补偿对尚未刷新和已刷新 marker 都成立，不复制 CM 的选区矩形算法，也不回退到原生选区。探针/正式场景同时读 selection layer 与 caret，防止只看文字不看自绘层。`clip-path` 不影响布局或 scrollWidth，因此 reveal 的 T 与两层裁切必须共享同一 44px 内缩，不能只改 CSS 外观。
 
 ## 3. 阅读位置与会话快照
 
@@ -34,10 +35,10 @@ CM 的 caret/selection layer 是 scrollDOM 的绝对定位子树，也会在自�
 | 维度 | 取值 | 每格必须读/判 |
 |---|---|---|
 | 折行 | wrap / nowrap | wrap 无 inner 横滚；nowrap 有自然溢出时 inner 可滚 |
-| 横滚 | 起点 / 中段 / 最右 | glyph 可见交集 ⊆ X；行尾在最右可达；外层 x 恒 0 |
+| 横滚 | 起点 / 中段 / 最右 | glyph 可见交集 ⊆ T；左右各 44px 留白不消失；行尾在最右可达；外层 x 恒 0 |
 | 行号 | off / on | gutter 留在 grid 左轨；X 不变；caret 与选区正确 |
 | pane | 单 / 双 | 各自容量独立；root/第二 Markdown 均遵守同一合同 |
-| 窗口 | 1200 宽 / 820 窄 | X=min(token,pane−48)，窄窗自然宽仍不越出可见窗口 |
+| 窗口 | 1200 宽 / 820 窄 | X=min(token,pane−48)，T=X−左右44px，窄窗自然宽仍不越出 T |
 | 主题 | light / dark / eink | 几何不变；文字、caret、选区可辨；不新增颜色/滚动条样式 |
 | 文档 chrome | doc-title / END | 不随正文横滚移出 X；不进文档字节/全选复制 |
 | 编辑 | 点击 / 键入 / 粘贴 / 删除 / undo | 只改预期文档与选区；caret 被最小揭示；无意外 scrollTop 改写 |
@@ -50,7 +51,7 @@ CM 的 caret/selection layer 是 scrollDOM 的绝对定位子树，也会在自�
 
 每条新断言分别构造反例：
 
-- glyph 可见交集：去掉 inner overflow/把可见交集强制越出 X，必须红；恢复后绿。
+- glyph 可见交集：去掉 inner overflow/把可见交集强制越出 T，或分别把左右 44px 留白写成 0，必须红；恢复后绿。
 - 行尾可达：把最右揭示写成 0，必须红。
 - caret/search 揭示：卸掉 scrollHandler，caret 留在旧 x，必须红。
 - selection：把 selection marker 向右偏移到 X 外，必须红。
@@ -62,7 +63,7 @@ CM 的 caret/selection layer 是 scrollDOM 的绝对定位子树，也会在自�
 
 ## 6. 视觉保真
 
-- **布局节奏**：grid 中列、24px 最小侧轨、44px 正文内边距、doc-title 与 END 的既有位置不变；横滚只改变 contentDOM 内文字切片。
+- **布局节奏**：grid 中列、24px 最小侧轨、44px 正文内边距、doc-title 与 END 的既有位置不变；横滚只改变 contentDOM 内文字切片，双侧 44px 留白任何位置都保留。
 - **字层级**：标题/正文/meta 字号、字重、行高、字族不变。
 - **框体**：不新增边框、卡片、阴影、遮罩或常驻手柄；行号 gutter 保持当前主题样式。
 - **滚动条**：inner contentDOM 登记 native-overlay 档，不写 `::-webkit-scrollbar` 或 scrollbar-width；块级横滚仍用既有 thin 档。

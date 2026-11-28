@@ -32,3 +32,4 @@
 - [x] 5.1 按 CM 6.43.15 宽矩形源码实现 active-head 二次修正，保留 xMargin；正反向纯函数与真实字号消费者回归通过。
 - [x] 5.2 pos0/target≤0 只跳过纵向 dispatch，不吞独立 x；真实原点捕获→装载与焦点往返回归通过。
 - [x] 5.3 新回归保留旧红新绿；回扫目标、编辑/IME/undo/图层补偿、会话恢复、build、OpenSpec 与 quick，记录 rework readiness。
+- [x] 5.4 双侧 44px 留白候选：区分外框 X 与文字窗口 T，contentDOM/caret/selection 同步裁切；行尾可滚空间、原始几何、左右反例、同名候选与看图完成；render-codeblock/IME/quick 通过，待 Alex 视觉确认。

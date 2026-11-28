@@ -78,7 +78,12 @@ export const markdownNowrapScrollHandler = EditorView.scrollHandler.of((view, ra
   }
   const content = view.contentDOM;
   const bounds = content.getBoundingClientRect();
-  const delta = horizontalScrollDelta(rect, bounds, options.x, options.xMargin, range.head < range.anchor ? -1 : 1);
+  const style = getComputedStyle(content);
+  const viewport = {
+    left: bounds.left + Number.parseFloat(style.paddingLeft),
+    right: bounds.right - Number.parseFloat(style.paddingRight),
+  };
+  const delta = horizontalScrollDelta(rect, viewport, options.x, options.xMargin, range.head < range.anchor ? -1 : 1);
   if (delta !== 0) content.scrollLeft += delta;
   return false;
 });

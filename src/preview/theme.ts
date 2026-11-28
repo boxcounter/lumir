@@ -35,11 +35,19 @@ import { DOC_TITLE_TOP_CLASS } from "./doc-title";
 import { FRONTMATTER_HAS_TITLE_CLASS } from "./frontmatter";
 
 export const markdownNowrapScrollportTheme = EditorView.theme({
-  ".cm-content.cm-lp-reading-scrollport": { overflowX: "auto" },
+  ".cm-content.cm-lp-reading-scrollport": {
+    overflowX: "auto",
+    clipPath: "inset(0 var(--sp-13))",
+    "& .cm-line:not(.cm-lp-codeblock-line)::after": {
+      content: '""',
+      display: "inline-block",
+      inlineSize: "44px",
+    },
+  },
   "&.lumir-md-nowrap-scrollport > .cm-scroller > .cm-layer": {
     inlineSize: "100%",
     overflow: "hidden",
-    clipPath: "inset(0 max(24px, calc((100% - var(--layout-doc-measure)) / 2)))",
+    clipPath: "inset(0 calc(max(24px, calc((100% - var(--layout-doc-measure)) / 2)) + var(--sp-13)))",
     "& > *": { translate: "calc(1px * var(--lumir-md-layer-delta, 0))" },
   },
 });

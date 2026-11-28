@@ -645,6 +645,7 @@ async function readProseScrollport(page: Page, toEnd = false) {
     if (toEnd) inner.scrollLeft = inner.scrollWidth;
     const end = range.getBoundingClientRect();
     const innerBox = inner.getBoundingClientRect();
+    const inlineInset = Number.parseFloat(getComputedStyle(inner).paddingLeft);
     const chrome = (selector: string) => {
       const el = document.querySelector<HTMLElement>(selector);
       if (!el) throw new Error(`doc chrome 必须在场：${selector}`);
@@ -661,6 +662,8 @@ async function readProseScrollport(page: Page, toEnd = false) {
         clientWidth: inner.clientWidth,
         left: innerBox.left,
         right: innerBox.right,
+        textLeft: innerBox.left + inlineInset,
+        textRight: innerBox.right - inlineInset,
       },
       outer: { x: outer.scrollLeft, max: outer.scrollWidth - outer.clientWidth },
       chrome: { titleLeft: title.left, titleRight: title.right, endLeft: endMarker.left, endRight: endMarker.right },
@@ -669,7 +672,7 @@ async function readProseScrollport(page: Page, toEnd = false) {
     if (mutation === "inner" && toEnd) result.inner.x = 0;
     if (mutation === "outer") result.outer.max = 1;
     if (mutation === "chrome" && toEnd) result.chrome.titleLeft += 2;
-    if (mutation === "clip" && toEnd) result.end.right = result.inner.right + 2;
+    if (mutation === "clip" && toEnd) result.end.right = result.inner.textRight + 2;
     return result;
   }, { toEnd, mutation: WRAP_MUTATION, proseNeedle: PROSE_NEEDLE, proseEnd: PROSE_END });
 }
@@ -844,8 +847,8 @@ test("四种组合逐格可判：两个轴正交，代码块折行时不装容�
   expect(afterScroll.inner.x).toBeGreaterThan(0);
   expect(afterScroll.outer, "inner 横滚不得泄漏成 outer 溢出或位移").toEqual({ x: 0, max: 0 });
   expect(afterScroll.chrome, "inner 横滚不得移动 doc-title / END chrome").toEqual(beforeScroll.chrome);
-  expect(afterScroll.end.left, "正文行尾左缘必须进入 X").toBeGreaterThanOrEqual(afterScroll.inner.left - 0.51);
-  expect(afterScroll.end.right, "正文行尾右缘必须进入 X，不能只裁掉").toBeLessThanOrEqual(afterScroll.inner.right + 0.51);
+  expect(afterScroll.end.left, "正文行尾左缘必须进入 X−44 的文字窗口").toBeGreaterThanOrEqual(afterScroll.inner.textLeft - 0.51);
+  expect(afterScroll.end.right, "正文行尾右缘必须进入 X−44 的文字窗口，不能只裁掉").toBeLessThanOrEqual(afterScroll.inner.textRight + 0.51);
   await page.locator(".cm-content.cm-lp-reading-scrollport").evaluate(el => { el.scrollLeft = 0; });
   await page.waitForTimeout(60);
   await expectScreenshot(page, "wrap-combo-2-file-nowrap-block-nowrap.png");
