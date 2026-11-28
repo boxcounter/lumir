@@ -60,8 +60,9 @@ import { gutterVisible } from "./line-numbers";
 import { LANGUAGES, TOKEN_GROUPS, tokenClassOf } from "./preview/code";
 import type { CommandRunner, EditorCommandId } from "./keys";
 import { isWidgetKeyTarget } from "./keys";
-import { DEFAULT_CODE_BLOCK_WRAP, DEFAULT_CODE_MODE_LINE_WRAP, DEFAULT_LINE_WRAP, codeBindingTheme, codeTokenTheme, wrapSpec } from "./preview/theme";
+import { DEFAULT_CODE_BLOCK_WRAP, DEFAULT_CODE_MODE_LINE_WRAP, DEFAULT_LINE_WRAP, codeBindingTheme, codeTokenTheme, markdownNowrapScrollportTheme, wrapSpec } from "./preview/theme";
 import type { WrapSettings } from "./preview/theme";
+import { horizontalScrollLeft, MARKDOWN_NOWRAP_SCROLLPORT_CLASS, MARKDOWN_NOWRAP_SCROLLPORT_EDITOR_CLASS, markdownNowrapLayerSync, markdownNowrapScrollHandler, syncMarkdownScrollportLayers, writeHorizontalScrollLeft } from "./markdown-scrollport";
 import { DEFAULT_FONT_SIZE, applyTypography as writeTypography, nextFontSize, textScaleRatio } from "./typography";
 import { CONTENT_WIDTH_TOKEN, DEFAULT_CONTENT_WIDTH, clampContentWidth } from "./content-width";
 import type { TextScaleDirection, TypographySettings } from "./typography";
@@ -1278,17 +1279,9 @@ export interface EditorSession {
    * 回答「它是不是外部会话」。
    */
   readonly external: boolean;
-  /**
-   * 离开该会话时的滚动位置快照（`view.scrollSnapshot()` 的产物）。**滚动不在 CM state 里**
-   *（只存在于 scrollDOM），所以必须逐会话单独存，否则切标签会继承上一篇的滚动位置。
-   *
-   * 存快照而不是裸 `scrollTop`：快照记的是「某个文档位置 + 相对视口的偏移」，恢复时报给
-   * CM 的 `scrollTarget` 由它自己的测量周期落地，不受两份内容高度差与排版变化的影响；
-   * 直接写 `scrollDOM.scrollTop` 会被 CM 的滚动锚点维护逻辑改掉（M149 实测差 242px）。
-   *
-   * 图片会话恒 `undefined`：它没有文档位置可锚（哨兵空状态里也没有可读的阅读位置）。
-   */
-  scroll: ScrollSnapshot | undefined;
+  /** 离开该会话时的滚动位置：CM 快照负责纵向锚，x 记录当前模式真实的横向 scrollport。
+   *  滚动不在 CM state 里，必须逐会话保存；图片会话没有位置可锚，恒为 undefined。 */
+  scroll: { snapshot: ScrollSnapshot; x: number } | undefined;
 }
 
 export interface EditorHandle {
@@ -1707,6 +1700,15 @@ function wrapExtensions(mode: EditorMode, settings: WrapSettings): Extension[] {
   const extensions: Extension[] = spec.lineWrapping ? [EditorView.lineWrapping] : [];
   if (spec.codeBlockClass !== null) {
     extensions.push(EditorView.contentAttributes.of({ class: spec.codeBlockClass }));
+  }
+  if (mode === "md" && !spec.lineWrapping) {
+    extensions.push(
+      EditorView.contentAttributes.of({ class: MARKDOWN_NOWRAP_SCROLLPORT_CLASS }),
+      EditorView.editorAttributes.of({ class: MARKDOWN_NOWRAP_SCROLLPORT_EDITOR_CLASS }),
+      markdownNowrapScrollportTheme,
+      markdownNowrapScrollHandler,
+      markdownNowrapLayerSync,
+    );
   }
   // 代码块的块级横滚容器（M180）：只有「代码块不折行」时才装——折行打开时没有任何东西需要
   // 横滚，装一个空容器只会多出一个空的 `region`（spec 的「代码块折行可显式打开」明确要求
@@ -2745,13 +2747,17 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   active = initialSession;
   const view = new EditorView({ state: active.state, parent });
 
-  /** 滚动信号的订阅者（捕获侧）：挂原生 `scroll` 而不挂 CM 的 `viewportChanged`——两者同源
-   *  （CM 自己在 `.cm-scroller` 上就挂着原生 scroll 监听），取前者的理由是让捕获与 CM 的更新
-   *  循环解耦：捕获只需要一个 `scrollTop` 与一次 `coordsAtPos`，不必等一次测量周期。回调是
-   *  **同步派发**的，消费者自己负责防抖（见 src/reading-position.ts）。 */
+  /** 滚动信号的订阅者：外层与 Markdown nowrap 的 contentDOM 共用原生 scroll 通知；
+   *  inner 滚动额外让 CM 测量与自绘图层失效，再进入既有捕获/防抖链。 */
   const scrollListeners = new Set<() => void>();
-  view.scrollDOM.addEventListener("scroll", () => {
+  const notifyScroll = () => {
     for (const listener of scrollListeners) listener();
+  };
+  view.scrollDOM.addEventListener("scroll", notifyScroll);
+  view.contentDOM.addEventListener("scroll", () => {
+    view.requestMeasure();
+    syncMarkdownScrollportLayers(view);
+    notifyScroll();
   });
 
   // ---------------------------------------------------------------------------
@@ -3022,14 +3028,13 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     // 切标签即离开当前文档：行高亮是「刚才跳到哪」的瞬态提示，装饰存在 state 里，不带它走就
     // 会在切回时原样复现——在这里先清（change add-path-line-target-highlight-nov02）。
     clearLineHighlight();
-    // 离开前把滚动位置记回前台会话：滚动不在 state 里（只存在于 scrollDOM），
-    // 存成 CM 的 scrollSnapshot（位置锚 + 相对偏移），恢复时走同一个 scrollTarget
-    // 通道——它由 CM 自己的测量周期落地，不受两份内容高度差与排版变化影响；
+    // 离开前把滚动位置记回前台会话：滚动不在 state 里。CM 快照负责纵向锚，
+    // 旁边的 x 记录当前真实横向 scrollport；恢复时先走 CM 快照，再写回 inner/outer x。
     // 直接写 scrollDOM.scrollTop 会被 CM 的滚动锚点维护逻辑改掉（M149 实测差 242px）。
     //
     // 图片会话不存快照（M629）：它的 `scroll` 恒 undefined（图片没有「上次读到哪里」），
     // 且哨兵空状态里没有可锚的文档位置——给空文档记一份再「恢复」没有语义。
-    if (isDocSession(active)) active.scroll = view.scrollSnapshot();
+    if (isDocSession(active)) active.scroll = { snapshot: view.scrollSnapshot(), x: horizontalScrollLeft(view) };
     // 切走即取消（change add-url-paste-title-nov21 的 spec 语义）：离开会话时撤清它的取标题
     // pending。此后即使标题响应在切回之前到达，也没有可升级的区间——切走再切回不会补写。
     // 放在 `clearLineHighlight` 之后：那条路径可能派发视图事务并经 updateListener 回写
@@ -3059,7 +3064,11 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     view.setState(isDocSession(session) ? session.state : imageSentinelState());
     // 恢复该会话的滚动位置。没有快照（新建会话）时不干预：新装载的文档由
     // reloadSession 复位到篇首，未命名空文档本来就在篇首。
-    if (session.scroll !== undefined) view.dispatch({ effects: session.scroll });
+    if (session.scroll !== undefined) {
+      const { snapshot, x } = session.scroll;
+      view.dispatch({ effects: snapshot });
+      requestAnimationFrame(() => writeHorizontalScrollLeft(view, x));
+    }
     collapseDomSelectionIfBlurred();
     // C3（change cursor-visibility-oct23）：切到「装载时未被聚焦、只有 frontmatter」的后台
     // 会话不会再触发 focus 事件——已聚焦状态下换 state 后补一刀边界光标规范化。code 模式
@@ -3385,6 +3394,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         // 主动下滚，页首 padding 被顶出画。
         view.scrollDOM.scrollTop = 0;
         view.scrollDOM.scrollLeft = 0;
+        view.contentDOM.scrollLeft = 0;
       });
       updateDirty(false);
       collapseDomSelectionIfBlurred();

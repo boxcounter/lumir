@@ -101,6 +101,13 @@ const REGISTRY: RegistryEntry[] = [
   },
   {
     tier: "native-overlay",
+    selectors: [".cm-content.cm-lp-reading-scrollport"],
+    note:
+      "Markdown nowrap 的 contentDOM 横向 scrollport（clip-markdown-content-to-reading-width-nov27）。" +
+      "与 CM 主 scroller 一样保留平台 overlay，不写任何自绘滚动条声明。",
+  },
+  {
+    tier: "native-overlay",
     origin: "cm",
     selectors: [".cm-scroller"],
     note:
@@ -379,11 +386,12 @@ test("滚动条注册表与源码双向对齐，且各档声明实际成立", ()
   );
 });
 
-test("注册表覆盖盘点出的全部滚动容器（24 个面 = 25 个选择器）", () => {
+test("注册表覆盖盘点出的全部滚动容器（25 个面 = 26 个选择器）", () => {
   const scanned = scrollContainers(realWorld());
   assert.deepEqual(
     [...scanned.keys()].sort(),
     [
+      ".cm-content.cm-lp-reading-scrollport",
       ".cm-lp-block-scroll",
       ".cm-lp-math-block",
       ".cm-lp-mermaid",

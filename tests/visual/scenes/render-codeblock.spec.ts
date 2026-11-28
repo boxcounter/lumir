@@ -536,7 +536,9 @@ test("编辑态：块内输入即时着色，颜色不溢出到块外段落", as
 
 const WRAP_SOURCE = readFileSync(new URL("../fixtures/render-codeblock/wrap.md", import.meta.url), "utf8");
 const PROSE_NEEDLE = "超长正文行";
+const PROSE_END = "PROSE-END-MARK";
 const CODE_NEEDLE = "CODE-END-MARK";
+const WRAP_MUTATION = process.env.LUMIR_RENDER_CODEBLOCK_WRAP_MUTATION;
 /** [keys] 把两条默认不绑键的折行命令绑到默认表里的两个空位（⌃J / ⌃K）。本版界面上没有别的
  *  触发路径（不做 M-x，见 spec 的已知边界），绑键因此既是场景的入口，也是 spec 里
  *  「配置绑定后真的能触发」那条 scenario 的验证形态。 */
@@ -618,6 +620,61 @@ async function codeContainer(page: Page) {
       tabindex: el.getAttribute("tabindex"),
     };
   });
+}
+
+/** Markdown nowrap 的自然长行由 contentDOM 承载；outer 与 doc chrome 只读，不跟随 inner 横滚。 */
+async function readProseScrollport(page: Page, toEnd = false) {
+  return page.evaluate(({ toEnd, mutation, proseNeedle, proseEnd }) => {
+    const inner = document.querySelector<HTMLElement>(".cm-content.cm-lp-reading-scrollport");
+    const outer = document.querySelector<HTMLElement>(".cm-scroller");
+    const line = [...document.querySelectorAll<HTMLElement>(".cm-line")].find(el => el.textContent?.includes(proseNeedle));
+    if (!inner || !outer || !line) throw new Error("nowrap 的 inner/outer/自然长行必须在场");
+    const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    let textNode: Node | null = null;
+    while (walker.nextNode()) {
+      if (walker.currentNode.textContent?.includes(proseEnd)) {
+        textNode = walker.currentNode;
+        break;
+      }
+    }
+    if (!textNode?.textContent) throw new Error("自然长行的末端文本节点必须在场");
+    const range = document.createRange();
+    const start = textNode.textContent.indexOf(proseEnd);
+    range.setStart(textNode, start);
+    range.setEnd(textNode, start + proseEnd.length);
+    if (toEnd) inner.scrollLeft = inner.scrollWidth;
+    const end = range.getBoundingClientRect();
+    const innerBox = inner.getBoundingClientRect();
+    const inlineInset = Number.parseFloat(getComputedStyle(inner).paddingLeft);
+    const chrome = (selector: string) => {
+      const el = document.querySelector<HTMLElement>(selector);
+      if (!el) throw new Error(`doc chrome 必须在场：${selector}`);
+      const box = el.getBoundingClientRect();
+      return { left: box.left, right: box.right };
+    };
+    const title = chrome(".cm-lp-doc-title-outer");
+    const endMarker = chrome(".cm-lp-end-marker");
+    const result = {
+      inner: {
+        x: inner.scrollLeft,
+        max: inner.scrollWidth - inner.clientWidth,
+        scrollWidth: inner.scrollWidth,
+        clientWidth: inner.clientWidth,
+        left: innerBox.left,
+        right: innerBox.right,
+        textLeft: innerBox.left + inlineInset,
+        textRight: innerBox.right - inlineInset,
+      },
+      outer: { x: outer.scrollLeft, max: outer.scrollWidth - outer.clientWidth },
+      chrome: { titleLeft: title.left, titleRight: title.right, endLeft: endMarker.left, endRight: endMarker.right },
+      end: { left: end.left, right: end.right },
+    };
+    if (mutation === "inner" && toEnd) result.inner.x = 0;
+    if (mutation === "outer") result.outer.max = 1;
+    if (mutation === "chrome" && toEnd) result.chrome.titleLeft += 2;
+    if (mutation === "clip" && toEnd) result.end.right = result.inner.textRight + 2;
+    return result;
+  }, { toEnd, mutation: WRAP_MUTATION, proseNeedle: PROSE_NEEDLE, proseEnd: PROSE_END });
 }
 
 /** 把一个块级横滚容器滚到最右，并读「正文文本右端距容器右缘还有多远」。
@@ -780,16 +837,19 @@ test("四种组合逐格可判：两个轴正交，代码块折行时不装容�
   expect(now).toMatchObject({ codeWhiteSpace: "pre", proseWhiteSpace: "pre" });
   expect(now.containers, "文件级折行开关不改代码块那一条规则").toBeGreaterThan(0);
   expect(now.proseLines, "关掉文件级折行后超长正文行必须是一行").toBe(1);
-  const scroller = await page.evaluate(() => {
-    const el = document.querySelector<HTMLElement>(".cm-scroller")!;
-    el.scrollLeft = el.scrollWidth;
-    return { scrollWidth: el.scrollWidth, clientWidth: el.clientWidth, scrollLeft: el.scrollLeft };
-  });
-  expect(scroller.scrollWidth, "超长正文行必须让编辑区可横向滚动（不是裁切）").toBeGreaterThan(scroller.clientWidth);
-  expect(scroller.scrollLeft).toBe(scroller.scrollWidth - scroller.clientWidth);
-  await page.evaluate(() => {
-    document.querySelector<HTMLElement>(".cm-scroller")!.scrollLeft = 0;
-  });
+  const beforeScroll = await readProseScrollport(page);
+  expect(beforeScroll.inner.max, "自然长行必须在 contentDOM inner 产生横滚").toBeGreaterThan(0);
+  expect(beforeScroll.inner.x).toBe(0);
+  expect(beforeScroll.outer, "自然长行不得再撑大或移动 outer").toEqual({ x: 0, max: 0 });
+  const afterScroll = await readProseScrollport(page, true);
+  expect(afterScroll.inner.scrollWidth, "超长正文行必须让 inner 可横向滚动（不是裁切）").toBeGreaterThan(afterScroll.inner.clientWidth);
+  expect(afterScroll.inner.x, "inner 必须能滚到真实最右").toBe(afterScroll.inner.max);
+  expect(afterScroll.inner.x).toBeGreaterThan(0);
+  expect(afterScroll.outer, "inner 横滚不得泄漏成 outer 溢出或位移").toEqual({ x: 0, max: 0 });
+  expect(afterScroll.chrome, "inner 横滚不得移动 doc-title / END chrome").toEqual(beforeScroll.chrome);
+  expect(afterScroll.end.left, "正文行尾左缘必须进入 X−44 的文字窗口").toBeGreaterThanOrEqual(afterScroll.inner.textLeft - 0.51);
+  expect(afterScroll.end.right, "正文行尾右缘必须进入 X−44 的文字窗口，不能只裁掉").toBeLessThanOrEqual(afterScroll.inner.textRight + 0.51);
+  await page.locator(".cm-content.cm-lp-reading-scrollport").evaluate(el => { el.scrollLeft = 0; });
   await page.waitForTimeout(60);
   await expectScreenshot(page, "wrap-combo-2-file-nowrap-block-nowrap.png");
 

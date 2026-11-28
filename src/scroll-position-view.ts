@@ -17,6 +17,7 @@ import { EditorView } from "@codemirror/view";
 import { positionFromReadings, restoreScrollTop } from "./scroll-position";
 import type { ScrollPosition } from "./scroll-position";
 import { beginViewportTransition, endViewportTransition } from "./viewport-transition";
+import { horizontalScrollLeft, writeHorizontalScrollLeft } from "./markdown-scrollport";
 
 /**
  * 把一段「应用自己推动视口」的动作包进捕获让位窗口（窗口语义见 src/viewport-transition.ts）。
@@ -62,7 +63,7 @@ export function readScrollPosition(view: EditorView): ScrollPosition | null {
       charLeft: rect.left,
       boxTop: box.top,
       boxLeft: box.left,
-      scrollLeft: scroller.scrollLeft,
+      scrollLeft: horizontalScrollLeft(view),
     }),
   };
 }
@@ -90,21 +91,20 @@ function writeBack(view: EditorView, position: ScrollPosition, anchor: number): 
       xMargin: 0,
     }),
   });
-  // 横向按 CM 自己的快照分支的口径恢复：直接写 scrollLeft（`dist/index.js` 的快照分支就是
-  // `scrollDOM.scrollLeft = xMargin`）。CM 的滚动锚点维护只管纵向（`scrollAnchorAt` 用
-  // scrollTop），因此这个赋值不会像裸写 scrollTop 那样被改掉（M149 的 242px 是纵向现场）。
+  // 横向按 CM 快照的原始 scrollLeft 口径恢复，但写入当前模式真实的 scrollport：
+  // Markdown nowrap 是 contentDOM，其余是 scrollDOM。纵向锚点维护不读这个 x。
   //
   // 放在下一帧：上面那个效果由 CM 在测量周期里落地，而它带 `x: "nearest"`——锚被横向移出
   // 视口时它会主动把锚拉回来（实测：先写 200、效果随后把它拉回 62），所以横向必须是**最后**
   // 一次写入。requestAnimationFrame 的回调排在 CM 同帧的测量之后。
   requestAnimationFrame(() => {
-    view.scrollDOM.scrollLeft = position.x;
+    writeHorizontalScrollLeft(view, position.x);
   });
 }
 
 /**
- * **运行期**施加一个阅读位置（切标签 / 交还焦点 / 切模式之后）。唯一一条早退是「捕获锚落在
- * 文档原点」——那时「恢复到篇首」与「停在篇首」是同一件事，不施加更稳。
+ * **运行期**施加一个阅读位置（切标签 / 交还焦点 / 切模式之后）。捕获锚落在文档原点时不发纵向
+ * 效果，但独立 inner/outer x 仍必须写回。
  *
  * **MUST NOT 在这里按 `coordsAtPos` 复核落点**（装载口径 `applyLoadedScrollPosition` 才那么做）：
  * 运行期读数取在**当前** `scrollTop` 上，同一算式退化成「还差多少才到位」的**差值**，
@@ -113,14 +113,17 @@ function writeBack(view: EditorView, position: ScrollPosition, anchor: number): 
  */
 export function applyScrollPosition(view: EditorView, position: ScrollPosition): void {
   const anchor = clampAnchor(view, position.pos);
-  if (anchor === 0) return;
+  if (anchor === 0) {
+    writeHorizontalScrollLeft(view, position.x);
+    return;
+  }
   writeBack(view, position, anchor);
 }
 
 /**
  * **装载路径**施加一个阅读位置：装载复位（`scrollTop = 0`）之后调用，此时读数取在原点，同一
- * 算式给出的就是**绝对落点**，落点 ≤ 0 说明这条历史位置就落在文档原点——不施加效果（带 margin
- * 的 `scrollIntoView` 对 pos 0 有把页首 44px 内边距顶出画的历史，M110）。
+ * 算式给出的就是**绝对落点**，落点 ≤ 0 时不施加纵向效果（带 margin 的 `scrollIntoView` 对 pos 0
+ * 有把页首内边距顶出画的历史，M110），但独立 inner/outer x 仍须写回。
  *
  * 这不是冗余：装载刚结束时存储的锚几乎总在视口之外，那时 `coordsAtPos` 返回 null（实测：锚在
  * 视口下方 ~2800px 时为 null）。若把 null 当「不可读 → 放弃恢复」，整条能力对所有深于一屏的
@@ -130,7 +133,10 @@ export function applyScrollPosition(view: EditorView, position: ScrollPosition):
  */
 export function applyLoadedScrollPosition(view: EditorView, position: ScrollPosition): void {
   const anchor = clampAnchor(view, position.pos);
-  if (anchor === 0) return;
+  if (anchor === 0) {
+    writeHorizontalScrollLeft(view, position.x);
+    return;
+  }
   const rect = view.coordsAtPos(anchor);
   if (rect !== null) {
     const box = view.scrollDOM.getBoundingClientRect();
@@ -140,11 +146,14 @@ export function applyLoadedScrollPosition(view: EditorView, position: ScrollPosi
         charLeft: rect.left,
         boxTop: box.top,
         boxLeft: box.left,
-        scrollLeft: view.scrollDOM.scrollLeft,
+        scrollLeft: horizontalScrollLeft(view),
       },
       position,
     );
-    if (target <= 0) return;
+    if (target <= 0) {
+      writeHorizontalScrollLeft(view, position.x);
+      return;
+    }
   }
   writeBack(view, position, anchor);
 }

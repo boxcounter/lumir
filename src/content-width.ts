@@ -57,7 +57,7 @@ export interface ContentWidthDragDeps {
   overlay: HTMLElement;
   leftHandle: HTMLElement;
   rightHandle: HTMLElement;
-  /** `.cm-content`（列缘矩形的读取对象）与 `.cm-scroller`（横向滚动会移动列缘）。 */
+  /** `.cm-content`（列缘矩形的读取对象）与 `.cm-scroller`（外层纵向/grid 容器）。 */
   content: HTMLElement;
   scroller: HTMLElement;
   /** 当前生效栏宽（运行期真源在 editor 闭包里）。 */
@@ -99,8 +99,8 @@ export function createContentWidthDrag(deps: ContentWidthDragDeps): ContentWidth
     rightHandle.style.left = `${rect.right - paneRect.left - 5}px`;
   }
 
-  // 列缘矩形的移动来源：Markdown pane 缩放、内容自身尺寸变化
-  //（栏宽施加后）、横向滚动（line_wrap = false 时）。三条都在控制器内自闭环；
+  // 列缘矩形的移动来源：Markdown pane 缩放与内容自身尺寸变化（栏宽施加后）。
+  // nowrap 正文横滚发生在 contentDOM 内，不移动这个 grid 列框；
   // 模式 / 会话切换不改变尺寸但可能改位置（gutter 进出），由装配层显式调 reposition()。
   const paneObserver = new ResizeObserver(position);
   paneObserver.observe(pane);

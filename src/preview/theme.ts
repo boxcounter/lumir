@@ -34,6 +34,24 @@ import type { EditorMode } from "../bindings/EditorMode";
 import { DOC_TITLE_TOP_CLASS } from "./doc-title";
 import { FRONTMATTER_HAS_TITLE_CLASS } from "./frontmatter";
 
+export const markdownNowrapScrollportTheme = EditorView.theme({
+  ".cm-content.cm-lp-reading-scrollport": {
+    overflowX: "auto",
+    clipPath: "inset(0 var(--sp-13))",
+    "& .cm-line:not(.cm-lp-codeblock-line):not(:has(> br))::after": {
+      content: '""',
+      display: "inline-block",
+      inlineSize: "44px",
+    },
+  },
+  "&.lumir-md-nowrap-scrollport > .cm-scroller > .cm-layer": {
+    inlineSize: "100%",
+    overflow: "hidden",
+    clipPath: "inset(0 calc(max(24px, calc((100% - var(--layout-doc-measure)) / 2)) + var(--sp-13)))",
+    "& > *": { translate: "calc(1px * var(--lumir-md-layer-delta, 0))" },
+  },
+});
+
 /** 代码块折行口径的内容级 class（M180，单一来源）：由 `src/editor.ts` 的 `wrapExtensions` 经
  *  `contentAttributes` 加到 `.cm-content` 上，本文件的样式按它们选择。两个 class 互斥，
  *  按 `editor.code_block_wrap` 取其中一个；它们与 CM 自己的 `cm-lineWrapping` 并列共存
