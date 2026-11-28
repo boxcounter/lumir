@@ -49,7 +49,7 @@ const VAULT: VaultFixture = {
   },
 };
 
-/** 合成空 vault（M851 的 D107 空态 + 可见「新建笔记」入口）。 */
+/** 合成空 vault（统一空工作区 + 可见「新建笔记」入口）。 */
 const EMPTY_VAULT: VaultFixture = {
   root: "/Users/alex/focus-empty-vault",
   vault_id: "focus-empty-vault",
@@ -514,43 +514,9 @@ test("装载中焦点进入真实 harness composer：激活链不抢焦、新文
   ).toEqual([]);
 });
 
-test("未命名 dirty 守卫：openFile 返回 false，不建标签、不聚焦、草稿留在前台", async ({ page }) => {
-  await stubTauri(page, VAULT);
-  await installRecorder(page);
-  await page.goto("/");
-
-  // 启动即未命名文档（没有路径、不是标签）：直接键入让它变脏——这条守卫只在「前台没有路径」
-  // 时成立，读盘报错是另一条路径（下面另有独立用例）。
-  // 此时正文被 D107 空态覆盖层（`inset: 0`）盖住，真实鼠标点不进去，用 `userClickIntoEditor`
-  // 的合成手势（同 go-to-line 用例的装配限制）；断言只看提交之后的获焦，因此不影响判据。
-  await expect(page.locator(".tab")).toHaveCount(0);
-  await userClickIntoEditor(page);
-  await expect.poll(async () => (await editorState(page)).activeInContent).toBe(true);
-  await page.keyboard.type("DRAFT-IN-UNNAMED");
-  await expect(page.locator(".cm-content")).toContainText("DRAFT-IN-UNNAMED");
-  const draft = await editorState(page);
-
-  // 根级菜单新建文件：创建照常落盘，但打开被 dirty 守卫拦下（openFile 返回 false）
-  await page.locator(".ft-vault").click({ button: "right" });
-  await expect(page.locator(".ft-menu")).toBeVisible();
-  await page.locator(".ft-menu .ft-menu-item", { hasText: "新建文件…" }).click();
-  await expect(page.locator(".ft-item.is-new .ft-edit")).toBeFocused();
-  const submitT = await page.evaluate(() => performance.now());
-  await submitInlineCreate(page, "guarded.md");
-
-  // 守卫提示上屏（D230 模板 + 动作「切换文件」），文件确实建了，但没有标签被打开
-  await expect(page.locator(".toast-dirty-guard")).toBeVisible();
-  await expect(page.locator(".toast-dirty-guard")).toContainText("当前文档不支持保存");
-  await expect.poll(async () => fsMutations(page)).toEqual([{ cmd: "fs_create_file", path: "guarded.md" }]);
-  await expect(page.locator(".tab")).toHaveCount(0);
-
-  // 草稿原样留在前台、焦点不进编辑器、提交之后没有任何编辑器获焦
-  const state = await editorState(page);
-  expect(state.doc, "守卫拦下时不得替换草稿").toBe(draft.doc);
-  expect(state.activeInContent, "openFile=false 时 MUST NOT 聚焦").toBe(false);
-  const after = (await focusLog(page)).filter((row) => row.inContent && row.t > submitT);
-  expect(after, `openFile=false 之后不得有编辑器获焦：${JSON.stringify(after)}`).toEqual([]);
-});
+// 「未命名 dirty 守卫」用例随 change make-no-tab-empty-workspace-nov28 删除：无路径的空工作区
+// 结构性只读、恒 clean，旧「在未命名文档里键入 → 打开文件被 dirty 拦下」的现场不可达。
+// 有路径 dirty 的守卫另由 save-controller / tab-menu 的用例覆盖。
 
 test("新建子目录：焦点与标签栏 / 编辑器矩形逐值不变", async ({ page }) => {
   await stubTauri(page, VAULT);

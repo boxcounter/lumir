@@ -2193,7 +2193,7 @@ test("全库场景静态校验通过（--check 的真实通道）", () => {
 // ---- `do: settle` 的无编辑器门版本（settleEditorless，M759）--------------------------------------
 //
 // `settle()` 的同类正反用例在 drive.test.mjs；这里守的是**另一条实现路径**：没有 AXTextArea 的
-// 两类合法终态（未打开空态 / 空 vault 引导层）走 settleEditorless，它原先同样比整份 AX 原文，
+// 两类合法终态（未打开空态 / 空工作区表面）走 settleEditorless，它原先同样比整份 AX 原文，
 // 会被每次读取都变的 `AX snapshot_id` 拖满 15s。修法是共用 drive.mjs 的 `snapshotBody`（单一
 // 真源），用例必须证明两条路径都改了——只改 settle() 时这里必红。
 //
@@ -2287,7 +2287,7 @@ test("settleEditorless：正文抖动 ⇒ 超时落 note 并返回末次读取�
       nodeLine:
         i % 2
           ? '- [5] AXStaticText = "打开一个目录作为 vault"'
-          : '- [5] AXStaticText = "这个 vault 还没有打开的文件"',
+          : '- [5] AXStaticText = "没有打开的文档"',
     }),
   );
   const notes = [];

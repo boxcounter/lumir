@@ -110,17 +110,18 @@ test("分栏双 pane：双标签槽 + 分隔条 + 右簇退让（整页 + 标题
   // 右簇退让与几何不变量。
   await expectChromeRetreat(page);
   await expectSplitGeometry(page);
-  // 焦点落右 pane（pane.split 的用户动作落点）：右 pane 的未命名空文档成为前台。
-  await expect(page.locator(".editor-pane").nth(1).locator(".cm-content")).toBeFocused();
+  // 焦点落右 pane 的入口（pane.split 的用户动作落点）：右 pane 是空工作区，正文不是焦点
+  // 落点，焦点在主操作「打开笔记…」上（change make-no-tab-empty-workspace-nov28）。
+  const rightSurface = page.locator(".editor-pane").nth(1).locator(".pane-empty-workspace");
+  await expect(rightSurface.getByRole("button", { name: "打开笔记…" })).toBeFocused();
   await expect(page.locator(".editor-pane").nth(1).locator(".cm-content")).toHaveText("");
-  // 空 pane 引导（M322）：零标签的右 pane 水印在场，有标签的左 pane 不在场。
-  const rightGuide = page.locator(".editor-pane").nth(1).locator(".pane-empty-guide");
-  await expect(rightGuide).toBeVisible();
-  await expect(page.locator(".editor-pane").nth(0).locator(".pane-empty-guide")).toBeHidden();
+  // 零标签的右 pane 空工作区在场，有标签的左 pane 不在场。
+  await expect(rightSurface).toBeVisible();
+  await expect(page.locator(".editor-pane").nth(0).locator(".pane-empty-workspace")).toBeHidden();
 
   // 在右 pane 打开 beta.md（树单击落活跃 pane）：右槽出标签，左槽不动，引导随之离场。
   await page.locator('.ft-row[title="beta.md"]').click();
-  await expect(rightGuide).toBeHidden();
+  await expect(rightSurface).toBeHidden();
   await expect(page.locator(".editor-pane").nth(1).locator(".cm-content")).toContainText("Beta 的第一段");
   await expect(strips.nth(1).locator(".tab-name")).toHaveText(["beta.md"]);
   await expect(strips.nth(0).locator(".tab-name")).toHaveText(["alpha.md"]);
@@ -139,17 +140,17 @@ test("空右 pane 形态 + 收拢复原单 pane（整页 + 标题栏元素级基
 
   const strips = page.locator(".tabstrip");
   await expect(strips).toHaveCount(2);
-  // 空右 pane：右槽在场但零标签（零高盒，同 test 1 的注释）；正文区是空 pane 引导水印
-  //（M322，D369——底下的未命名空文档编辑器仍在场、可聚焦，水印是覆盖层不是替换）。
+  // 空右 pane：右槽在场但零标签（零高盒，同 test 1 的注释）；正文区是空工作区表面
+  //（change make-no-tab-empty-workspace-nov28——不透明覆盖层，底下的正文结构性只读、不接受输入）。
   await expect(strips.nth(1)).toBeAttached();
   await expect(strips.nth(1)).not.toHaveAttribute("hidden", /.*/);
   await expect(strips.nth(1).locator(".tab")).toHaveCount(0);
   const rightContent = page.locator(".editor-pane").nth(1).locator(".cm-content");
   await expect(rightContent).toHaveText("");
-  const guide = page.locator(".editor-pane").nth(1).locator(".pane-empty-guide");
-  await expect(guide).toBeVisible();
-  await expect(guide).toHaveText(/在左栏选一个文件/);
-  await expect(page.locator(".editor-pane").nth(0).locator(".pane-empty-guide")).toBeHidden();
+  const surface = page.locator(".editor-pane").nth(1).locator(".pane-empty-workspace");
+  await expect(surface).toBeVisible();
+  await expect(surface.locator(".pane-empty-title")).toHaveText("没有打开的文档");
+  await expect(page.locator(".editor-pane").nth(0).locator(".pane-empty-workspace")).toBeHidden();
   await expect(page.locator(".editor-pane").nth(0).locator(".cm-content")).toContainText("Alpha 的第一段");
   await expectChromeRetreat(page);
   await expectSplitGeometry(page);
@@ -163,8 +164,8 @@ test("空右 pane 形态 + 收拢复原单 pane（整页 + 标题栏元素级基
   await expect(page.locator(".pane-divider")).toHaveCount(0);
   await expect(page.locator(".editor-pane")).toHaveCount(1);
   await expect(page.locator(".tabstrip")).toHaveCount(1);
-  // 引导随分栏态消失（root pane 的常驻水印归 hidden——引导仅分栏态空 pane 在场）。
-  await expect(page.locator(".pane-empty-guide")).toBeHidden();
+  // 空工作区随标签进入而离场（root pane 有标签 ⇒ hidden）。
+  await expect(page.locator(".pane-empty-workspace")).toBeHidden();
   await expect(page.locator(".tab-name")).toHaveText(["alpha.md"]);
   await expect(page.locator(".tab.is-active .tab-name")).toHaveText("alpha.md");
   await expect(page.locator(".titlebar-traffic .titlebar-identity")).toBeVisible();

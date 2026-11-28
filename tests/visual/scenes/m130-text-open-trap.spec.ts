@@ -206,8 +206,8 @@ test("注册表差集的裁决落地：hpp/cc 走 C++、bash/zsh 走 shell、php
 test("binary 仍不进编辑器：点击给「暂不支持预览」，不产生会话与 dirty", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
-  // 装载 vault 但一个标签都没有 = M163 的空 vault 首入态：D107 的引导层盖住正文
-  await expect(page.locator(".editor-notice")).toContainText("这个 vault 还没有打开的文件");
+  // 装载 vault 但一个标签都没有 = 统一空工作区（change make-no-tab-empty-workspace-nov28）
+  await expect(page.locator(".pane-empty-title")).toHaveText("没有打开的文档");
 
   for (const path of NON_EDITOR) {
     await page.locator(`.ft-row[title="${path}"]`).click();
@@ -218,39 +218,9 @@ test("binary 仍不进编辑器：点击给「暂不支持预览」，不产生�
   expect(await documentWrites(page)).toHaveLength(0);
 });
 
-test("没有打开文件时 Cmd+S 必须给出可见反馈（不得静默 return）", async ({ page }) => {
-  await stubTauri(page, VAULT);
-  await page.goto("/");
-  await expect(page.locator(".editor-notice")).toContainText("这个 vault 还没有打开的文件");
-  await expect(page.locator(".modeline-path")).toHaveText("无当前文件");
-
-  // M164 判据变更：未命名空文档不再由「装载后直接可得」到达，改走「打开一个文件再关掉它的
-  // 标签」——`closeTabNow` 关掉最后一个标签时落在未命名空文档上并撤下覆盖层。本场景验的是
-  // 未命名 dirty 文档上的 ⌘S 反馈与切换守卫，与「怎么到达它」无关。
-  await page.locator('.ft-row[title="readme.md"]').click();
-  await expect(page.locator(".modeline-path")).toHaveText("readme.md");
-  await page.keyboard.press("Meta+w");
-  await expect(page.locator(".modeline-path")).toHaveText("无当前文件");
-  await expect(page.locator(".tab")).toHaveCount(0);
-
-  const content = page.locator(".cm-content");
-  await content.click();
-  await page.keyboard.type("draft");
-  await expect(content).toContainText("draft");
-  await expect.poll(() => dirtyReports(page)).toContain(true);
-
-  // dirty 会锁死切换与退出，保存入口的静默失败必须被可见反馈替代
-  await page.keyboard.press("Meta+s");
-  await expect(page.locator(".lumir-toast", { hasText: "无法保存" })).toBeVisible();
-
-  // 切换文件的 dirty 守卫不得建议「请先保存（Cmd+S）」这条走不通的动作：
-  // 无落盘基准时必须指向真正的出口（撤销修改），且不真的切走
-  await page.locator('.ft-row[title="readme.md"]').click();
-  const blocked = page.locator(".lumir-toast", { hasText: "无法切换文件" });
-  await expect(blocked).toContainText("Cmd+Z");
-  await expect(blocked).not.toContainText("请先保存");
-  await expect(page.locator(".modeline-path")).toHaveText("无当前文件");
-});
+// 「没有打开文件时 Cmd+S 必须给出可见反馈」用例随 change make-no-tab-empty-workspace-nov28
+// 删除：无 Tab 是空工作区（结构性只读，不能产生 dirty），⌘S 没有保存目标，也就不存在这条
+// 反馈的触发面。有路径但未登记 revision 的 D234 反馈仍由 save-controller 单测覆盖。
 
 test("无扩展名文件（LICENSE/Makefile）与 dotfile 同属文本类：可编辑且能落盘", async ({ page }) => {
   await stubTauri(page, VAULT);

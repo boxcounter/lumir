@@ -209,10 +209,6 @@ const COPY_TABLE = {
     zh: "这个目录没法用来重新定位「{name}」；请选择该 vault 现在所在的目录",
     en: 'That folder cannot be used to relocate "{name}"; pick the folder where that vault is now',
   },
-  D107: {
-    zh: "这个 vault 还没有打开的文件。新建一篇笔记开始。",
-    en: "No files opened in this vault yet. Create a note to start.",
-  },
   D108: {
     zh: "{n} 个文件已不在这个 vault 里，已跳过",
     en: "{n} files are no longer in this vault and were skipped",
@@ -527,10 +523,6 @@ const COPY_TABLE = {
     zh: "当前文档有未保存修改，无法{action}；请先保存（Cmd+S）",
     en: "This document has unsaved changes, so it can't {action}; save first (Cmd+S)",
   },
-  D233: {
-    zh: "当前没有打开的文件，无法保存；修改仍在编辑器内（按 Cmd+Z 可撤销）",
-    en: "No file is open, so there's nothing to save; your changes are still in the editor (Cmd+Z undoes them)",
-  },
   D234: {
     zh: "当前文件尚未可保存（未登记磁盘版本）；修改仍在编辑器内（按 Cmd+Z 可撤销）",
     en: "This file can't be saved yet (its on-disk version isn't known); your changes are still in the editor (Cmd+Z undoes them)",
@@ -835,16 +827,6 @@ const COPY_TABLE = {
     zh: "把焦点交给光标所在块的块级横滚容器（表格与围栏 / 缩进代码块共用同一个容器 class；caret 不在块内、或该块没有容器（代码块折行档）时无操作）。键位取 ⌃⌥S：S = Scroll，语义就是「进那块横向滚动区」。⌃ 系归 Emacs 惯例，而 ⌃⌥ 单段是表内既有形态——这一族现只有 Ctrl-Alt-Minus（重做，Emacs 的 C-M-_），⌃⌥S 零占用。作用域 editor（由命令面派生）：命令要读 caret 才知道是哪一块，前提正是编辑器持焦。不带 when：本键在文本编辑里没有原生含义，不存在「同一物理键在不同焦点下语义不同」的情形（这也是它不进 WIDGET_COMMAND_IDS 的原因——那一组的每条都要求带 when，见 tests/unit/keys.test.ts 的对账）。冲突已核（零冲突，三条独立来源）：① 表内——src/keys.ts 即真源，⌃⌥ 系现只有 Ctrl-Alt-Minus，Ctrl-Alt-KeyS 零占用；② 原生菜单 accelerator——muda 0.19.3 的 items/predefined.rs 的 accelerator() 清单（Copy ⌘C / Cut ⌘X / Paste ⌘V / Undo ⌘Z / Redo ⇧⌘Z / SelectAll ⌘A / Minimize ⌘M / Fullscreen ⌃⌘F / Hide ⌘H / HideOthers ⌥⌘H / CloseWindow ⌘W / Quit ⌘Q）里没有 ⌃⌥ 系，自建项里唯一带 accelerator 的是 CmdOrCtrl+Q（src-tauri/src/lib.rs）；③ macOS 系统级——本机 defaults export com.apple.symbolichotkeys 的 20 条 enabled 项里没有一条的修饰位是 ⌃⌥（在用的是 ⌘ / ⌘⇧ / ⌘⌥ / ⌃ / ⌃⇧ / ⌥ 的单用与组合；⌃ 系是 ⌃←/→ 切桌面与 ⌃↑/↓ Mission Control 这类方向键预置），也没有一条的主键是 S（2026-10-12 实测）。token 形态含 Alt ⇒ 按物理键 KeyboardEvent.code 判定，表内 MUST 写 Ctrl-Alt-KeyS（写字符形态永不命中，同 M195 / M277 / M319 的坑）。它恢复的是 M239 把 Tab 判给列表缩进后丢掉的能力：容器再无入口 ⇒ M132 收编的五条滚动键（← / → / Home / End / Escape）无从触发；本键把入口接回来，实现见 src/preview/livePreview.ts 的 focusBlockScroll。（M474，tower 2026-10-12 裁决取 backlog「块级横滚容器失去焦点入口」候选①）",
     en: "Gives focus to the block-level horizontal scroll container of the block the caret is in (tables and fenced / indented code blocks share one container class; no-op when the caret is not in such a block or the block has no container, i.e. the code-block-wrapping mode). The key is ⌃⌥S: S = Scroll, and the meaning is literally \"enter that horizontal scroll area\". The ⌃ family follows Emacs convention, and a single-segment ⌃⌥ is an existing form in this table — that family currently holds only Ctrl-Alt-Minus (redo, Emacs's C-M-_), so ⌃⌥S is free. Scope is editor (derived from the command group): the command must read the caret to know which block, which presupposes an editor-focused context. No `when` guard: this key has no native meaning while editing text, so there is no \"same physical key, different meaning under different focus\" case (which is also why it is not in WIDGET_COMMAND_IDS — every member of that group must carry `when`, checked by tests/unit/keys.test.ts). Conflicts checked (none, three independent sources): (1) the table (src/keys.ts is the source of truth) uses only Ctrl-Alt-Minus in the ⌃⌥ family, so Ctrl-Alt-KeyS is free; (2) the native menu accelerator set (muda 0.19.3's items/predefined.rs accelerator(): Copy ⌘C / Cut ⌘X / Paste ⌘V / Undo ⌘Z / Redo ⇧⌘Z / SelectAll ⌘A / Minimize ⌘M / Fullscreen ⌃⌘F / Hide ⌘H / HideOthers ⌥⌘H / CloseWindow ⌘W / Quit ⌘Q) has no ⌃⌥ combination, and the only self-built accelerator is CmdOrCtrl+Q (src-tauri/src/lib.rs); (3) macOS system level — none of the 20 enabled entries in this machine's `defaults export com.apple.symbolichotkeys` has ⌃⌥ in its modifiers (the ones in use are single or combined ⌘ / ⌘⇧ / ⌘⌥ / ⌃ / ⌃⇧ / ⌥, with the ⌃ family being arrow-key presets such as ⌃←/→ to switch desktops and ⌃↑/↓ for Mission Control), and none of them is bound to S (measured 2026-10-12). Because the token contains Alt it is matched by physical key (KeyboardEvent.code), so the table MUST write Ctrl-Alt-KeyS (a character form never fires — the same trap as M195 / M277 / M319). It restores the capability lost when M239 gave Tab to list indentation: with no way in, the five scroll keys M132 had folded into the table (← / → / Home / End / Escape) could not be triggered at all; this key brings the entry back, implemented in src/preview/livePreview.ts's focusBlockScroll. (M474; tower ruling of 2026-10-12 taking candidate (1) of the backlog item \"block-level scroller lost its focus entry\")",
   },
-  // 空 pane 引导（M322，change pane-system-split-view 分组 6.2 的拆分 mission）：分栏态空 pane
-  // 正文区的水印文案。消费者是装配层 `src/main.ts` 的 `PANE_GUIDE_LABEL`（建元素时写、
-  // `onRelabel` 重写）；显示谓词在 `src/pane-layout.ts` 的 `emptyPaneGuideVisible`（仅分栏态 +
-  // 零带路径标签 + 前台非 dirty 草稿 + 已装载 vault——未装 vault 不显示，Alex 2026-10-04 裁决）。⌥W 是 pane.close 的默认绑定（M319 落槌）——用户经
-  // [keys] 重绑后这句提示不再准确，是本条已知的明账。
-  D369: {
-    zh: "这个 pane 还没有打开的文件——在左栏选一个文件，它就会在这里打开。不需要它时按 ⌥W 收起。",
-    en: "Nothing open in this pane yet — pick a file in the left column and it will open here. Press ⌥W to collapse it.",
-  },
-
   // -------------------------------------------------------------------------
   // Harness 摘录引用卡片（D370–D374，M343，change add-harness-quote-cards）：
   // 混排 composer、卡片、浮动钮与失锚告知的全部可见文案。卡片出处行（文档名 · 标题）是
@@ -2408,8 +2390,9 @@ const COPY_TABLE = {
     zh: "{segments} 段",
     en: "{segments} segments",
   },
-  // D882：空 vault 首入态正文里的可见新建入口（M851）。与右键根菜单的「新建文件…」（D129）
-  // 走同一条 tree 命令；标签按「笔记」命名，因为无扩展名输入默认落 .md。
+  // D882：空工作区的「新建笔记」动作名（M851 的首入态入口并入统一空工作区：change
+  // make-no-tab-empty-workspace-nov28）。与右键根菜单的「新建文件…」（D129）走同一条
+  // tree 内联命名命令；标签按「笔记」命名，因为无扩展名输入默认落 .md。
   D882: {
     zh: "新建笔记",
     en: "New note",
@@ -3152,6 +3135,18 @@ const COPY_TABLE = {
   D1089: {
     zh: "撤回这条消息和它引发的回答、工具记录；原文回到输入框",
     en: "Withdraw this message, the reply and tool records it triggered; the original text returns to the composer",
+  },
+  // D1090–D1091：无 Tab 的空工作区表面（change make-no-tab-empty-workspace-nov28）。
+  // 标题一句 + 主操作名；次操作复用 D882「新建笔记」。消费者是装配层
+  // `src/main.ts` 的 `EMPTY_WORKSPACE_TITLE` / `EMPTY_WORKSPACE_OPEN`（建元素时写、
+  // `onRelabel` 重写）。「打开笔记…」走既有 Quick Open，不新增打开链路。
+  D1090: {
+    zh: "没有打开的文档",
+    en: "No document open",
+  },
+  D1091: {
+    zh: "打开笔记…",
+    en: "Open note…",
   },
 
 } satisfies Record<string, CopyEntry>;

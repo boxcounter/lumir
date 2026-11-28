@@ -1,10 +1,10 @@
 ---
 # M851（0.13.0 初装验证，M849 报告 §B / §E 的 #4 / #5 / #6）：首启空态合同与空 vault 新建入口。
 # change add-first-run-onboarding-nov25 起，无 last_vault 的首启由启动态首启模式承接（唯一
-# 「添加 vault」）；本场景第一段改判首启模式，第二段仍是**老用户**空 vault（last_vault 非 null）
-# 的 D107 + 新建入口。
+# 「添加 vault」）；本场景第一段改判首启模式，第二段是**老用户**空 vault（last_vault 非 null）
+# 的统一空工作区 + 新建入口（change make-no-tab-empty-workspace-nov28 起不再有 D107 覆盖层）。
 #
-# 真机链：空配置 → 首启模式（添加 vault）→ 老用户空 vault（D107 + 新建笔记）
+# 真机链：空配置 → 首启模式（添加 vault）→ 老用户空 vault（空工作区 + 新建笔记）
 # → 新建不带扩展名的 note（默认补 .md）→ 编辑保存 → 退出重启恢复。
 #
 # 原生目录选择器边界（README「已知边界」）：套件不驱动 rfd 的 NSOpenPanel，因此首启模式的
@@ -14,7 +14,7 @@
 id: "263-first-run-empty-vault"
 item: 263
 tier: full
-title: 首启模式 + 老用户空 vault 新建：唯一添加 vault、D107 新建入口、默认 .md、保存与重启恢复
+title: 首启模式 + 老用户空 vault 新建：唯一添加 vault、空工作区新建入口、默认 .md、保存与重启恢复
 seed:
   registry:
     - { id: acc-b, path: $vault2, lastOpenedAt: 1757000003000 }
@@ -61,17 +61,19 @@ steps:
         ax: { not: "Image read failed" }
       - shot: 01-首启模式-添加vault
 
-  - name: 打开注册表里的空 vault（等价于非首启用户打开空目录后的终态），重启进入老用户空 vault 首入态
+  - name: 打开注册表里的空 vault（等价于非首启用户打开空目录后的终态），重启进入老用户空工作区
     do: configWrite
     lastVault: $vault-b
     language: zh
     expect:
       - label: 树头部点名第二个合成 vault（装载的是 $vault2）
         ax: { has: "vault：lumir-m102-acceptance-b（点击查看全部 vault）" }
-      - label: 空 vault 引导句给出可执行下一步（D107，M851 改写后的第二句）
-        ax: { has: "这个 vault 还没有打开的文件。新建一篇笔记开始。" }
+      - label: 空工作区标题点明「没有打开的文档」（不再有 D107 覆盖层）
+        ax: { has: "没有打开的文档" }
       - label: 正文里有可见的「新建笔记」按钮（入口不藏在右键菜单里）
         ax: { has: "/AXButton[^\\n]*新建笔记/" }
+      - label: 正文里有可见的「打开笔记…」主操作
+        ax: { has: "/AXButton[^\\n]*打开笔记…/" }
       - label: 空 vault 不残留 SAMPLE 注解
         ax: { not: "i18n-exempt" }
       - label: 空 vault 不残留 SAMPLE 演示标题
@@ -112,7 +114,7 @@ steps:
       - label: 新建即自动打开（正文 / 标签 / 树都点名 note.md）
         ax: { has: "note.md" }
       - label: 空态引导已撤下（有打开的文件就不再盖引导）
-        ax: { not: "这个 vault 还没有打开的文件" }
+        ax: { not: "没有打开的文档" }
       - shot: 04-新建note.md已打开
 
   - name: 编辑正文（标记串不含小写 e：键盘注入通道的已知边界）
@@ -136,7 +138,7 @@ steps:
     do: restart
   - name: 等重启恢复的标签与正文落定（就绪门早于恢复段，见 README 的 M516 条）
     do: waitFor
-    waitFor: { has: ["关闭 note.md", "M851-FIRST-RUN-NOTE"], not: ["这个 vault 还没有打开的文件"] }
+    waitFor: { has: ["关闭 note.md", "M851-FIRST-RUN-NOTE"], not: ["没有打开的文档"] }
     expect:
       - label: vault 自动恢复（last_vault）
         ax: { has: "vault：lumir-m102-acceptance-b（点击查看全部 vault）" }
@@ -146,8 +148,8 @@ steps:
         editor: { has: "M851-FIRST-RUN-NOTE" }
       - label: 盘上字节与重启前一致
         file: { path: "$vault-b/note.md", exact: "M851-FIRST-RUN-NOTE" }
-      - label: 不残留空 vault 引导（有恢复出来的标签）
-        ax: { not: "这个 vault 还没有打开的文件" }
+      - label: 不残留空工作区标题（有恢复出来的标签）
+        ax: { not: "没有打开的文档" }
       - label: 不残留 SAMPLE 伪文档（重启路径同样不许回来）
         ax: { not: "i18n-exempt" }
       - shot: 05-重启恢复
@@ -163,13 +165,14 @@ M849 的 0.13.0 初装验证暴露了首启面的三件事（报告 §B / §E �
    found` / `Image read failed` 两条错误样式行、en 界面里的中文标题。修复后初始会话是空白
    未命名文档，首屏只剩左栏 D5 说明行 + D6「打开 vault」按钮。
 2. **空 vault 没有可见新建入口**：旧 D107 指向「在左栏选一个文件」，而左栏没有任何文件；
-   新建只能右键 vault 名。修复后正文空态给出「新建笔记」按钮（D882），与右键根菜单同一条
-   `tree.beginCreate("")` 命令。
+   新建只能右键 vault 名。修复后无 Tab 统一为空工作区：标题「没有打开的文档」+ 主操作
+   「打开笔记…」（既有 Quick Open）+「新建笔记」（D882，与右键根菜单同一条
+   `tree.beginCreate("")` 命令）。
 3. **新建无扩展名输入落成无扩展名 plain text**：修复后末段名不含 `.` 时默认补 `.md`，
    用户显式写的其他扩展名原样保留。
 
 判据全部落在用户可见面（AX 文本 / 按钮节点 / 编辑器正文）与磁盘字节上；两条负向判据
-（无 SAMPLE 注解、无错误附件占位）都有正观测配对（D5 + Open vault、D107 + New note），
+（无 SAMPLE 注解、无错误附件占位）都有正观测配对（D5 + Open vault、空工作区标题 + New note），
 不是对着「读不到」空转。
 
 ## 为什么「空配置」用 envWrite 构造

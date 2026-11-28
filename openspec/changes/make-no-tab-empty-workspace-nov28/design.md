@@ -1,0 +1,105 @@
+# Design: make-no-tab-empty-workspace-nov28
+
+## 1. 状态模型：空工作区 = 无带路径标签的文档 pane
+
+现实现里每个 `EditorView` 恒有至少一个会话（`active` 永不为 undefined），没有标签时它就是一份无路径的空白会话。装配层已经有「有没有标签」的读数：`editor.sessions().some(session => session.path !== undefined)`（`renderAllTabStrips`，与标签条 `visibleTabsOf` 同一定义）。
+
+本 change 不拆掉这个占位会话，而是改它的**身份**：
+
+- 无路径会话 = 空工作区本身，不是一份可编辑文档；
+- 它只在内部存在，用来承接「打开文件时就地复用」的既有语义（`targetSessionFor` 的复用分支、`closeSession` / `reset` 的兜底），避免 `active` 变成 undefined 所引发的全链路改造；
+- 它 MUST NOT 可编辑、MUST NOT 产生 dirty、MUST NOT 成为保存目标。
+
+这样「关闭最后一个 Tab / Close All / reset / 分栏 / 首启」不需要各自写一套空态逻辑：它们都已经汇到 `syncActiveDocument → renderAllTabStrips` 这一个同步点。
+
+### 1.1 可编辑性的单点落定
+
+`src/editor.ts` 的 `makeSession` 是全部路径的创建点（初始会话、`createSession`、`closeSession` 的兜底、`reset`、新 pane）。在这里把无路径会话定死为：
+
+- `editable = false`（视图层 `contenteditable=false` + `changeFilter` 双层拒收）；
+- `structuralReadOnly = true`（不画 CM 插入光标）。
+
+`reloadSession` 在装载有路径文档时按既有表达式恢复 `editable` 并清 `structuralReadOnly`；装配层同步点随后按真实状态再裁决一次（幂等）。
+
+`renderAllTabStrips` 的表达式同步收窄：
+
+```ts
+const structuralReadOnly = foreground.path === undefined || firstRunTipsVisible;
+editor.setSessionEditable(
+  foreground,
+  !structuralReadOnly && isEditablePath(foreground.path),
+  structuralReadOnly,
+);
+```
+
+原先的 `paneBlocksInput(split, hasTabs, foregroundDirty)` 三个维度全部失效：单 pane 也封锁、dirty 的无路径草稿不再可能。`src/pane-layout.ts` 的 `paneBlocksInput` / `emptyPaneGuideVisible` 随之删除——留着一个「只在分栏态成立」的判据就是第二处真源。
+
+## 2. 空工作区表面
+
+每个 doc pane 在 `createPaneHandle` 里建一个常驻、初态 `hidden` 的元素（沿用 `pane-empty-guide` 的挂载位置，类名改为 `pane-empty-workspace`）：
+
+- 标题：「没有打开的文档」（新文案）；
+- 主操作「打开笔记…」：先 `activatePane(paneId)`，再打开既有 Quick Open；
+- 次操作「新建笔记」：先 `activatePane(paneId)`，再走 `tree.beginCreate("", "file")`（既有内联命名链路；默认名与 `withDefaultFileExtension` 都在树侧，提交合法名字后才 `fs_create_file` 并自动打开）。
+
+在场判据只有一条：**该 pane 没有带路径标签**（`hasTabs=false`）。tips 在场时空工作区让位（tips 是首启专属的空态表面，见 `first-run-onboarding`）。notice 覆盖层在场时，宿主 pane 的空工作区同时隐藏，避免不可见按钮留在 Tab 序里。
+
+判据与写入收敛在 `renderAllTabStrips` 的同一个 `hasTabs` 读数上；notice / showEditor 的状态变化经一个只做 `hidden` 翻转的同步函数复用同一读数函数，不复制表达式。
+
+### 2.1 为什么不用 `.editor-notice`
+
+`.editor-notice` 是**单个**元素，经 `placeNotice` 跟随活跃 pane；双 pane 时非活跃空 pane 就没有自己的动作面，而合同明确要求「非活跃空 pane 的动作先激活所属 pane」。因此空工作区必须是 per-pane 元素。notice 仍承担打开失败 / 暂不支持预览等瞬时覆盖层，两者职责不重叠。
+
+### 2.2 D107 空 vault 覆盖层并入空工作区
+
+老用户空 vault（`onEmptyVault`）此前走 D107 + D882 的 notice 分支。它与「无 Tab」是同一个状态，保留两套表面就是同一语义两处真源。本 change 删除 `showEmptyVaultState`：空 vault 与普通无 Tab 一样呈现空工作区；「新建笔记」复用同一条内联命名链路。D107 / D233 / D369 三条文案随之删除（D882「新建笔记」保留，作为按钮与首启 tips 的动作名）。
+
+## 3. 焦点落点
+
+新增装配层唯一入口：
+
+```ts
+function focusDocPaneEntry(paneId: PaneId): void
+```
+
+- 该 pane 的空工作区在场 → 焦点交给「打开笔记…」；
+- 否则 → 交给该 pane 的 `focusPreservingReadingPosition()`（M280 口径不变）。
+
+所有「把焦点交还文档 pane」的路径改走它：复合句柄的 `focusPreservingReadingPosition`、标签条的 `focusEditor`、`pane.split` / `pane.other` / pane 收起、Close All 收尾、Quick Open / goto-line / 遮罩 / 设置面板的 `restoreFocus`。空 pane 的正文因此 MUST NOT 成为焦点落点；有文档的 pane 行为逐字不变。
+
+关闭最后一个标签的路径补一次交还：`closeTabNow` 在同步点之后，若本 pane 已无可见标签则调用 `focusEditor`（在装配层解析为上面的入口）。这样 `×` 按钮随 DOM 移除后焦点不会掉回 `body`，⌘W 关掉最后一个标签也不会把焦点留在只读正文里。
+
+### 3.1 非活跃空 pane 的动作
+
+按钮在建元素时闭包持有 `paneId`，点击第一步就是 `activatePane(paneId)`（已活跃时幂等早退）。`activatePane` 只翻活跃指针并同步表现层，不抢焦点；随后 Quick Open / 树内联输入各自取焦点。双 pane 下因此不会把打开落点或焦点串到另一个 pane。
+
+## 4. 旧合同的处置（按不再可达）
+
+| 旧合同 | 处置 |
+|---|---|
+| `pane-layout`「分栏态空 pane 不接受文本输入」 | REMOVED，由新的「无标签文档 pane 的空工作区」承接 |
+| `pane-layout`「无标签文档 pane 的空态呈现」 | REMOVED，并入同一条新 requirement |
+| `multi-tabs`「未命名文档的 dirty 守卫」 | REMOVED，由「无 Tab 空工作区与 dirty 判定」承接（有路径 dirty / vault 切换条款原样保留） |
+| `multi-tabs`「标签的关闭操作」的 Close All 焦点落点 | MODIFIED：空 pane 落到空工作区主操作，有文档仍落正文 |
+| `fs-io`「没有打开文件时的 Cmd+S 反馈」 | MODIFIED：删除无路径分支与场景；有路径未登记 revision 的 D234 不变 |
+| `first-run-onboarding` tips 与空白草稿 | MODIFIED：tips 在场时空工作区动作隐藏，空白正文结构性只读；删除「MUST NOT 出现 D107」的过时表述 |
+| `keymap-commands` 行号条款里的「单 pane 未命名 scratch」 | MODIFIED：改为「无标签 pane / 空工作区」 |
+| `quick-open` | ADDED：空工作区入口、所属 pane 激活与焦点归还 |
+
+不可达的代码分支同步删除：`save-controller` 的无路径 guard 反馈、`save()` 的无路径 dirty 反馈、`tabs.targetSessionFor` 的「dirty 草稿不复用」分支（无路径恒 clean）。依赖这些状态的单测按「不再可达」删除或改准；不保留兼容层。
+
+## 5. 测试与证据
+
+- 单测：`pane-layout` 旧判据用例删除；`save-controller` 无路径用例删除（有路径未登记 revision 用例保留）；`tabs` / `tab-menu` 的注释与不可达分支改准。`line-numbers` 的 `gutterVisible` 真值表不变。
+- 视觉结构层：新建 `no-tab-empty-workspace-nov28.spec.ts` 覆盖单 pane / 双 pane / 首启 / 空 vault 四格；改准 `m320`（分栏后焦点落主操作）、`m281`（不再点水印聚焦正文）、`first-run-empty-state` / `first-run-onboarding-nov25`（D107 → 空工作区）、`gutter-copy-path-line`（关最后标签后空工作区盖住原 gutter 位置）。
+- 反向必红：把 `makeSession` 的无路径 `editable` 改回 true，单 pane 用例的 `contenteditable=false` 与「键入不落字」必须判红；把焦点落点改回正文，主操作聚焦断言必须判红。
+- 像素：不更新基线。普通 / 双 pane / 首启候选截图落 `.local/reviews/no-tab-empty-workspace-nov28/`，供 Alex 过目。
+- 真机：本批不跑（主会话串行）；验收场景 885 只做静态 `--check`，真机读数由主会话排期。
+
+## 6. 风险与边界
+
+- **首帧时序**：初始会话的不可编辑性在 `makeSession` 定死，不依赖 `renderAllTabStrips` 首次运行，首帧就不会出现可输入的空文档。
+- **打开文件复用占位会话**：`targetSessionFor` 的复用分支保留（只去掉 dirty 条件）；`reloadSession` 把路径、可编辑性与 `structuralReadOnly` 一起翻面，空工作区表面在同一同步点离场。
+- **notice 与空工作区**：notice 只在宿主 pane 覆盖；空工作区隐藏不改变 notice 的既有层序与动作。
+- **外部只读文档**：仍有 `contenteditable=false`，但不是无路径、不带 `structuralReadOnly`，光标保留（与 nov27 的判据一致）。
+- **行号**：`gutterVisible(hasTabs, …)` 不变；无标签仍压过 `on` 与 ⌥G。

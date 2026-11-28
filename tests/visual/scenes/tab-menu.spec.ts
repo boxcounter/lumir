@@ -528,7 +528,26 @@ async function expectEditorActive(page: Page, paneIndex = 0): Promise<void> {
   ).toBe(true);
 }
 
-test("Close All Tabs：全 clean——本 pane 全部标签关闭、回到空态、焦点交还编辑器", async ({ page }) => {
+/** 空工作区的焦点归属：目标 pane 的主操作「打开笔记…」是 activeElement（正文不是落点；
+ *  焦点不掉回 body）。change make-no-tab-empty-workspace-nov28 的 Close All 收尾判据。 */
+async function expectEmptyWorkspaceActive(page: Page, paneIndex = 0): Promise<void> {
+  const info = await page.evaluate((index) => {
+    const pane = document.querySelectorAll(".editor-pane")[index] ?? null;
+    const active = document.activeElement as HTMLElement | null;
+    return {
+      tag: active?.tagName ?? "null",
+      cls: typeof active?.className === "string" ? active.className : "",
+      isOpenAction: active !== null && active.classList.contains("pane-empty-open"),
+      inPane: pane !== null && active !== null && pane.contains(active),
+    };
+  }, paneIndex);
+  expect(
+    info.isOpenAction && info.inPane,
+    `activeElement 应为第 ${paneIndex} 个 pane 的「打开笔记…」，实测 ${info.tag}.${info.cls}（inPane=${info.inPane}）`,
+  ).toBe(true);
+}
+
+test("Close All Tabs：全 clean——本 pane 全部标签关闭、回到空态、焦点交给空工作区主操作", async ({ page }) => {
   await stubTauri(page, closeAllVault());
   await page.goto("/");
   await openTabs(page, ["alpha.md", "beta.md", "gamma.md"]);
@@ -544,8 +563,8 @@ test("Close All Tabs：全 clean——本 pane 全部标签关闭、回到空态
   await expect(page.locator(".tabstrip")).toBeHidden();
   await expect(page.locator(".modeline-path")).toHaveText("无当前文件");
   await expect(page.locator(".ft-row.is-current")).toHaveCount(0);
-  // 空态下前台是未命名空文档：焦点交给正文，不掉回 body（菜单关闭后键盘仍可用）
-  await expect(page.locator(".cm-content")).toBeFocused();
+  // 空工作区：焦点交给主操作，不落正文、不落 body（菜单关闭后键盘仍可用）
+  await expectEmptyWorkspaceActive(page);
   // 布局：标签区在标题栏内，空态不占行高——标题栏与正文区顶边都不动
   const after = await titlebar.boundingBox();
   expect(after?.height, "标题栏高度不因关完标签而变化").toBe(before?.height);
@@ -594,7 +613,8 @@ test("Close All Tabs：多个 dirty——逐个弹既有确认；取消停手不
   await gammaConfirm.getByRole("button", { name: "保存并关闭" }).click();
 
   await expect(page.locator(".tab")).toHaveCount(0, { timeout: 10000 });
-  await expectEditorActive(page);
+  // 全关完 = 空工作区：焦点落主操作，不落正文 / body。
+  await expectEmptyWorkspaceActive(page);
   // 放弃 ≠ 写盘；保存才落盘
   expect(await fileText(page, "beta.md")).toBe(BETA);
   await expect.poll(() => fileText(page, "gamma.md")).toContain("GGG");
@@ -733,8 +753,8 @@ test("Close All Tabs：作用域是右键所在 pane 的标签条——另一个
 
   await expect(strips.nth(1).locator(".tab")).toHaveCount(0);
   await expect(strips.nth(0).locator(".tab-name")).toHaveText(["alpha.md", "beta.md"]);
-  // 右 pane 回到空态：焦点落它自己的正文（空态占位槽仍在场），左 pane 不抢焦点
-  await expectEditorActive(page, 1);
+  // 右 pane 回到空工作区：焦点落它自己的主操作，左 pane 不抢焦点
+  await expectEmptyWorkspaceActive(page, 1);
 });
 
 test("Close All Tabs：双 pane 停手——焦点落在右键 pane 的编辑器，另一 pane 不动", async ({ page }) => {
@@ -770,7 +790,7 @@ test("Close All Tabs：双 pane 停手——焦点落在右键 pane 的编辑器
   await expectEditorActive(page, 1);
   await expect(page.locator(".editor-pane").nth(1).locator(".cm-content")).toContainText("DDD");
 
-  // 完成路径：再关一次并放弃 → 右 pane 清空，焦点仍在右 pane 的编辑器（空态）
+  // 完成路径：再关一次并放弃 → 右 pane 清空，焦点落在右 pane 的空工作区主操作
   await strips.nth(1).locator(".tab", { hasText: "delta.md" }).click({ button: "right" });
   await menuItem(page, "Close All Tabs").click();
   await page
@@ -779,5 +799,5 @@ test("Close All Tabs：双 pane 停手——焦点落在右键 pane 的编辑器
     .click();
   await expect(strips.nth(1).locator(".tab")).toHaveCount(0, { timeout: 10000 });
   await expect(strips.nth(0).locator(".tab-name")).toHaveText(["alpha.md", "beta.md"]);
-  await expectEditorActive(page, 1);
+  await expectEmptyWorkspaceActive(page, 1);
 });

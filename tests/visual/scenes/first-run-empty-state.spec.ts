@@ -8,10 +8,10 @@ import type { VaultFixture } from "./tauri-stub";
 //   1. **真正首次启动**（启动快照 last_vault === null）：启动态进入首启模式——只有唯一
 //      「添加 vault」主操作，整窗居中，无骨架 / 产品标记 / 阶段行 / 树空态；#app inert，
 //      命令闸门阻断设置 / harness / 键位面板（含原生菜单来源）。
-//   2. **首启空工作区**（首个 vault 无标签）：content pane 出 tips + 默认 harness；无
-//      D107 / D882 / D369；打开首个文档后 tips 消失，编辑器恢复可编辑。
-//   3. **非首启空 vault**（老用户）：仍走 M851 的 D107 + 可见「New note」入口；新建默认 .md、
-//      显式扩展名保留。判据取后端收到的实际创建路径，不是输入框里的文本。
+//   2. **首启空工作区**（首个 vault 无标签）：content pane 出 tips + 默认 harness；统一空工作区
+//      的标题与两个动作让位；打开首个文档后 tips 消失，编辑器恢复可编辑。
+//   3. **非首启空 vault**（老用户）：统一空工作区（「没有打开的文档」+ Open note… / New note）；
+//      新建默认 .md、显式扩展名保留。判据取后端收到的实际创建路径，不是输入框里的文本。
 //
 // 判据落点一律是「用户可见文本 / 后端调用参数」：前者在 DOM 上直接读，后者读桩的
 // `__fsMutations` / `__documentWrites` 记录。没有新增像素基线（「保持视觉合同」= 既有整页
@@ -25,7 +25,7 @@ const pageTest = (name: string, body: (page: Page) => Promise<void>): void => {
   });
 };
 
-/** 合成空 vault：条目为空、无会话历史——开箱即触发 D107 的空 vault 首入态。 */
+/** 合成空 vault：条目为空、无会话历史——开箱即触发统一空工作区。 */
 const EMPTY_VAULT: VaultFixture = {
   root: "/Users/alex/empty-vault",
   vault_id: "empty-vault",
@@ -212,7 +212,7 @@ const FIRST_RUN_VAULT: VaultFixture = {
   config: { language: "en" },
 };
 
-pageTest("首启空工作区：tips + 默认 harness，无 D107 / New note / D369；打开文档 tips 消失", async (page) => {
+pageTest("首启空工作区：tips + 默认 harness，空工作区标题与动作让位；打开文档 tips 消失", async (page) => {
   await stubTauri(page, FIRST_RUN_VAULT);
   await page.goto("/");
 
@@ -225,9 +225,9 @@ pageTest("首启空工作区：tips + 默认 harness，无 D107 / New note / D36
   await expect(page.locator(".pane-divider")).toHaveCount(1);
   await expect(page.locator(".editor-notice")).toBeHidden();
   expect(await page.evaluate(() => document.querySelector<HTMLElement>("#app")?.inert)).toBe(false);
-  await expect(page.locator(".pane-empty-guide")).toBeHidden();
-  await expect(tips).not.toContainText("No files opened in this vault yet");
-  await expect(tips).not.toContainText("Nothing open in this pane yet");
+  await expect(page.locator(".pane-empty-workspace")).toBeHidden();
+  await expect(tips).not.toContainText("No document open");
+  await expect(tips).not.toContainText("Open note…");
 
   // tips 只覆盖 root doc pane；harness 是另一个 pane，不被 tips 盖住。
   const structure = await page.evaluate(() => {
@@ -277,10 +277,11 @@ pageTest("首 vault restore 延迟、第二空 vault 先完成：第二不继承
   await expect(page.locator(".ft-vault-name")).toHaveText("second-empty-vault", { timeout: 10_000 });
 
   // 第二个空 vault 先完成空态：资格仍属于第一个 vault，第二个不得继承 tips / harness。
-  // 先判 tips / harness（本用例的核心），再判 D107；首个 restore 的迟到覆盖层不遮盖这条判据。
+  // 先判 tips / harness（本用例的核心），再判空工作区；首个 restore 的迟到结果不遮盖这条判据。
   await expect(page.locator(".first-run-tips")).toHaveCount(0);
   await expect(page.locator(".pane-divider")).toHaveCount(0);
-  await expect(page.locator(".editor-notice")).toContainText("No files opened in this vault yet", { timeout: 10_000 });
+  await expect(page.locator(".pane-empty-workspace")).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator(".pane-empty-title")).toHaveText("No document open", { timeout: 10_000 });
 
   // 等过第一个 restore 的延迟窗：迟到的首个 restore 也不得把 tips / harness 补到第二个。
   await page.waitForTimeout(2400);
@@ -288,22 +289,24 @@ pageTest("首 vault restore 延迟、第二空 vault 先完成：第二不继承
   await expect(page.locator(".pane-divider")).toHaveCount(0);
 });
 
-pageTest("老用户空 vault：D107 可执行引导 + 可见 New note；新建默认 .md、显式扩展名保留", async (page) => {
+pageTest("老用户空 vault：统一空工作区 + 可见 New note；新建默认 .md、显式扩展名保留", async (page) => {
   await stubTauri(page, EMPTY_VAULT);
   await page.goto("/");
 
   await expect(page.locator(".ft-vault-name")).toHaveText("empty-vault");
 
-  // 空 vault 正文空态：引导句 + 可点的「New note」入口（不是右键菜单那种隐藏入口）。
-  const notice = page.locator(".editor-notice");
-  await expect(notice).toBeVisible();
-  await expect(notice).toContainText("No files opened in this vault yet. Create a note to start.");
-  const newNote = page.getByRole("button", { name: "New note" });
+  // 空 vault 正文空态：统一空工作区（标题 + 两个动作），不再有 D107 覆盖层。
+  const surface = page.locator(".editor-pane").first().locator(".pane-empty-workspace");
+  await expect(surface).toBeVisible();
+  await expect(surface.locator(".pane-empty-title")).toHaveText("No document open");
+  await expect(page.locator(".editor-notice")).toBeHidden();
+  const newNote = surface.getByRole("button", { name: "New note" });
   await expect(newNote).toBeVisible();
+  await expect(surface.getByRole("button", { name: "Open note…" })).toBeVisible();
 
   // 旧病串（SAMPLE 的 frontmatter / 错误附件占位）不得出现在可见正文面。
   for (const junk of ["i18n-exempt", "Attachment not found", "Image read failed", "标题一"]) {
-    await expect(notice, `空态正文不得含 ${junk}`).not.toContainText(junk);
+    await expect(surface, `空态正文不得含 ${junk}`).not.toContainText(junk);
   }
 
   // 入口开始同一套行内新建（tree.beginCreate("")）：输入框落在树里并持焦点。
@@ -320,7 +323,7 @@ pageTest("老用户空 vault：D107 可执行引导 + 可见 New note；新建�
   // 新建成功即自动打开；空态覆盖层随之撤下。
   await expect(page.locator(".modeline-path")).toHaveText("note.md");
   await expect(page.locator(".tab-name")).toHaveText("note.md");
-  await expect(notice).toBeHidden();
+  await expect(surface).toBeHidden();
   // watcher 回响把真实条目收敛进树（桩只让 fixture 世界前进、事件由场景显式发，与
   // tree-menu.spec 同一口径）——后面「撞名预检」要对着树模型里的 note.md 判。
   await fireFsEvent(page, [{ kind: "created", path: "note.md", entry_kind: "file" }]);

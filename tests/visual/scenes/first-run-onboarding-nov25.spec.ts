@@ -7,8 +7,8 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 //      `expectStartupScreenshot`（不等启动面撤下）；
 //   2. 首启空工作区（tips + 默认 harness）：启动面已撤下，走 `expectScreenshot` 的撤下门与
 //      chrome 就绪门；
-//   3. 老用户空 vault（D107 引导 + New note）：同走 `expectScreenshot`。
-// 三主题各一张；判据面（唯一按钮、tips 文案、D107 / New note、命令闸门等）在
+//   3. 老用户空 vault（统一空工作区 + New note）：同走 `expectScreenshot`。
+// 三主题各一张；判据面（唯一按钮、tips 文案、空工作区 / New note、命令闸门等）在
 // `first-run-empty-state.spec.ts`，本文件只冻结像素。
 const THEMES = ["light", "dark", "eink"] as const;
 
@@ -21,7 +21,7 @@ const FIRST_RUN_VAULT: VaultFixture = {
   lastVault: null,
 };
 
-/** 老用户空 vault：`last_vault` 非 null（非首启），条目为空 → D107 + New note。 */
+/** 老用户空 vault：`last_vault` 非 null（非首启），条目为空 → 统一空工作区 + New note。 */
 const EMPTY_VAULT: VaultFixture = {
   root: "/Users/alex/empty-vault",
   vault_id: "empty-vault",
@@ -48,10 +48,10 @@ for (const theme of THEMES) {
     await expectScreenshot(page, `tips-${theme}.png`);
   });
 
-  test(`老用户空 vault（${theme}）：D107 引导 + New note`, async ({ page }) => {
+  test(`老用户空 vault（${theme}）：空工作区 + New note`, async ({ page }) => {
     await stubTauri(page, { ...EMPTY_VAULT, config: { language: "en", theme } });
     await page.goto("/");
-    await expect(page.locator(".editor-notice")).toContainText("No files opened in this vault yet");
+    await expect(page.locator(".pane-empty-title")).toHaveText("No document open");
     await expect(page.getByRole("button", { name: "New note" })).toBeVisible();
     await expect(page.locator("#startup")).toHaveCount(0);
     await expectScreenshot(page, `old-user-empty-${theme}.png`);

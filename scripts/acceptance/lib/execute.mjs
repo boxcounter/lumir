@@ -3336,7 +3336,7 @@ async function settleAction(cu, pid, evidence) {
 
 /** `do: settle` 在**没有编辑器节点**的合法终态下的等待（M249）。
  *
- * 两种终态（都是正观测，见 waitAppReady）：已装载 vault 但一个标签都没有（D107 引导层盖住
+ * 两种终态（都是正观测，见 waitAppReady）：已装载 vault 但一个标签都没有（空工作区表面盖住
  * 正文，M163 起的启动常态）、未打开 vault 的空态。两者里 `AXTextArea` 都不存在，`drive.mjs`
  * 的 `settle()` 的编辑器门因此永远不成立。等待口径与它一致（连续两次 AX **快照正文**相同，
  * 产物 id 行除外——与 `settle()` 共用 `drive.mjs` 的 `snapshotBody` 与采样间隔

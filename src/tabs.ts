@@ -33,7 +33,7 @@
 //     构造），标签模块够不到，因此定位是**唯一**一条绕装配层的菜单动作——与树菜单「浮层在
 //     tree-menu.ts、动作在 main.ts」同形。
 //
-// 关闭确认的未命名文档守卫（reviewer r1 P2-1 的那条）在 closeTab 里，语义见该函数注释。
+// 无路径的空工作区占位会话不是标签：⌘W / 逐标签关闭钮对它是空操作（resolveClose 的守卫）。
 
 import type { EditorHandle, EditorSession } from "./editor";
 import { isDocSession } from "./session-kind";
@@ -112,9 +112,10 @@ export function tabMenuItems(): TabMenuItem[] {
   ];
 }
 
-/** 可见标签（有文件路径的会话），按打开顺序。标签栏、⌘1–9、⌃⇥、两条「批量关闭」共用
- *  这一份口径——未命名文档不是标签（空态就是它），所以一律经这里过滤。 */
-function visibleTabsOf(sessions: readonly EditorSession[]): EditorSession[] {
+/** 可见标签（有文件路径的会话），按打开顺序。标签栏、⌘1–9、⌃⇥、两条「批量关闭」与装配
+ *  层的「有没有标签」共用这一份口径——无路径的空工作区占位会话不是标签，
+ *  所以一律经这里过滤。 */
+export function visibleTabsOf(sessions: readonly EditorSession[]): EditorSession[] {
   return sessions.filter((session) => session.path !== undefined);
 }
 
@@ -145,9 +146,8 @@ export function closeRightTargets(
  *  范围由实例决定而不是由右键落在哪一条决定：每个 pane 一个 `createTabs` 实例，
  *  `sessions` 传进来的就是这个 pane 的会话表——双 pane 时另一个 pane 的标签不在其中，
  *  「关闭范围与右键所在 pane 的标签组一致」因此是实例边界，不需要额外参数。
- *  没有路径的会话（未命名草稿）不是标签，与 `visibleTabsOf` 的其他消费者同一口径：
- *  它们 MUST NOT 进入目标集，否则批量关闭会碰到「关掉即静默清空」的那条路（见 closeTab
- *  的未命名文档守卫）。 */
+ *  没有路径的空工作区占位会话不是标签，与 `visibleTabsOf` 的其他消费者同一口径：
+ *  它们 MUST NOT 进入目标集（没有「关闭」这个语义，见 closeTab 的占位会话守卫）。 */
 export function closeAllTargets(sessions: readonly EditorSession[]): EditorSession[] {
   return visibleTabsOf(sessions);
 }
@@ -209,12 +209,12 @@ export interface TabsDeps {
   /** 前台文档变化后的表现层一次对齐（装配层的 syncActiveDocument）。
    *  `options` 由激活链透传（见 {@link DocumentSwitchOptions}），缺省 = 既有行为。 */
   syncActiveDocument: (options?: DocumentSwitchOptions) => void;
-  /** 把焦点交给这个 pane 的编辑器（装配层的 `handle.focusPreservingReadingPosition`，
-   *  MUST NOT 裸 `view.focus()`——聚焦不得把阅读位置拽回光标处，见 `src/scroll-position-view.ts`）。
+  /** 把焦点交给这个 pane 的入口（装配层按「有没有标签」解析：有文档 → 正文；
+   *  空工作区 → 主操作「打开笔记…」）。
    *
    *  消费者是「关闭全部标签」的批量收尾：**全关完与中途停手都要动一次焦点**——确认浮条的
    *  动作钮随答复从 DOM 移除，浏览器会把焦点送回 body（review r1 P2-1）；全关完时前台是
-   *  未命名空文档、停手时前台是当前标签，两者的键盘落点都是正文。
+   *  空工作区、停手时前台是当前标签，两者的键盘落点由装配层同一入口给出。
    *  注入而不是在模块内够 `editor.view`：交还焦点的口径与实现全仓只有装配层那一份。 */
   focusEditor: () => void;
   /** 让**这条标签条所属的 pane** 成为活跃 pane（装配层的 activatePane）。
@@ -588,10 +588,9 @@ export function createTabs(deps: TabsDeps): TabsHandle {
 
   /** 关标签：有未保存修改的先给三个出口确认（文案 D92 / D93）。
    *
-   * **未命名文档（没有路径）不是标签**：⌘W 与逐标签关闭钮对它一律无操作（reviewer r1 P2-1）。
-   * 它的内容只活在内存里，根本没有「关掉」这个语义——不加这条守卫时，冷启动的未命名
-   * 文档会被静默换成一份空文档（用户看到的是文档被无声清空），对一个无路径的 dirty 文档还会
-   * 弹出主体为空的确认浮条（`「」有未保存修改…`）。spec 与 proposal 都写「零标签时 ⌘W 无操作」，
+   * **无路径的空工作区占位会话不是标签**：⌘W 与逐标签关闭钮对它一律无操作。它不是一份
+   * 可编辑文档（结构性只读、恒 clean），根本没有「关掉」这个语义——不加这条守卫时，冷启动
+   * 的空工作区会被静默换成另一份空会话。spec 与 proposal 都写「零标签时 ⌘W 无操作」，
    * 这条守卫就是它的落点。
    *
    * M254：返回值在用户选定出口（或点掉浮条）之后才 resolve——批量关闭（closeEach）靠这个
@@ -600,7 +599,12 @@ export function createTabs(deps: TabsDeps): TabsHandle {
     // 与 activateTab 同一条不变量（点 / 关都是该 pane 标签条的交互 ⇒ 该 pane 变活跃）：
     // 关闭钮的 DOM 监听也绑在本模块内部，覆写对外方法挡不住它。
     activatePane();
+    const wasTab = session.path !== undefined;
     await resolveClose(session);
+    // 单条关闭（⌘W / ×）关掉最后一个可见标签 = 该 pane 回到空工作区：正文不是焦点落点
+    //（change make-no-tab-empty-workspace-nov28），交还给空工作区主操作。批量关闭不在这里
+    // 交还——它的收尾自己调一次 focusEditor（避免同一次动作动两遍焦点）。
+    if (wasTab && visibleTabs().length === 0) focusEditor();
   }
 
   /** 关一个标签并等它**真的**关掉：干净的直接关，脏的弹 M149 的既有确认。
@@ -676,7 +680,7 @@ export function createTabs(deps: TabsDeps): TabsHandle {
     editor.closeSession(session);
     if (wasActive) {
       invalidateResolve(); // 前台文档被关掉：它的 from 基准一并作废
-      showEditor(); // 关掉最后一个标签会落在未命名空文档上，撤下「暂不支持预览」覆盖层
+      showEditor(); // 关掉最后一个标签会落在空工作区上，撤下「暂不支持预览」覆盖层
     }
     syncActiveDocument();
   }
@@ -747,11 +751,10 @@ export function createTabs(deps: TabsDeps): TabsHandle {
    *  文件树的手势 → 意图判定只在 `src/tree.ts` 的 `treeOpenIntent` 一处（change
    *  improve-file-open-harness-affordance-nov26），本函数只按意图挑会话。
    *
-   *  空态里那个**没有文件**的会话不是一个标签（冷启动的示例文档、关掉最后一个标签后的空
-   *  文档），它就是「还没有打开任何文件」这个状态本身，因此就地复用它——否则每次单击都会
-   *  在会话列表里留下一份看不见的空会话。复用只在它**干净**时发生：脏的空文档有真实内容
-   *  且没有落盘基准（openFile 的守卫在它是前台时会拦下），复用它等于丢掉那份草稿，因此脏的
-   *  一律新开。 */
+   *  空态里那个**没有文件**的占位会话不是一个标签（冷启动 / 关掉最后一个标签后的空工作区），
+   *  它就是「还没有打开任何文件」这个状态本身，因此就地复用它——否则每次单击都会在会话
+   *  列表里留下一份看不见的空会话。占位会话结构性只读、恒 clean（change
+   *  make-no-tab-empty-workspace-nov28），没有需要保护的草稿，复用无条件成立。 */
   function targetSessionFor(intent: "new" | "current"): EditorSession {
     if (intent === "current") {
       const active = editor.activeSession();
@@ -760,9 +763,7 @@ export function createTabs(deps: TabsDeps): TabsHandle {
       // 与 `openImage` 恒新开（文本不能改判成图片）是同一条边界的另一侧。
       if (isDocSession(active)) return active;
     }
-    const reusable = editor.sessions().find(
-      (session) => session.path === undefined && !session.dirty,
-    );
+    const reusable = editor.sessions().find((session) => session.path === undefined);
     return reusable ?? editor.createSession();
   }
 

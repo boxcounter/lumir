@@ -1197,7 +1197,7 @@ export interface EditorSession {
    *  语义、恒零内容。MUST NOT 让图片会话持有上一份文档的 state——任何读 `view.state` 的命令
    *  （⌘S 尤其）都会落到一份真实文档上。 */
   state: EditorState;
-  /** 文档的 vault 相对路径；未命名文档（空态 / 新建）为 undefined。 */
+  /** 文档的 vault 相对路径；空工作区（没有打开文件）为 undefined。 */
   path: string | undefined;
   /**
    * 该会话的**文档内容是否已装载**（M283，change vault-switch-restore-perf 的 3.1）。
@@ -1205,7 +1205,7 @@ export interface EditorSession {
    * vault 会话恢复的第一步（建壳）产出的标签是「`path` / `mode` / `editable` 就位、内容为空、
    * `loaded === false`」的**壳**：它已是一个真实标签（顺序、路径标题、会话快照全按真标签工作），
    * 正文留到它**首次成为前台**时装载（`reloadSession` 是那条装载路径，它把本字段置真）。
-   * 无路径的会话（未命名空文档）没有盘上内容可等，恒为 true。
+   * 无路径的空工作区占位会话没有盘上内容可等，恒为 true。
    *
    * 两个读点：`activate()` 里的 `ensureMtime`（壳态跳过——那是每标签一次的 IPC，留到装载时）
    * 与装配层的按需装载触发（`src/main.ts` 的 `syncActiveDocument`）。
@@ -1241,30 +1241,31 @@ export interface EditorSession {
   mode: SessionMode;
   /**
    * 该会话是否可编辑（editable-non-md-files，裁决 D1「注册表全量文本类」）。取值 =
-   * 无文件上下文（空态 / 新建）或 `isEditablePath(path)`，且 **vault 外只读会话恒为假**
-   *（change quick-open-file-oct23 的 D2）。判据只有
+   * **有文件路径**且 `isEditablePath(path)`，且 **vault 外只读会话恒为假**
+   *（change quick-open-file-oct23 的 D2）。无路径是**空工作区占位会话**（change
+   * make-no-tab-empty-workspace-nov28）：MUST NOT 可编辑、MUST NOT 产生 dirty。判据只有
    * `attachments.ts` 的 `isEditablePath` 一处（REVIEW.md 「同一语义两处真源」条）。同 `mode` 一样是**逐会话**
    * 的：`modeExtensions` 按它装视图层 editability（`editable` / `readOnly` / `aria-readonly`），
    * dispatch 层的 `changeFilter` 按它的实例级投影放行，保存链路的 `saveBaseline` 也读它
    *（save-controller.ts）。装载与激活时必须与 state / mode 一起同步（见 syncProjection）。
    *
    * 三处按路径重算的地方（`makeSession` / `reloadSession` / `remapSessionPaths`）必须收敛到
-   * **同一个表达式** `!external && isEditablePath(path)`——漏一处，一次装载就能把只读翻回
-   * 可编辑（change quick-open-file-oct23 的 design §5.2 点名的风险点）。
+   * **同一个表达式** `!external && path !== undefined && isEditablePath(path)`——漏一处，一次
+   * 装载就能把只读翻回可编辑（change quick-open-file-oct23 的 design §5.2 点名的风险点）。
    */
   editable: boolean;
   /**
-   * 该会话的前台是否是**结构性只读**的呈现态（change fix-no-tab-empty-state-nov27）：
-   * 分栏态空 pane 的输入闸门（M329）与首启 tips 在场时的空白草稿（change
+   * 该会话的前台是否是**结构性只读**的呈现态：无路径的空工作区占位会话（change
+   * make-no-tab-empty-workspace-nov28）与首启 tips 在场的空白正文（change
    * add-first-run-onboarding-nov25）都属这一类。它与 `editable` 不是同一维：
    *  - `editable === false` 还可能是 vault 外只读会话 / 图片（非文本）会话——那些不是
    *    「结构性」只读，本标志对它们恒假；结构只读只是 `editable === false` 的一个子集。
    *  - 本标志只服务**呈现**：结构性只读前台不画 CM 插入光标（`modeExtensions` 在
    *    `.cm-editor` 上挂 `lumir-structural-readonly`，样式隐藏 `.cm-cursorLayer`）。
-   *    点击仍可聚焦 / 激活 pane，只读内容仍可选中复制，tabindex 与焦点归还不改。
-   *  - 值由装配层在唯一同步点 `renderAllTabStrips` 经 `setSessionEditable` 的第三参写入；
-   *    单 pane 可编辑 scratch、分栏前 dirty scratch 豁免、打开文档后的恢复都在这条写入
-   *    路径上，不存在第二处改判。
+   *    正文不是焦点落点（空工作区经装配层的 `focusDocPaneEntry` 落到主操作）。
+   *  - 创建点（`makeSession`）对无路径会话直接置真；值另由装配层在唯一同步点
+   *    `renderAllTabStrips` 经 `setSessionEditable` 的第三参重算；打开文档后的恢复在同一
+   *    条写入路径上，不存在第二处改判。
    */
   structuralReadOnly: boolean;
   /**
@@ -1433,13 +1434,12 @@ export interface EditorHandle {
     changes: readonly { from: number; to: number; insert: string }[],
   ): boolean;
   /**
-   * 运行期置某会话的可编辑性（M329，分栏态空 pane 的输入闸门）。
+   * 运行期置某会话的可编辑性（空工作区 / 首启 tips 的结构性只读）。
    *
-   * **为什么需要它**：会话的可编辑性此前只在创建点（`makeSession`）与路径变更点
-   * （`reloadSession` / `remapSessionPaths`）按 `isEditablePath(path)` 算一次，没有运行期入口。
-   * 分栏态下「无带路径标签」的 pane 必须**不接受文本输入**（Alex 2026-10-05 dogfood：⌥O 后
-   * 在空 pane 里敲字 → dirty → ⌘S 报「No file is open…」），而它的空会话没有路径、按路径裁决
-   * 恒为可编辑——装配层因此需要能把这个会话显式置为只读，打开 / 新建文件后按路径裁决复原。
+   * **为什么需要它**：会话的可编辑性在创建点（`makeSession`）与路径变更点
+   * （`reloadSession` / `remapSessionPaths`）按路径算一次；无路径的空工作区占位会话创建即
+   * 只读，但有路径的会话在前台切换 / 首启 tips 撤下时需要运行期入口重算。装配层因此在
+   * `renderAllTabStrips` 这一个同步点显式写入，打开文件后按路径裁决复原。
    *
    * **这是结构性只读，不是「按键被吞」**：`editable(false)` 走的是与 image/binary 只读会话
    * 同一条路（`modeExtensions` 的 view 层拒收 + `changeFilter` 兜底），MUST NOT 用 DOM 层
@@ -1455,14 +1455,15 @@ export interface EditorHandle {
    * 它与 `editable` 一起比较、一起重配——只翻一个会让「可编辑但无光标」或「只读却有光标」
    * 的假态残留。
    *
-   * 条款居所（living spec）：`openspec/specs/pane-layout/spec.md` 的「分栏态空 pane 不接受
-   * 文本输入」——本条是实现只读的那个运行期入口。
+   * 条款居所（living spec）：`openspec/specs/pane-layout/spec.md` 的「无标签文档 pane 的空
+   * 工作区」——本条是实现只读的那个运行期入口。
    */
   setSessionEditable(session: EditorSession, editable: boolean, structuralReadOnly?: boolean): void;
   /** 设置本实例所属文档 pane 是否有**带路径标签**（change fix-no-tab-empty-state-nov27）：
    *  行号 gutter 的在场判据之一（`src/line-numbers.ts` 的 `gutterVisible`，唯一判据）。装配层
-   *  在 `renderAllTabStrips` 把既有 `hasTabs` 逐 pane 喂进来；无标签的空态（含单 pane 未命名
-   *  scratch）不显示行号，⌥G 的临时 gutter 同样受此约束。打开 / 新建带路径文件后 hasTabs 转真，
+   *  在 `renderAllTabStrips` 把既有 `hasTabs` 逐 pane 喂进来；无标签的空工作区（单 pane 与
+   *  分栏同一条规则）不显示行号，⌥G 的临时 gutter 同样受此约束。打开 / 新建带路径文件后
+   *  hasTabs 转真，
    *  同一同步点按配置恢复。值没变时是空操作；新建会话直接读当前实例值。 */
   setPaneHasTabs(hasTabs: boolean): void;
   /**
@@ -1506,9 +1507,9 @@ export interface EditorHandle {
   /** 监听文档装载、装饰和首个 paint 的可观测阶段。 */
   onReady(listener: EditorReadyListener): () => void;
   /**
-   * 清空全部会话并复位上下文（vault 切换 / 关闭时调用）：只留一个未命名空文档会话，
-   * 模式回到配置默认基线（defaultMode，与 createSession 对无文件上下文文档的回落锚
-   * 一致——不继承上一个文件漂移出的模式）。
+   * 清空全部会话并复位上下文（vault 切换 / 关闭时调用）：只留一个空工作区占位会话
+   *（无路径、结构性只读），模式回到配置默认基线（defaultMode，与 createSession 对空工作区
+   *  占位会话的回落锚一致——不继承上一个文件漂移出的模式）。
    */
   reset(): void;
   /**
@@ -1928,7 +1929,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   /**
    * 本实例所属文档 pane 是否有**带路径标签**（change fix-no-tab-empty-state-nov27）：gutter
    * 在场判据的第三个维度，由装配层在 `renderAllTabStrips` 逐 pane 经 `setPaneHasTabs` 写入。
-   * 初值 `false`——没有任何标签的空态（含单 pane 未命名 scratch）不显示行号；打开 / 新建带
+   * 初值 `false`——没有任何标签的空工作区（单 pane 与分栏同一规则）不显示行号；打开 / 新建带
    * 路径文件后同一同步点转真，按配置恢复。`setLineNumbers` / `setGotoLineGutterVisible` 的
    * 重配都会读它，⌥G 的临时 gutter 因此同样受约束。
    */
@@ -2679,19 +2680,22 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     loaded = true,
     external = false,
   ): EditorSession {
-    // 可编辑性按文件类裁决（唯一判据在 attachments.ts 的 isEditablePath）：无路径（空态 /
-    // 新建）可编辑；有路径时 md/code/text 可编辑，image/binary 不可（它们不进编辑器）。
-    // vault 外只读会话（external）**恒不可编辑**——三处重算共用这一个表达式（design §5.2）。
-    const editable = !external && isEditablePath(path);
+    // 可编辑性按文件类裁决（唯一判据在 attachments.ts 的 isEditablePath）：无路径是**空工作区
+    // 占位会话**（change make-no-tab-empty-workspace-nov28）——MUST NOT 可编辑、MUST NOT 产生
+    // dirty，structurally read-only 从创建点就成立；有路径时 md/code/text 可编辑，
+    // image/binary 不可（它们不进编辑器）。vault 外只读会话（external）**恒不可编辑**——
+    // 三处重算共用这一个表达式（design §5.2）。
+    const emptyWorkspace = path === undefined;
+    const editable = !external && !emptyWorkspace && isEditablePath(path);
     return {
       id: ++sessionSerial,
       kind: "doc",
-      state: sessionState(doc, path, mode, editable, wrap),
+      state: sessionState(doc, path, mode, editable, wrap, emptyWorkspace),
       path,
       loaded,
       mode,
       editable,
-      structuralReadOnly: false,
+      structuralReadOnly: emptyWorkspace,
       external,
       cleanDoc: doc,
       dirty: false,
@@ -2739,9 +2743,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     };
   }
 
-  // 启动时的会话：**空白**未命名文档（无文件上下文）。它也是标签栏不显示的那一个——
-  // 「未命名」会话只承载「还没有打开任何文件」这个状态（M851：不再预置演示文档——
-  // 首屏把内部注解 / 错误占位 / 中英混排的伪文档当正文，既不真实也误导）。
+  // 启动时的会话：**空工作区占位会话**（无文件上下文、结构性只读）。它也是标签栏不显示的
+  // 那一个——只承载「还没有打开任何文件」这个状态（M851：不再预置演示文档——首屏把内部注解 /
+  // 错误占位 / 中英混排的伪文档当正文，既不真实也误导；change make-no-tab-empty-workspace-nov28
+  // 起它不再可编辑）。
   const initialSession = makeSession("", undefined, initialMode);
   sessions.push(initialSession);
   active = initialSession;
@@ -3063,7 +3068,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     // 否则任何读 `view.state` 的命令都会作用在上一份文档上，⌘S 尤其危险。
     view.setState(isDocSession(session) ? session.state : imageSentinelState());
     // 恢复该会话的滚动位置。没有快照（新建会话）时不干预：新装载的文档由
-    // reloadSession 复位到篇首，未命名空文档本来就在篇首。
+    // reloadSession 复位到篇首，空工作区占位会话本来就在篇首。
     if (session.scroll !== undefined) {
       const { snapshot, x } = session.scroll;
       view.dispatch({ effects: snapshot });
@@ -3341,16 +3346,17 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       if (!isDocSession(session)) return;
       const mode = modeForPath(path, defaultMode);
       // 可编辑性按文件类（与 mode 正交，唯一判据 isEditablePath）：path 一换就要一起改，
-      // 否则会话会停在上一份文件的编辑性上。vault 外只读会话恒不可编辑——三处重算的
-      // 同一表达式（design §5.2）。
-      const editable = !session.external && isEditablePath(path);
+      // 否则会话会停在上一份文件的编辑性上。无路径（防御性：空工作区占位会话）恒不可编辑，
+      // vault 外只读会话恒不可编辑——三处重算的同一表达式（design §5.2）。
+      const emptyWorkspace = path === undefined;
+      const editable = !session.external && !emptyWorkspace && isEditablePath(path);
       session.path = path;
       session.mode = mode;
       session.editable = editable;
-      // 内容进来了就退出结构性只读（change fix-no-tab-empty-state-nov27）：空 pane 装载文档 /
-      // 恢复备份后按路径与 dirty 的真实值重新裁决；装配层的同一同步点随后会再算一次（幂等）。
-      // MUST NOT 让上一帧的空态标记留到有内容的文档上——那会隐藏一个本应可见的可编辑光标。
-      session.structuralReadOnly = false;
+      // 有路径文档装载 / 恢复备份后退出结构性只读（change make-no-tab-empty-workspace-nov28）；
+      // 无路径仍按空工作区裁决。装配层的同一同步点随后会再算一次（幂等）。MUST NOT 让上一帧
+      // 的空态标记留到有内容的文档上——那会隐藏一个本应可见的可编辑光标。
+      session.structuralReadOnly = emptyWorkspace;
       // 内容进来了（壳会话的「填充」这一步也走这里，M283）：`loaded` 置真之后按需装载不再触发。
       session.loaded = true;
       session.cleanDoc = doc;
@@ -3485,7 +3491,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       if (session.editable === editable && session.structuralReadOnly === structuralReadOnly) return;
       if (!sessions.includes(session)) return; // 防御性：不属于本实例的会话忽略
       // vault 外只读会话是**结构性只读**（change quick-open-file-oct23 的 D2）：可编辑性在
-      // 创建点定死，运行期没有改判路径（本入口只服务「分栏态空 pane 的输入闸门」那一条）。
+      // 创建点定死，运行期没有改判路径（本入口只服务空工作区 / 首启 tips 的结构性只读）。
       if (session.external) return;
       // 图片会话是**结构性只读**（M629）：editable 恒 false，运行期没有改判路径，
       // 也没有可重配的文本面。这里守住而不是让下面喂 "image" 给 modeAndWrapEffects。
@@ -3532,7 +3538,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         activate(neighbour);
         return;
       }
-      // 最后一个也关了——回到未命名空文档（标签栏随之隐藏）。
+      // 最后一个也关了——回到空工作区占位会话（标签栏随之隐藏）。
       const blank = makeSession("", undefined, defaultMode);
       sessions.push(blank);
       activate(blank);
@@ -3576,7 +3582,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // 行高亮的装饰随会话作废；计时器与持有者先清，避免悬挂回调指向已丢弃的 state。
       clearLineHighlight();
       closeLinkSuggestion(view);
-      // 全部会话作废，只留一个未命名空文档（vault 切换 / 关闭）。旧会话对象随 GC 回收。
+      // 全部会话作废，只留一个空工作区占位会话（vault 切换 / 关闭）。旧会话对象随 GC 回收。
       sessions.length = 0;
       // mtime 缓存按路径索引，vault 换了同 rel 路径指向别的文件——随会话一起作废。
       mtimeCache.clear();

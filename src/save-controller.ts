@@ -126,10 +126,10 @@ export interface RecoveryFailures {
 }
 
 export interface SaveController {
-  /** 前台标签的 vault 相对路径；未打开文件为 undefined。 */
+  /** 前台标签的 vault 相对路径；空工作区（没有打开文件）为 undefined。 */
   displayedPath(): string | undefined;
   /** 前台文档的 dirty 守卫；返回 false 时已给出人话提示。用于「就地替换前台标签」
-   *  这一类会丢内容的动作（当前唯一调用点是打开文件时前台是未命名文档的情形）。 */
+   *  这一类会丢内容的动作；空工作区恒 clean，直接放行。 */
   guard(action: string): boolean;
   /** 切换 vault 的 dirty 前置判据（M149 判据原样，M163 起调用形态变了）：**任一**标签有
    *  未保存修改就拦下——切 vault 会把全部标签一起作废。返回被拦下的信息（脏标签数 +
@@ -476,19 +476,16 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   }
 
   /** 前台文档的 dirty 守卫（M130 语义不变）。用于「就地替换前台标签」这一类会丢内容的
-   *  动作——当前唯一调用点是打开文件时前台是**未命名文档**：它没有路径，内容只活在内存
-   *  里，被复用掉就等于丢弃；有文件路径的前台标签之间是标签切换，不丢内容，因此不设守卫。
+   *  动作——有文件路径的前台标签之间是标签切换，不丢内容，因此不设守卫；无路径的前台是
+   *  **空工作区**（change make-no-tab-empty-workspace-nov28），结构性只读、恒 clean，
+   *  没有内容可丢，直接放行。
    *
-   *  无落盘基准的 dirty（未打开文件 / 不可编辑文件类 / 未登记 revision）不能沿用
+   *  无落盘基准的 dirty（不可编辑文件类 / 未登记 revision）不能沿用
    *  「请先保存（Cmd+S）」——那是一条走不通的建议；改指撤销修改，给出真正的出口。 */
   function guard(action: string): boolean {
     const path = displayedPath();
-    if (path === undefined) {
-      if (!editor.isDirty()) return true;
-      toast(t("D230", { action }))
-        .classList.add(SAVE_GUARD_TOAST_CLASS);
-      return false;
-    }
+    // 空工作区没有活动文档、没有 dirty：没有可拦的内容（打开文件就地复用占位会话）。
+    if (path === undefined) return true;
     if (!isDirty(path)) return true;
     const blocked = saveBaseline(path) === null
       ? t("D230", { action })
@@ -570,14 +567,13 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
    *  按 Cmd+S，而 Cmd+S 无效」的死态。提示必须给出脱离 dirty 的动作（Cmd+Z 撤销）。
    *
    *  触发面（editable-non-md-files 收窄后）：已打开的可编辑文本类文件都登记了磁盘 revision，
-   *  所以真正可达的只有两种——没有打开文件（空态 / 新建文档），与「有路径但尚未读到快照 /
-   *  未登记基准」。前者的文案说「修改仍在编辑器内」，后者说「尚未可保存」。旧的
-   *  「Lumir 只保存 Markdown 文件」随非 md 可保存而废止（它现在是一句假话）。
-   *  备份路径不调用本函数（每 2s 一次会砸提示），其跳过口径见 backupDirty。 */
-  function reportUnsaveable(path: string | undefined): void {
-    toast(
-      path === undefined ? t("D233") : t("D234"),
-    ).classList.add(SAVE_GUARD_TOAST_CLASS);
+   *  所以真正可达的只有「有路径但尚未读到快照 / 未登记基准」——文案说「尚未可保存」。
+   *  无路径的空工作区不触发本函数（结构性只读、恒 clean，没有保存目标；change
+   *  make-no-tab-empty-workspace-nov28）。旧的「Lumir 只保存 Markdown 文件」随非 md
+   *  可保存而废止（它现在是一句假话）。备份路径不调用本函数（每 2s 一次会砸提示），
+   *  其跳过口径见 backupDirty。 */
+  function reportUnsaveable(): void {
+    toast(t("D234")).classList.add(SAVE_GUARD_TOAST_CLASS);
   }
 
   /** toasts 里点名的文档：多标签下每条保存侧提示都必须说清「是哪一份」，
@@ -591,7 +587,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   async function saveDocument(path: string): Promise<boolean> {
     const expectedRevision = saveBaseline(path);
     if (expectedRevision === null) {
-      if (isDirty(path)) reportUnsaveable(path);
+      if (isDirty(path)) reportUnsaveable();
       return false;
     }
     if (saving.has(path) || !isDirty(path)) return false;
@@ -1107,10 +1103,9 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
       // 人话提示（D234）——对一张图片说「尚未可保存」是假信息。
       if (!isDocSession(session)) return;
       const path = session.path;
-      if (path === undefined) {
-        if (editor.isDirty()) reportUnsaveable(path);
-        return;
-      }
+      // 空工作区（无路径占位会话）没有活动文档、没有 dirty 与保存目标：⌘S 是空操作，
+      // 不给「不可保存」提示（change make-no-tab-empty-workspace-nov28）。
+      if (path === undefined) return;
       await saveDocument(path);
     },
     handleExternalChange,

@@ -1008,30 +1008,48 @@ body {
   color: var(--danger);
   background-color: var(--code-bg);
 }
-/* 空 pane 引导（M322，文案 D369）：pane 在场但零标签时正文区的水印层——绝对定位盖在该
-   pane 的编辑器之上（**透明底**：底下的 scratch 在可编辑豁免档仍透得出；前台未命名文档是
-   dirty 草稿时引导让位，谓词在 pane-layout 的 emptyPaneGuideVisible）。指针用 `default`
-   而不是 `text`：分栏空 pane 的正文是结构性只读，`text` 光标会暗示「这里能打字」。
-   常驻 mountEl 内、`hidden` 切换在场 / 离场，单 pane 恒隐——单 pane 常态逐像素不变
-   （构造上零影响）。只消费既有 token。 */
-.pane-empty-guide {
+/* 空工作区（change make-no-tab-empty-workspace-nov28）：无带路径标签的文档 pane 的完整表面
+   ——绝对定位盖在该 pane 的编辑器之上（**不透明底**：空工作区不是一份可编辑文档，底下没有
+   需要透出的内容），承接点击使正文不成为焦点落点。标题一句 + 两个动作；动作钮复用
+   `.editor-notice-action` 的形态（同一套按钮样式，不引入第二种）。常驻 mountEl 内、`hidden`
+   切换在场 / 离场；harness pane 没有这个元素。只消费既有 token。 */
+.pane-empty-workspace {
   position: absolute;
   inset: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: var(--sp-6);
+  gap: var(--sp-5);
+  padding: var(--sp-10);
   text-align: center;
+  background: var(--content-bg);
+  cursor: default;
+}
+.pane-empty-title {
+  margin: 0;
+  color: var(--text-3);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
+}
+.pane-empty-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+/* 未装载 vault 时「新建笔记」禁用：树里没有根，点击只会静默落空；不给死按钮。 */
+.pane-empty-actions .editor-notice-action:disabled {
   color: var(--text-3);
   cursor: default;
 }
+.pane-empty-actions .editor-notice-action:disabled:hover {
+  background: var(--content-bg);
+}
 /* display:flex 会盖掉 UA 的 [hidden] 规则，显式补回（同 .titlebar-identity / .editor-notice） */
-.pane-empty-guide[hidden] {
+.pane-empty-workspace[hidden] {
   display: none;
 }
-/* 结构性只读前台（分栏空 pane / 首启 tips，change fix-no-tab-empty-state-nov27）不画 CM 插入
+/* 结构性只读前台（空工作区 / 首启 tips，change make-no-tab-empty-workspace-nov28）不画 CM 插入
    光标：类由 src/editor.ts 的 `modeExtensions` 按会话 `structuralReadOnly` 挂在 `.cm-editor`
    外层（随 mode Compartment 重配）。只隐藏**光标层**——`.cm-selectionLayer` 不受影响，只读
    内容仍可选中复制；`tabindex` / `aria-readonly` 与焦点归还不改（点击仍激活 pane）。MUST NOT

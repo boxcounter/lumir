@@ -19,44 +19,42 @@ const flush = async () => {
 /** 收尾：清掉崩溃备份排期的定时器（否则测试结束后它还会跑一次真的备份写入）。 */
 const stopTimers = (rig: Rig) => rig.controller.noteVaultReset();
 
-test("guard：无路径 / 不可编辑文件类 / 未登记基准 / 有基准，各给出口，clean 直接放行", () => {
+test("guard：空工作区放行 / 不可编辑文件类 / 未登记基准 / 有基准，各给出口，clean 直接放行", () => {
   const rig = createRig();
 
-  // 未命名文档：内容只活在内存里，出口是撤销而不是保存
-  rig.editor.open(undefined, "草稿");
-  rig.editor.edit(undefined, "草稿改");
+  // 空工作区（无路径）结构性只读、恒 clean：没有可拦的内容，直接放行（change
+  // make-no-tab-empty-workspace-nov28；旧的无路径 dirty 出口已不可达）。
+  rig.editor.open(undefined, "");
   assert.equal(rig.controller.displayedPath(), undefined);
-  assert.equal(rig.controller.guard("打开文件"), false);
-  assert.match(rig.toasts.live()[0].text, /无法打开文件/);
-  assert.match(rig.toasts.live()[0].text, /Cmd\+Z/);
-  assert.ok(rig.toasts.live()[0].classes.has(SAVE_GUARD_TOAST_CLASS));
+  assert.equal(rig.controller.guard("打开文件"), true);
+  assert.equal(rig.toasts.live().length, 0);
 
-  // 不可编辑文件类（image/binary 形态）：同样不能建议「请先保存」
+  // 不可编辑文件类（image/binary 形态）：不能建议「请先保存」，改指撤销
   rig.editor.open("pic.png", "binary", { editable: false });
   rig.editor.edit("pic.png", "binary 改");
   assert.equal(rig.controller.guard("打开文件"), false);
-  assert.match(rig.toasts.live()[1].text, /Cmd\+Z/);
+  assert.match(rig.toasts.live()[0].text, /Cmd\+Z/);
 
   // 可编辑文本类但**未登记磁盘 revision**（M130 兜底口径保留的防再犯分支）
   rig.editor.open("notes.txt", "纯文本", { mode: "code" });
   rig.editor.edit("notes.txt", "纯文本改");
   assert.equal(rig.editor.handle.sessionForPath("notes.txt")!.editable, true, "文本类会话可编辑");
   assert.equal(rig.controller.guard("打开文件"), false);
-  assert.match(rig.toasts.live()[2].text, /无法打开文件/);
+  assert.match(rig.toasts.live()[1].text, /无法打开文件/);
 
   // 非 md 文本类登记了基准后同样是「请先保存」（editable-non-md-files 的核心翻转）
   rig.editor.open("notes2.txt", "纯文本", { mode: "code" });
   rig.controller.noteOpened("notes2.txt", "rev-1");
   rig.editor.edit("notes2.txt", "纯文本改");
   assert.equal(rig.controller.guard("打开文件"), false);
-  assert.match(rig.toasts.live()[3].text, /请先保存（Cmd\+S）/);
+  assert.match(rig.toasts.live()[2].text, /请先保存（Cmd\+S）/);
 
   // 可编辑 + 有基准：正常出口是 ⌘S
   rig.editor.open("a.md", "# A");
   rig.controller.noteOpened("a.md", "rev-1");
   rig.editor.edit("a.md", "# A 改");
   assert.equal(rig.controller.guard("打开文件"), false);
-  assert.match(rig.toasts.live()[4].text, /请先保存（Cmd\+S）/);
+  assert.match(rig.toasts.live()[3].text, /请先保存（Cmd\+S）/);
 
   // clean：放行（判据是前台会话，此处前台是 a.md）
   rig.editor.handle.markCleanOf("a.md", "# A 改");
@@ -246,10 +244,11 @@ test("save：不可保存的 dirty 文档按 ⌘S 必须给人话反馈，不静
   assert.equal(rig.backend.countOf("document_save"), 1, "无基准不得发起写入");
   assert.match(rig.toasts.live().at(-1)!.text, /尚未可保存/);
 
-  rig.editor.open(undefined, "草稿");
-  rig.editor.edit(undefined, "草稿改");
+  // 空工作区：⌘S 是空操作，不给「不可保存」提示（没有活动文档 / dirty / 保存目标）
+  rig.editor.open(undefined, "");
+  const before = rig.toasts.live().length;
   await rig.controller.save();
-  assert.match(rig.toasts.live().at(-1)!.text, /没有打开的文件/);
+  assert.equal(rig.toasts.live().length, before, "空工作区的 ⌘S MUST NOT 产生提示");
   stopTimers(rig);
 });
 

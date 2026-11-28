@@ -19,11 +19,11 @@ import { t } from "./copy";
 
 /**
  * 行号 gutter 是否在场（change fix-no-tab-empty-state-nov27）：全局开关 / ⌥G 临时档之外，
- * 还要求**该文档 pane 有带路径标签**。没有标签的空态（含单 pane 未命名 scratch）不显示行号
+ * 还要求**该文档 pane 有带路径标签**。没有标签的空工作区（单 pane 与分栏同一规则）不显示行号
  * ——空编辑器上挂一列「1」既无信息量，又与「按键无反应」的只读/可编辑歧义叠在一起。
  *
  * `hasTabs` 是 per-pane 输入（装配层 `renderAllTabStrips` 的既有 `hasTabs`，与标签条 /
- * 空 pane 引导同一定义），本函数是唯一把三者合起来的判据；`src/editor.ts` 的
+ * 空工作区同一定义），本函数是唯一把三者合起来的判据；`src/editor.ts` 的
  * `gutterExtensions()` 直接消费它，别处 MUST NOT 另写一份表达式。
  */
 export function gutterVisible(hasTabs: boolean, lineNumbersOn: boolean, gotoGutterVisible: boolean): boolean {

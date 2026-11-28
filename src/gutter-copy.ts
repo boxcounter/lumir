@@ -15,7 +15,7 @@
  *  （剪贴板 / 反馈 / 失败处置）由装配层决定。 */
 export interface GutterCopyPort {
   /**
-   * 复制 `{path}:{line}`。`path` 缺省 = 文档没有路径（未命名文档 / 空态）——出口 MUST NOT
+   * 复制 `{path}:{line}`。`path` 缺省 = 空工作区（没有打开的文档）——出口 MUST NOT
    * 编造路径，SHALL 走失败反馈且不写剪贴板。
    */
   copy(path: string | undefined, line: number): void;

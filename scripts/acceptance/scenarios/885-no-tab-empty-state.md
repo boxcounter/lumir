@@ -1,104 +1,127 @@
 ---
-# 885（change fix-no-tab-empty-state-nov27）：无 TAB 空态的呈现修正。
+# 885（change make-no-tab-empty-workspace-nov28）：无 TAB 统一为空工作区。
 #
-# 本场景只覆盖真机 WKWebView 上**行为可观测**的两条：单 pane scratch 的「无行号但可输入」，
-# 以及分栏空 pane 的「无行号、键入无效、引导在场」。行号 gutter 与插入光标的**像素**判据在
-# screenshot 里留证（光标层是否真的没画，chromium 层的结构断言在
-# tests/visual/scenes/no-tab-empty-state-nov27.spec.ts；真机像素归 Alex 过目，不在本场景判红）。
-# 首启 tips / 老用户 D107 覆盖层收窄的判据同样在视觉场景；本场景不伪造首启状态。
+# 本场景覆盖真机 WKWebView 上**行为可观测**的四条：
+#   ① 关掉最后一个标签后是空工作区：标题 + 两个动作在场，focus 落在主操作，正文结构性只读；
+#   ② 空工作区不能产生内容：负向键入不落字、无「（未保存）」、⌘S 不弹「不可保存」；
+#   ③ ⌥G 在空工作区没有编辑器目标（输入条不打开）；
+#   ④ 分栏空 pane 同合同：右 pane 空工作区、Quick Open 取消后焦点回主操作、左 pane 文档不受影响。
+# 行号 gutter 与插入光标的**像素**判据在 screenshot 留证（chromium 结构断言在
+# tests/visual/scenes/no-tab-empty-workspace-nov28.spec.ts）；本场景不伪造首启状态。
 #
-# 2026-11-27 真机两轮定位：
-# 1) 首跑 `open` 等待「第 1 行」60s 超时——AX 快照显示文档其实已装载，只是 fixture 以
-#    `## 段一` 开头、没有「第 1 行」；marker 改为 fixture 实有的 `段一`。
-# 2) r2 打开 / 单 pane scratch 通过，但 F2 分栏无效果。证据
-#    `.local/acceptance/2026-11-27-ux-goal-r2-885.log`：隔离 config.json 已写入
-#    `"keys": {"F2": "pane.split"}`，诊断日志无 keys 的 config_warning；同一产品路径在
-#    chromium 视觉层（m320）与真机默认键（场景 79 的 `alt+s`）均成立。F2 是功能键注入 /
-#    配置键名匹配的不可靠腿，不作为本场景的分栏通道。改用产品**默认** `⌥S`（`Alt-KeyS`，
-#    scope global，场景 79 已真机验证）——真实用户路径，不依赖 [keys] 覆盖。
-# 3) r3 分栏与引导已通过，但 `do: type` 把 MUST-NOT-LAND 打进左文档：r3 AX 快照显示分栏后
-#    空 pane 的第二个 AXTextArea 已 `(focused)`，而 `type` 动作固定取第一个 AXTextArea（左文档）
-#    注入。不是产品结构性只读失效，是场景没有对准“当前焦点”。改为先点第二个 AXTextArea 建立
-#    落点，再用 `typeInNode` 显式指向第二个 AXTextArea；`allowNoLanding: true` 表示这个只读
-#    宿主的负向注入不要求落地（partial / duplicated / target-lost 仍判败），后续无文本 / 无
-#    dirty 断言原样保留。本轮只跑 `--check`；真机待主会话重排。
+# 2026-11-27 的旧版本（fix-no-tab-empty-state-nov27）验的是「单 pane scratch 仍可输入」；
+# 该形态已被 Alex 2026-11-28 裁决取消，本场景同步改判为「空工作区不可输入」。
 id: "885-no-tab-empty-state"
 item: 885
 tier: full
-title: 无 TAB 空态：单 pane scratch 无行号但可输入；分栏空 pane 无行号、键入无效、引导在场
+title: 无 TAB 空工作区：不可输入、无 dirty / 保存目标、两个动作与焦点落点；分栏同合同
 fixtures: [goto-line-long.md]
 open: goto-line-long.md
 marker: "段一"
 config:
   lineNumbers: "on"
 steps:
-  - name: 起点：文档打开、on 档 gutter 在场（后面「无标签后没有 gutter」的对照面）
+  - name: 起点：文档打开（后面「无标签后是空工作区」的对照面）
     do: settle
     expect:
       - label: 文档已装载（正观测）
         editor: { has: "第 2 行：填充段落" }
-      - shot: 01-有文档-on-档
+      - label: 有文档时没有空工作区标题
+        ax: { not: "没有打开的文档" }
+      - shot: 01-有文档
 
-  - name: 关掉最后一个标签，回到单 pane scratch
+  - name: 关掉最后一个标签，回到空工作区
     do: key
     key: "cmd+w"
     expect:
-      - label: 前台回到未命名空文档
+      - label: 正文标题点明空工作区
+        ax: { has: "没有打开的文档" }
+      - label: 主操作在场（走既有 Quick Open）
+        ax: { has: "/AXButton[^\\n]*打开笔记…/" }
+      - label: 次操作在场（走既有内联命名）
+        ax: { has: "/AXButton[^\\n]*新建笔记/" }
+      - label: modeline 显示无当前文件
         ax: { has: "无当前文件" }
-      - shot: 02-无标签-单-pane
+      - label: 旧的水印引导不再出现
+        ax: { not: "在左栏选一个文件" }
+      - label: 焦点落在主操作（不是正文 / body）
+        ax: { focused: "AXButton" }
+      - shot: 02-空工作区
 
-  - name: 点正文并键入：scratch 仍可编辑（M149 形态不被本 change 收紧）
-    do: clickEditor
-  - name: 键入 scratch 文本
-    do: type
-    text: "NO-TAB-SCRATCH"
+  - name: 在空工作区正文里键入（结构性只读宿主）
+    do: typeInNode
+    target: { role: AXTextArea, name: ".*", nth: 0 }
+    text: "NO-TAB-LAND"
+    allowNoLanding: true
     expect:
-      - label: 键入真的落进空文档（不是「按键被吞」的假只读）
-        ax: { has: "NO-TAB-SCRATCH" }
-      - shot: 03-scratch-可输入
+      - label: 键入没有落进任何文档
+        ax: { not: "NO-TAB-LAND" }
+      - label: 没有未保存修改标记
+        ax: { not: "（未保存）" }
+      - shot: 03-空工作区-键入无效
 
-  - name: 撤销回 clean，避免打开守卫拦住下一步
+  - name: 空工作区按 ⌘S：没有保存目标
     do: key
-    key: "cmd+z"
+    key: "cmd+s"
     expect:
-      - label: 撤销后文本退出（确认上一步落的是可撤销的编辑，不是残留渲染）
-        ax: { not: "NO-TAB-SCRATCH" }
+      - label: 不弹「无法保存 / 没有打开文件」类提示
+        ax: { not: "无法保存" }
+      - label: 不出现「没有打开的文件」的不可保存提示
+        ax: { not: "没有打开的文件" }
+      - shot: 04-空工作区-cmd-s
 
-  - name: 重新打开文档：gutter 同帧恢复
+  - name: 空工作区按 ⌥G：键位作用域是 editor，主操作持焦时不打开输入条
+    do: key
+    key: "alt+g"
+    expect:
+      - label: 跳转输入条不打开（空工作区没有编辑器目标）
+        ax: { not: "跳转到行" }
+      - label: 焦点仍在空工作区主操作
+        ax: { focused: "AXButton" }
+      - shot: 05-空工作区-altg
+
+  - name: 重新打开文档：空工作区离场
     do: open
     file: goto-line-long.md
     marker: "段一"
     expect:
       - label: 文档回到前台
         editor: { has: "第 2 行：填充段落" }
-      - shot: 04-重开文档-gutter-恢复
+      - label: 空工作区标题离场
+        ax: { not: "没有打开的文档" }
+      - shot: 06-重开文档
 
-  - name: 分栏得到空 pane（产品默认 ⌥S；场景 79 同一条真机路径）
+  - name: 分栏得到空的右 pane（产品默认 ⌥S；场景 79 同一条真机路径）
     do: key
     key: "alt+s"
     expect:
       - label: 分栏已发生（分隔条在场）
         ax: { has: "分隔条" }
-      - label: 空 pane 引导在场（D369）
-        ax: { has: "在左栏选一个文件" }
-      - shot: 05-分栏空-pane
+      - label: 空 pane 是同一空工作区（标题 + 动作）
+        ax: { has: "没有打开的文档" }
+      - label: 空 pane 的旧水印文案不再出现
+        ax: { not: "在左栏选一个文件" }
+      - shot: 07-分栏空工作区
 
-  - name: 点第二个 AXTextArea（右 pane）建立落点——真实焦点在空 pane，不在左文档
+  - name: 点右 pane 的「打开笔记…」：先激活所属 pane，再打开 Quick Open
     do: click
-    target: { role: AXTextArea, name: ".*", nth: 1 }
+    target: { any: "/^打开笔记…$/" }
     expect:
-      - shot: 05b-空-pane-落点
+      - label: 快速打开浮层已打开（输入框读屏名）
+        ax: { has: "按路径快速打开文件" }
+      - shot: 08-空工作区-打开笔记浮层
 
-  - name: 在空 pane 里键入：结构性只读拒收，且不出现「打了没反应」的脏状态
-    do: typeInNode
-    target: { role: AXTextArea, name: ".*", nth: 1 }
-    text: "MUST-NOT-LAND"
-    allowNoLanding: true
+  - name: Esc 取消：不打开任何文件，焦点回空工作区主操作
+    do: key
+    key: "escape"
     expect:
-      - label: 键入没有落进任何文档
-        ax: { not: "MUST-NOT-LAND" }
-      - label: 没有未保存修改标记
-        ax: { not: "（未保存）" }
-      - shot: 06-空-pane-键入无效
-
+      - label: 浮层收起
+        ax: { not: "按路径快速打开文件" }
+      - label: 空工作区标题仍在
+        ax: { has: "没有打开的文档" }
+      - label: 焦点回主操作（不落正文 / 不串到左 pane）
+        ax: { focused: "AXButton" }
+      - label: 左 pane 的文档原样在场
+        editor: { has: "第 2 行：填充段落" }
+      - shot: 09-空工作区-取消回焦点
 ---

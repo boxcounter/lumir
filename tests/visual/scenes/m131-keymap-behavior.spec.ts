@@ -114,32 +114,14 @@ async function openFile(page: Page, files: Record<string, string>, name: string)
   await expect(page.locator(".modeline-path")).toHaveText(name);
 }
 
-/** 装载 vault 且编辑器停在**未命名空文档**（无文件上下文 → 不可保存，dirty 只由文本决定）。
- *
- *  M164 判据变更：M163 起「装载 vault 后一个标签都没有」是**空 vault 首入态**——D107 的引导层
- *  盖住正文（`.editor-notice` 拦截指针事件，编辑器点不进去），因此它不再是「装载后直接可得」
- *  的状态。未命名空文档改经「打开一个文件再关掉它的标签」到达：`closeTabNow` 会落在它上面
- *  并撤下覆盖层（`src/tabs.ts` / `src/editor.ts` 的 `closeSession`）。本函数验的是未命名文档
- *  上的键位与撤销语义，与「怎么到达它」无关；引导层本身另有一条断言钉住（别让它静默回退）。 */
-async function openEmptyEditor(page: Page): Promise<string> {
-  await stubTauri(page, {
-    entries: [{ path: "blank.md", kind: "file", size: 6, mtime_ms: 0 }],
-    files: { "blank.md": "BLANK\n" },
-  });
-  await page.goto("/");
-  await expect(page.locator(".editor-notice")).toContainText("这个 vault 还没有打开的文件");
-  await page.locator('.ft-row[title="blank.md"]').click();
-  await expect(page.locator(".modeline-path")).toHaveText("blank.md");
-  await page.keyboard.press("Meta+w");
-  await expect(page.locator(".modeline-path")).toHaveText("无当前文件");
-  await expect(page.locator(".tab")).toHaveCount(0);
-  await page.locator(".cm-content").click();
-  return readDocument(page);
-}
+// 撤销 / 重做的判据落在**有路径文档**上：change make-no-tab-empty-workspace-nov28 后
+// 无 Tab 是空工作区（结构性只读，不能输入），旧「未命名空文档里键入」的入口已不存在；
+// 撤销语义本身与文档是否有路径无关。空工作区的呈现与不可输入由
+// tests/visual/scenes/no-tab-empty-workspace-nov28.spec.ts 覆盖。
 
 const unsavedMark = (page: Page) => page.locator(".modeline-path", { hasText: "（未保存）" });
 
-/** dirty 镜像探针（document_set_dirty）：无文件上下文的编辑器没有 modeline 标记，dirty 只能从这里看。 */
+/** dirty 镜像探针（document_set_dirty）：直接读前端给后端的退出守卫镜像，不依赖 modeline 文本。 */
 const dirtyMirror = (page: Page) =>
   page.evaluate(() => (window as unknown as { __dirtyReports: boolean[] }).__dirtyReports.at(-1));
 
@@ -218,7 +200,8 @@ test("⌃A 在表格滚动容器焦点内同样到行首（widget 焦点委托�
 });
 
 test("撤销：⌘Z 与 ⌃/ 都回退输入，回到已保存内容时 dirty 收窄为 false", async ({ page }) => {
-  const baseline = await openEmptyEditor(page);
+  await openFile(page, { "undo.md": DOC }, "undo.md");
+  const baseline = DOC;
 
   await setCursor(page, baseline.length);
   await page.keyboard.type("draft");
@@ -245,7 +228,8 @@ test("撤销：⌘Z 与 ⌃/ 都回退输入，回到已保存内容时 dirty �
 });
 
 test("重做：⌘⇧Z 与 ⌃⌥_ 都恢复被撤销的输入", async ({ page }) => {
-  const baseline = await openEmptyEditor(page);
+  await openFile(page, { "redo.md": DOC }, "redo.md");
+  const baseline = DOC;
 
   await setCursor(page, baseline.length);
   await page.keyboard.type("redo");

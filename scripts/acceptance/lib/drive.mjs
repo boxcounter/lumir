@@ -121,9 +121,9 @@ export async function settle(cu, pid, { timeoutMs = 30_000, now = Date.now, slee
  *
  * 四种合法终态（M164 补第三种；change add-first-run-onboarding-nov25 补第四种）：
  *   1. 已装载 vault 且有文件行 + 编辑器可读（严格门的默认形态）；
- *   2. 已装载 vault 但一个标签都没恢复 → D107 的空 vault 引导盖住正文，编辑器从 AX 消失。
- *      这是**启动常态**（该 vault 还没有会话历史），不是异常——判据是「树头部入口在 + 引导
- *      文案在」，两者都是正观测；
+ *   2. 已装载 vault 但一个标签都没恢复 → 统一空工作区（「没有打开的文档」+ 两个动作）盖住
+ *      正文，编辑器从 AX 消失。这是**启动常态**（该 vault 还没有会话历史），不是异常——判据是
+ *      「树头部入口在 + 空工作区标题在」，两者都是正观测；
  *   3. 未打开 vault 的空态（D5/D6）——只有 `requireVault: false` 才认（见下）；
  *   4. **首启模式**（无 `last_vault`，启动面首启态）——AX 里是唯一真实的「添加 vault」/
  *      「Add vault」按钮（D1034），树 / 编辑器都被启动面盖住。同样只有 `requireVault: false`
@@ -138,7 +138,7 @@ export async function settle(cu, pid, { timeoutMs = 30_000, now = Date.now, slee
  */
 /**
  * **语言无关的就绪判据**（M282，change ui-language-i18n）：产品默认语言已裁为 `en`，而这里的
- * 判据原来是写死的中文措辞（D96 / D5 / D6 / D107）——语言一变，套件在**启动就超时**（实测：
+ * 判据原来是写死的中文措辞（D96 / D5 / D6 / 空工作区标题）——语言一变，套件在**启动就超时**（实测：
  * 场景 55 在默认 en 下 30s 未就绪）。因此四组措辞各接受两档：判据的意图是「那个入口在场」，
  * 不是「它是中文的」；语言的判定归场景自己的断言（`ax: { has: ... }` 按文案表取值）。
  * 措辞逐字取自 `src/copy-data.ts` 的 zh / en 列（同一份真源，改文案时这里会一起红）。
@@ -149,7 +149,7 @@ const LANG_PATTERNS = {
   header: /点击查看全部 vault|click to see all vaults/,
   emptyHint: /打开一个目录作为 vault|Open a folder as a vault/,
   openVault: /打开 vault|Open vault/,
-  emptyVault: /这个 vault 还没有打开的文件|No files opened in this vault yet/,
+  emptyWorkspace: /没有打开的文档|No document open/,
   // 首启模式（change add-first-run-onboarding-nov25）的唯一主操作（D1034）；只有
   // `requireVault: false` 才认（见 waitAppReady 的终态表）。
   firstRun: /^(添加 vault|Add vault)$/,
@@ -169,23 +169,23 @@ export async function waitAppReady(cu, pid, { timeoutMs = 30_000, requireVault =
     const hasFiles = ax.nodes.some((n) => n.role === "AXButton" && /\.md$/.test(n.title ?? ""));
     // 未打开空态在 AX 里的稳定标志：空态说明行 + 「打开 vault」入口（D5/D6 的文案）。
     const hasEmptyState = LANG_PATTERNS.emptyHint.test(ax.text) && LANG_PATTERNS.openVault.test(ax.text);
-    // **已装载 vault 但一个标签都没恢复**（M163 的「空 vault 首入态」）：树头部入口与文件行
-    // 都在，但 D107 的引导层盖住正文、编辑器随之从 AX 里消失。这是启动的**常态**（该 vault
-    // 还没有会话历史），严格门必须认它——否则每个场景都会在这一步超时。
-    const hasEmptyVaultNotice = LANG_PATTERNS.emptyVault.test(ax.text);
+    // **已装载 vault 但一个标签都没恢复**：树头部入口与文件行都在，但统一空工作区的表面盖住
+    // 正文、编辑器随之从 AX 里消失。这是启动的**常态**（该 vault 还没有会话历史），严格门必须
+    // 认它——否则每个场景都会在这一步超时。
+    const hasEmptyWorkspace = LANG_PATTERNS.emptyWorkspace.test(ax.text);
     // **首启模式**（change add-first-run-onboarding-nov25）：启动面盖住整窗、`#app` inert 且
     // aria-hidden，AX 里只剩唯一主操作「添加 vault」（D1034）。判据必须是**真实的按钮节点**
     // （role=AXButton + 精确读屏名），不是「AX 文本里出现过这句话」——空 AX / 只有静态文本
     // 一律不算就绪（REVIEW.md「读不到当成空」条）。严格门不认它：`requireVault: true` 时
     // 落到首启模式说明 `last_vault` 意外丢失，是场景要报红的现场，不是可放行的终态。
     const hasFirstRun = findNode(ax.nodes, { role: "AXButton", name: LANG_PATTERNS.firstRun }) !== null;
-    const treeReady = hasHeader && (hasFiles || hasEmptyVaultNotice)
+    const treeReady = hasHeader && (hasFiles || hasEmptyWorkspace)
       ? true
       : !requireVault && (hasEmptyState || hasFirstRun);
-    // 编辑器就位 = AXTextArea 可读，**或**上面那条空态引导正在覆盖它。后者是**正**判据
-    // （引导文案必须真的在 AX 里），不是「读不到就当就绪」——REVIEW.md 「读不到当成空」条禁的是后者。
+    // 编辑器就位 = AXTextArea 可读，**或**上面那条空工作区标题正在覆盖它。后者是**正**判据
+    // （标题文案必须真的在 AX 里），不是「读不到就当就绪」——REVIEW.md 「读不到当成空」条禁的是后者。
     // 首启模式同理：启动面盖住编辑器，唯一按钮是正观测（只随 requireVault: false 生效）。
-    const editorReady = ax.textarea !== null || hasEmptyVaultNotice || (!requireVault && hasFirstRun);
+    const editorReady = ax.textarea !== null || hasEmptyWorkspace || (!requireVault && hasFirstRun);
     if (treeReady && editorReady) seen += 1;
     else seen = 0;
     if (seen >= 2) {

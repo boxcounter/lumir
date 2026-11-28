@@ -807,9 +807,8 @@ test("双 pane 同步：两个 pane 的前台会话同时变化", async ({ page 
   await page.keyboard.press("F2");
   await expect(page.locator(".editor-pane")).toHaveCount(2);
   const rightPane = page.locator(".editor-pane").nth(1);
-  // 空 pane 的水印层盖在编辑器之上（点击它 = 把焦点交给该 pane 的编辑器，见 src/main.ts 的
-  // pane-empty-guide）；直接点 `.cm-content` 会被它拦住。
-  await rightPane.locator(".pane-empty-guide").click();
+  // 分栏已把右 pane 翻成活跃 pane（空工作区，正文不持焦）；树单击的打开落点就是活跃 pane，
+  // 不需要先点正文（change make-no-tab-empty-workspace-nov28 后空 pane 的正文也不再是入口）。
   await page.locator('.ft-row[title="b.md"]').click();
   await expect(rightPane.locator(".cm-content")).toContainText("Beta 正文");
   expect(await gutterCountsPerPane(page)).toEqual([0, 0]); // 切换前两个 pane 都没有 gutter
