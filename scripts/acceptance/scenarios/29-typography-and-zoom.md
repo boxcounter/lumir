@@ -49,7 +49,7 @@ steps:
       - label: 关掉最后一个标签落在统一空工作区：modeline「无当前文件」
         ax: { has: "无当前文件" }
       - label: 空工作区标题在场（正观测：不是还停在一份文档上）
-        ax: { has: "没有打开的文档" }
+        ax: { has: "开始使用" }
 
   - name: 配置通道端到端：font_size 32 写进隔离配置并重启（配置面的唯一入口）
     do: configWrite

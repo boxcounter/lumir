@@ -15,12 +15,12 @@ steps:
   - name: 启动落在「没有打开的文件」态（无 open:、无预置会话 ⇒ 一个标签都没恢复）
     do: waitFor
     waitFor:
-      has: ["没有打开的文档"]
+      has: ["开始使用"]
     timeoutMs: 40000
     expect:
       - shot: 01-无文档态
       - label: 正文是空工作区标题——本场景的前置状态就是「没有打开的文件」
-        ax: { has: "没有打开的文档" }
+        ax: { has: "开始使用" }
 
   - name: ⌘⇧A 打开 harness pane（无文档也能开）
     do: keys
@@ -83,7 +83,7 @@ null, expected a string`。前端在无上下文时给 `harness_send` 传了 nul
 ## 断言口径
 
 - **前置状态是构造出来的**（不是断言推出来的）：front-matter 不写 `open:`、也不预置会话 ⇒ 该 vault
-  一个标签都没恢复，启动落在统一空工作区的「没有打开的文档」态（`waitAppReady` 认这一
+  一个标签都没恢复，启动落在统一空工作区的「开始使用」态（`waitAppReady` 认这一
   形态，见套件 README 的「严格门」表）。这一状态在步骤里由空工作区标题正观测 + 步骤③的 D333
   chip 两条可区分断言共同锁定。
 - **chip D333**（`上下文：无（未打开文件）`）证明面板此刻确实是「无上下文」——修复的触发条件。

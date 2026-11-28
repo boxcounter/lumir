@@ -24,7 +24,7 @@
 `renderAllTabStrips` 的表达式同步收窄：
 
 ```ts
-const structuralReadOnly = foreground.path === undefined || firstRunTipsVisible;
+const structuralReadOnly = foreground.path === undefined || tipsCoversPane(assembly);
 editor.setSessionEditable(
   foreground,
   !structuralReadOnly && isEditablePath(foreground.path),
@@ -36,12 +36,13 @@ editor.setSessionEditable(
 
 ### 1.2 空工作区没有 goto-line 目标
 
-`editor.goto-line` 是 editor 作用域命令，但空工作区的正文仍有 `tabindex=0`（结构性只读宿主），
-命令因此可达。占位会话此前被它当成一份可跳转的文档：⌥G 会打开输入条（真机 885 的 AXTextField
-「1」即此）。本 change 在 `editor.goto-line` 的入口加门：`active.path === undefined` 时直接返回，
-不打开输入条、不动焦点。有路径文档——含 vault 外只读、尚未装载等异常会话——行为不变。
+`editor.goto-line` 是 editor 作用域命令，但空工作区的编辑器宿主为 `inert`，region 持焦时命令
+本就不以正文为目标。占位会话此前被它当成一份可跳转的文档：⌥G 会打开输入条（真机 885 的
+AXTextField「1」即此）。本 change 在 `editor.goto-line` 的入口加门：`active.path === undefined`
+时直接返回，不打开输入条、不动焦点。有路径文档——含 vault 外只读、尚未装载等异常会话——行为不变。
 
-回归：结构层「正文持焦 + ⌥G 不打开」；native 885 用真实 ⌥G 键位复验。
+回归：结构层「region 持焦 + ⌥G 不打开」与「程序 focus 被 inert 正文拒绝」；native 885 用真实
+⌥G 键位复验（本批未跑）。
 
 ## 2. 空工作区表面
 
@@ -60,7 +61,7 @@ region 由可见 `h2` 命名，四项是带 `h3` 的列表项，仅 `tabindex=-1
 `firstRunTipsVisible` 是全局 flag，但 tips 元素只挂在 root doc pane 的 mountEl。空工作区的在场判据
 因此 MUST 按**宿主关系**（`firstRunTipsEl.parentElement === assembly.mountEl`）收窄，MUST NOT 用全局
 flag 隐藏所有 pane 的空工作区：首启收起 harness 再分栏时，右 pane 既没有 tips，也不该丢掉自己的
-空工作区与动作（P2-2）。结构只读里 tips 那一维也按同一宿主判据收窄；无路径本身仍使右 pane 只读。
+共享 tips region（P2-2）。结构只读里 tips 那一维也按同一宿主判据收窄；无路径本身仍使右 pane 只读。
 
 ### 2.3 D107 空 vault 覆盖层并入空工作区
 
@@ -79,7 +80,7 @@ function focusDocPaneEntry(paneId: PaneId): void
 
 所有「把焦点交还文档 pane」的路径改走它：复合句柄的 `focusPreservingReadingPosition`、标签条的 `focusEditor`、`pane.split` / `pane.other` / pane 收起、Close All 收尾、**vault 切换器**、Quick Open / goto-line / 遮罩 / 设置面板的 `restoreFocus`。空 pane 的正文因此 MUST NOT 成为焦点落点；有文档的 pane 行为逐字不变。vault 切换器保留自己的阅读位置快照取 / 写，只把 `focusEditor` 的实现换成这个入口（P2-1）。
 
-关闭最后一个标签的路径补一次交还：`closeTabNow` 在同步点之后，若本 pane 已无可见标签则调用 `focusEditor`（在装配层解析为上面的入口）。这样 `×` 按钮随 DOM 移除后焦点不会掉回 `body`，⌘W 关掉最后一个标签也不会把焦点留在只读正文里。
+关闭最后一个标签的路径补一次交还：`closeTab` 在 `await resolveClose(session)` 之后、若本 pane 已无可见标签则调用 `focusEditor`（在装配层解析为上面的入口）。Close All 不在 `closeTab` 里重复交还，而由批量收尾自己调用一次。这样 `×` 按钮随 DOM 移除后焦点不会掉回 `body`，⌘W 关掉最后一个标签也不会把焦点留在 inert 正文里。
 
 ### 3.1 非活跃空 pane 的激活
 

@@ -24,7 +24,7 @@ Alex 2026-11-28 明确裁决：**无 Tab 就是空工作区，不能输入，不
 1. **无 Tab 状态统一为结构性只读空工作区**
    - 任一文档 pane 没有带路径标签时，该 pane SHALL 呈空工作区：无正文焦点、无输入、无 dirty、无保存目标。
    - 无路径会话只作为内部占位（打开文件时就地复用，MUST NOT 让空会话堆积），MUST NOT 可编辑、MUST NOT 画插入光标、MUST NOT 显示行号；`⌥G`（`editor.goto-line`）在空工作区没有可跳转文档，MUST NOT 打开输入条。
-   - Close All、关闭最后一个 Tab、`reset()`、分栏、首启等所有到达「无 Tab」的路径 SHALL 落在同一形态；首启 tips 在场时 tips 是该 pane 的空态表面，空工作区动作隐藏。
+   - Close All、关闭最后一个 Tab、`reset()`、分栏、首启等所有到达「无 Tab」的路径 SHALL 落在同一形态；首启 tips 在场时 tips 是该 pane 的空态表面，普通空工作区副本隐藏。
 2. **空工作区的共享呈现**
    - 首启、普通无 Tab、空 vault 与双 pane 共用同一组四条 Lumir 特有 tips：Outline、选择文本 → Quote to chat、Knowledge links、Harness pane；布局可按 pane 容量退让。
    - 不提供 Open note / New note 按钮，不显示 Quick Open、查找、设置、vault 切换、`⌘/` 查看全部等通用快捷键，也不以右键新建提示凑数。既有 Quick Open、文件树打开与 vault 右键内联新建链路不变，不新增 IPC、save-as 或一等草稿系统。
@@ -72,21 +72,23 @@ Alex 2026-11-28 明确裁决：**无 Tab 就是空工作区，不能输入，不
 |---|---|---|
 | implemented | 是 | 本分支 tip（实现提交；待合并后补 merge hash） |
 | released | 不适用 | 本批不打包 |
-| machine PASS | 是 | 实现批最终读数 `GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0。同一 change 的实现过程中另有两轮因 master 既有抖动 `unit-tests` 的 `link-suggest.test.ts`「万文件过滤」时序预算（17.75 / 31.75ms > 16ms）读出 `GATE RESULT: 12/13 PASS（SKIP 0）` exit 1；隔离复跑 `pnpm test` 2205/2205 PASS。返修后：`GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0；结构层视觉目标批 126 scene PASS（11 个 spec，`LUMIR_VISUAL_STRUCTURAL=1`）、`pnpm test` 2205/2205 PASS、`execute.test.mjs` 134 PASS、docs-check / openspec validate PASS、`git diff --check` PASS；P2-1 / P2-2 各一轮旧红新绿 |
-| native PASS | 是 | 返修 tip 串行复跑：**885 PASS（36 断言）/ 50 PASS（79 断言）**；同 change 上一轮 **263 PASS（37）/ 79 PASS（29）**（改动面不涉 ⌥G，行为未变）。证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-28-no-tab-empty-workspace-r2/evidence/` 与上一轮 `.../2026-11-28-no-tab-empty-workspace/evidence/`；877 未跑（可选） |
+| machine PASS | 是 | 主会话 quick：`GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0，证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/no-tab-empty-workspace-nov28/redesign/verification/gate-quick-main.log`。仅指 quick 与定向静态/结构检查；完整 visual 未跑，不预写 PASS |
+| native PASS | 未验 | 本批按 Alex 要求不跑 native；重设计前 885/50/263/79 的 PASS 只属旧实现，不能覆盖当前 region/inert。待主会话按本次交付清单复跑 |
 | archived | 否 | 待独立评审与归档 |
 
 空态重设计补记（2026-11-28，未归档）：候选 A / B 各 11 张在
 `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/no-tab-empty-workspace-nov28/redesign/`，推荐 A；
 正式基线未更新。新 spec 12/12、相邻结构 171/171、focus-created 13/13、前端 2206/2206、
 OpenSpec 39/39、验收静态 313/313 通过；五类反向变异均先构建成功再命中目标失败并恢复。
-quick r2 为 `GATE RESULT: 13/13 PASS（SKIP 0）` exit 0；最新 r3 / r4 均为
-`GATE RESULT: 12/13 PASS（SKIP 0）` exit 1，唯一红项为既有 `link-suggest` 万文件过滤
-时序预算（53.26 / 57.80ms > 16ms），隔离 15/15 均过。按本批要求未跑完整 visual / native /
-merge / archive，新的 region / inert 真机表现未复验。
+主会话 quick 为 `GATE RESULT: 13/13 PASS（SKIP 0）` exit 0（`gate-quick-main.log`）。
+本批未跑完整 visual / native / merge / archive，新的 region / inert 真机表现未复验；早期 quick
+12/13 的 `link-suggest` 时序抖动只作历史记录，不替代主会话这次全绿结果。终审返修后另有
+静态 313/313、drive 31/31、execute 137/137 与 quick 13/13（`gate-quick-acceptance-sync.log`）；
+主会话 native 的 16 个完整场景清单见 tasks 10.4。
 
 五要件现状（归档前由 tower 复核）：方案已批准（节点 1，Alex 2026-11-28）；tasks 全部勾选；
-机器门禁与目标批视觉结构层通过；规格对账（docs-check 的归档对账）PASS；真机 885 / 50 已串行复跑 PASS（263 / 79 上一轮 PASS）。
+quick 与目标批静态/结构检查通过；规格对账（docs-check 的归档对账）PASS。完整 visual 未跑；
+当前重设计的 native 未验，885/50/263/79 的旧 native 结果不列入当前放行证据。
 独立评审首轮（K3，绑定 `aa4634a4`）为 needs-changes（P1=0 / P2=3 / P3=4），已按报告逐项返修：
 P2-1 vault 切换器焦点接统一入口、P2-2 tips 覆盖判据收窄到宿主 pane、P2-3 同步 native 50/79；
 P3-1 `ax.focused` 支持 `{ role, name }`、P3-2 Quick Open 双 pane scenario 改准、P3-3 旧文案 /

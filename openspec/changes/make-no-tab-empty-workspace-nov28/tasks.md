@@ -103,3 +103,16 @@
 - [x] 9.4 前端 2206/2206、目标 12/12 与相邻 171/171、focus-created 13/13、OpenSpec 39/39、
       验收静态 313/313 通过；quick r2 `13/13 PASS（SKIP 0）`，末两轮 r3/r4 仅既有
       `link-suggest` 万文件过滤时序项失败（隔离 15/15 均过）。不跑完整 visual / native / merge / archive。
+
+## 10. K3 重设计终审返修（needs-changes @ `b218549e`）
+
+- [x] 10.1 `waitAppReady` 与 11 个既有场景改用当前 A 标题「开始使用 / Get started」；
+      新标题中英文正例、旧标题与缺树头反例、README / 合成 fixture 同步。
+- [x] 10.2 885 不再 `do:type` 定位 inert 正文，改 `do:keys + allowNoLanding` 向 focused region
+      发真实字符；runner 静态校验与正反执行自测证明单次未变通过、partial 失败且不重叠注入。
+- [x] 10.3 proposal / design 对齐主会话 quick 13/13、per-pane `tipsCoversPane` 与 closeTab
+      焦点路径；完整 visual / native 保持未验，不复用旧 native PASS。
+- [x] 10.4 静态 313/313、drive 31/31、execute 137/137、quick `13/13 PASS（SKIP 0）`
+      （`redesign/verification/gate-quick-acceptance-sync.log`）通过；主会话 native 全清单 16 个：
+      885 / 263 / 50 / 79 / 877，以及 17 / 18 / 29 / 47a / 47b / 47c / 47d / 49 / 60 / 67 / 107。
+      不跑完整 visual / native / merge / archive / 基线。

@@ -211,7 +211,7 @@ steps:
       - label: 当前 vault 换成 B
         ax: { has: "Vaults: lumir-m102-acceptance-b (click to see all vaults)" }
       - label: B 没有会话历史 → 空 vault 首入态
-        ax: { has: "No document open" }
+        ax: { has: "Get started" }
       - shot: 04-B-稳定态
 
   - name: Cmd-o 打开列表（准备切回 A）

@@ -767,6 +767,12 @@ export function checkScenario(scenario) {
       }
     }
     if (step.do === "keys" && !Array.isArray(step.keys)) push(`${at} do=keys 需要 keys 数组`);
+    if (step.do === "keys" && step.allowNoLanding !== undefined) {
+      if (typeof step.allowNoLanding !== "boolean")
+        push(`${at} do=keys 的 allowNoLanding 需要布尔值（缺省 false=必须落地）`);
+      if (step.verify !== undefined)
+        push(`${at} do=keys 的 allowNoLanding 与 verify 互斥（负向注入不能同时要求副作用落地）`);
+    }
     if (step.do === "key" && !step.key) push(`${at} do=key 需要 key`);
     // `channel`（M767；M768 起 `do: key` 单数同样可写）：真键盘事件通道。这些形态都会**静默失效**，
     // 因此在静态期挡：① 挂在别的动作上（没人读它）；② 值拼错（运行期外的拼法会让通道不生效）；
@@ -4037,6 +4043,11 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       }
       const target = printable ? keysTarget(await readAx(cu, p)) : null;
       if (!target) {
+        // 负向注入也必须先有一个可回读目标：AX 缺失不能证明「内容未变」（REVIEW.md
+        // 「读不到当成空」条）。885 的 region 是 focused 静态节点，满足该前提。
+        if (step.allowNoLanding === true) {
+          throw new StepError("do=keys 的 allowNoLanding 要求注入前存在可回读的 focused 目标");
+        }
         if (printable) {
           evidence.record({
             kind: "note",
@@ -4090,6 +4101,17 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         await sleep(700);
         lastValue = await reread();
         verdict = classify(lastValue);
+        // 只读 region 的负向注入：逐字节未变即通过，且只注入一次。partial / duplicated /
+        // target-lost 仍走下面的失败路径，不把「没读到」或「内容变了」当成未落地。
+        if (verdict === "unchanged" && step.allowNoLanding === true) {
+          evidence.record({
+            kind: "note",
+            text:
+              `keys「${want}」目标内容逐字节未变；allowNoLanding=true，按只读宿主的负向注入接受` +
+              "（partial / duplicated / target-lost 仍判败）",
+          });
+          return;
+        }
         // 只有「目标字节完全没变」才允许再注入一次——整批丢键正是本重试要修的场景。
         // 值变了却没凑齐目标串（partial landing）绝不能重试：再注入整串会原地拼接
         // （如 "ndl" + "needle" → "ndlneedle"），而子串断言反而可能假绿。

@@ -26,7 +26,7 @@ steps:
       - label: 树里是 A 的条目（装载的是 last_vault 那个 vault）
         ax: { has: "tabs-a.md" }
       - label: 恢复完毕后不残留空 vault 引导（有标签就不该再盖着正文）
-        ax: { not: "没有打开的文档" }
+        ax: { not: "开始使用" }
 ---
 
 说明：本条对应 change `multi-vault-workspaces` 的任务 6.1 ②。与 M159 的 `16-startup-restore`

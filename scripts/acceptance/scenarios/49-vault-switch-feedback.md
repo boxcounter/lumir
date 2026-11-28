@@ -56,7 +56,7 @@ steps:
   - name: 等切到 B 的装载跑完（状态驱动，最多 90s）
     do: waitFor
     waitFor:
-      has: ["vault：lumir-m102-acceptance-b（点击查看全部 vault）", "没有打开的文档"]
+      has: ["vault：lumir-m102-acceptance-b（点击查看全部 vault）", "开始使用"]
       not: ["AXProgressIndicator"]
     timeoutMs: 90000
 
@@ -66,7 +66,7 @@ steps:
       - label: 当前 vault 换成了 B
         ax: { has: "vault：lumir-m102-acceptance-b（点击查看全部 vault）" }
       - label: B 没有会话历史 → 空 vault 首入态
-        ax: { has: "没有打开的文档" }
+        ax: { has: "开始使用" }
       - label: 装载指示不在场（B 这一次装载已结束）
         ax: { not: "AXProgressIndicator" }
       - shot: 04-B-稳定态

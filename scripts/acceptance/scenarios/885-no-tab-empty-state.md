@@ -5,6 +5,8 @@
 # 按钮、无通用快捷键。静态 region 承接焦点，被覆盖编辑器宿主 inert，不为留焦点伪造按钮。
 # 本场景验真机 WKWebView 上可观察的：不可输入 / 无 dirty / 无保存目标、⌥G 无目标、region
 # 焦点归还、双 pane 不串焦。chromium 另验程序 focus 无法进入 inert 正文与完整读屏列表语义。
+# 键入负例走 do: keys + allowNoLanding：向当前 focused region 发真实字符，目标未变才接受且
+# 不重试，不再调用要求 AXTextArea 的 do:type/typeInEditor；partial / target-lost 仍失败。
 id: "885-no-tab-empty-state"
 item: 885
 tier: full
@@ -56,12 +58,15 @@ steps:
         ax: { focused: { role: "AXGroup", name: "开始使用" } }
       - shot: 03-空工作区-altg
 
-  - name: 在空工作区键入（region 持焦；inert 正文不是落点）
-    do: type
-    text: "NO-TAB-LAND"
+  - name: 向当前聚焦 region 发真实字符（不定位 inert 正文；未变才接受且不重试）
+    do: keys
+    keys: ["N", "O", "-", "T", "A", "B", "-", "L", "A", "N", "D"]
+    allowNoLanding: true
     expect:
       - label: 键入没有落进任何文档
         ax: { not: "NO-TAB-LAND" }
+      - label: 焦点没有转入 inert 正文，仍在命名 region
+        ax: { focused: { role: "AXGroup", name: "开始使用" } }
       - label: 没有未保存修改标记
         ax: { not: "（未保存）" }
       - shot: 04-空工作区-键入无效

@@ -174,7 +174,7 @@ steps:
       - label: 树头部入口换成 B（整窗上下文真的换了）
         ax: { has: "vault：lumir-m102-acceptance-b（点击查看全部 vault）" }
       - label: B 没有打开过的文件——统一空工作区
-        ax: { has: "没有打开的文档" }
+        ax: { has: "开始使用" }
       - label: B 自己的文件在树里（装载的是 B 的条目，不是空树）
         ax: { has: "beta.md" }
       - label: A 的会话已按稳定 id 落盘，两个固定标签都在

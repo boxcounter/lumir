@@ -121,9 +121,9 @@ export async function settle(cu, pid, { timeoutMs = 30_000, now = Date.now, slee
  *
  * 四种合法终态（M164 补第三种；change add-first-run-onboarding-nov25 补第四种）：
  *   1. 已装载 vault 且有文件行 + 编辑器可读（严格门的默认形态）；
- *   2. 已装载 vault 但一个标签都没恢复 → 统一空工作区（「没有打开的文档」+ 两个动作）盖住
- *      正文，编辑器从 AX 消失。这是**启动常态**（该 vault 还没有会话历史），不是异常——判据是
- *      「树头部入口在 + 空工作区标题在」，两者都是正观测；
+ *   2. 已装载 vault 但一个标签都没恢复 → 共享空工作区（「开始使用 / Get started」+ 四条
+ *      Lumir 特有 tips）盖住正文，inert 编辑器从 AX 消失。这是**启动常态**，判据是
+ *      「树头部入口在 + 共享 region 标题在」，两者都是正观测；
  *   3. 未打开 vault 的空态（D5/D6）——只有 `requireVault: false` 才认（见下）；
  *   4. **首启模式**（无 `last_vault`，启动面首启态）——AX 里是唯一真实的「添加 vault」/
  *      「Add vault」按钮（D1034），树 / 编辑器都被启动面盖住。同样只有 `requireVault: false`
@@ -149,7 +149,7 @@ const LANG_PATTERNS = {
   header: /点击查看全部 vault|click to see all vaults/,
   emptyHint: /打开一个目录作为 vault|Open a folder as a vault/,
   openVault: /打开 vault|Open vault/,
-  emptyWorkspace: /没有打开的文档|No document open/,
+  emptyWorkspace: /开始使用|Get started/,
   // 首启模式（change add-first-run-onboarding-nov25）的唯一主操作（D1034）；只有
   // `requireVault: false` 才认（见 waitAppReady 的终态表）。
   firstRun: /^(添加 vault|Add vault)$/,
@@ -169,9 +169,9 @@ export async function waitAppReady(cu, pid, { timeoutMs = 30_000, requireVault =
     const hasFiles = ax.nodes.some((n) => n.role === "AXButton" && /\.md$/.test(n.title ?? ""));
     // 未打开空态在 AX 里的稳定标志：空态说明行 + 「打开 vault」入口（D5/D6 的文案）。
     const hasEmptyState = LANG_PATTERNS.emptyHint.test(ax.text) && LANG_PATTERNS.openVault.test(ax.text);
-    // **已装载 vault 但一个标签都没恢复**：树头部入口与文件行都在，但统一空工作区的表面盖住
-    // 正文、编辑器随之从 AX 里消失。这是启动的**常态**（该 vault 还没有会话历史），严格门必须
-    // 认它——否则每个场景都会在这一步超时。
+    // **已装载 vault 但一个标签都没恢复**：树头部入口与共享 region 都在，inert 正文从 AX
+    // 消失。这是启动常态；严格门必须认它，否则普通无 Tab / 老空 vault 会在这一步超时。
+    // 旧标题「没有打开的文档 / No document open」不是合法终态，不能因编辑器缺失而放行。
     const hasEmptyWorkspace = LANG_PATTERNS.emptyWorkspace.test(ax.text);
     // **首启模式**（change add-first-run-onboarding-nov25）：启动面盖住整窗、`#app` inert 且
     // aria-hidden，AX 里只剩唯一主操作「添加 vault」（D1034）。判据必须是**真实的按钮节点**
