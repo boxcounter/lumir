@@ -45,7 +45,8 @@
 - [x] 5.1 `specs/` 增量：`pane-layout`（REMOVED 旧两条 + ADDED 空工作区）、`multi-tabs`
       （REMOVED 未命名 dirty 守卫 + ADDED 空工作区与 dirty 判定 + MODIFIED Close All 焦点）、
       `fs-io`（MODIFIED 不可保存反馈）、`first-run-onboarding`（MODIFIED 首启构成 + Purpose）、
-      `keymap-commands`（MODIFIED 行号条款表述）、`quick-open`（ADDED 空工作区入口与焦点归还）。
+      `keymap-commands`（MODIFIED 行号条款表述 + 右键复制的不可达表述）、
+      `quick-open`（ADDED 空工作区入口与焦点归还）、`file-tree`（MODIFIED 默认名条款的不可达表述）。
 - [x] 5.2 更新 `scripts/acceptance/scenarios/885-no-tab-empty-state.md`：改为空工作区的
       「不可输入 / 无 dirty / 无保存目标 / 两个动作 / 焦点落主操作」；`--check` 通过。
 - [x] 5.3 `docs/backlog.md`：删除已裁的 M416「未保存新文档」条目；补本 change 的归档跟踪条目。
@@ -65,3 +66,15 @@
       改回正文、把空态动作去掉，各实测一次判红；恢复后判绿。读数记进完工报告。
 - [x] 6.8 普通 / 双 pane / 首启候选截图落 `.local/reviews/no-tab-empty-workspace-nov28/`；
       MUST NOT 更新视觉基线。
+
+## 7. 独立评审返修（K3 needs-changes @ `aa4634a4`）
+
+- [x] 7.1 P2-1：vault 切换器的 `focusEditor` 接 `focusActiveDocPaneEntry()`；补「空工作区 → ⌘O → Esc → 主操作持焦」回归并做旧红新绿。
+- [x] 7.2 P2-2：tips 覆盖判据收窄到实际宿主 pane（`firstRunTipsEl.parentElement`），结构只读同步收窄；补「首启 → 收起 harness → 分栏 → 右 pane 空工作区主操作持焦」回归并做旧红新绿。
+- [x] 7.3 P2-3：同步 native 场景 50（Close All 焦点 / 旧未命名守卫叙述）与 79（D369 → 空工作区）；native 复跑清单加入 50 + 79（不自行 native）。
+- [x] 7.4 P3-1：`ax.focused` 支持 `{ role, name }`，885 三条主操作焦点断言改用它；补读数与静态校验自测。
+- [x] 7.5 P3-2：修 Quick Open 双 pane scenario 的「成功打开后又要求回主操作」矛盾。
+- [x] 7.6 P3-3：清扫文案末位、m320 注释、`src/tabs.ts` Close All 注释、验收 29 的空态表述。
+- [x] 7.7 P3-4：清三个 delta 的 EOF blank line，`git diff --check` 通过。
+- [x] 7.8 清理 keymap「行号 gutter 右键复制」与 file-tree「默认名其他创建链路」两处不可达旧表述（新增 MODIFIED 增量）。
+- [x] 7.9 候选补「首启收起 harness 再分栏」一张，五张全量重生成。

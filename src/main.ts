@@ -736,6 +736,17 @@ const firstRunClaim = createFirstRunClaim();
  *  在场 = 该 pane 没有带路径标签，且首启 tips / notice 覆盖层没有占位。`hasTabs` 由
  *  `renderAllTabStrips` 传入（同一读数）；notice / tips 的状态变化经 `syncEmptySurfaces`
  *  复用本函数，不复制「有没有标签」的表达式。 */
+/** 首启 tips 只覆盖它**实际的宿主 doc pane**（`renderFirstRunTips` 挂在 `shell.editorPane`
+ *  = root 的 mountEl）。别的 pane 的空工作区照常显示——全局 flag 只说明 tips 在场，不说明它
+ *  盖住了哪个 pane（P2-2：首启收起 harness 再分栏时右 pane 曾是「无 tips、无动作、只读正文持焦」）。 */
+function tipsCoversPane(assembly: PaneAssembly): boolean {
+  return (
+    firstRunTipsVisible &&
+    firstRunTipsEl !== null &&
+    firstRunTipsEl.parentElement === assembly.mountEl
+  );
+}
+
 function updateEmptyWorkspace(assembly: PaneAssembly, hasTabs?: boolean): void {
   if (assembly.handle.kind !== "doc" || assembly.emptyEl === null) return;
   const paneHasTabs =
@@ -743,7 +754,7 @@ function updateEmptyWorkspace(assembly: PaneAssembly, hasTabs?: boolean): void {
   // notice 只覆盖它当前的宿主 pane（placeNotice 把元素移进 mountEl），别的 pane 的空工作区
   // 照常可用；隐藏的是「被覆盖的那一个」，不是全部。
   const coveredByNotice = !notice.hidden && notice.parentElement === assembly.mountEl;
-  assembly.emptyEl.hidden = paneHasTabs || firstRunTipsVisible || coveredByNotice;
+  assembly.emptyEl.hidden = paneHasTabs || tipsCoversPane(assembly) || coveredByNotice;
   // 未装载 vault 时树里没有可用的根，内联新建会静默落空——按钮显式禁用，不给死按钮。
   const newButton = assembly.emptyEl.querySelector<HTMLButtonElement>(".pane-empty-new");
   if (newButton !== null) newButton.disabled = !vaultLoaded;
@@ -773,10 +784,11 @@ function renderAllTabStrips(): void {
     editor.setPaneHasTabs(hasTabs);
     const foreground = editor.activeSession();
     // 结构性只读的两个来源：无路径的空工作区占位会话（change
-    // make-no-tab-empty-workspace-nov28）与首启 tips 在场（change add-first-run-onboarding-nov25）。
-    // 输入拒收由 `setSessionEditable` 的 editable 维度承担；空工作区从 makeSession 起就
-    // 不可编辑，这里是同一口径的运行期重算（打开文档后按路径复原）。
-    const structuralReadOnly = foreground.path === undefined || firstRunTipsVisible;
+    // make-no-tab-empty-workspace-nov28）与**该 pane 的**首启 tips 在场（change
+    // add-first-run-onboarding-nov25）。输入拒收由 `setSessionEditable` 的 editable 维度承担；
+    // 空工作区从 makeSession 起就不可编辑，这里是同一口径的运行期重算（打开文档后按路径复原）。
+    // tips 判据按宿主 pane 收窄：全局 flag 不把别的 pane 的正文一并标成结构只读。
+    const structuralReadOnly = foreground.path === undefined || tipsCoversPane(assembly);
     editor.setSessionEditable(
       foreground,
       !structuralReadOnly && isEditablePath(foreground.path),
@@ -2452,7 +2464,9 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
   // 直接写 scrollDOM.scrollTop 会被滚动锚点维护改掉（M149 实测差 242px）。
   readingPosition: () => editor.view.scrollSnapshot(),
   restoreReadingPosition: (snapshot) => editor.view.dispatch({ effects: snapshot }),
-  focusEditor: () => editor.view.focus(),
+  // 收起浮层交还焦点走统一入口：空工作区落主操作，有文档落正文（M186 的阅读位置快照
+  // 仍由 vault-switcher 的 handOffFocus 在前后取 / 写，见其注释）。
+  focusEditor: () => focusActiveDocPaneEntry(),
   getSession: (vaultId) => vaultSessionGet(vaultId),
   putSession: (vaultId, panes, ratio, harnessPane) =>
     vaultSessionPut(vaultId, panes, ratio, harnessPane),

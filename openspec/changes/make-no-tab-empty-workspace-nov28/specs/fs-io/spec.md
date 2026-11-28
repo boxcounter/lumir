@@ -30,4 +30,3 @@
 
 - **WHEN** 备份 debounce 到期，而当前文档未登记磁盘 revision（尚未读到快照），且编辑器有 dirty 内容
 - **THEN** 不写崩溃备份（也不排期任何自动落盘），且不产生恢复提示（该跳过为显式裁决，记录于 change non-md-readonly-open，触发面经 editable-non-md-files 收窄）
-

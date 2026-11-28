@@ -708,11 +708,13 @@ export function createTabs(deps: TabsDeps): TabsHandle {
       activatePane();
       void closeEach(closeAllTargets(sessions), resolveClose).then(() => {
         // 批量结束（全关完或中途停手）都要归还一次焦点：确认浮条的动作钮在答复那一刻就随
-        // 浮条从 DOM 移除，浏览器会把焦点送回 body（review r1 P2-1 的实测形态）。落点按
-        // 当前前台会话分两种，都在本 pane 内——另一个 pane MUST NOT 接管焦点：
-        //   - 文档会话（含全关完后的未命名空文档）→ 编辑器正文（focusEditor，按 M280 口径
-        //     不改变阅读位置；保存冲突 / 写失败的提示是非模态浮条，既有合同就是「不夺焦」）；
-        //   - 图片会话（编辑器这时是哨兵只读面，聚焦它没有意义）→ 那一条标签的按钮。
+        // 浮条从 DOM 移除，浏览器会把焦点送回 body（review r1 P2-1 的实测形态）。`focusEditor`
+        // 是装配层的 pane 入口，落点按该 pane 有没有带路径标签解析，都在本 pane 内——另一个
+        // pane MUST NOT 接管焦点：
+        //   - 还有带路径标签的文档会话 → 编辑器正文（M280 口径不改变阅读位置；保存冲突 /
+        //     写失败的提示是非模态浮条，既有合同就是「不夺焦」）；
+        //   - 全关完（空工作区）→ 主操作「打开笔记…」（正文不是焦点落点）；
+        //   - 图片会话（编辑器是哨兵只读面）→ 那一条标签的按钮。
         const active = editor.activeSession();
         if (isDocSession(active)) focusEditor();
         else focusTab(active);

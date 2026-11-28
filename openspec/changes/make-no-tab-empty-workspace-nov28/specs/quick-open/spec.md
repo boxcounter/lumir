@@ -30,8 +30,9 @@
 - **WHEN** 从空工作区的浮层输入一个存在的 vault 相对路径并按 Enter
 - **THEN** 文件在该 pane 打开、空工作区离场；焦点落在新文档正文；标签与 modeline 按既有口径更新
 
-#### Scenario: 双 pane 不串焦
+#### Scenario: 双 pane 不串焦（取消时的落点按当下状态判）
 
-- **WHEN** 双 pane 的左 pane 开着 `a.md`，右 pane 为空工作区；在右 pane 的浮层打开 `b.md` 后取消另一次打开
-- **THEN** `b.md` 落在右 pane，取消那一次的焦点回到右 pane 的主操作；左 pane 的前台、焦点与阅读
-  位置全程不变
+- **WHEN** 双 pane 的左 pane 开着 `a.md`，右 pane 为空工作区；先在右 pane 的浮层取消一次，再打开 `b.md`，随后再从右 pane 打开浮层并取消
+- **THEN** 第一次取消把焦点交还右 pane 的空工作区主操作；`b.md` 落在右 pane 并把焦点交给它的正文；
+  第二次取消把焦点交还 `b.md` 正文（此时右 pane 已不是空工作区，MUST NOT 回到已不存在的主操作）；
+  左 pane 的前台、焦点与阅读位置全程不变

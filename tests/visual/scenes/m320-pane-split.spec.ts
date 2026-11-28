@@ -10,9 +10,9 @@ import { configApplied, stubTauri, type VaultFixture } from "./tauri-stub";
 //     （harness 钮隐藏；HP1 后标识块移位 traffic 灯区、不再随 split 退让——右簇只剩
 //      toggle 一颗钮，change move-harness-to-pane-chat-frame）；
 //   2. 空右 pane 形态：split 后不开文件的右 pane——空槽仍占位（keepMountWhenEmpty，
-//      空槽一 hidden 另一槽的比例就漂），右 pane 正文区是**空 pane 引导水印**
-//     （M322，D369；水印是透明底覆盖层，底下的未命名空文档编辑器仍在场、可聚焦）。
-//      M322 落地后本条整页基线已随引导元素更新（Alex 过目批准，见 test 2 的断言注释）。
+//      空槽一 hidden 另一槽的比例就漂），右 pane 正文区是**空工作区表面**
+//     （change make-no-tab-empty-workspace-nov28：不透明底、结构性只读、正文不是焦点落点）。
+//      本 change 后 `pane-split-empty-right.png` 的基线待 Alex 过目后重截（本次未更新）。
 //
 // 为什么标题栏要元素级基线：标题栏只有约 42px 高，整页 0.001 容差（1200×800 ≈ 960px）
 // 吞得掉一条标题栏里的错位（REVIEW.md 「容差吞掉真实变化」条，M149 标签栏的同款教训——M316 把标签槽

@@ -191,6 +191,58 @@ test("双 pane：右 pane 空工作区的动作先激活所属 pane；取消回�
   await expect.poll(() => gutterCountsPerPane(page)).toEqual([1, 1]);
 });
 
+test("空工作区：vault 切换器取消后焦点回主操作（不落被覆盖的只读正文）", async ({ page }) => {
+  await bootDoc(page, "a.md", { config: { language: "en" } });
+  await page.locator(".tab-close").click();
+  const open = page.locator(".editor-pane").first().locator(".pane-empty-open");
+  await expect(open).toBeFocused();
+
+  await page.keyboard.press("Meta+o");
+  await expect(page.locator(".vault-pop")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".vault-pop")).toBeHidden();
+  // P2-1：vault 切换器的交还焦点也走统一入口——空工作区主操作，不是被覆盖的只读正文。
+  await expect(open).toBeFocused();
+  await expect(page.locator(".pane-empty-workspace")).toBeVisible();
+  await expect(page.locator(".cm-content")).not.toBeFocused();
+});
+
+test("首启 tips：收起 harness 再分栏，右 pane 仍是完整空工作区（P2-2）", async ({ page }) => {
+  await stubTauri(page, FIRST_RUN_VAULT);
+  await page.goto("/");
+  await expect(page.locator(".first-run-tips")).toBeVisible();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+
+  // 收起默认 harness（⌘⇧A），回到单 doc pane；再分栏（⌥S）。
+  await page.keyboard.press("Meta+Shift+A");
+  await expect(page.locator(".lumir-harness")).toHaveCount(0);
+  await expect(page.locator(".pane-divider")).toHaveCount(0);
+  await page.keyboard.press("Alt+s");
+  await expect(page.locator(".editor-pane")).toHaveCount(2);
+
+  const left = page.locator(".editor-pane").nth(0);
+  const right = page.locator(".editor-pane").nth(1);
+  // tips 只覆盖它的宿主 pane（root）；右 pane 按自身「无标签」显示空工作区与动作。
+  await expect(left.locator(".first-run-tips")).toBeVisible();
+  await expect(right.locator(".first-run-tips")).toHaveCount(0);
+  await expect(left.locator(".pane-empty-workspace")).toBeHidden();
+  const rightSurface = right.locator(".pane-empty-workspace");
+  await expect(rightSurface).toBeVisible();
+  await expect(rightSurface.locator(".pane-empty-title")).toHaveText("No document open");
+  await expect(rightSurface.getByRole("button", { name: "Open note…" })).toBeFocused();
+  await expect(rightSurface.getByRole("button", { name: "New note" })).toBeVisible();
+
+  // 两侧正文都是结构性只读；右 pane 的键入不落字。
+  const leftContent = await readOnlyPresentation(page, 0);
+  const rightContent = await readOnlyPresentation(page, 1);
+  expect(leftContent.contenteditable).toBe("false");
+  expect(rightContent.contenteditable).toBe("false");
+  expect(rightContent.structural).toBe(true);
+  await page.keyboard.type("MUST-NOT-LAND");
+  await expect(right.locator(".cm-content")).toHaveText("");
+  await expect(left.locator(".first-run-tips")).toBeVisible();
+});
+
 test("首启 tips：空工作区动作让位，正文结构只读、无行号", async ({ page }) => {
   await stubTauri(page, FIRST_RUN_VAULT);
   await page.goto("/");

@@ -50,7 +50,14 @@ editor.setSessionEditable(
 
 `.editor-notice` 是**单个**元素，经 `placeNotice` 跟随活跃 pane；双 pane 时非活跃空 pane 就没有自己的动作面，而合同明确要求「非活跃空 pane 的动作先激活所属 pane」。因此空工作区必须是 per-pane 元素。notice 仍承担打开失败 / 暂不支持预览等瞬时覆盖层，两者职责不重叠。
 
-### 2.2 D107 空 vault 覆盖层并入空工作区
+### 2.2 首启 tips 的覆盖范围按宿主 pane
+
+`firstRunTipsVisible` 是全局 flag，但 tips 元素只挂在 root doc pane 的 mountEl。空工作区的在场判据
+因此 MUST 按**宿主关系**（`firstRunTipsEl.parentElement === assembly.mountEl`）收窄，MUST NOT 用全局
+flag 隐藏所有 pane 的空工作区：首启收起 harness 再分栏时，右 pane 既没有 tips，也不该丢掉自己的
+空工作区与动作（P2-2）。结构只读里 tips 那一维也按同一宿主判据收窄；无路径本身仍使右 pane 只读。
+
+### 2.3 D107 空 vault 覆盖层并入空工作区
 
 老用户空 vault（`onEmptyVault`）此前走 D107 + D882 的 notice 分支。它与「无 Tab」是同一个状态，保留两套表面就是同一语义两处真源。本 change 删除 `showEmptyVaultState`：空 vault 与普通无 Tab 一样呈现空工作区；「新建笔记」复用同一条内联命名链路。D107 / D233 / D369 三条文案随之删除（D882「新建笔记」保留，作为按钮与首启 tips 的动作名）。
 
@@ -65,7 +72,7 @@ function focusDocPaneEntry(paneId: PaneId): void
 - 该 pane 的空工作区在场 → 焦点交给「打开笔记…」；
 - 否则 → 交给该 pane 的 `focusPreservingReadingPosition()`（M280 口径不变）。
 
-所有「把焦点交还文档 pane」的路径改走它：复合句柄的 `focusPreservingReadingPosition`、标签条的 `focusEditor`、`pane.split` / `pane.other` / pane 收起、Close All 收尾、Quick Open / goto-line / 遮罩 / 设置面板的 `restoreFocus`。空 pane 的正文因此 MUST NOT 成为焦点落点；有文档的 pane 行为逐字不变。
+所有「把焦点交还文档 pane」的路径改走它：复合句柄的 `focusPreservingReadingPosition`、标签条的 `focusEditor`、`pane.split` / `pane.other` / pane 收起、Close All 收尾、**vault 切换器**、Quick Open / goto-line / 遮罩 / 设置面板的 `restoreFocus`。空 pane 的正文因此 MUST NOT 成为焦点落点；有文档的 pane 行为逐字不变。vault 切换器保留自己的阅读位置快照取 / 写，只把 `focusEditor` 的实现换成这个入口（P2-1）。
 
 关闭最后一个标签的路径补一次交还：`closeTabNow` 在同步点之后，若本 pane 已无可见标签则调用 `focusEditor`（在装配层解析为上面的入口）。这样 `×` 按钮随 DOM 移除后焦点不会掉回 `body`，⌘W 关掉最后一个标签也不会把焦点留在只读正文里。
 
@@ -84,6 +91,8 @@ function focusDocPaneEntry(paneId: PaneId): void
 | `fs-io`「没有打开文件时的 Cmd+S 反馈」 | MODIFIED：删除无路径分支与场景；有路径未登记 revision 的 D234 不变 |
 | `first-run-onboarding` tips 与空白草稿 | MODIFIED：tips 在场时空工作区动作隐藏，空白正文结构性只读；删除「MUST NOT 出现 D107」的过时表述 |
 | `keymap-commands` 行号条款里的「单 pane 未命名 scratch」 | MODIFIED：改为「无标签 pane / 空工作区」 |
+| `keymap-commands`「行号 gutter 的右键复制」里「有标签 pane 中前台是未命名文档」 | MODIFIED：改为空工作区无 gutter / 无本手势；无路径不编造路径降为防御兜底 |
+| `file-tree`「新建文件的默认名预填」里的「未命名内存文档等其它创建链路」 | MODIFIED：删除该不可达链路，改为「空工作区占位会话不在此列」 |
 | `quick-open` | ADDED：空工作区入口、所属 pane 激活与焦点归还 |
 
 不可达的代码分支同步删除：`save-controller` 的无路径 guard 反馈、`save()` 的无路径 dirty 反馈、`tabs.targetSessionFor` 的「dirty 草稿不复用」分支（无路径恒 clean）。依赖这些状态的单测按「不再可达」删除或改准；不保留兼容层。
@@ -91,7 +100,8 @@ function focusDocPaneEntry(paneId: PaneId): void
 ## 5. 测试与证据
 
 - 单测：`pane-layout` 旧判据用例删除；`save-controller` 无路径用例删除（有路径未登记 revision 用例保留）；`tabs` / `tab-menu` 的注释与不可达分支改准。`line-numbers` 的 `gutterVisible` 真值表不变。
-- 视觉结构层：新建 `no-tab-empty-workspace-nov28.spec.ts` 覆盖单 pane / 双 pane / 首启 / 空 vault 四格；改准 `m320`（分栏后焦点落主操作）、`m281`（不再点水印聚焦正文）、`first-run-empty-state` / `first-run-onboarding-nov25`（D107 → 空工作区）、`gutter-copy-path-line`（关最后标签后空工作区盖住原 gutter 位置）。
+- 视觉结构层：新建 `no-tab-empty-workspace-nov28.spec.ts` 覆盖单 pane / 双 pane / 首启 / 空 vault 四格，
+  外加「vault 切换器取消回主操作」（P2-1）与「首启收起 harness 再分栏」（P2-2）两条回归；改准 `m320`（分栏后焦点落主操作）、`m281`（不再点水印聚焦正文）、`first-run-empty-state` / `first-run-onboarding-nov25`（D107 → 空工作区）、`gutter-copy-path-line`（关最后标签后空工作区盖住原 gutter 位置）。
 - 反向必红：把 `makeSession` 的无路径 `editable` 改回 true，单 pane 用例的 `contenteditable=false` 与「键入不落字」必须判红；把焦点落点改回正文，主操作聚焦断言必须判红。
 - 像素：不更新基线。普通 / 双 pane / 首启候选截图落 `.local/reviews/no-tab-empty-workspace-nov28/`，供 Alex 过目。
 - 真机：本批不跑（主会话串行）；验收场景 885 只做静态 `--check`，真机读数由主会话排期。

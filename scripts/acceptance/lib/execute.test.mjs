@@ -1842,6 +1842,40 @@ test("焦点读数（M678）：必须先区分「哪个 AXTextArea 有焦点」�
   assert.equal(readDump(["editor", "composer"]).isEditor, false, "多个 focused 节点一律判「未建立」");
 });
 
+test("焦点读数：{ role, name } 能区分同一 role 的节点（空工作区主操作），缺 role 判校验问题", () => {
+  // P3-1：只认 role 时，焦点落在任意 AXButton（新建笔记 / 左栏按钮）都能通过；空工作区主操作
+  // 的断言必须能看名称。名称取 nodeName（title > label > value）。
+  const buttonDump = [
+    "# Lumir App State",
+    "",
+    "- app: Lumir",
+    "- pid: 1",
+    "- element_count: 2",
+    "- captured_bounds: x=8 y=40 w=1200 h=800 (screen points)",
+    "- screenshot: 2048×1365 px",
+    "- coords: bbox `@x,y w×h` and click/scroll/drag x,y are screenshot pixels (origin = top-left of the screenshot)",
+    "",
+    "```text",
+    '- [0] AXApplication "Lumir"',
+    '  - [1] AXWindow "Lumir" @0,0 2048×1365',
+    "    - [7] AXButton (打开笔记…) @10,20 100×30 actions=[AXPress] (focused)",
+    "```",
+  ].join("\n");
+  const reading = focusedRoleReading(parseNodes(buttonDump));
+  assert.equal(reading.count, 1);
+  assert.equal(reading.role, "AXButton");
+  assert.equal(reading.name, "打开笔记…", "节点名必须可读，才能把主操作与其它 AXButton 区分开");
+
+  const scenario = (focused) => ({
+    id: "focused-name",
+    item: 0,
+    steps: [{ name: "焦点", do: "key", key: "escape", expect: [{ ax: { focused } }] }],
+  });
+  assert.deepEqual(checkScenario(scenario({ role: "AXButton", name: "打开笔记…" })), []);
+  const bad = checkScenario(scenario({ name: "打开笔记…" }));
+  assert.ok(bad.some((p) => p.includes("ax.focused")), `缺 role 的形态应判 problem，实际：${JSON.stringify(bad)}`);
+});
+
 test("正文单击落点（M678 / M762）：dx/dy 是窗口局部点，换算到屏幕点与证据用的截图像素，以及两条不可算的边界", () => {
   const textarea = { bbox: { x: 100, y: 200, w: 600, h: 500 } };
   const bounds = { x: 8, y: 40, w: 1200, h: 800 };

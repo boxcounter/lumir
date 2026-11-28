@@ -240,6 +240,9 @@ export function focusedRoleReading(nodes, { editor = null } = {}) {
     count: focused.length,
     roles: focused.map((n) => n.role),
     role: focused.length === 1 ? focused[0].role : null,
+    // 名称取 `nodeName`（title > label > value）：`ax.focused` 的 `{ role, name }` 形态据此
+    // 区分「同一个 role 的哪一个节点」——只认 role 时焦点落在任意 AXButton 都能通过（P3-1）。
+    name: focused.length === 1 ? nodeName(focused[0]) : null,
     isEditor: Boolean(editor) && focused.length === 1 && focused[0] === editor,
   };
 }
@@ -1117,6 +1120,15 @@ export function checkScenario(scenario) {
         push(`${at} expect[${j}] bytes 断言缺 magic/nameHash（写错字段名会静默变成恒真断言）`);
       else if (kinds[0] === "ax" && !["has", "not", "count", "focused", "scope", "order", "notInValue"].some((k) => exp.ax[k] !== undefined))
         push(`${at} expect[${j}] ax 断言缺 has/not/count/focused/scope/order/notInValue（写错字段名会静默变成恒真断言）`);
+      else if (
+        kinds[0] === "ax" &&
+        exp.ax.focused !== undefined &&
+        typeof exp.ax.focused !== "string" &&
+        (!isPlainTable(exp.ax.focused) ||
+          typeof exp.ax.focused.role !== "string" ||
+          (exp.ax.focused.name !== undefined && typeof exp.ax.focused.name !== "string"))
+      )
+        push(`${at} expect[${j}] ax.focused 只收角色字符串或 { role, name }（name 可选；写错会静默变成恒真断言）`);
       else if (kinds[0] === "node") {
         // 节点在场性断言（M669）：`present` 必填（在场 / 不在场方向相反，缺省会让写错键静默变味）；
         // `name` 是**裸正则源**（与 `target.name` 同口径，`findNode` 直接 `new RegExp`），因此
@@ -1262,6 +1274,10 @@ export function checkScenario(scenario) {
                 : {};
         for (const [field, value] of Object.entries(judged))
           pushBare(`${at} expect[${j}] ${kinds[0]}.${field}`, value);
+        if (kinds[0] === "ax" && isPlainTable(spec.focused)) {
+          pushBare(`${at} expect[${j}] ax.focused.role`, spec.focused.role);
+          pushBare(`${at} expect[${j}] ax.focused.name`, spec.focused.name);
+        }
       }
     }
   }
@@ -2497,13 +2513,23 @@ export async function runScenario(ctx, scenario) {
       }
       if (spec.focused !== undefined) {
         // 判定逻辑与 `focusWindow click` 的焦点校验同源（`focusedRoleReading`，M678）：
-        // AX 里**恰有一个** focused 节点，且它的 role 命中 spec.focused（子串或 /…/ 正则）。
+        // AX 里**恰有一个** focused 节点，且它的 role 命中 spec.focused（子串或 /…/ 正则）；
+        // 给 `{ role, name }` 时另要求节点名（title > label > value）命中 name——只认 role 时
+        // 「焦点落在任意 AXButton」也能通过，对空工作区主操作的断言没有区分度（P3-1）。
         // 不直接用 AX 原始文本做正则——没有节点边界，`(focused)` 落在别的节点上照样匹配。
-        const m = matcher(spec.focused);
+        const wantRole = typeof spec.focused === "string" ? spec.focused : spec.focused.role;
+        const wantName = typeof spec.focused === "string" ? undefined : spec.focused.name;
+        const m = matcher(wantRole);
+        const mn = wantName === undefined ? null : matcher(wantName);
         const reading = focusedRoleReading(ax.nodes);
         const roles = reading.roles.join(",") || "无";
-        if (reading.count === 1 && m.test(reading.role)) return pass(label, `focused=${roles}`);
-        return fail(`${label}（期望唯一 focused 节点为 ${m.show}，实际 focused=${roles}，共 ${reading.count} 个）`, "", ax);
+        const name = reading.name ?? "";
+        const actual = `focused=${roles}${name ? ` 「${name}」` : ""}，共 ${reading.count} 个`;
+        if (reading.count === 1 && m.test(reading.role) && (mn === null || mn.test(name))) {
+          return pass(label, `focused=${roles}${name ? ` 「${name}」` : ""}`);
+        }
+        const expected = `${m.show}${mn === null ? "" : ` 且名称匹配 ${mn.show}`}`;
+        return fail(`${label}（期望唯一 focused 节点为 ${expected}，实际 ${actual}）`, "", ax);
       }
       if (spec.has !== undefined) {
         const m = matcher(spec.has);

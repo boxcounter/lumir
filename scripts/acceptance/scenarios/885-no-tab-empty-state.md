@@ -45,7 +45,7 @@ steps:
       - label: 旧的水印引导不再出现
         ax: { not: "在左栏选一个文件" }
       - label: 焦点落在主操作（不是正文 / body）
-        ax: { focused: "AXButton" }
+        ax: { focused: { role: "AXButton", name: "打开笔记…" } }
       - shot: 02-空工作区
 
   - name: 在空工作区正文里键入（结构性只读宿主）
@@ -77,7 +77,7 @@ steps:
       - label: 跳转输入条不打开（空工作区没有编辑器目标）
         ax: { not: "跳转到行" }
       - label: 焦点仍在空工作区主操作
-        ax: { focused: "AXButton" }
+        ax: { focused: { role: "AXButton", name: "打开笔记…" } }
       - shot: 05-空工作区-altg
 
   - name: 重新打开文档：空工作区离场
@@ -120,7 +120,7 @@ steps:
       - label: 空工作区标题仍在
         ax: { has: "没有打开的文档" }
       - label: 焦点回主操作（不落正文 / 不串到左 pane）
-        ax: { focused: "AXButton" }
+        ax: { focused: { role: "AXButton", name: "打开笔记…" } }
       - label: 左 pane 的文档原样在场
         editor: { has: "第 2 行：填充段落" }
       - shot: 09-空工作区-取消回焦点
