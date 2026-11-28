@@ -27,7 +27,9 @@
 //
 // 残余风险：① 本 app 的 helper 若在 app 退出后仍存活 >5s（罕见）会被误排除，读数偏低；
 // ② 外来 helper 若在 earlyWindow 内出现（早到），计数/集合判据仍会把它当成本 app 的——存活检查
-// 判它「无法判别」⇒ 整轮污染（保守，不洗绿）；③ pid 复用按 pid+lstart 匹配，不会误配。
+// 判它「无法判别」⇒ 整轮污染（保守，不洗绿）；③ **baseline 差集仍是 pid-only**：启动前已存在的
+// 外来 WebKit pid 被复用给窗口内的新进程时，仍可能被当成基线排除（既有残余，本次未改）；
+// 分类/扣减/stale 等待已全部按 pid+lstart 身份对匹配，不受 pid 复用影响。
 //
 // 口径缺陷（spec 已声明）：RSS 含 shared pages，合计系统性偏高；门禁取 max 而非 p95。
 import { execFile, spawn } from "node:child_process";
@@ -124,60 +126,77 @@ export function parseLstartEpochMs(lstart) {
   return new Date(+m[6], month, +m[2], +m[3], +m[4], +m[5]).getTime();
 }
 
-const helperKey = (p) => `${p.pid}\u0000${p.lstart}`;
+/** 进程身份：pid 会被复用（同一 pid 在不同 lstart 是两个进程），所有匹配/扣减/等待都必须带 lstart。 */
+export const identityKey = (p) => `${p.pid}\u0000${p.lstart}`;
+
+/** 从进程表里挑出身份（pid+lstart）仍存活的那些；pid 相同但 lstart 不同不算同一个进程。 */
+export function filterAliveIdentities(table, identities) {
+  const alive = new Set(table.map(identityKey));
+  return identities.filter((p) => alive.has(identityKey(p)));
+}
 
 /**
  * 外来 helper 判别（纯函数）。
  * 输入：
- *   - helpers：本轮并集里的 WebKit helper 明细（含 pid/lstart/comm）；
+ *   - helpers：本轮并集里的 WebKit helper 明细（含 pid/lstart/comm/rssKB）；
  *   - appStartMs：app 进程的启动时刻（由 app 的 lstart 解析，失败时退化到 spawn 时刻）；
  *   - earlyWindowMs：早到晚界（max(EARLY_WINDOW_MS, ready + READY_MARGIN_MS)）；
- *   - survivors：kill 后 SURVIVAL_GRACE_MS 仍存活的进程明细（pid+lstart 匹配）。
+ *   - survivors：kill 后 SURVIVAL_GRACE_MS 仍存活的进程明细（按 pid+lstart 匹配）。
  * 规则：late（lstart − appStart > earlyWindow）且 survived ⇒ 外来；
  *       early 且 survived ⇒ 无法判别（unexplainedSurvivors，调用方判污染，不排除）；
- *       late 且已退出 ⇒ 本 app 的晚建 helper（保留计数，不排除）。
+ *       late 且已退出 ⇒ 本 app 的晚建 helper（保留计数，不排除）；
+ *       lstart 无法解析 ⇒ unparsableHelpers（时间证据不可用，调用方**无条件**判污染，不排除）。
  */
 export function classifyForeignHelpers({ helpers, appStartMs, earlyWindowMs, survivors = [] }) {
-  const survivedKeys = new Set(survivors.map(helperKey));
+  const survivedKeys = new Set(survivors.map(identityKey));
   const foreign = [];
   const lateHelpers = [];
   const unexplainedSurvivors = [];
+  const unparsableHelpers = [];
   for (const h of [...helpers].sort((a, b) => a.pid - b.pid)) {
     const startedAtMs = parseLstartEpochMs(h.lstart);
-    const startedAfterAppMs = startedAtMs === null ? null : startedAtMs - appStartMs;
-    const late = startedAfterAppMs !== null && startedAfterAppMs > earlyWindowMs;
-    const survivedAfterAppExit = survivedKeys.has(helperKey(h));
-    const detail = { pid: h.pid, lstart: h.lstart, comm: h.comm, startedAfterAppMs, survivedAfterAppExit };
+    const survivedAfterAppExit = survivedKeys.has(identityKey(h));
+    if (startedAtMs === null) {
+      unparsableHelpers.push({ pid: h.pid, lstart: h.lstart, comm: h.comm, rssKB: h.rssKB, startedAfterAppMs: null, survivedAfterAppExit });
+      continue;
+    }
+    const startedAfterAppMs = startedAtMs - appStartMs;
+    const late = startedAfterAppMs > earlyWindowMs;
+    const detail = { pid: h.pid, lstart: h.lstart, comm: h.comm, rssKB: h.rssKB, startedAfterAppMs, survivedAfterAppExit };
     if (late) lateHelpers.push(detail);
     if (late && survivedAfterAppExit) foreign.push(detail);
     else if (!late && survivedAfterAppExit) unexplainedSurvivors.push(detail);
   }
-  return { foreign, lateHelpers, unexplainedSurvivors };
+  return { foreign, lateHelpers, unexplainedSurvivors, unparsableHelpers };
 }
 
 /**
  * 从单个样本里剔除外来 helper 的 RSS 与 pid（纯函数）。
- * `mb` 是 KB/1024 的合计，所以按 helperRssKB 逐 pid 扣减；样本里没有该 pid 时扣 0（幂等）。
+ * **按身份（pid+lstart）匹配**：样本里同 pid 但 lstart 不同的进程是另一个进程，不得误扣。
+ * `mb` 是 KB/1024 的合计，按 helperRssKB 逐 pid 扣减；样本里没有匹配身份时扣 0（幂等）。
  * processes 明细不删：attributed 仍要保留外来进程供事后复核。
  */
-export function excludeForeignHelpers(sample, foreignPids = []) {
-  const drop = new Set(foreignPids);
-  if (drop.size === 0) return sample;
-  const removed = sample.helperPids.filter((pid) => drop.has(pid));
+export function excludeForeignHelpers(sample, foreignHelpers = []) {
+  if (!foreignHelpers.length) return sample;
+  const dropKeys = new Set(foreignHelpers.map(identityKey));
+  const lstartByPid = new Map((sample.processes ?? []).map((p) => [p.pid, p.lstart]));
+  const removed = sample.helperPids.filter((pid) =>
+    dropKeys.has(`${pid}\u0000${lstartByPid.get(pid)}`)
+  );
   if (removed.length === 0) return sample;
   const removedKB = removed.reduce((sum, pid) => sum + (sample.helperRssKB?.[pid] ?? 0), 0);
   return {
     ...sample,
     mb: sample.mb - removedKB / 1024,
-    helperPids: sample.helperPids.filter((pid) => !drop.has(pid)),
+    helperPids: sample.helperPids.filter((pid) => !removed.includes(pid)),
   };
 }
 
-/** 进程诊断字段（meta 用）：只保留 pid/ppid/lstart/comm，按 pid 升序。 */
+/** 进程诊断字段（meta 用）：pid/ppid/lstart/rssKB/comm，按 pid 升序；保留 RSS 供独立重算扣减。 */
 export function toProcessDetails(procs) {
   return [...procs]
     .sort((a, b) => a.pid - b.pid)
-    .map(({ pid, ppid, lstart, comm }) => ({ pid, ppid, lstart, comm }));
+    .map(({ pid, ppid, lstart, rssKB, comm }) => ({ pid, ppid, lstart, rssKB, comm }));
 }
 
 /**
@@ -190,7 +209,7 @@ export function mergeProcessDetails(samples) {
   const byKey = new Map();
   for (const sample of samples) {
     for (const p of sample.processes ?? []) {
-      const key = `${p.pid}\u0000${p.lstart}`;
+      const key = identityKey(p);
       if (!byKey.has(key)) byKey.set(key, p);
     }
   }
@@ -328,24 +347,26 @@ async function procTable() {
   return parseProcTable(stdout);
 }
 
-/** 等一组 pid 全部退出；返回超时后仍存活的 pid（空数组 = 已清干净）。 */
-async function waitForPidsGone(pids, timeoutMs) {
-  const target = new Set(pids);
+/**
+ * 等一组进程身份（pid+lstart）全部退出；返回超时后仍存活的 pid（空数组 = 已清干净）。
+ * 按身份匹配：pid 被别的进程复用时不算「还活着」，避免假 stale 等待 15 秒。
+ * `tableFn` 可注入（夹具测试用假进程表驱动，不碰真实 ps）。
+ */
+export async function waitForPidsGone(identities, timeoutMs, tableFn = procTable) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const table = await procTable();
-    const alive = table.filter((p) => target.has(p.pid)).map((p) => p.pid);
+    const alive = filterAliveIdentities(await tableFn(), identities).map((p) => p.pid);
     if (alive.length === 0 || Date.now() >= deadline) return alive;
     await sleep(250);
   }
 }
 
 /** 跑一轮：基线快照 → spawn → ready → settle → N 次采样 → kill，并给出污染判定。 */
-async function measureRound({ attempt, bin, spawnEnv, previousAppHelperPids }) {
-  // 上一轮**本 app 的** helper 若还活着，会被新一轮基线当成「预先存在」排除，读数假低——先等它们退出。
+async function measureRound({ attempt, bin, spawnEnv, previousAppHelperIdentities = [] }) {
+  // 上一轮**本 app 的** helper（身份对 pid+lstart）若还活着，会被新一轮基线当成「预先存在」排除，读数假低——先等它们退出。
   // 外来客户端的残留不进这项检查：它们本来就会跨轮存活，新一轮的基线快照会把它们排除。
-  const leftoverHelperPids = previousAppHelperPids.length
-    ? await waitForPidsGone(previousAppHelperPids, HELPER_EXIT_TIMEOUT_MS)
+  const leftoverHelperPids = previousAppHelperIdentities.length
+    ? await waitForPidsGone(previousAppHelperIdentities, HELPER_EXIT_TIMEOUT_MS)
     : [];
   const baselineWebKit = (await procTable()).filter(isWebKit);
   const baselinePids = new Set(baselineWebKit.map((p) => p.pid));
@@ -417,69 +438,116 @@ async function measureRound({ attempt, bin, spawnEnv, previousAppHelperPids }) {
   const unionHelpers = attributed.filter(isWebKit);
   // app 退出后仍存活的 helper：本 app 的 helper 随主进程退出，活下来的属于别的客户端。
   const survivors = await waitForHelperSurvivors(unionHelpers, SURVIVAL_GRACE_MS);
-  const earlyWindowMs = Math.max(EARLY_WINDOW_MS, (readyElapsedMs ?? 0) + READY_MARGIN_MS);
-  const classified = classifyForeignHelpers({ helpers: unionHelpers, appStartMs, earlyWindowMs, survivors });
-  const foreignPids = classified.foreign.map((p) => p.pid);
-  const adjusted = samples.map((s) => excludeForeignHelpers(s, foreignPids));
-  for (let i = 0; i < adjusted.length; i++) {
-    if (adjusted[i] === samples[i]) continue;
-    const dropped = samples[i].helperPids.filter((pid) => foreignPids.includes(pid));
+  const round = assessRound({
+    attempt,
+    samples,
+    unionHelpers,
+    appStartMs,
+    readyElapsedMs,
+    survivors,
+    staleHelperPids: leftoverHelperPids,
+  });
+  for (let i = 0; i < round.samples.length; i++) {
+    if (round.samples[i] === samples[i]) continue;
+    const dropped = samples[i].helperPids.filter((pid) => !round.samples[i].helperPids.includes(pid));
     console.log(
       `[perf] memory foreign ${i + 1}/${SAMPLES} (attempt ${attempt}): ` +
         `${dropped.length} webkit [${dropped.join(",")}] 已剔除（late+survived）`
     );
   }
-  if (foreignPids.length > 0) {
+  if (round.foreignHelperPids.length > 0) {
     console.log(
-      `[perf] memory foreign helpers (attempt ${attempt}): ${foreignPids.length} [${foreignPids.join(",")}] ` +
-        `（earlyWindow=${earlyWindowMs}ms；app 退出后仍存活 ${survivors.length} 个）`
+      `[perf] memory foreign helpers (attempt ${attempt}): ${round.foreignHelperPids.length} [${round.foreignHelperPids.join(",")}] ` +
+        `（earlyWindow=${round.earlyWindowMs}ms；app 退出后仍存活 ${survivors.length} 个）`
     );
   }
-  if (classified.unexplainedSurvivors.length > 0) {
+  if (round.unparsableHelpers.length > 0) {
     console.log(
-      `[perf] memory unexplained survivors (attempt ${attempt}): ` +
-        `${classified.unexplainedSurvivors.length} [${classified.unexplainedSurvivors.map((p) => p.pid).join(",")}]` +
-        `（早到但存活：无法判别归属，判污染）`
+      `::warning::[perf] memory unparsable helper lstart (attempt ${attempt}): ` +
+        `[${round.unparsableHelpers.map((p) => p.pid).join(",")}]（时间证据不可用，整轮判污染）`
     );
   }
-  const extraReasons = classified.unexplainedSurvivors.length
-    ? [
-        {
-          sample: null,
-          kind: "helper-survived-app",
-          detail: { helperPids: classified.unexplainedSurvivors.map((p) => p.pid).sort((a, b) => a - b) },
-        },
-      ]
-    : [];
-  const evaluation = evaluateRound(adjusted, { staleHelperPids: leftoverHelperPids, extraReasons });
   return {
+    ...round,
     attempt,
-    contaminated: evaluation.contaminated,
-    reasons: evaluation.reasons,
-    helperCounts: adjusted.map((s) => s.helperPids.length),
-    sampleHelperPids: adjusted.map((s) => s.helperPids),
-    // stale 检查只看本 app 的 helper：外来客户端的残留不阻挠重测。
-    appHelperPidsAtExit: lastAttribution ? lastAttribution.helperPids.filter((pid) => !foreignPids.includes(pid)) : [],
     helperPidsAtExit: lastAttribution ? lastAttribution.helperPids : [],
-    foreignHelperPids: foreignPids,
-    foreignHelpers: classified.foreign,
-    survivedAfterAppExit: survivors.map((p) => ({ pid: p.pid, lstart: p.lstart, comm: p.comm })),
-    earlyWindowMs,
     leftoverHelperPids,
-    samples: adjusted,
     attributedPids: [...new Set(attributed.map((p) => p.pid))].sort((a, b) => a - b),
     attributed,
     excludedBaselineWebKit: toProcessDetails(baselineWebKit),
   };
 }
 
+/**
+ * 一轮的纯函数收尾（生产 measureRound 与夹具测试共用同一接线）：
+ * 分类外来 → 按身份逐样本剔除 → 轮级不可判别理由 → evaluateRound。
+ * `samples` 保持原样本（含 processes/rss），返回的 `samples` 是剔除后的；`rawSamples` 留存调整前 MB。
+ */
+export function assessRound({
+  attempt,
+  samples,
+  unionHelpers,
+  appStartMs,
+  readyElapsedMs = 0,
+  survivors = [],
+  staleHelperPids = [],
+}) {
+  const earlyWindowMs = Math.max(EARLY_WINDOW_MS, readyElapsedMs + READY_MARGIN_MS);
+  const classified = classifyForeignHelpers({ helpers: unionHelpers, appStartMs, earlyWindowMs, survivors });
+  const adjusted = samples.map((sample) => excludeForeignHelpers(sample, classified.foreign));
+  const roundReasons = [];
+  if (classified.unexplainedSurvivors.length > 0) {
+    roundReasons.push({
+      sample: null,
+      kind: "helper-survived-app",
+      detail: { helperPids: classified.unexplainedSurvivors.map((p) => p.pid).sort((a, b) => a - b) },
+    });
+  }
+  if (classified.unparsableHelpers.length > 0) {
+    roundReasons.push({
+      sample: null,
+      kind: "helper-lstart-unparsable",
+      detail: { helperPids: classified.unparsableHelpers.map((p) => p.pid).sort((a, b) => a - b) },
+    });
+  }
+  const evaluation = evaluateRound(adjusted, { staleHelperPids, extraReasons: roundReasons });
+  const last = samples.at(-1);
+  const lastLstartByPid = new Map((last?.processes ?? []).map((p) => [p.pid, p.lstart]));
+  const foreignKeys = new Set(classified.foreign.map(identityKey));
+  const appHelperIdentitiesAtExit = (last?.helperPids ?? [])
+    .filter((pid) => !foreignKeys.has(`${pid}\u0000${lastLstartByPid.get(pid)}`))
+    .map((pid) => ({ pid, lstart: lastLstartByPid.get(pid) }));
+  const helperRssBySample = samples.map((sample) =>
+    (sample.processes ?? [])
+      .filter((p) => sample.helperPids.includes(p.pid))
+      .map((p) => ({ pid: p.pid, lstart: p.lstart, rssKB: p.rssKB }))
+  );
+  return {
+    attempt,
+    contaminated: evaluation.contaminated,
+    reasons: evaluation.reasons,
+    helperCounts: adjusted.map((s) => s.helperPids.length),
+    sampleHelperPids: adjusted.map((s) => s.helperPids),
+    rawSamples: samples.map((s) => s.mb),
+    samples: adjusted,
+    helperRssBySample,
+    foreignHelperPids: classified.foreign.map((p) => p.pid),
+    foreignHelpers: classified.foreign,
+    unparsableHelpers: classified.unparsableHelpers,
+    survivedAfterAppExit: survivors.map(({ pid, lstart, comm, rssKB }) => ({ pid, lstart, comm, rssKB })),
+    earlyWindowMs,
+    // stale 检查只看本 app 的 helper：按身份对（pid+lstart）落盘，避免 pid 复用误等/误放。
+    appHelperIdentitiesAtExit,
+    appHelperPidsAtExit: appHelperIdentitiesAtExit.map((p) => p.pid),
+  };
+}
+
 /** kill 后等 helper 消失；返回观察窗结束时仍存活的并集成员（pid+lstart 匹配，防 pid 复用）。 */
-async function waitForHelperSurvivors(helpers, timeoutMs) {
+export async function waitForHelperSurvivors(helpers, timeoutMs, tableFn = procTable) {
   if (helpers.length === 0) return [];
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const aliveKeys = new Set((await procTable()).filter(isWebKit).map(helperKey));
-    const alive = helpers.filter((h) => aliveKeys.has(helperKey(h)));
+    const alive = filterAliveIdentities((await tableFn()).filter(isWebKit), helpers);
     if (alive.length === 0 || Date.now() >= deadline) return alive;
     await sleep(250);
   }
@@ -494,13 +562,18 @@ export function summarizeAttempt(a) {
     attempt: a.attempt,
     contaminated: a.contaminated,
     reasons: a.reasons,
+    // samples 是剔除后的（门禁口径）；rawSamples 是剔除前，配合 helperRssBySample 可独立重算扣减。
     samples: a.samples.map((s) => s.mb),
+    rawSamples: (a.rawSamples ?? a.samples.map((s) => s.mb)),
+    helperRssBySample: a.helperRssBySample ?? [],
     helperCounts: a.helperCounts,
     sampleHelperPids: a.sampleHelperPids,
     helperPidsAtExit: a.helperPidsAtExit,
     appHelperPidsAtExit: a.appHelperPidsAtExit ?? [],
+    appHelperIdentitiesAtExit: a.appHelperIdentitiesAtExit ?? [],
     foreignHelperPids: a.foreignHelperPids ?? [],
     foreignHelpers: a.foreignHelpers ?? [],
+    unparsableHelpers: a.unparsableHelpers ?? [],
     survivedAfterAppExit: a.survivedAfterAppExit ?? [],
     earlyWindowMs: a.earlyWindowMs ?? null,
     leftoverHelperPids: a.leftoverHelperPids,
@@ -519,8 +592,11 @@ export function buildMeta({ attempts, acceptedAttempt, panes, xdgConfigHome, hom
     attributedPids: accepted.attributedPids,
     attributed: accepted.attributed,
     excludedBaselineWebKit: accepted.excludedBaselineWebKit,
+    rawSamples: accepted.rawSamples ?? [],
+    helperRssBySample: accepted.helperRssBySample ?? [],
     foreignHelperPids: accepted.foreignHelperPids ?? [],
     foreignHelpers: accepted.foreignHelpers ?? [],
+    unparsableHelpers: accepted.unparsableHelpers ?? [],
     survivedAfterAppExit: accepted.survivedAfterAppExit ?? [],
     earlyWindowMs: accepted.earlyWindowMs ?? null,
     contaminationPolicy: CONTAMINATION_POLICY,
@@ -609,7 +685,7 @@ async function main() {
         attempt: step.attempt,
         bin,
         spawnEnv,
-        previousAppHelperPids: previous ? previous.appHelperPidsAtExit ?? [] : [],
+        previousAppHelperIdentities: previous ? previous.appHelperIdentitiesAtExit ?? [] : [],
       });
       attempts.push(round);
       const foreignNote = (round.foreignHelperPids?.length ?? 0) > 0

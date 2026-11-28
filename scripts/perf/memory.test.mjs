@@ -22,18 +22,21 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  assessRound,
   attribute,
   buildContaminatedPayload,
   buildMeta,
   classifyForeignHelpers,
   evaluateRound,
   excludeForeignHelpers,
+  filterAliveIdentities,
   mergeProcessDetails,
   nextStep,
   parseLstartEpochMs,
   parseProcTable,
   resolveRun,
   summarizeAttempt,
+  waitForPidsGone,
   CONTAMINATION_REASON,
   EARLY_WINDOW_MS,
   MAX_ATTEMPTS,
@@ -463,21 +466,23 @@ test("buildContaminatedPayload：连续污染诊断件两轮各带并集明细�
   assert.equal("excludedBaselineWebKit" in legacySummary, false);
 });
 
-// --- 外来 helper 判别（2026-11-28）：late + survived 双证据，保留诊断、不洗绿 ---
+// --- 外来 helper 判别（2026-11-28，K3 review 后修订）：
+//     身份对 pid+lstart 贯穿分类/扣减/stale；lstart 失败无条件污染；a2/a3 真实回放走生产 assessRound 接线。 ---
 
 const appStart = "Sat Nov 28 11:45:38 2026";
 const appStartMs = parseLstartEpochMs(appStart);
-const wk = (pid, lstart, comm = "com.apple.WebKit.WebContent") => ({
+const wk = (pid, lstart, comm = "com.apple.WebKit.WebContent", rssKB = 20 * 1024) => ({
   pid,
   ppid: 1,
+  rssKB,
   lstart,
   comm: `/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/${comm}.xpc/Contents/MacOS/${comm}`,
 });
+const ident = (pid, lstart) => ({ pid, lstart });
 
 test("parseLstartEpochMs：解析 ps lstart（1s 精度），垃圾输入返回 null", () => {
   const ms = parseLstartEpochMs("Sat Nov 28 11:45:43 2026");
-  assert.equal(typeof ms, "number");
-  assert.equal(ms - appStartMs, 5000); // 1 秒精度：+5s
+  assert.equal(ms - appStartMs, 5000);
   assert.equal(parseLstartEpochMs("Fri Oct  3 09:00:00 2026") - parseLstartEpochMs("Fri Oct  3 09:00:02 2026"), -2000);
   for (const bad of ["", "not a date", "2026-11-28T11:45:43Z", null, undefined]) {
     assert.equal(parseLstartEpochMs(bad), null, `应拒绝 ${JSON.stringify(bad)}`);
@@ -485,163 +490,304 @@ test("parseLstartEpochMs：解析 ps lstart（1s 精度），垃圾输入返回 
 });
 
 test("classifyForeignHelpers：正常 2/3 helper（早到、随 app 退出）不判外来", () => {
-  const helpers = [wk(101, "Sat Nov 28 11:45:38 2026"), wk(102, "Sat Nov 28 11:45:39 2026", "com.apple.WebKit.Networking")];
+  const helpers = [wk(101, appStart), wk(102, "Sat Nov 28 11:45:39 2026", "com.apple.WebKit.Networking")];
   const result = classifyForeignHelpers({ helpers, appStartMs, earlyWindowMs: 3000, survivors: [] });
   assert.deepEqual(result.foreign, []);
   assert.deepEqual(result.unexplainedSurvivors, []);
+  assert.deepEqual(result.unparsableHelpers, []);
   assert.equal(result.lateHelpers.length, 0);
-  // 边界：+2s 仍在窗口内
-  const boundary = classifyForeignHelpers({
-    helpers: [wk(103, "Sat Nov 28 11:45:41 2026")], // +3s，恰好等于窗口
-    appStartMs,
-    earlyWindowMs: 3000,
-    survivors: [wk(103, "Sat Nov 28 11:45:41 2026")],
-  });
-  assert.deepEqual(boundary.foreign, [], "恰好落在窗口边界应视为早到（保守，不排除）");
-  assert.equal(boundary.unexplainedSurvivors.length, 1);
 });
 
-test("classifyForeignHelpers：晚到且 app 退出后存活 ⇒ 外来（CI 现场形态）", () => {
-  const late = [wk(201, "Sat Nov 28 11:45:43 2026"), wk(202, "Sat Nov 28 11:45:47 2026"), wk(203, "Sat Nov 28 11:45:48 2026")];
-  const survivors = late.map((h) => ({ ...h }));
-  const result = classifyForeignHelpers({ helpers: late, appStartMs, earlyWindowMs: 3000, survivors });
-  assert.deepEqual(result.foreign.map((p) => p.pid), [201, 202, 203]);
+test("classifyForeignHelpers：晚到且 app 退出后存活 ⇒ 外来；晚到但退出 ⇒ 保留；早到存活 ⇒ 不可判别", () => {
+  const helpers = [
+    wk(201, "Sat Nov 28 11:45:43 2026"), // +5s
+    wk(202, "Sat Nov 28 11:45:47 2026"), // +9s
+    wk(203, "Sat Nov 28 11:45:48 2026"), // +10s
+    wk(204, appStart), // 早到
+  ];
+  const survivors = [helpers[0], helpers[2], helpers[3]].map((h) => ({ ...h }));
+  const result = classifyForeignHelpers({ helpers, appStartMs, earlyWindowMs: 3000, survivors });
+  assert.deepEqual(result.foreign.map((p) => p.pid), [201, 203]);
+  assert.deepEqual(result.lateHelpers.map((p) => p.pid), [201, 202, 203]);
+  assert.deepEqual(result.unexplainedSurvivors.map((p) => p.pid), [204]);
   assert.equal(result.foreign[0].startedAfterAppMs, 5000);
   assert.equal(result.foreign[0].survivedAfterAppExit, true);
-  assert.deepEqual(result.unexplainedSurvivors, []);
 });
 
-test("classifyForeignHelpers：晚到但随 app 退出 ⇒ 本 app 的晚建 helper，必须保留（不排除）", () => {
-  const late = [wk(301, "Sat Nov 28 11:45:48 2026")]; // +10s，renderer 重启形态
-  const result = classifyForeignHelpers({ helpers: late, appStartMs, earlyWindowMs: 3000, survivors: [] });
-  assert.deepEqual(result.foreign, []);
-  assert.equal(result.lateHelpers.length, 1);
-  assert.equal(result.lateHelpers[0].survivedAfterAppExit, false);
+test("classifyForeignHelpers：lstart 解析失败 ⇒ unparsable（与存活无关，两个方向都不可判别）", () => {
+  const broken = { pid: 501, lstart: "garbage", comm: "com.apple.WebKit.WebContent" };
+  for (const survivors of [[], [broken]]) {
+    const result = classifyForeignHelpers({ helpers: [broken], appStartMs, earlyWindowMs: 3000, survivors });
+    assert.deepEqual(result.foreign, []);
+    assert.deepEqual(result.unparsableHelpers.map((p) => p.pid), [501]);
+    assert.equal(result.unparsableHelpers[0].survivedAfterAppExit, survivors.length > 0);
+  }
 });
 
-test("classifyForeignHelpers：早到但存活 ⇒ 无法判别（不排除、判污染）", () => {
-  const early = [wk(401, "Sat Nov 28 11:45:38 2026")];
-  const result = classifyForeignHelpers({ helpers: early, appStartMs, earlyWindowMs: 3000, survivors: early.map((h) => ({ ...h })) });
-  assert.deepEqual(result.foreign, []);
-  assert.deepEqual(result.unexplainedSurvivors.map((p) => p.pid), [401]);
-});
-
-test("classifyForeignHelpers：lstart 解析失败按「无法判别」处理，不静默排除", () => {
-  const broken = [{ pid: 501, lstart: "garbage", comm: "com.apple.WebKit.WebContent" }];
-  const result = classifyForeignHelpers({ helpers: broken, appStartMs, earlyWindowMs: 3000, survivors: broken });
-  assert.deepEqual(result.foreign, []);
-  assert.deepEqual(result.unexplainedSurvivors.map((p) => p.pid), [501]);
-});
-
-test("classifyForeignHelpers：慢 runner 用 ready+1s 抬窗口（late 判定按传入的 earlyWindow）", () => {
-  const helpers = [wk(601, "Sat Nov 28 11:45:43 2026")]; // +5s
-  // ready 8s ⇒ 窗口 9s：+5s 的 helper 属于早到，不应被排除
-  const slow = classifyForeignHelpers({ helpers, appStartMs, earlyWindowMs: 8000 + READY_MARGIN_MS, survivors: helpers });
-  assert.deepEqual(slow.foreign, []);
-  assert.equal(slow.unexplainedSurvivors.length, 1);
-  // 快 ready ⇒ 窗口 3s：同一 helper 变晚到
-  const fast = classifyForeignHelpers({ helpers, appStartMs, earlyWindowMs: EARLY_WINDOW_MS, survivors: helpers });
-  assert.deepEqual(fast.foreign.map((p) => p.pid), [601]);
-});
-
-test("excludeForeignHelpers：只扣外来 helper 的 RSS 与 pid，幂等且不动无外来的样本", () => {
-  const sample = {
-    mb: 330,
-    helperPids: [101, 201, 202],
-    helperRssKB: { 101: 60 * 1024, 201: 20 * 1024, 202: 25 * 1024 },
-    processes: [{ pid: 101 }, { pid: 201 }, { pid: 202 }],
+test("excludeForeignHelpers：按身份 pid+lstart 扣除——同 pid 不同 lstart 的本 app helper 不得误扣", () => {
+  const own = { pid: 200, ppid: 1, lstart: "Sat Nov 28 11:45:39 2026", rssKB: 50 * 1024, comm: "com.apple.WebKit.WebContent" };
+  const foreignLater = { pid: 200, ppid: 1, lstart: "Sat Nov 28 11:45:48 2026", rssKB: 30 * 1024, comm: "com.apple.WebKit.WebContent" };
+  const ownSample = {
+    mb: 280,
+    helperPids: [200],
+    helperRssKB: { 200: 50 * 1024 },
+    processes: [{ pid: 200, lstart: own.lstart }],
   };
-  const out = excludeForeignHelpers(sample, [201, 202]);
-  assert.deepEqual(out.helperPids, [101]);
-  assert.equal(out.mb, 330 - 45);
-  assert.equal(out.helperRssKB, sample.helperRssKB); // 明细保留，attributed 仍可见
-  assert.deepEqual(out.processes, sample.processes);
-  assert.equal(excludeForeignHelpers(out, [201, 202]), out, "重复剔除应为 no-op（返回同一对象）");
-  const untouched = { mb: 230, helperPids: [101], helperRssKB: { 101: 60 * 1024 } };
-  assert.equal(excludeForeignHelpers(untouched, [201]), untouched);
-});
-
-test("集成：CI 的 7 helpers 现场 ⇒ 剔除外来后 2 helpers / 233MB 且 clean，诊断齐全", () => {
-  // 表：app + 2 个本 app helper（早到）+ 5 个外来（+5s/+9s/+10s）
-  const table = [
-    { pid: 100, ppid: 1, rssKB: 100 * 1024, lstart: appStart, comm: "/repo/src-tauri/target/release/lumir" },
-    { pid: 101, ppid: 1, rssKB: 60 * 1024, lstart: appStart, comm: wk(101, "").comm },
-    { pid: 102, ppid: 1, rssKB: 73 * 1024, lstart: "Sat Nov 28 11:45:39 2026", comm: wk(102, "", "com.apple.WebKit.Networking").comm },
-    { pid: 201, ppid: 1, rssKB: 20 * 1024, lstart: "Sat Nov 28 11:45:43 2026", comm: wk(201, "").comm },
-    { pid: 202, ppid: 1, rssKB: 21 * 1024, lstart: "Sat Nov 28 11:45:43 2026", comm: wk(202, "", "com.apple.WebKit.Networking").comm },
-    { pid: 203, ppid: 1, rssKB: 22 * 1024, lstart: "Sat Nov 28 11:45:47 2026", comm: wk(203, "").comm },
-    { pid: 204, ppid: 1, rssKB: 19 * 1024, lstart: "Sat Nov 28 11:45:47 2026", comm: wk(204, "", "com.apple.WebKit.Networking").comm },
-    { pid: 205, ppid: 1, rssKB: 20 * 1024, lstart: "Sat Nov 28 11:45:48 2026", comm: wk(205, "").comm },
-  ];
-  const attribution = attribute(table, 100, new Set());
-  assert.equal(attribution.helperPids.length, 7);
-  const sample = {
-    mb: attribution.mb,
-    helperPids: attribution.helperPids,
-    helperRssKB: attribution.helperRssKB,
-    processes: attribution.processes,
+  const laterSample = {
+    mb: 280,
+    helperPids: [200],
+    helperRssKB: { 200: 30 * 1024 },
+    processes: [{ pid: 200, lstart: foreignLater.lstart }],
   };
-  const samples = [1, 2, 3, 4, 5].map(() => ({ ...sample }));
-  const union = mergeProcessDetails(samples).filter((p) => p.comm.includes("com.apple.WebKit."));
-  const survivors = union.filter((p) => p.pid >= 201);
-  const classified = classifyForeignHelpers({ helpers: union, appStartMs, earlyWindowMs: 3000, survivors });
-  assert.deepEqual(classified.foreign.map((p) => p.pid), [201, 202, 203, 204, 205]);
-  const adjusted = samples.map((s) => excludeForeignHelpers(s, classified.foreign.map((p) => p.pid)));
-  const evaluation = evaluateRound(adjusted, { staleHelperPids: [] });
-  assert.equal(evaluation.contaminated, false, "剔除外来后应 clean");
-  assert.deepEqual(evaluation.firstHelperPids, [101, 102]);
-  assert.deepEqual(adjusted.map((s) => s.helperPids.length), [2, 2, 2, 2, 2]);
-  // 335MB − 102MB = 233MB：外来 RSS 确实被扣掉，不是只换了计数
-  assert.equal(adjusted[0].mb, 233);
+  const foreign = [{ pid: 200, lstart: foreignLater.lstart }];
+  // 早样本里 pid 200 是另一个身份（本 app helper）：RSS 与计数都不动
+  assert.equal(excludeForeignHelpers(ownSample, foreign), ownSample);
+  // 晚样本里 pid 200 是外来身份：只扣那一个样本
+  const adjusted = excludeForeignHelpers(laterSample, foreign);
+  assert.deepEqual(adjusted.helperPids, []);
+  assert.equal(adjusted.mb, 280 - 30);
 });
 
-test("不洗绿：早到但存活 ⇒ 判污染（helper-survived-app），且不被算成外来", () => {
-  const early = [wk(701, appStart)];
-  const classified = classifyForeignHelpers({ helpers: early, appStartMs, earlyWindowMs: 3000, survivors: early });
-  const samples = [{ mb: 300, helperPids: [701], helperRssKB: { 701: 50 * 1024 } }];
-  const adjusted = samples.map((s) => excludeForeignHelpers(s, classified.foreign.map((p) => p.pid)));
-  assert.equal(adjusted[0].mb, 300, "不能把无法判别的 helper 扣掉");
-  const extraReasons = classified.unexplainedSurvivors.length
-    ? [{ sample: null, kind: "helper-survived-app", detail: { helperPids: [701] } }]
-    : [];
-  const evaluation = evaluateRound(adjusted, { extraReasons });
-  assert.equal(evaluation.contaminated, true);
-  assert.deepEqual(evaluation.reasons.map((r) => r.kind), ["helper-survived-app"]);
+test("filterAliveIdentities + waitForPidsGone：pid 复用不算存活；身份匹配才等", async () => {
+  const previous = [ident(700, "Sat Nov 28 11:45:39 2026")];
+  const reused = [{ pid: 700, ppid: 1, rssKB: 1, lstart: "Sat Nov 28 11:45:48 2026", comm: "x" }];
+  assert.deepEqual(filterAliveIdentities(reused, previous), [], "同 pid 不同 lstart 不是同一个进程");
+  // 复用 pid 的进程不应制造假 stale：立即返回空
+  const gone = await waitForPidsGone(previous, 5_000, async () => reused);
+  assert.deepEqual(gone, []);
+  // 身份仍在 ⇒ 等到超时并回报该 pid（夹具用 0ms 上限）
+  const still = await waitForPidsGone(previous, 0, async () => [reused[0], { ...reused[0], lstart: previous[0].lstart }]);
+  assert.deepEqual(still, [700]);
 });
 
-test("不洗绿：晚建但随 app 退出 ⇒ 仍计入 helper 数，超过 3 照常判污染", () => {
+test("生产接线 assessRound：早到但存活 ⇒ helper-survived-app（不洗绿、不扣 RSS）", () => {
+  const early = wk(701, appStart, undefined, 40 * 1024);
+  const samples = [1, 2, 3, 4, 5].map(() => ({
+    mb: 300,
+    helperPids: [701],
+    helperRssKB: { 701: 40 * 1024 },
+    processes: [early],
+  }));
+  const round = assessRound({
+    attempt: 1,
+    samples,
+    unionHelpers: [early],
+    appStartMs,
+    readyElapsedMs: 500,
+    survivors: [early],
+    staleHelperPids: [],
+  });
+  assert.equal(round.contaminated, true);
+  assert.deepEqual(round.reasons.map((r) => r.kind), ["helper-survived-app"]);
+  assert.deepEqual(round.foreignHelperPids, []);
+  assert.equal(round.samples[0].mb, 300);
+});
+
+test("生产接线 assessRound：lstart 失败 + 未存活 ⇒ 无条件污染（fail-closed）", () => {
+  const broken = { pid: 702, ppid: 1, rssKB: 10 * 1024, lstart: "garbage", comm: "com.apple.WebKit.WebContent" };
+  const samples = [1, 2, 3].map(() => ({
+    mb: 240,
+    helperPids: [702],
+    helperRssKB: { 702: 10 * 1024 },
+    processes: [broken],
+  }));
+  for (const survivors of [[], [broken]]) {
+    const round = assessRound({
+      attempt: 1,
+      samples,
+      unionHelpers: [broken],
+      appStartMs,
+      readyElapsedMs: 500,
+      survivors,
+      staleHelperPids: [],
+    });
+    assert.equal(round.contaminated, true, `survivors=${survivors.length} 时也必须污染`);
+    assert.deepEqual(round.reasons.map((r) => r.kind), ["helper-lstart-unparsable"]);
+    assert.equal(round.samples[0].mb, 240, "无法判别时不得扣 RSS");
+  }
+});
+
+test("a2 真实事故回放（生产 assessRound）：2 survivor / 3 late-exited ⇒ 首轮 5 helpers 污染，stale 不含外来", () => {
+  // 真实 pid/lstart（run 46137691165 attempt 2 round 1）；survivors 只有 5075、5173（artifact 记录的残留）。
   const helpers = [
-    wk(801, appStart),
-    wk(802, appStart, "com.apple.WebKit.Networking"),
-    wk(803, "Sat Nov 28 11:45:48 2026"),
-    wk(804, "Sat Nov 28 11:45:49 2026"),
+    wk(4947, "Sat Nov 28 11:45:38 2026", "com.apple.WebKit.WebContent", 60 * 1024),
+    wk(4948, "Sat Nov 28 11:45:38 2026", "com.apple.WebKit.Networking", 73 * 1024),
+    wk(5071, "Sat Nov 28 11:45:43 2026", "com.apple.WebKit.WebContent", 20 * 1024),
+    wk(5075, "Sat Nov 28 11:45:43 2026", "com.apple.WebKit.Networking", 21 * 1024),
+    wk(5169, "Sat Nov 28 11:45:47 2026", "com.apple.WebKit.WebContent", 22 * 1024),
+    wk(5170, "Sat Nov 28 11:45:47 2026", "com.apple.WebKit.Networking", 19 * 1024),
+    wk(5173, "Sat Nov 28 11:45:48 2026", "com.apple.WebKit.WebContent", 20 * 1024),
   ];
-  const classified = classifyForeignHelpers({ helpers, appStartMs, earlyWindowMs: 3000, survivors: [] });
-  assert.deepEqual(classified.foreign, []);
-  const samples = [{ mb: 300, helperPids: [801, 802, 803, 804], helperRssKB: {} }];
-  const evaluation = evaluateRound(samples, { staleHelperPids: [] });
-  assert.equal(evaluation.contaminated, true);
-  assert.ok(evaluation.reasons.some((r) => r.kind === "helper-count"));
+  const totalMB = (100 * 1024 + helpers.reduce((s, h) => s + h.rssKB, 0)) / 1024; // app 100MB + helpers
+  const samples = [1, 2, 3, 4, 5].map(() => ({
+    mb: totalMB,
+    helperPids: helpers.map((h) => h.pid),
+    helperRssKB: Object.fromEntries(helpers.map((h) => [h.pid, h.rssKB])),
+    processes: [{ pid: 100, ppid: 1, lstart: appStart, rssKB: 100 * 1024, comm: "lumir" }, ...helpers],
+  }));
+  const survivors = helpers.filter((h) => h.pid === 5075 || h.pid === 5173);
+  const round = assessRound({
+    attempt: 1,
+    samples,
+    unionHelpers: helpers,
+    appStartMs,
+    readyElapsedMs: 500,
+    survivors,
+    staleHelperPids: [],
+  });
+  // 只有 2 个外来身份被剔除：剩 5 个 helper（2 早到 + 3 late-exited）⇒ 仍超上限、首轮污染
+  assert.deepEqual(round.foreignHelperPids, [5075, 5173]);
+  assert.deepEqual(round.helperCounts, [5, 5, 5, 5, 5]);
+  assert.equal(round.contaminated, true);
+  assert.ok(round.reasons.some((r) => r.kind === "helper-count" && r.detail.helperCount === 5));
+  // 首轮调整后的 RSS = 原始 − 两个外来身份各自 RSS
+  assert.equal(round.samples[0].mb, totalMB - (21 + 20));
+  assert.deepEqual(round.rawSamples, [totalMB, totalMB, totalMB, totalMB, totalMB]);
+  // stale 作用域：本 app 的 5 个（2 早到 + 3 late-exited），不含两个外来 survivor
+  assert.deepEqual(round.appHelperPidsAtExit, [4947, 4948, 5071, 5169, 5170]);
+  assert.ok(round.appHelperIdentitiesAtExit.every((p) => p.pid !== 5075 && p.pid !== 5173));
+  // 落盘字段：调整后的逐样本 helper 集合、存活集合与外来明细（带 rssKB）都在
+  assert.deepEqual(round.sampleHelperPids[0], [4947, 4948, 5071, 5169, 5170]);
+  assert.deepEqual(round.survivedAfterAppExit.map((p) => p.pid), [5075, 5173]);
+  assert.ok(round.foreignHelpers.every((p) => typeof p.rssKB === "number"));
+  // 第二轮：这 5 个身份都已退出 ⇒ stale 不触发；基线排除 2 个外来 survivor ⇒ 2 helpers clean、接受
+  const round2Clean = {
+    attempt: 2,
+    contaminated: false,
+    reasons: [],
+    samples: [{ mb: 233.1 }, { mb: 233.0 }],
+    helperCounts: [2, 2],
+    sampleHelperPids: [[6831, 6832], [6831, 6832]],
+    rawSamples: [233.1, 233.0],
+    helperRssBySample: [],
+    foreignHelperPids: [],
+    foreignHelpers: [],
+    unparsableHelpers: [],
+    survivedAfterAppExit: [],
+    earlyWindowMs: 3000,
+    appHelperPidsAtExit: [6831, 6832],
+    appHelperIdentitiesAtExit: [ident(6831, "Sat Nov 28 11:46:13 2026")],
+    leftoverHelperPids: [],
+    attributedPids: [6829, 6831, 6832],
+    attributed: [],
+    excludedBaselineWebKit: [],
+  };
+  assert.deepEqual(nextStep([round]), { action: "measure", attempt: 2 });
+  assert.deepEqual(nextStep([round, round2Clean]), { action: "accept", attempt: 2 });
+  const resolved = resolveRun([round, round2Clean]);
+  assert.equal(resolved.status, "ok");
+  assert.deepEqual(resolved.samples, [233.1, 233.0]);
+});
+
+test("a3 真实事故回放：同样只有 2 survivor ⇒ 首轮 5 helpers 污染、stale 不含外来", () => {
+  const helpers = [
+    wk(4198, "Sat Nov 28 11:51:43 2026", "com.apple.WebKit.WebContent", 60 * 1024),
+    wk(4199, "Sat Nov 28 11:51:43 2026", "com.apple.WebKit.Networking", 73 * 1024),
+    wk(4377, "Sat Nov 28 11:51:49 2026", "com.apple.WebKit.WebContent", 20 * 1024),
+    wk(4378, "Sat Nov 28 11:51:49 2026", "com.apple.WebKit.Networking", 21 * 1024),
+    wk(4387, "Sat Nov 28 11:51:53 2026", "com.apple.WebKit.WebContent", 22 * 1024),
+    wk(4388, "Sat Nov 28 11:51:53 2026", "com.apple.WebKit.Networking", 19 * 1024),
+    wk(4390, "Sat Nov 28 11:51:53 2026", "com.apple.WebKit.WebContent", 20 * 1024),
+  ];
+  const totalMB = (100 * 1024 + helpers.reduce((s, h) => s + h.rssKB, 0)) / 1024;
+  const samples = [1, 2, 3, 4, 5].map(() => ({
+    mb: totalMB,
+    helperPids: helpers.map((h) => h.pid),
+    helperRssKB: Object.fromEntries(helpers.map((h) => [h.pid, h.rssKB])),
+    processes: [{ pid: 100, ppid: 1, lstart: "Sat Nov 28 11:51:43 2026", rssKB: 100 * 1024, comm: "lumir" }, ...helpers],
+  }));
+  const round = assessRound({
+    attempt: 1,
+    samples,
+    unionHelpers: helpers,
+    appStartMs: parseLstartEpochMs("Sat Nov 28 11:51:43 2026"),
+    readyElapsedMs: 500,
+    survivors: helpers.filter((h) => h.pid === 4378 || h.pid === 4390),
+    staleHelperPids: [],
+  });
+  assert.deepEqual(round.foreignHelperPids, [4378, 4390]);
+  assert.deepEqual(round.helperCounts, [5, 5, 5, 5, 5]);
+  assert.equal(round.contaminated, true);
+  assert.deepEqual(round.appHelperPidsAtExit, [4198, 4199, 4377, 4387, 4388]);
+});
+
+test("artifact 可独立重算扣减：attributed/foreignHelpers 带 rssKB，rawSamples 与逐样本 helper RSS 齐全", () => {
+  const helpers = [
+    wk(4947, "Sat Nov 28 11:45:38 2026", "com.apple.WebKit.WebContent", 60 * 1024),
+    wk(5075, "Sat Nov 28 11:45:43 2026", "com.apple.WebKit.Networking", 21 * 1024),
+    wk(5173, "Sat Nov 28 11:45:48 2026", "com.apple.WebKit.WebContent", 20 * 1024),
+  ];
+  const samples = [1, 2].map(() => ({
+    mb: 201,
+    helperPids: [4947, 5075, 5173],
+    helperRssKB: Object.fromEntries(helpers.map((h) => [h.pid, h.rssKB])),
+    processes: [{ pid: 100, ppid: 1, lstart: appStart, rssKB: 100 * 1024, comm: "lumir" }, ...helpers],
+  }));
+  const round = assessRound({
+    attempt: 1,
+    samples,
+    unionHelpers: helpers,
+    appStartMs,
+    readyElapsedMs: 500,
+    survivors: [helpers[1], helpers[2]],
+    staleHelperPids: [],
+  });
+  const summary = summarizeAttempt({ ...round, helperPidsAtExit: [], leftoverHelperPids: [], attributedPids: [], attributed: [], excludedBaselineWebKit: [] });
+  assert.deepEqual(summary.rawSamples, [201, 201]);
+  assert.deepEqual(summary.samples, [201 - 41, 201 - 41]);
+  // 逐样本 helper RSS 能重算：raw − Σ foreign rss = adjusted
+  const foreign = new Set(summary.foreignHelperPids);
+  for (let i = 0; i < summary.helperRssBySample.length; i++) {
+    const droppedKB = summary.helperRssBySample[i].filter((p) => foreign.has(p.pid)).reduce((s, p) => s + p.rssKB, 0);
+    assert.equal(summary.rawSamples[i] - droppedKB / 1024, summary.samples[i]);
+  }
+  // 进程明细带 RSS
+  assert.equal(summary.attributed?.[0]?.rssKB ?? helpers[0].rssKB, helpers[0].rssKB);
+  assert.ok(summary.foreignHelpers.every((p) => typeof p.rssKB === "number"));
+});
+
+test("生产接线 assessRound：慢 runner（ready 8s ⇒ 窗口 9s）不误伤 +5s 的本 app helper", () => {
+  const helper = wk(601, "Sat Nov 28 11:45:43 2026"); // +5s
+  const samples = [{ mb: 250, helperPids: [601], helperRssKB: { 601: 20 * 1024 }, processes: [helper] }];
+  const round = assessRound({
+    attempt: 1,
+    samples,
+    unionHelpers: [helper],
+    appStartMs,
+    readyElapsedMs: 8_000,
+    survivors: [],
+    staleHelperPids: [],
+  });
+  assert.equal(round.earlyWindowMs, 9_000);
+  assert.deepEqual(round.foreignHelperPids, []);
+  assert.equal(round.contaminated, false);
 });
 
 test("结果与阈值口径不变：maxHelpers=3、resident-memory 250MB/absolute/max、contract 200", () => {
   assert.equal(MAX_HELPERS, 3);
   assert.equal(SURVIVAL_GRACE_MS, 5_000);
-  const thresholds = JSON.parse(
-    readFileSync(path.resolve(here, "../../tests/perf/thresholds.json"), "utf8")
-  );
+  const thresholds = JSON.parse(readFileSync(path.resolve(here, "../../tests/perf/thresholds.json"), "utf8"));
   const mem = thresholds.metrics["resident-memory"];
   assert.equal(mem.threshold, 250);
   assert.equal(mem.mode, "absolute");
   assert.equal(mem.gate, "max");
   const meta = buildMeta({
-    attempts: [{ ...attemptOf({ samples: [{ mb: 230, helperPids: [1, 2], processes: [] }], contaminated: false }), foreignHelperPids: [9], foreignHelpers: [{ pid: 9 }], survivedAfterAppExit: [{ pid: 9 }], earlyWindowMs: 3000 }],
+    attempts: [{
+      ...attemptOf({ samples: [{ mb: 230, helperPids: [1, 2], processes: [] }], contaminated: false }),
+      rawSamples: [230],
+      helperRssBySample: [],
+      foreignHelperPids: [],
+      foreignHelpers: [],
+      unparsableHelpers: [],
+      survivedAfterAppExit: [],
+      earlyWindowMs: 3000,
+    }],
     acceptedAttempt: 1,
     panes: 0,
     xdgConfigHome: "/tmp/xdg",
     home: "/tmp/home",
   });
-  assert.deepEqual(meta.foreignHelperPids, [9]);
-  assert.equal(meta.earlyWindowMs, 3000);
+  assert.deepEqual(meta.foreignHelperPids, []);
+  assert.equal(meta.rawSamples[0], 230);
   assert.equal(meta.contaminationPolicy.maxHelpers, MAX_HELPERS);
 });
