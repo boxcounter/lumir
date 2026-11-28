@@ -38,7 +38,7 @@ export const markdownNowrapScrollportTheme = EditorView.theme({
   ".cm-content.cm-lp-reading-scrollport": {
     overflowX: "auto",
     clipPath: "inset(0 var(--sp-13))",
-    "& .cm-line:not(.cm-lp-codeblock-line)::after": {
+    "& .cm-line:not(.cm-lp-codeblock-line):not(:has(> br))::after": {
       content: '""',
       display: "inline-block",
       inlineSize: "44px",

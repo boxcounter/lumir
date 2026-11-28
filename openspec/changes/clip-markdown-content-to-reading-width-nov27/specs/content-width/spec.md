@@ -40,6 +40,11 @@ caret、选区、搜索结果与粘贴/编辑后的插入点 SHALL 通过同一�
 - **WHEN** 对一条宽于 X 的非空选区发放显式 reveal，分别覆盖正向与反向 active head，并在字号调整后再次 reveal
 - **THEN** 横向算法使用选择方向执行与 CM 相同的宽矩形二次修正；active head 不越出 T，且保留 reveal 自带的 xMargin；物理横滚边界不得为制造 margin 而越过 0/max
 
+#### Scenario: 行尾补偿不改变纵向布局与块级尺寸
+
+- **WHEN** 在单双 pane、宽窄窗中往返切换 Markdown nowrap，并把正文横滚到最右
+- **THEN** 空行与非空行的高度、初始 scrollTop、代码块和表格尺寸保持不变；行尾补偿只增加横向可滚范围，最右仍能进入 T
+
 #### Scenario: 文档原点的横向位置独立恢复
 
 - **WHEN** 真实捕获 `{pos:0,y,x>0}` 后重新装载，或带着同一位置交还编辑器焦点

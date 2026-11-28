@@ -5,7 +5,7 @@
 - `X`：grid 中列的 border-box 宽，等于 `min(token,pane−48)`；包含既有左右各 44px padding，也是 contentDOM 横向 scrollport 的外框。
 - `T`：文字可见窗口，等于 X 左右各内缩 44px。文字 glyph、caret、selection 的可见部分必须始终落在 T 内；这 44px 双侧留白在起点、中段、最右都不得消失。
 - 自然宽：nowrap 行盒/文本的 intrinsic inline 长度，可大于 X，不因本 change 改小。
-- 裁切与可达：contentDOM 的 `clip-path: inset(0 44px)` 只裁文字，不改 scrollWidth；caret/selection layer 在既有 X 裁切之外再内缩同一 44px。非代码块行尾的空伪元素提供 44px 可滚空间，避免最右内容永久被裁掉；它不进入文档文本、不缩代码块可用宽度，也不改变 outer 的横向所有权。
+- 裁切与可达：contentDOM 的 `clip-path: inset(0 44px)` 只裁文字，不改 scrollWidth；caret/selection layer 在既有 X 裁切之外再内缩同一 44px。非代码块且非 CM 空行（`:not(:has(> br))`）的行尾空伪元素提供 44px 可滚空间，避免最右内容永久被裁掉；空行不产生额外行盒，空/非空行高度、初始锚点和代码块尺寸均不得改变。伪元素不进入文档文本，也不改变 outer 的横向所有权。
 - 横滚容器：正文是 contentDOM；代码块/宽表是各自块级容器；code 文件仍是外层 scrollDOM。
 
 wrap 时装 `EditorView.lineWrapping`，contentDOM 不启用横向 auto。Markdown nowrap 才装专用 class 与主题 `overflow-x:auto`。外层 grid、行模板和 content width 不改。

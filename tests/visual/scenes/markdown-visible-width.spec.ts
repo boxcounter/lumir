@@ -13,7 +13,11 @@ const BLOCK_DOC = [
   "| one long value | two long value | three long value | four long value | five long value | six long value |", "",
 ].join("\n");
 const CODE_DOC = `const result = "${"code".repeat(150)}"; // CODE-END\n`;
-const FILES = { "visible.md": DOC, "other-long.md": DOC, "other.md": "Other document\n", "origin.md": LONG_LINE, "blocks.md": BLOCK_DOC, "code.ts": CODE_DOC };
+const VERTICAL_DOC = [
+  "# Vertical probe", "", LONG_LINE, "", "", "", "short anchor", "", "```ts", `const embedded = "${"block".repeat(40)}"; // VERTICAL-BLOCK-END`, "```", "",
+  "| alpha | bravo | charlie |", "| --- | --- | --- |", "| one long value | two long value | three long value |", "", "",
+].join("\n");
+const FILES = { "visible.md": DOC, "other-long.md": DOC, "other.md": "Other document\n", "origin.md": LONG_LINE, "blocks.md": BLOCK_DOC, "vertical.md": VERTICAL_DOC, "code.ts": CODE_DOC };
 const ENTRIES = Object.entries(FILES).map(([file, text]) => ({ path: file, kind: "file", size: text.length, mtime_ms: 0 }));
 const MUTATION = process.env.LUMIR_VISIBLE_WIDTH_MUTATION;
 const REVIEW_DIR = process.env.LUMIR_VISIBLE_WIDTH_REVIEW_DIR;
@@ -76,7 +80,7 @@ async function boot(page: Page, options: Partial<Options> = {}, file = "visible.
       line_wrap: options.wrap ?? false,
       line_numbers: options.lineNumbers ? "on" : "off",
       theme: options.theme ?? "light",
-      keys: { F2: "pane.split" },
+      keys: { F2: "pane.split", "Control-j": "view.toggle-line-wrap" },
     },
   });
   await page.goto("/");
@@ -396,6 +400,52 @@ test("code 满 pane 与 Markdown 块级横滚不被 inner scrollport 接管", as
   expect(code.innerClass).toBe(false);
   expect(code.outerMax).toBeGreaterThan(0);
   expect(code.outerX).toBe(code.outerMax);
+});
+
+test("横滚补偿不改变空/非空行高度、初始锚点或块级尺寸", async ({ page }) => {
+  for (const options of [{}, { split: true }, { narrow: true }]) {
+    await boot(page, options, "vertical.md");
+    const measure = () => page.locator(".editor-pane").evaluateAll(panes => panes.map(pane => {
+      const scroller = pane.querySelector(".cm-scroller") as HTMLElement;
+      return {
+        top: scroller.scrollTop,
+        lines: [...pane.querySelectorAll(".cm-line")].map(line => ({ text: line.textContent ?? "", height: line.getBoundingClientRect().height })),
+        blocks: [".cm-lp-codeblock-scroll", ".cm-lp-table-scroll"].map(selector => {
+          const el = pane.querySelector(selector) as HTMLElement | null;
+          if (!el) return { selector, width: 0, height: 0, scrollWidth: 0, clientWidth: 0 };
+          const box = el.getBoundingClientRect();
+          return { selector, width: box.width, height: box.height, scrollWidth: el.scrollWidth, clientWidth: el.clientWidth };
+        }),
+      };
+    }));
+    const before = await measure();
+    expect(before.length).toBe(options.split ? 2 : 1);
+    for (const pane of before) {
+      expect(pane.top).toBe(0);
+      expect(pane.lines.filter(line => line.text === "").length).toBeGreaterThanOrEqual(4);
+      expect(pane.lines.some(line => line.text !== "")).toBe(true);
+      expect(pane.blocks.every(block => block.width === 0 || block.height > 0)).toBe(true);
+    }
+    expect(before[0].blocks.some(block => block.width > 0)).toBe(true);
+    if (MUTATION === "vertical") {
+      await page.addStyleTag({ content: ".cm-content.cm-lp-reading-scrollport .cm-line::after { content: '' !important; display: inline-block !important; inline-size: 44px !important; }" });
+    }
+    await page.keyboard.press("Control+j");
+    await page.waitForTimeout(80);
+    await page.keyboard.press("Control+j");
+    await page.waitForTimeout(80);
+    expect(await measure()).toEqual(before);
+    await setHorizontal(page, 1);
+    const scrolled = await measure();
+    expect(scrolled.map(pane => pane.top)).toEqual(before.map(pane => pane.top));
+    expect(scrolled.map(pane => pane.lines)).toEqual(before.map(pane => pane.lines));
+    expect(scrolled.map(pane => pane.blocks)).toEqual(before.map(pane => pane.blocks));
+    for (let pane = 0; pane < before.length; pane++) {
+      await setHorizontal(page, 1, pane);
+      expectEndReachable(await readWindow(page, pane));
+    }
+    await setHorizontal(page, 0);
+  }
 });
 
 async function setSelectionRange(page: Page, anchor: number, head: number, explicitRange: boolean): Promise<void> {
