@@ -207,6 +207,27 @@ test("空工作区：vault 切换器取消后焦点回主操作（不落被覆�
   await expect(page.locator(".cm-content")).not.toBeFocused();
 });
 
+test("双 pane：vault 切换器取消后焦点回活跃空 pane 的主操作，不串到左 pane", async ({ page }) => {
+  await bootDoc(page, "a.md", { config: { language: "en", keys: { F2: "pane.split" } } });
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("F2");
+  await expect(page.locator(".editor-pane")).toHaveCount(2);
+
+  const left = page.locator(".editor-pane").nth(0);
+  const right = page.locator(".editor-pane").nth(1);
+  const rightOpen = right.locator(".pane-empty-open");
+  await expect(rightOpen).toBeFocused();
+
+  // 活跃 pane 是右（空）pane：vault 切换器的 Esc 关闭必须回**这个** pane 的主操作。
+  await page.keyboard.press("Meta+o");
+  await expect(page.locator(".vault-pop")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".vault-pop")).toBeHidden();
+  await expect(rightOpen).toBeFocused();
+  await expect(left.locator(".cm-content")).not.toBeFocused();
+  await expect(left.locator(".pane-empty-workspace")).toBeHidden();
+});
+
 test("首启 tips：收起 harness 再分栏，右 pane 仍是完整空工作区（P2-2）", async ({ page }) => {
   await stubTauri(page, FIRST_RUN_VAULT);
   await page.goto("/");

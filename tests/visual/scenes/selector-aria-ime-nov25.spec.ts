@@ -869,10 +869,12 @@ test("vault：Esc 第一次只撤确认、第二次关浮层；游标移动取�
   await expect(page.locator(".vault-row.is-active .vault-row-name")).toHaveText("sandbox-vault");
   expect(await removes()).toEqual([]);
 
-  // 第二次 Esc（没有确认态）：既有规则——关层并交还编辑器焦点
+  // 第二次 Esc（没有确认态）：既有规则——关层并交还焦点；空工作区落在主操作「打开笔记…」
+  //（change make-no-tab-empty-workspace-nov28：正文不是空态的焦点落点）。
   await page.keyboard.press("Escape");
   await expect(popover).toBeHidden();
-  await expect(page.locator(".cm-content")).toBeFocused();
+  await expect(page.locator(".pane-empty-open")).toBeFocused();
+  await expect(page.locator(".cm-content")).not.toBeFocused();
 });
 
 test("vault：行与删除钮不进 Tab 遍历、Tab 不被消费；hover 不清掉游标；关闭的焦点口径", async ({ page }) => {
@@ -914,14 +916,15 @@ test("vault：行与删除钮不进 Tab 遍历、Tab 不被消费；hover 不清
   await page.keyboard.press("Tab");
   await expect(popover).toBeHidden();
 
-  // 主动关闭：Esc 交还编辑器焦点
+  // 主动关闭：Esc 交还焦点——空工作区落在主操作「打开笔记…」（不再是正文）
   await page.locator(".ft-vault").click();
   await expect(popover).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(popover).toBeHidden();
-  await expect(page.locator(".cm-content")).toBeFocused();
+  await expect(page.locator(".pane-empty-open")).toBeFocused();
+  await expect(page.locator(".cm-content")).not.toBeFocused();
 
-  // 被动关闭：点浮层外不把焦点拽回编辑器
+  // 被动关闭：点浮层外不把焦点拽回编辑器，也不替用户聚焦空态主操作
   await page.locator(".ft-vault").click();
   await expect(popover).toBeVisible();
   await installFocusLog(page);
@@ -929,6 +932,8 @@ test("vault：行与删除钮不进 Tab 遍历、Tab 不被消费；hover 不清
     el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
   });
   await expect(popover).toBeHidden();
-  const editorFocus = (await focusLog(page)).filter((entry) => entry.includes("cm-content"));
-  expect(editorFocus, "被动关闭 MUST NOT 聚焦编辑器").toEqual([]);
+  const editorFocus = (await focusLog(page)).filter(
+    (entry) => entry.includes("cm-content") || entry.includes("pane-empty-open"),
+  );
+  expect(editorFocus, "被动关闭 MUST NOT 聚焦编辑器或空态主操作").toEqual([]);
 });
