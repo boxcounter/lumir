@@ -45,7 +45,7 @@ CSS Overflow 的 scrollport 定义、CodeMirror 的 scrollDOM/contentDOM 结构�
 | released | 否：本批不打包 | 不适用 |
 | machine PASS | quick `GATE RESULT: 13/13 PASS（SKIP 0）`、完整 visual `GATE RESULT: 15/15 PASS（SKIP 0）`，退出码均 0 | `.local/reviews/markdown-visible-width-nov27/inset-p1-gate-quick-final.log`、`gate-visual-inset-final.log` |
 | native PASS | 889 PASS，32 断言、20.6s；主会话已审横滚与行尾图，双侧留白和 NATIVE-WIDTH-END 有效 | `.local/acceptance/2026-11-28-markdown-visible-width-inset/evidence/889-markdown-visible-width/status.txt`、`evidence/summary.md` |
-| archived | 否：待归档 | 待包装器与 `--archived` 读数 |
+| archived | 已归档，提交 `909cbee10cab92917e728bf460e449fcfec9358e`；`--archived` PASS | `archive-wrapper.log`、`archive-audit.log` |
 
 ### 五要件
 
@@ -59,4 +59,7 @@ CSS Overflow 的 scrollport 定义、CodeMirror 的 scrollDOM/contentDOM 结构�
 
 ### 归档后记录
 
-待包装器输出、归档提交 hash、修链读数与 `--archived` PASS 后回填。
+- 包装器于 2026-11-28 执行成功：`content-width: update`，`+ 1 added`；归档目录为 `openspec/changes/archive/2026-11-28-clip-markdown-content-to-reading-width-nov27/`。修链 0 处（4 篇 Markdown / 0 条相对链接），`openspec-links` 716 条全部可达。
+- 归档结果提交：`909cbee10cab92917e728bf460e449fcfec9358e`。
+- 提交后执行 `node scripts/openspec-archive-check.mjs --archived clip-markdown-content-to-reading-width-nov27`：`openspec-archive-check: PASS（openspec/changes/archive/2026-11-28-clip-markdown-content-to-reading-width-nov27：0 条 MODIFIED，对比 0 段；人工恢复 0 段，声明认领 0 段）`，退出码 0。
+- 证据日志位于主仓 `.local/reviews/markdown-visible-width-nov27/archive-wrapper.log` 与 `archive-audit.log`。

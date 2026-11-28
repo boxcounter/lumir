@@ -26,7 +26,7 @@
 - [x] 4.1 确认未实施容量反馈/A/B 手柄、未改 code 满 pane、未新增设置；记录与容量 change 的 contentDOM x 接口。
 - [x] 4.2 在指定独立分支提交实现并 rebase 到 master d356a0f7；不 merge/push/archive。完整视觉、native 与独立 K3 评审仍留主会话。
 - [x] 4.3 归档前补齐五态、五要件与独立 reviewer；最终 visual、native 和 Alex 双侧留白批准均已在案。
-- [ ] 4.4 执行归档包装器，提交归档目录与 living spec，运行 `--archived` 至 PASS 并回填归档提交与审计记录。
+- [x] 4.4 执行归档包装器，提交归档目录与 living spec，运行 `--archived` 至 PASS 并回填归档提交与审计记录。
 
 ## 5. 独立评审 rework
 
