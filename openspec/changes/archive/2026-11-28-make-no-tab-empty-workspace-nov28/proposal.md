@@ -66,32 +66,29 @@ Alex 2026-11-28 明确裁决：**无 Tab 就是空工作区，不能输入，不
 - Alex 2026-11-28 空态重设计：普通空态不要 Open / New 按钮；首启 tips 只保留 Lumir 特有功能，删除系统通用快捷键；首启 / 普通 / 双 pane 共用同一内容，视觉需真正重设计。实现先写机器合同，候选截图仍须过目，不更新正式基线。
 - 根方向已获批准，可直接实现；实现与后续批次随任务更新，不另设开工口令。
 
-## 节点 2：归档记录（实现完成后填写）
+## 节点 2：归档记录
 
 | 状态 | 值 | 证据指针 |
 |---|---|---|
-| implemented | 是 | 本分支 tip（实现提交；待合并后补 merge hash） |
-| released | 不适用 | 本批不打包 |
-| machine PASS | 是（quick 与定向静态/结构检查） | 最新 quick：`GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0，证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/no-tab-empty-workspace-nov28/redesign/verification/gate-quick-native-r1.log`。完整 visual 已跑但为 `GATE RESULT: 14/15 PASS（SKIP 0）`，exit 1；仅七张已获 Alex 选择的 A 形态基线待更新后复跑，不预写全绿 |
-| native PASS | 是（16/16） | 既有 10 个场景见 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-28-no-tab-empty-workspace-redesign/evidence/`；六项返修复跑见 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-28-no-tab-empty-workspace-redesign-r1/evidence/`，6/6 PASS、232 断言。完整 visual 状态同上行，不混作全绿 |
-| archived | 否 | 待独立评审与归档 |
+| implemented | 是 | `cc67bfb1803dcbec7c418727b595454e3b9d5415` |
+| released | 否：本批不打包 | 无发布产物 |
+| machine PASS | 是 | quick `GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0（`/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/no-tab-empty-workspace-nov28/redesign/verification/gate-quick-native-r1.log`）；完整 visual `GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0（`/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/no-tab-empty-workspace-nov28/redesign/verification/gate-visual-final-seven-baselines.log`） |
+| native PASS | 是（16/16） | 既有 10 个场景见 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-28-no-tab-empty-workspace-redesign/evidence/`；六项返修复跑见 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-28-no-tab-empty-workspace-redesign-r1/evidence/`，6/6 PASS、232 断言 |
+| archived | 否：待包装器归档与 `--archived` 审计 | 归档后补提交 hash 与审计原文 |
 
-空态重设计补记（2026-11-28，未归档）：候选 A / B 各 11 张在
-`/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/no-tab-empty-workspace-nov28/redesign/`，推荐 A；
-正式基线未更新。新 spec 12/12、相邻结构 171/171、focus-created 13/13、前端 2206/2206、
-OpenSpec 39/39、验收静态 313/313 通过；五类反向变异均先构建成功再命中目标失败并恢复。
-主会话 quick 为 `GATE RESULT: 13/13 PASS（SKIP 0）` exit 0（`gate-quick-main.log`）。
-完整 visual 已跑但为 `GATE RESULT: 14/15 PASS（SKIP 0）`，exit 1，七张获批 A 基线待更新后复跑；16 个 native 场景已全部 PASS（首轮 10 + 返修 6，返修证据 232 断言，目录见 native PASS 行）；merge / archive 未执行。早期 quick
-12/13 的 `link-suggest` 时序抖动只作历史记录，不替代主会话这次全绿结果。终审返修后另有
-静态 313/313、drive 31/31、execute 137/137 与 quick 13/13（`gate-quick-acceptance-sync.log`）；
-主会话 native 的 16 个完整场景清单见 tasks 10.4。
+### 五要件（归档前）
 
-五要件现状（归档前由 tower 复核）：方案已批准（节点 1，Alex 2026-11-28）；tasks 全部勾选；
-quick 与目标批静态/结构检查通过；规格对账（docs-check 的归档对账）PASS。完整 visual 已跑但为 `GATE RESULT: 14/15 PASS（SKIP 0）`，exit 1，七张获批 A 基线待更新后复跑；
-当前重设计的 native 16/16 已通过（首轮 10 + 返修 6，返修证据 232 断言）。
-独立评审首轮（K3，绑定 `aa4634a4`）为 needs-changes（P1=0 / P2=3 / P3=4），已按报告逐项返修：
-P2-1 vault 切换器焦点接统一入口、P2-2 tips 覆盖判据收窄到宿主 pane、P2-3 同步 native 50/79；
-P3-1 `ax.focused` 支持 `{ role, name }`、P3-2 Quick Open 双 pane scenario 改准、P3-3 旧文案 /
-注释清扫、P3-4 EOF 空行清理；另清 keymap gutter 右键复制与 file-tree 默认名的不可达旧表述
-（各加 MODIFIED 增量）。视觉基线未更新，候选截图落 `.local/reviews/no-tab-empty-workspace-nov28/`
-（普通 / 双 pane / 首启 / 空 vault / 首启收起 harness 再分栏 五张），基线更新仍是人肉裁决点。
+1. **方案已批准**：节点 1 根方向已获 Alex 批准；空态视觉另经 Alex「空态选 A」定稿，无实现期扩 scope。
+2. **独立 reviewer clean/merge**：K3 对最终 tip `cc67bfb1803dcbec7c418727b595454e3b9d5415` 给出 clean/merge，P1/P2/P3=0；证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/no-tab-empty-workspace-nov28/independent-review-baselines.md`。
+3. **tasks 全部勾选**：实现、返修、native 六项与基线收口均完成，见 `tasks.md`。
+4. **门禁与真机证据通过**：quick 13/13、完整 visual 15/15、native 16/16，指针见上表。七张获批 A 基线已更新，`baseline-after-sha256.txt` 与 `baseline-actual-sha256.txt` 逐张一致；变更范围严格为七张 PNG。
+5. **规格对账无丢段**：`scripts/docs-check.sh` 与 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` PASS；`docs/backlog.md` 的归档跟踪队列恰好一条本 change 条目，文件保持 80 行上限。
+
+### 候选与基线批准记录
+
+- Alex「空态选 A」：采用编号清单，B 仅留评审证据。候选目录 `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/no-tab-empty-workspace-nov28/redesign/`。
+- 获批更新仅七张：首启 tips light/dark/eink、老用户空 vault light/dark/eink、m320 `pane-split-empty-right`。实际图逐张复核后覆盖，`cmp` 全部一致；SHA 与复跑证据在 `redesign/verification/`。
+
+### 归档后记录
+
+待包装器与审计完成后填写。

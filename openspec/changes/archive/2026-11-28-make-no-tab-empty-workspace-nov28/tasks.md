@@ -108,8 +108,8 @@
 
 - [x] 10.1 `waitAppReady` 与 11 个既有场景改用当前 A 标题「开始使用 / Get started」；
       新标题中英文正例、旧标题与缺树头反例、README / 合成 fixture 同步。
-- [x] 10.2 885 不再 `do:type` 定位 inert 正文，改 `do:keys + allowNoLanding` 向 focused region
-      发真实字符；runner 静态校验与正反执行自测证明单次未变通过、partial 失败且不重叠注入。
+- [x] 10.2 885 不再 `do:type` 定位 inert 正文，改 `typeInNode + channel:cgevent` 向 focused
+      region 注入真实 Unicode；静态校验与 native 证明目标未变且 region 持焦，partial / target-lost 仍失败。
 - [x] 10.3 proposal / design 对齐主会话 quick 13/13、per-pane `tipsCoversPane` 与 closeTab
       焦点路径；完整 visual / native 保持未验，不复用旧 native PASS。
 - [x] 10.4 静态 313/313、drive 31/31、execute 137/137、quick `13/13 PASS（SKIP 0）`
@@ -135,3 +135,12 @@
 - [x] 11.7 六项 native 证据：`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-28-no-tab-empty-workspace-redesign-r1/evidence/`，
       6/6 PASS、232 断言；静态 313/313、drive 31/31、execute 137/137、quick 13/13。
       未发现需改产品代码的缺陷；完整 visual / merge / archive / 基线仍不执行。
+
+## 12. 基线与归档收口（2026-11-28）
+
+- [x] 12.1 Alex「空态选 A」；仅更新首启 tips / 老用户空 vault 三主题与 m320 空右 pane 共七张
+      基线，实际图逐张复核且 `cmp` 一致，未扩大其它基线。
+- [x] 12.2 完整 visual `GATE RESULT: 15/15 PASS（SKIP 0）` exit 0（1448s）；
+      quick 13/13；native 合计 16/16；最终 K3 clean/merge 绑 `cc67bfb1`（`independent-review-baselines.md`）。
+- [x] 12.3 节点 2 五要件、五态与候选批准记录写入 proposal；归档跟踪队列恰一条且
+      `docs/backlog.md` 不超过 80 行；执行包装器归档并提交归档结果，`--archived` 至 PASS。

@@ -98,37 +98,6 @@ design tokens：高 29px、max-width 230px、圆角 7px；激活标签 SHALL 是
   两槽宽度比例与分隔条一致，顶部恒为一条横带；`c.md` MUST NOT 出现在左槽；收起 pane 后
   标签区回到单 pane 形态（位置与几何与常态逐像素一致）
 
-### Requirement: 未命名文档的 dirty 守卫
-
-前台是**未命名文档**（没有文件路径，内容只活在内存里）且有未保存修改时，打开任何文件 SHALL
-被拦下并给出人话提示（沿用 M130 的守卫与文案：这类内容没有落盘基准，「请先保存」是一条走
-不通的建议，提示 SHALL 指向撤销修改这条真正的出口）。
-
-前台是有文件路径的标签时，打开另一个文件 MUST NOT 被 dirty 拦下——它开成（或复用）标签，
-修改留在原标签上。这是本能力相对 M101/M130 的语义变化，SHALL 记在 proposal 的「语义变化」里。
-
-切换 vault 的守卫 SHALL 用「任一标签有未保存修改」作判据（切 vault 会把全部标签一起作废）。
-拦下时的人话提示 SHALL 点名**当前** vault 与它有未保存修改的标签数——MUST NOT 点名切换目标
-（未保存修改属于当前 vault），也 MUST NOT 逐个列出脏标签（哪些标签脏由标签栏逐标签的 dirty
-点承担）；出口口径（保存并切换 / 放弃修改并切换 / 取消）见 `vault-workspace` 的「vault 切换与
-整窗上下文替换」，本 capability 不再自带一句无动作的提示。
-
-#### Scenario: 未命名文档 dirty 时打开文件被拦下
-
-- **WHEN** vault 已装载但未打开任何文件，在编辑器里键入内容，再单击文件树里的文件
-- **THEN** 不切换；给出指向「撤销修改」的提示，编辑器内容与 masthead 都保持不变
-
-#### Scenario: 有文件路径的标签 dirty 时不拦
-
-- **WHEN** 打开 A 并编辑（A 变 dirty），再单击文件树里的 B
-- **THEN** B 被打开，A 的标签保留且仍带 dirty 点；不出现任何「无法切换」的拦截提示
-
-#### Scenario: 任一标签 dirty 即拦下切换 vault
-
-- **WHEN** 有两个标签且其中**非前台**那个有未保存修改，触发切换 vault
-- **THEN** 切换被拦下，提示点名当前 vault 与它有未保存修改的标签数（1 个）并给出三条出口；
-  MUST NOT 因为脏标签不在前台而放行，MUST NOT 点名切换目标
-
 ### Requirement: 保存粒度按标签隔离
 
 dirty 判定基准、磁盘 revision（CAS 基准）、在途保存标记、崩溃备份的 debounce
@@ -424,15 +393,16 @@ Right / Close All Tabs）SHALL 逐个提交关闭：同一时刻 MUST NOT 出现
 「用户已经在批量动作里点过一次」就静默丢弃它们的修改）；已经成功关闭的标签 MUST NOT 回滚。没有
 可关的标签时四项 SHALL 是空动作（不报错、不提示）。
 
-Close All Tabs 全部关完之后，该 pane MUST NOT 留下任何标签，前台 SHALL 回到未命名空文档
-（modeline「无当前文件」、单 pane 时标签区隐藏）。
+Close All Tabs 全部关完之后，该 pane MUST NOT 留下任何标签，前台 SHALL 回到空工作区
+（modeline「无当前文件」、单 pane 时标签区隐藏；空工作区的正文不是焦点落点）。
 
 Close All Tabs 的批量收尾（全部关完**或**中途停手）SHALL 归还一次焦点：确认浮条的动作钮在
-答复那一刻随浮条从 DOM 移除，焦点 MUST NOT 留在 `body`。落点按该 pane 的当前前台会话分两种：
-前台是文档会话（含全关完后的未命名空文档）⇒ 焦点 SHALL 交给该 pane 的编辑器正文；前台是图片
-会话（编辑器是哨兵只读面）⇒ 焦点 SHALL 交给那一条标签的按钮。焦点 MUST NOT 跨到另一个 pane。
+答复那一刻随浮条从 DOM 移除，焦点 MUST NOT 留在 `body`。落点按该 pane 的当前前台分三种：该 pane
+还有带路径标签 ⇒ 焦点 SHALL 交给前台标签的编辑器正文；该 pane 已无带路径标签（空工作区）⇒
+焦点 SHALL 交给该 pane 的命名静态 region；前台是图片会话（编辑器是哨兵只读面）⇒ 焦点
+SHALL 交给那一条标签的按钮。焦点 MUST NOT 跨到另一个 pane。
 保存冲突与写失败的提示是非模态浮条，**既有合同是不夺焦**（与 ⌘S 触发的同一条提示一致）——
-停手时它们保持可见，焦点仍按上一句归还编辑器，MUST NOT 声称已删除的浮条或它的按钮持焦。
+停手时它们保持可见，焦点仍按上一句归还该 pane 的入口，MUST NOT 声称已删除的浮条或它的按钮持焦。
 
 vault 外只读会话与图片会话沿用 `closeTab` 的既有语义（恒无未保存内容，直接关闭、不弹确认）。
 
@@ -466,15 +436,17 @@ vault 外只读会话与图片会话沿用 `closeTab` 的既有语义（恒无�
 #### Scenario: 关闭全部标签（全 clean）
 
 - **WHEN** 某 pane 有三个干净标签，右键其中任意一条并选 Close All Tabs
-- **THEN** 三条全部关闭（包括右键那一条），该 pane 回到空态：modeline 显示「无当前文件」、
-  单 pane 时标签区隐藏、标题栏与正文区的位置不因关完标签而移动；焦点落在编辑器正文
+- **THEN** 三条全部关闭（包括右键那一条），该 pane 回到空工作区：modeline 显示「无当前文件」、
+  单 pane 时标签区隐藏、标题栏与正文区的位置不因关完标签而移动；焦点落在该 pane 的静态 region，
+  MUST NOT 落在正文或 `body`
 
 #### Scenario: 关闭全部标签：多个 dirty 逐个确认，取消即停手
 
 - **WHEN** 某 pane 有三个标签，第二条与第三条有未保存修改，右键第一条（干净）并选 Close All Tabs，
   随后在第一条脏标签的确认里选「取消」
 - **THEN** 第一条（干净）已经关闭且不回滚；第二条与第三条都还在，脏内容不动；同一时刻只有一条确认浮条；
-  焦点回到当前前台标签的编辑器正文（MUST NOT 留在 `body`，因为答复用的按钮已随浮条移除）
+  焦点回到当前前台（有带路径标签时是正文，全关完后是空工作区的静态 region），MUST NOT 留在 `body`，
+  因为答复用的按钮已随浮条移除
 
 #### Scenario: 关闭全部标签：保存与放弃之后继续到关完
 
@@ -497,7 +469,8 @@ vault 外只读会话与图片会话沿用 `closeTab` 的既有语义（恒无�
 #### Scenario: 关闭全部标签：作用域是右键所在的 pane
 
 - **WHEN** 双 pane，左 pane 有标签 A、B，右 pane 有标签 C、D，右键右 pane 的 C 并选 Close All Tabs
-- **THEN** 只关闭 C、D；A、B 原样保留；右 pane 回到空态，焦点落在右 pane 的编辑器正文
+- **THEN** 只关闭 C、D；A、B 原样保留；右 pane 回到空工作区，焦点落在右 pane 的静态 region
+  （MUST NOT 跨到左 pane 的正文或标签）
 
 #### Scenario: 脏标签先确认
 
@@ -756,3 +729,40 @@ dirty。只有屏障报告全部成功且本地复查无新 dirty 时，才 SHAL
 
 - **WHEN** 文档 pane 有可见标签，Harness composer 持焦后按住 Command，或按住 Command 后打开 Harness
 - **THEN** 序号继续显示在既有 `⌘1–9` 实际作用的文档 pane；切换标签与开关 Harness 不改变既有焦点语义
+
+### Requirement: 无 Tab 空工作区与 dirty 判定
+
+没有带路径标签时，该 pane 的前台是**空工作区**：MUST NOT 可编辑、MUST NOT 产生未保存修改，
+也没有保存落点。打开文件 SHALL 就地复用无路径占位会话（MUST NOT 让空会话堆积），复用后该会话
+按新路径恢复可编辑。
+
+前台是**有文件路径的标签**时，打开另一个文件 MUST NOT 被 dirty 拦下——它开成（或复用）标签，
+修改留在原标签上。这是本能力相对 M101/M130 的语义变化，SHALL 记在 proposal 的「语义变化」里。
+
+切换 vault 的守卫 SHALL 用「任一标签有未保存修改」作判据（切 vault 会把全部标签一起作废）。
+拦下时的人话提示 SHALL 点名**当前** vault 与它有未保存修改的标签数——MUST NOT 点名切换目标
+（未保存修改属于当前 vault），也 MUST NOT 逐个列出脏标签（哪些标签脏由标签栏逐标签的 dirty
+点承担）；出口口径（保存并切换 / 放弃修改并切换 / 取消）见 `vault-workspace` 的「vault 切换与
+整窗上下文替换」，本 capability 不再自带一句无动作的提示。
+
+#### Scenario: 空工作区没有 dirty，打开文件不被拦截
+
+- **WHEN** 没有打开任何文件，在空工作区里按键（含可编辑文本、粘贴与输入法合成），再单击文件树里的文件
+- **THEN** 空工作区内容不变、不出现未保存修改；文件正常打开，不出现任何「无法切换」的拦截提示
+
+#### Scenario: 有文件路径的标签 dirty 时不拦
+
+- **WHEN** 打开 A 并编辑（A 变 dirty），再单击文件树里的 B
+- **THEN** B 被打开，A 的标签保留且仍带 dirty 点；不出现任何「无法切换」的拦截提示
+
+#### Scenario: 任一标签 dirty 即拦下切换 vault
+
+- **WHEN** 有两个标签且其中**非前台**那个有未保存修改，触发切换 vault
+- **THEN** 切换被拦下，提示点名当前 vault 与它有未保存修改的标签数（1 个）并给出三条出口；
+  MUST NOT 因为脏标签不在前台而放行，MUST NOT 点名切换目标
+
+#### Scenario: 关闭最后一个标签后不产生可保存内容
+
+- **WHEN** 单 pane 的最后一个干净标签被关闭
+- **THEN** 前台回到空工作区：modeline 显示「无当前文件」，`⌘S` 无提示、无写入；编辑器不是焦点
+  落点，也不存在随后的「未命名文档 dirty」状态
