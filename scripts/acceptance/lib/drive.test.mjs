@@ -28,7 +28,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { settle, snapshotBody, StepError, resizeWindowAX, pinWindowSize, parseLsappinfoPid, waitAppReady } from "./drive.mjs";
+import { settle, snapshotBody, StepError, injectModifierCGEvent, resizeWindowAX, pinWindowSize, parseLsappinfoPid, waitAppReady } from "./drive.mjs";
 import { InfraError } from "./util.mjs";
 
 /** KimiCU 快照首行（逐字取自 2026-10-27 的真机 dump）。 */
@@ -478,4 +478,27 @@ test("pinWindowSize（M764）：首次即成功 ⇒ 证据行与旧格式一字�
   const swift = fakeSwift([{ ok: true, stdout: sizeLine(1200, 800) }]);
   const line = await pinWindowSize(fakeCu([axText()]), 7, { width: 1200, height: 800 }, { run: swift.run, sleepFn: swift.sleepFn });
   assert.match(line, /^窗口钉尺寸：请求 1200×800，回读生效 1200×800（AXSize 直写；webview 重排 settle \d+ms）$/);
+});
+
+
+test("modifier CGEvent：左右 keycode 与 down/up 原样到 swift，失败/无回读行均 INVALID，不回落", () => {
+  const calls = [];
+  const run = (args) => {
+    calls.push(args);
+    return { ok: true, stdout: "modifier keycode=55 phase=down commandDown=true", error: null, status: 0 };
+  };
+  assert.match(injectModifierCGEvent("left", "down", { run }), /^modifier/);
+  injectModifierCGEvent("right", "up", { run });
+  assert.deepEqual(calls[0].slice(-3), ["--modifier", "55", "down"]);
+  assert.deepEqual(calls[1].slice(-3), ["--modifier", "54", "up"]);
+  assert.throws(() => injectModifierCGEvent("middle", "down", { run }), StepError);
+  assert.throws(() => injectModifierCGEvent("left", "hold", { run }), StepError);
+  assert.throws(
+    () => injectModifierCGEvent("left", "down", { run: () => ({ ok: false, stdout: "", error: "denied", status: 3 }) }),
+    InfraError,
+  );
+  assert.throws(
+    () => injectModifierCGEvent("left", "down", { run: () => ({ ok: true, stdout: "", error: null, status: 0 }) }),
+    /没有通道回读行/,
+  );
 });

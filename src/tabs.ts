@@ -238,6 +238,9 @@ export interface TabsDeps {
    *  而标签模块没有、也不该有树的句柄——与 `syncActiveDocument` 同一条接线模式（闭包在动作
    *  发生时读，不在装配时读）。 */
   revealInTree: (path: string) => void;
+  /** 本标签条是否属于标签命令的目标 pane（按住 Command 的序号只落在该 pane）。真源由装配层
+   *  的 activeDocPane 提供；Harness 持焦时与 ⌘1–9 一样回退文档 pane，MUST NOT 另存活跃指针。 */
+  isActivePane: () => boolean;
   /** 空槽占位（M316 双 pane）：双栏时**没有可见标签的 pane 的标签槽也必须占位**——两槽
    *  宽度比例与 pane 分隔条同源，空槽一 hidden，另一槽的比例就跟着漂。返回 true 时空态
    *  不 hidden；单 pane 不传本字段，行为与 M149 起逐字相同（空态整条隐藏）。 */
@@ -267,6 +270,71 @@ export interface TabsHandle {
   /** 销毁标签条：清闪烁计时器与状态、移除残留 class。装配层在销毁编辑器**之前**调用
    *  （见 `disposePaneHandle`）——MUST NOT 依赖「DOM 没了自然就好了」。 */
   dispose(): void;
+}
+
+interface CommandInputState {
+  held: Set<string>;
+  listeners: Set<() => void>;
+  refs: number;
+  cleanup(): void;
+}
+
+const commandInputStates = new WeakMap<Window, CommandInputState>();
+
+/** 物理 Meta 状态属于 window，而不是某个后来才创建的 pane；序号是否显示仍由各实例的
+ *  isActivePane 判定。最后一个实例销毁时解绑并清空，不让输入监听或按键状态泄漏。 */
+function subscribeCommandInput(listener: () => void): () => void {
+  let state = commandInputStates.get(window);
+  if (state === undefined) {
+    const created: CommandInputState = { held: new Set(), listeners: new Set(), refs: 0, cleanup: () => {} };
+    const publish = (): void => {
+      for (const notify of created.listeners) notify();
+    };
+    const clear = (): void => {
+      created.held.clear();
+      publish();
+    };
+    const keydown = (event: KeyboardEvent): void => {
+      if (event.key !== "Meta") return;
+      created.held.add(event.code || "Meta");
+      publish();
+    };
+    const keyup = (event: KeyboardEvent): void => {
+      if (event.key !== "Meta") return;
+      created.held.delete(event.code || "Meta");
+      publish();
+    };
+    const visibilitychange = (): void => {
+      if (document.hidden) clear();
+    };
+    window.addEventListener("keydown", keydown);
+    window.addEventListener("keyup", keyup);
+    window.addEventListener("blur", clear);
+    document.addEventListener("visibilitychange", visibilitychange);
+    created.cleanup = () => {
+      window.removeEventListener("keydown", keydown);
+      window.removeEventListener("keyup", keyup);
+      window.removeEventListener("blur", clear);
+      document.removeEventListener("visibilitychange", visibilitychange);
+      created.held.clear();
+      created.listeners.clear();
+      commandInputStates.delete(window);
+    };
+    commandInputStates.set(window, created);
+    state = created;
+  }
+  const active = state;
+  active.refs += 1;
+  active.listeners.add(listener);
+  listener();
+  let subscribed = true;
+  return () => {
+    if (!subscribed) return;
+    subscribed = false;
+    active.listeners.delete(listener);
+    active.refs -= 1;
+    if (active.refs === 0) active.cleanup();
+  };
 }
 
 export function createTabs(deps: TabsDeps): TabsHandle {
@@ -302,6 +370,14 @@ export function createTabs(deps: TabsDeps): TabsHandle {
   let flashed: EditorSession | null = null;
   let flashTimer: ReturnType<typeof setTimeout> | null = null;
   const tabEls = new Map<EditorSession, HTMLElement>();
+
+  // 按住 Command 的序号是纯展示状态：输入状态按 window 共享，是否可见按本实例的 pane 判定。
+  let disposed = false;
+  function syncCommandIndexes(): void {
+    const held = commandInputStates.get(window)?.held.size ?? 0;
+    mount.classList.toggle("is-cmd-held", !disposed && held > 0 && deps.isActivePane());
+  }
+  const unsubscribeCommandInput = subscribeCommandInput(syncCommandIndexes);
 
   function clearFlashTimer(): void {
     if (flashTimer === null) return;
@@ -346,7 +422,7 @@ export function createTabs(deps: TabsDeps): TabsHandle {
     const active = editor.activeSession();
     mount.hidden = sessions.length === 0 && deps.keepMountWhenEmpty?.() !== true;
     mount.replaceChildren(
-      ...sessions.map((session) => {
+      ...sessions.map((session, sessionIndex) => {
         const path = session.path as string;
         const name = baseName(path);
         const isActive = session === active;
@@ -450,9 +526,17 @@ export function createTabs(deps: TabsDeps): TabsHandle {
         });
 
         tab.append(open, close);
+        if (sessionIndex < 9) {
+          const commandIndex = document.createElement("span");
+          commandIndex.className = "tab-cmd-index";
+          commandIndex.setAttribute("aria-hidden", "true");
+          commandIndex.textContent = String(sessionIndex + 1);
+          tab.append(commandIndex);
+        }
         return tab;
       }),
     );
+    syncCommandIndexes();
     // 标签栏出现 / 消失会改变编辑器列的高度，通知 CM 立刻重新测量一次：否则它要等浏览器
     // resize 观察器的回调，滚动锚点会在之后的某一拍才被修正——那一拍落在用户操作之间时，
     // 表现为「莫名其妙跳了几个像素」。m118 的「cell 内 Ctrl+E」场景按 1px 容差断言
@@ -731,6 +815,9 @@ export function createTabs(deps: TabsDeps): TabsHandle {
     gotoCommands,
     flash,
     dispose() {
+      disposed = true;
+      unsubscribeCommandInput();
+      mount.classList.remove("is-cmd-held");
       clearFlash();
       tabEls.clear();
     },

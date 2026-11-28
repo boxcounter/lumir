@@ -2,7 +2,7 @@
 id: "14-tabs"
 item: 14
 tier: full
-title: 多标签——单击即开标签 / 序号直达 / 循环切换 / 关闭确认 / 外部变更点名后台标签
+title: 多标签——动态序号 / 序号直达 / 循环切换 / 关闭确认 / 外部变更点名后台标签
 fixtures: [tabs-a.md, tabs-b.md, tabs-long.md]
 open: tabs-a.md
 marker: "标签场景 A"
@@ -67,6 +67,43 @@ steps:
       - shot: 直达第二个标签
       - label: 仍在第二个标签
         editor: { has: "标签场景 B" }
+
+  # add-tab-dynamic-numbering-nov27：真实 WKWebView 下分别验左右 Meta 的按住 / 松开。
+  # 序号 aria-hidden，截图才是可见性证据；AX 只钉既有标签数量与读屏面不被污染。
+  - name: 按住左侧 Command——当前两个标签应叠加序号 1 / 2
+    do: modifier
+    side: left
+    phase: down
+    expect:
+      - shot: 动态序号-左Command按住-1与2
+      - label: 按住只展示序号，标签数量与正文不变
+        ax: { count: { pattern: "关闭 ", exact: 2 } }
+      - label: 仍在第二个标签
+        editor: { has: "标签场景 B" }
+  - name: 松开左侧 Command——序号立即撤下
+    do: modifier
+    side: left
+    phase: up
+    expect:
+      - shot: 动态序号-左Command松开-无序号
+      - label: 松开后仍不新增读屏节点或标签
+        ax: { count: { pattern: "关闭 ", exact: 2 } }
+  - name: 按住右侧 Command——同一当前 pane 仍叠加序号 1 / 2
+    do: modifier
+    side: right
+    phase: down
+    expect:
+      - shot: 动态序号-右Command按住-1与2
+      - label: 右侧 Command 不改前台文档
+        editor: { has: "标签场景 B" }
+  - name: 松开右侧 Command——不粘住
+    do: modifier
+    side: right
+    phase: up
+    expect:
+      - shot: 动态序号-右Command松开-无序号
+      - label: 右侧松开后标签仍完整
+        ax: { count: { pattern: "关闭 ", exact: 2 } }
 
   - name: ⌘W 关掉干净的当前标签（标签吃掉 ⌘W，不关窗）
     do: key
@@ -224,7 +261,10 @@ steps:
    ⌘-点击建立，普通点击的就地替换判据见场景 883），关掉全部标签后仍能继续开。
 2. **键位**：`⌘1` / `⌘2` 直达、`⌃⇥` 循环、`⌘W` 关当前标签（干净直接关、dirty 先确认、
    关掉当前标签后前台交给邻座）。
-3. **外部变更按标签路由**：**后台**标签的文件被外部删除时，浮条点名那一份文档、只影响它
+3. **动态序号**：左右 Command 各自按住时当前两个标签叠加 1 / 2，松开立即撤下；截图是可见性
+   判据，AX 计数与正文读数证明展示不改既有语义。序号的 1–9 顺序、>9 无号、宽度与滚动零变化、
+   blur/visibility/destroy 与双 pane 隔离由单元和 chromium 场景机器判定。
+4. **外部变更按标签路由**：**后台**标签的文件被外部删除时，浮条点名那一份文档、只影响它
    （前台正文与标签数量都不变）。
 
 ## 断言口径

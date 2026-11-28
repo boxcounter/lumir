@@ -51,7 +51,7 @@
 | 11 | `render-table-degrade` | 表格降级文案带上出错行号与原因（M138）/ 短行补空列不再降级（M142） | core |
 | 12 | `12-links` | 链接渲染与激活（外链 / 相对 md / 资产 / 锚点 / 不可用） | full |
 | 13 | `13-toc` | 轻量大纲：位置指示 / 浮层条目 / 键盘（↑↓ / ⌃N⌃P）与鼠标跳转 / 关闭 / 空标题与 frontmatter 边界 | full |
-| 14 | `14-tabs` | 多标签——单击即开标签 / 序号直达 / 循环切换 / 关闭确认 / 外部变更点名后台标签 | full |
+| 14 | `14-tabs` | 多标签——动态序号 / 序号直达 / 循环切换 / 关闭确认 / 外部变更点名后台标签 | full |
 | 16 | `16-startup-restore` | 启动自动恢复 last_vault（终态与失效路径） | full |
 | 17 | `17-multi-vault-switch` | 多 vault——树头部入口的列表浮层、切到未打开过的 vault 的空态引导、切回后按会话恢复标签 | full |
 | 18 | `18-vault-session-restore` | 启动按 last_vault 恢复 vault，并一并恢复它的标签列表与激活项 | full |

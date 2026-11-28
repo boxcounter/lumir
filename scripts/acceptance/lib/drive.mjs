@@ -719,6 +719,24 @@ export function injectChordCGEvent(spec, { run = runKeySwiftOnce } = {}) {
   return raw.stdout;
 }
 
+export function injectModifierCGEvent(side, phase, { run = runKeySwiftOnce } = {}) {
+  if (side !== "left" && side !== "right") throw new StepError(`Meta side 只支持 left / right，实际 ${JSON.stringify(side)}`);
+  if (phase !== "down" && phase !== "up") throw new StepError(`Meta phase 只支持 down / up，实际 ${JSON.stringify(phase)}`);
+  const keycode = side === "left" ? 55 : 54;
+  const script = new URL("./cgevent-key.swift", import.meta.url).pathname;
+  const raw = run(["/usr/bin/swift", script, "--modifier", String(keycode), phase]);
+  if (!raw.ok) {
+    throw new InfraError(
+      `Meta ${side} ${phase} 真键盘事件注入失败：swift 退出 ${raw.status ?? "?"}——${raw.error}；` +
+        "不回落到 press_key（它不能可靠表达按住修饰键）",
+    );
+  }
+  if (!/^modifier\b/.test(raw.stdout)) {
+    throw new InfraError(`Meta ${side} ${phase} 没有通道回读行：${JSON.stringify(raw.stdout)}`);
+  }
+  return raw.stdout;
+}
+
 export async function typeInNode(cu, pid, { resolve, text, retries = 3, label = "", replace = false } = {}) {
   if (typeof resolve !== "function") throw new StepError("typeInNode：缺少 resolve(ax) 目标解析函数");
   const countOf = (v) => (text ? v.split(text).length - 1 : 0);

@@ -2,7 +2,9 @@
 //
 //   1. `<text>`（M507）：逐 scalar 的 **Unicode 文本注入**——原生输入框（AXTextField / AXComboBox）
 //      用，KimiCU 的 type_text 在这些目标上会触发失焦取消。
-//   2. `--key <keycode> <flags> [--key <keycode> <flags> ...]`（M767）：**真键位事件**。
+//   2. `--modifier <54|55> <down|up>`：右/左 Command 的独立按下与抬起，供「按住时」界面截图；
+//      down 保留 command 修饰位，up 清掉并自检。调用方必须在场景 finally 里兜底 up。
+//   3. `--key <keycode> <flags> [--key <keycode> <flags> ...]`（M767）：**真键位事件**。
 //      keycode = 虚拟键码，flags = `CGEventFlags` 原始值（十进制或 `0x` 十六进制）。down / up 带
 //      同一组 flags、投 `.cghidEventTap`、间隔 8ms —— 与 M766 探针的行为矩阵 B1 同形（一次真
 //      ⌃A 在 app 进程侧留下两条 `kc=… flags=0x…40000` 的记录，composer 执行 `editor.line-start`）。
@@ -35,6 +37,7 @@ let args = CommandLine.arguments
 func usage() -> Never {
     FileHandle.standardError.write(
         ("usage: cgevent-key <text>\n" +
+            "       cgevent-key --modifier <54|55> <down|up>\n" +
             "       cgevent-key --key <keycode> <flags> [--key <keycode> <flags> ...]\n").data(using: .utf8)!,
     )
     exit(2)
@@ -51,6 +54,37 @@ func parseUnsigned(_ text: String) -> UInt64? {
         return UInt64(text.dropFirst(2), radix: 16)
     }
     return UInt64(text, radix: 10)
+}
+
+if args.count >= 2 && args[1] == "--modifier" {
+    guard args.count == 4 else { usage() }
+    guard let code = parseUnsigned(args[2]), code == 54 || code == 55 else {
+        fail("Command keycode 只支持 54（右）/ 55（左）", code: 2)
+    }
+    let phase = args[3]
+    guard phase == "down" || phase == "up" else { fail("phase 只支持 down / up", code: 2) }
+    guard CGPreflightPostEventAccess() else {
+        fail("没有「辅助功能」投递权限：拒绝投递 Command \(phase)", code: 3)
+    }
+    guard let source = CGEventSource(stateID: .hidSystemState),
+          let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(code), keyDown: phase == "down")
+    else {
+        fail("Command CGEvent 构造失败", code: 4)
+    }
+    event.flags = phase == "down" ? .maskCommand : []
+    event.post(tap: .cghidEventTap)
+    usleep(50_000)
+    let commandDown = CGEventSource.flagsState(.combinedSessionState).contains(.maskCommand)
+    guard commandDown == (phase == "down") else {
+        if phase == "down",
+           let release = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(code), keyDown: false) {
+            release.flags = []
+            release.post(tap: .cghidEventTap)
+        }
+        fail("Command \(phase) 后修饰位与目标不符（commandDown=\(commandDown)）", code: 5)
+    }
+    print("modifier keycode=\(code) phase=\(phase) commandDown=\(commandDown)")
+    exit(0)
 }
 
 if args.count >= 2 && args[1] == "--key" {
