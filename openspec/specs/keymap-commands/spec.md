@@ -1257,7 +1257,7 @@ SHALL 整体跳过该项并留下可诊断的告警，MUST NOT 静默产生半�
 
 默认键位 SHALL 是 `⌥G`，token MUST 写 `Alt-KeyG`：含 Alt 的组合按物理键（`KeyboardEvent.code`）判定——macOS 的 Alt 层替换字符（⌥G 的 `event.key` 是 `©`），`e.key` 判不出用户按的是哪个键（与既有的 `Alt-KeyV` / `Alt-KeyD` / `Alt-KeyB` / `Alt-KeyF` 同款口径）。键位占用 SHALL 按三条独立来源核实（表内 / 原生菜单 accelerator / macOS 系统级），结论 SHALL 写在绑定对象的 `doc` 与实现处注释里（表即文档）。作用域 SHALL 随命令归属机械派生为 `editor`（命令 id 属编辑器内核组，前缀与作用域 MUST NOT 互相打脸）：`⌥G` 是「⌥ 系 Emacs 键位集」（M132）的成员，与 ⌃N/⌃P/⌃F/⌃B/⌃E、⌥V、⌥D、⌥⌫ 同族。绑定 SHALL 可经 `[keys]` 重绑 / 解绑：默认键位是单段、无空白，配置层的形态校验因此放行（含空白的 chord 会被拒，见本 requirement 末尾的已知边界）。
 
-行号口径 SHALL 在 md 与只读 code 模式下是**同一条**：计数单位是 `view.state.doc` 的**源文档逻辑行**（硬换行分隔、1 基、总行数 = `doc.lines`），软换行（视觉行）MUST NOT 参与计数——因此两个模式跳到的行号都与各自 gutter 显示的行号一致。**两个模式的行号 gutter 在场 SHALL 由同一个开关决定**：`[ui] line_numbers` 的 `"on"` / `"off"` 两档（默认 `"off"`；启动真源、运行期切换与持久化的口径见「行号开关命令（view.toggle-line-numbers）」条），取值由 Rust 侧闭集合校验；md 与只读 code MUST NOT 各自再判一套档位，也 MUST NOT 存在「code 恒常显」的例外。**上述两档与 ⌥G 临时档都只在「该文档 pane 有带路径标签」时才成立**（change fix-no-tab-empty-state-nov27）：任一文档 pane 没有带路径标签（含单 pane 未命名 scratch、分栏空 pane）时 MUST NOT 显示行号 gutter，`"on"` 档与 ⌥G 打开期间都不例外；有带路径标签进入后按本档恢复。判据 SHALL 是 per-pane 的 `hasTabs`（与标签条 / 空 pane 引导同一定义），并与两个开关合成在**同一个纯函数**里（`src/line-numbers.ts` 的 `gutterVisible`），`src/editor.ts` 的 `gutterExtensions()` 是唯一消费者——别处 MUST NOT 另写一份「无标签 ⇒ 无 gutter」的表达式。`"on"` 下 gutter SHALL 常驻在场、与跳转输入条无关；`"off"` 下 gutter SHALL 在文档打开时不在场，唯一例外是**跳转输入条打开期间 SHALL 临时在场**（md 与 code 一致），输入条收起（Enter / Escape / `⌃G` / `focusout` 到浮层之外 / 前台会话切换）时 SHALL 卸除。gutter 在场时装的是同一套 `lineNumbers()`（行号即源文档逻辑行号），当前行的行号 SHALL 有高亮（`highlightActiveLineGutter`，只给行号加底、MUST NOT 改正文行的底色）。**装 / 卸 gutter 的几何 SHALL 按窗口分两档**：① md 的任意窗口宽度、以及 code 左侧余量足以容纳 gutter 的窗口（判据取 1200px 定窗）——正文列仍居中、行号贴正文列左缘且不被裁切，开关瞬间 `.cm-content` 的实测 rect 逐值不变；② code 左侧余量不足的窗口——允许正文列左移一个 gutter 宽，但 MUST NOT 出现横向滚动、MUST NOT 裁切行号，正文从 gutter 右缘起排（边界见 design §4.2）。触发命令 SHALL 呈现一个小浮层输入条：输入框 SHALL 预填当前行号（1 基）并全选，SHALL 只接受数字字符（其余按键在输入框内不产生字符），并 SHALL 显示文档总行数（`共 M 行`）——输入条与 gutter 是行号可见面的两处；modeline 的 meta 段仍只给总行数，行号开关的指示钮是新增的独立 requirement（`ui-design-system` 的「行号指示钮」），MUST NOT 把行号读数塞进 meta。
+行号口径 SHALL 在 md 与只读 code 模式下是**同一条**：计数单位是 `view.state.doc` 的**源文档逻辑行**（硬换行分隔、1 基、总行数 = `doc.lines`），软换行（视觉行）MUST NOT 参与计数——因此两个模式跳到的行号都与各自 gutter 显示的行号一致。**两个模式的行号 gutter 在场 SHALL 由同一个开关决定**：`[ui] line_numbers` 的 `"on"` / `"off"` 两档（默认 `"off"`；启动真源、运行期切换与持久化的口径见「行号开关命令（view.toggle-line-numbers）」条），取值由 Rust 侧闭集合校验；md 与只读 code MUST NOT 各自再判一套档位，也 MUST NOT 存在「code 恒常显」的例外。**上述两档与 ⌥G 临时档都只在「该文档 pane 有带路径标签」时才成立**（change fix-no-tab-empty-state-nov27）：任一文档 pane 没有带路径标签（含单 pane 与分栏的无标签 pane，即空工作区）时 MUST NOT 显示行号 gutter，`"on"` 档与 ⌥G 打开期间都不例外；有带路径标签进入后按本档恢复。**空工作区没有可跳转的文档：`⌥G` MUST NOT 打开跳转输入条（焦点在空态 region 上时不打开），焦点留在原处；有路径文档——含只读 / 尚未装载等异常会话——行为不变。**判据 SHALL 是 per-pane 的 `hasTabs`（与标签条 / 空工作区同一定义），并与两个开关合成在**同一个纯函数**里（`src/line-numbers.ts` 的 `gutterVisible`），`src/editor.ts` 的 `gutterExtensions()` 是唯一消费者——别处 MUST NOT 另写一份「无标签 ⇒ 无 gutter」的表达式。`"on"` 下 gutter SHALL 常驻在场、与跳转输入条无关；`"off"` 下 gutter SHALL 在文档打开时不在场，唯一例外是**跳转输入条打开期间 SHALL 临时在场**（md 与 code 一致），输入条收起（Enter / Escape / `⌃G` / `focusout` 到浮层之外 / 前台会话切换）时 SHALL 卸除。gutter 在场时装的是同一套 `lineNumbers()`（行号即源文档逻辑行号），当前行的行号 SHALL 有高亮（`highlightActiveLineGutter`，只给行号加底、MUST NOT 改正文行的底色）。**装 / 卸 gutter 的几何 SHALL 按窗口分两档**：① md 的任意窗口宽度、以及 code 左侧余量足以容纳 gutter 的窗口（判据取 1200px 定窗）——正文列仍居中、行号贴正文列左缘且不被裁切，开关瞬间 `.cm-content` 的实测 rect 逐值不变；② code 左侧余量不足的窗口——允许正文列左移一个 gutter 宽，但 MUST NOT 出现横向滚动、MUST NOT 裁切行号，正文从 gutter 右缘起排（边界见 design §4.2）。触发命令 SHALL 呈现一个小浮层输入条：输入框 SHALL 预填当前行号（1 基）并全选，SHALL 只接受数字字符（其余按键在输入框内不产生字符），并 SHALL 显示文档总行数（`共 M 行`）——输入条与 gutter 是行号可见面的两处；modeline 的 meta 段仍只给总行数，行号开关的指示钮是新增的独立 requirement（`ui-design-system` 的「行号指示钮」），MUST NOT 把行号读数塞进 meta。
 
 确认（Enter）SHALL 把光标移到第 n 行行首并把该行滚到视口居中：落点 SHALL 复用编辑器既有的 1-based 行定位原语（`revealLine`，其滚动口径与 `editor.recenter`、wikilink 锚点跳转同为 `scrollIntoView` 的 `y:"center"`），MUST NOT 另写一套落点算式。完成后焦点 SHALL 交还编辑器（后续按键落回文本上下文）。整条路径 MUST NOT 改动文档（ADR 0003 §3）、MUST NOT 进撤销栈、MUST NOT 改 dirty、MUST NOT 触发写盘。
 
@@ -1284,8 +1284,8 @@ SHALL 整体跳过该项并留下可诊断的告警，MUST NOT 静默产生半�
 
 #### Scenario: 无带路径标签的文档 pane 没有行号（含 ⌥G 临时档）
 
-- **WHEN** `[ui] line_numbers = "on"`，依次观察：① 单 pane 零标签的空态 scratch；② 分栏后无标签的空 pane；③ 在上述空态按 `⌥G` 打开跳转输入条；随后在空 pane 打开一份带路径文档
-- **THEN** ① 与 ② 都没有行号 gutter（`on` 档不覆盖 per-pane 的「无标签」条件）；③ 输入条可打开、落点与钳制照常，但临时 gutter 同样不在场；打开文档后，该 pane 立即按 `"on"` 档恢复行号，行号与源文档逻辑行号一致；全程 MUST NOT 改动文档、dirty、选区或阅读位置
+- **WHEN** `[ui] line_numbers = "on"`，依次观察：① 单 pane 的无标签空工作区；② 分栏后无标签的空 pane；随后在空 pane 打开一份带路径文档
+- **THEN** ① 与 ② 都没有行号 gutter（`on` 档不覆盖 per-pane 的「无标签」条件）；空工作区没有可跳转的文档，`⌥G` MUST NOT 打开跳转输入条（焦点在空态 region 上时不打开，输入条总会显示的「共 N 行」因此不在场）；打开文档后，该 pane 立即按 `"on"` 档恢复行号，行号与源文档逻辑行号一致；全程 MUST NOT 改动文档、dirty、选区或阅读位置
 
 #### Scenario: 取值由配置装载、非法值回落、旧键退场
 
@@ -1337,8 +1337,8 @@ SHALL 整体跳过该项并留下可诊断的告警，MUST NOT 静默产生半�
 路径口径 SHALL 复用会话的 `path` 原样——vault 内文档是 **vault 相对路径**（与 modeline 路径段 /
 快速打开 / harness 路径链接同一份语义），vault 外只读文档是**绝对路径**（沿用既有外部路径
 语义）。实现 MUST NOT 重写、补全、规范化或另算一份路径；MUST NOT 为无路径文档编造路径。
-文档没有路径（未命名文档 / 空态）时 MUST NOT 写剪贴板、MUST NOT 显示成功提示，SHALL 走失败
-反馈（见下）。
+无路径的空工作区没有 gutter、也没有本手势（见下面「无标签 pane 没有 gutter」Scenario）；实现的
+失败兜底 MUST NOT 为无路径编造路径——该分支是防再犯的兜底，正常产品路径不可达。
 
 行号口径 SHALL 与 gutter 显示的行号一致：计数单位是 `view.state.doc` 的**源文档逻辑行**（硬换行
 分隔、1 基、总行数 = `doc.lines`），软换行（视觉行）MUST NOT 参与计数。右键落在 gutter 的某个
@@ -1354,7 +1354,7 @@ SHALL 整体跳过该项并留下可诊断的告警，MUST NOT 静默产生半�
 系统菜单）。
 
 成功时 SHALL 复用既有 toast 机制（success tone）并逐字显示复制出去的 `{path}:{line}`。剪贴板
-不可用、写入被拒（权限拒绝）或文档没有路径时，SHALL 给失败 toast 与一条 console 诊断线索；
+不可用或写入被拒（权限拒绝）时，SHALL 给失败 toast 与一条 console 诊断线索；
 MUST NOT 显示成功提示，MUST NOT 静默吞掉失败。成功与失败 MUST NOT 同时出现。
 
 本要求 MUST NOT 改变行号 gutter 的在场合同：`[ui] line_numbers` 的 `"on"` / `"off"` 两档语义与
@@ -1412,8 +1412,8 @@ gutter**（per-pane `hasTabs` 条件，见同两条），因此其原位置右�
 
 #### Scenario: 无路径文档不编造路径
 
-- **WHEN** 某个有带路径标签的文档 pane 里，前台是一份未命名文档（`path` 缺失，gutter 因该 pane 有标签而在场），用户在 gutter 上右键
-- **THEN** 不写剪贴板，出现失败反馈与一条 console 诊断线索（`navigator.clipboard` 未被调用）；MUST NOT 输出 `undefined:{line}`、`: {line}` 或任何编造的路径。无标签 pane 没有 gutter、也就没有本手势（见上一条 Scenario）
+- **WHEN** 某个 pane 的前台是空工作区（`path` 缺失、结构性只读），用户在原行号列位置右键（正常产品路径下没有 gutter，本 Scenario 只钉「不得编造路径」的兜底）
+- **THEN** 没有本手势：不写剪贴板、不出现成功 / 失败反馈、不产生 console 诊断；实现即使被防御性调用也 MUST NOT 输出 `undefined:{line}`、`: {line}` 或任何编造的路径
 
 ### Requirement: 行号开关命令（view.toggle-line-numbers）
 

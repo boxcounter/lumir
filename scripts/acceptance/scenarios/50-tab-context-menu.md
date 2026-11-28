@@ -87,9 +87,12 @@ steps:
 
   - name: 再开一个标签并弄脏（M278 起 dirty 由构造就持久：写盘只由显式动作触发）
     do: click
-    target: { role: AXButton, name: "^tabs-b\\.md$" }
+    # 手势 → 意图的唯一判据在 src/tree.ts 的 treeOpenIntent：单击 = 当前标签就地打开，
+    # ⌘-单击 = 新开标签（change improve-file-open-harness-affordance-nov26）。旧场景按
+    # M254 的「单击即新标签」写，已被该 change 改准；这里用 ⌘-单击才是「再开一个」。
+    target: { role: AXButton, name: "^tabs-b\\.md$", modifiers: ["cmd"] }
     expect:
-      - label: 单击开出一个新标签（M254：单击即正式标签，不再有预览态）
+      - label: ⌘-单击开出一个新标签（保留当前标签；M254 起新标签即正式标签，不再有预览态）
         ax: { count: { pattern: "关闭 ", exact: 2 } }
       - label: 新标签成为前台
         ax: { has: "/AXRadioButton \\(tabs-b\\.md\\) Value: true/" }
@@ -178,17 +181,17 @@ steps:
   # ② 放弃 ≠ 写盘、保存才落盘；③ 全关完之后的空态与焦点落点（真机层的唯一判据）。
   # -------------------------------------------------------------------------
 
-  - name: 「关闭全部标签」起点——重开 tabs-b（磁盘版是 DISK-VERSION）
+  - name: 「关闭全部标签」起点——⌘-单击重开 tabs-b（磁盘版是 DISK-VERSION）
     do: click
-    target: { role: AXButton, name: "^tabs-b\\.md$" }
+    target: { role: AXButton, name: "^tabs-b\\.md$", modifiers: ["cmd"] }
     expect:
-      - label: 第二个标签出现
+      - label: ⌘-单击后第二个标签出现（保留当前标签）
         ax: { count: { pattern: "关闭 ", exact: 2 } }
       - label: 新标签成为前台
         ax: { has: "/AXRadioButton \\(tabs-b\\.md\\) Value: true/" }
-  - name: 再开 tabs-long——三个标签，前台是 tabs-long
+  - name: 再 ⌘-单击开 tabs-long——三个标签，前台是 tabs-long
     do: click
-    target: { role: AXButton, name: "^tabs-long\\.md$" }
+    target: { role: AXButton, name: "^tabs-long\\.md$", modifiers: ["cmd"] }
     expect:
       - label: 三个标签都在
         ax: { count: { pattern: "关闭 ", exact: 3 } }
@@ -290,8 +293,8 @@ steps:
         node: { role: AXRadioButton, name: "tabs-long\\.md", present: false }
       - label: 回到空态：modeline 无当前文件
         ax: { has: "无当前文件" }
-      - label: 焦点交还编辑器（空文档正文，不掉回 body）
-        ax: { focused: "AXTextArea" }
+      - label: 焦点交给空工作区静态 region（不掉回 body / 正文）
+        ax: { focused: { role: "AXGroup", name: "开始使用" } }
       - label: 放弃 ≠ 写盘：tabs-b 仍是冲突时写下的那一版
         file: { path: tabs-b.md, has: "DISK-VERSION" }
       - label: 保存的那一份落盘了
@@ -354,13 +357,15 @@ M254（change `tab-strip-context-menu`）新增的标签右键菜单在**真实 
   （名字不锚 D90 后缀）——标签数归零但残留一条同名节点的形态同样判红。
 - **放弃 ≠ 写盘 / 保存才落盘**：末两步分别断言 tabs-b 仍是 `DISK-VERSION`、tabs-long 里有
   `ALL-GGG`；这是 chromium 桩给不出的真实文件系统读数。
-- **空态与焦点**：全关完后 `ax: { focused: "AXTextArea" }` 是本场景的**新判据**——批量关闭
-  没有标签可归还焦点，产品把焦点交给编辑器（空文档正文）；真机层只有这一条能验。
+- **空态与焦点**：全关完后 `ax: { focused: { role: "AXGroup", name: "开始使用" } }` 是本场景的
+  判据——批量关闭没有标签可归还焦点，产品把焦点交给空工作区静态 region，MUST NOT 落进
+  inert 正文，也不为留焦点伪造按钮。
 - **停手焦点（review r1 P2-1）**：确认浮条的动作钮在答复那一刻随浮条从 DOM 移除，浏览器会把
-  焦点送回 `body`；产品的归还口径是「收尾（全关完或停手）→ 当前前台标签的编辑器正文」。
-  本段在「取消」之后与全关之后各有一条 `ax: { focused: "AXTextArea" }` 判据——真机层只有这两条
-  能判实际焦点归属（chromium 层的四条 `document.activeElement` 回归见 tab-menu.spec.ts）。
+  焦点送回 `body`；产品的归还口径是「收尾（全关完或停手）→ 当前前台标签的编辑器正文；全关完
+  → 空工作区静态 region」。本段在「取消」之后（仍有标签，`focused: AXTextArea`）与全关之后
+  （无标签，`focused: AXGroup 开始使用`）各有一条焦点判据；chromium 另由 `document.activeElement`
+  与 inert 反向断言防旁路（tab-menu.spec.ts）。
 - **多脏形态的构造边界**：运行期只有「打开多个文件后再逐个键入」这一条路能造出多个 dirty
-  标签；未命名草稿不是标签（没有路径），批量目标集按 `visibleTabsOf` 口径排除它——
-  这一条由单测 `closeAllTargets` 的负向用例钉住，真机不可达（未命名文档 dirty 时打开文件
-  会被既有守卫拦下，见 `multi-tabs` 的「未命名文档的 dirty 守卫」）。
+  标签；无路径的空工作区占位会话不是标签，批量目标集按 `visibleTabsOf` 口径排除它——这一条由
+  单测 `closeAllTargets` 的负向用例钉住，真机不可达（空工作区结构性只读、不能产生 dirty；
+  见 `multi-tabs` 的「无 Tab 空工作区与 dirty 判定」）。

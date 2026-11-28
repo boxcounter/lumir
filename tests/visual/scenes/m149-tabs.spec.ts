@@ -439,33 +439,48 @@ test("后台标签的外部修改也自动重载，且不抢前台", async ({ pa
   await expect(content).toContainText("外部改写过的正文");
 });
 
-test("零标签时 ⌘W 无操作：未命名文档不是标签（reviewer r1 P2-1）", async ({ page }) => {
-  // 非首启的 vault 未装载：M851 起编辑器是空白未命名文档（不再预置 SAMPLE），没有任何标签（标签栏隐藏）。
-  await stubTauri(page, null, { lastVault: "/mock/missing-vault" });
+test("零标签时 ⌘W 无操作：空工作区不是标签（reviewer r1 P2-1 / change make-no-tab-empty-workspace-nov28）", async ({
+  page,
+}) => {
+  // 装载 vault 但没有任何标签：M851 起不再预置 SAMPLE；本 change 起空态是**空工作区**
+  //（无路径、结构性只读），不再是一份可输入的未命名文档。
+  await stubTauri(page, VAULT);
   await page.goto("/");
   await expect(page.locator(".tabstrip")).toBeHidden();
-  // 先键入一个字符建立「有内容的未命名文档」现场：空白文档上的逐字节比较没有区分度
-  // （P2-1 的 bug 正是把它静默换成另一份空文档，"" === "" 会假绿）。
-  await page.locator(".cm-content").click();
+  const surface = page.locator(".pane-empty-workspace");
+  await expect(surface).toBeVisible();
+  await expect(surface.locator(".workspace-tips-title")).toHaveText("开始使用");
+
+  // 被覆盖编辑器整体 inert：即使显式尝试程序聚焦也到不了正文，键入仍不落字。
+  await expect(page.locator(".cm-editor")).toHaveJSProperty("inert", true);
+  await page.locator(".cm-content").evaluate((el) => el.focus());
+  await expect(page.locator(".cm-content")).not.toBeFocused();
+  await surface.focus();
   await page.keyboard.type("Z");
   const before = await readDocument(page);
-  expect(before.length).toBeGreaterThan(0);
+  expect(before).toBe("");
 
-  await page.locator(".cm-content").click();
+  // ⌘W（global 命令，焦点在静态 region）：没有标签可关 ⇒ 空工作区与内容原样，焦点不动。
   await page.keyboard.press("Meta+w");
-
-  // 无操作：文档逐字节不变（P2-1 修之前它会被静默换成一份空文档）、没有确认浮条。
   expect(await readDocument(page)).toBe(before);
   await expect(page.locator(".tabstrip")).toBeHidden();
+  await expect(surface).toBeVisible();
+  await expect(page.locator(".modeline-path")).toHaveText("无当前文件");
   await expect(page.locator(".lumir-toast")).toHaveCount(0);
 
-  // dirty 的未命名文档同样无操作：P2-1 修之前会弹出主体为空的确认浮条（`「」有未保存…`）。
-  await page.locator(".cm-content").click();
-  await page.keyboard.type("Z");
+  // 再按一次同样无操作（防「第一次把空态换掉、第二次才稳定」的假绿）。
+  await expect(surface).toBeFocused();
   await page.keyboard.press("Meta+w");
-  expect(await readDocument(page)).toContain("Z");
-  await expect(page.locator(".lumir-toast", { hasText: "关闭后修改将丢失" })).toHaveCount(0);
-  await expect(page.locator(".tabstrip")).toBeHidden();
+  await expect(surface).toBeFocused();
+  expect(await readDocument(page)).toBe("");
+  await expect(surface).toBeVisible();
+  await expect(page.locator(".lumir-toast")).toHaveCount(0);
+
+  // ⌘W 没有破坏空工作区的动作链路：从树里打开文件仍按既有语义进入有路径文档。
+  await page.locator('.ft-row[title="alpha.md"]').click();
+  await expect(surface).toBeHidden();
+  await expect(page.locator(".tab")).toHaveCount(1);
+  await expect(page.locator(".modeline-path")).toHaveText("alpha.md");
 });
 
 // ---------------------------------------------------------------------------

@@ -356,16 +356,17 @@ test("关闭右侧标签：严格右侧、按打开顺序、目标缺席即空�
   assert.deepEqual(closeRightTargets([a, b], session("z.md")), []);
 });
 
-test("关闭全部标签：本 pane 的全部可见标签（含右键那一条），按打开顺序、排除未命名草稿", () => {
+test("关闭全部标签：本 pane 的全部可见标签（含右键那一条），按打开顺序、排除空工作区占位会话", () => {
   const a = session("a.md");
   const b = session("b.md");
   const c = session("c.md");
-  // 未命名草稿不是标签——即使它脏，也 MUST NOT 进目标集（closeTab 的守卫不让它被「关掉」，
+  // 无路径的空工作区占位会话不是标签——即使夹具把它标成脏，也 MUST NOT 进目标集
+  //（change make-no-tab-empty-workspace-nov28：真实实现里它结构性只读、恒 clean；
   // 它根本不在标签条上；进了目标集只会让批量动作对着一个空路径停手）。
   const scratch = session(undefined, { dirty: true });
   assert.deepEqual(closeAllTargets([scratch, a, b, c]), [a, b, c]);
   assert.deepEqual(closeAllTargets([a]), [a]);
-  assert.deepEqual(closeAllTargets([scratch]), [], "只有未命名草稿时没有可关的标签");
+  assert.deepEqual(closeAllTargets([scratch]), [], "只有空工作区占位会话时没有可关的标签");
   // 目标集合是快照：调用方拿到之后列表变化（别处关掉一条）由 resolveClose 的「已不在」分支吃掉。
   assert.deepEqual(closeAllTargets([]), []);
 });

@@ -173,8 +173,8 @@ steps:
       - shot: 切到 B
       - label: 树头部入口换成 B（整窗上下文真的换了）
         ax: { has: "vault：lumir-m102-acceptance-b（点击查看全部 vault）" }
-      - label: B 没有打开过的文件——D107 的空 vault 引导
-        ax: { has: "这个 vault 还没有打开的文件" }
+      - label: B 没有打开过的文件——统一空工作区
+        ax: { has: "开始使用" }
       - label: B 自己的文件在树里（装载的是 B 的条目，不是空树）
         ax: { has: "beta.md" }
       - label: A 的会话已按稳定 id 落盘，两个固定标签都在
@@ -336,8 +336,8 @@ steps:
    `dblclick`（四条路实测都失败，判据与现场见 README「已知边界」），因此「双击固定」这条路径由
    chromium 视觉通道覆盖（`tests/visual/scenes/m149-tabs.spec.ts`）。
    键入后 ⌘S 把标签留在固定态且 clean——否则 dirty 会触发切换守卫（那是 19 的场景）。
-3. **切到没打开过的 vault = 空 vault 首入态**：B 没有会话历史，装载后一条标签都恢复不出来，正文被
-   D107 的引导盖住。这也是**启动**的常态（验收 vault 首次打开时没有会话），因此就绪门必须认它
+3. **切到没打开过的 vault = 统一空工作区**：B 没有会话历史，装载后一条标签都恢复不出来，正文被
+   空工作区表面盖住。这也是**启动**的常态（验收 vault 首次打开时没有会话），因此就绪门必须认它
    （见 `lib/drive.mjs` 的 `waitAppReady`）。
 4. **切回后按会话恢复**：断言「激活项是 tabs-b 而不是退化的第一个」，靠的是正文内容
    （`BPIN` 只可能来自 tabs-b）；`editor.not "标签场景 A"` 是它的反证——两条一起才有区分度

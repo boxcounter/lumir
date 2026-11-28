@@ -88,9 +88,11 @@ test("文件行右键：菜单四项、无新建项，且不改上下文", async
   await expect(page.locator(".ft-menu .ft-menu-item").last()).toHaveText("移到废纸篓…");
   // 打开即持焦点，游标落在首项
   await expect(page.locator(".ft-menu .ft-menu-item.is-active")).toHaveText("重命名…");
-  // 右键不改上下文：没有打开任何文件（仍是无当前文件的覆盖层）、标签栏为空
+  // 右键不改上下文：没有打开任何文件（仍是统一空工作区，不再是 D107 覆盖层）、标签栏为空
   await expect(page.locator(".tab")).toHaveCount(0);
-  await expect(page.locator(".editor-notice")).toBeVisible();
+  await expect(page.locator(".pane-empty-workspace")).toBeVisible();
+  await expect(page.locator(".pane-empty-workspace .workspace-tips-title")).toHaveText("开始使用");
+  await expect(page.locator(".editor-notice")).toBeHidden();
 
   await expectScreenshot(menu, "context-menu-file.png");
 

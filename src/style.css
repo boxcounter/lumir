@@ -1008,33 +1008,11 @@ body {
   color: var(--danger);
   background-color: var(--code-bg);
 }
-/* 空 pane 引导（M322，文案 D369）：pane 在场但零标签时正文区的水印层——绝对定位盖在该
-   pane 的编辑器之上（**透明底**：底下的 scratch 在可编辑豁免档仍透得出；前台未命名文档是
-   dirty 草稿时引导让位，谓词在 pane-layout 的 emptyPaneGuideVisible）。指针用 `default`
-   而不是 `text`：分栏空 pane 的正文是结构性只读，`text` 光标会暗示「这里能打字」。
-   常驻 mountEl 内、`hidden` 切换在场 / 离场，单 pane 恒隐——单 pane 常态逐像素不变
-   （构造上零影响）。只消费既有 token。 */
-.pane-empty-guide {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--sp-6);
-  text-align: center;
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-  color: var(--text-3);
-  cursor: default;
-}
-/* display:flex 会盖掉 UA 的 [hidden] 规则，显式补回（同 .titlebar-identity / .editor-notice） */
-.pane-empty-guide[hidden] {
-  display: none;
-}
-/* 结构性只读前台（分栏空 pane / 首启 tips，change fix-no-tab-empty-state-nov27）不画 CM 插入
+/* 空工作区的完整表面由 src/workspace-tips.css 统一提供；.pane-empty-workspace 只作装配选择器。 */
+/* 结构性只读前台（空工作区 / 首启 tips，change make-no-tab-empty-workspace-nov28）不画 CM 插入
    光标：类由 src/editor.ts 的 `modeExtensions` 按会话 `structuralReadOnly` 挂在 `.cm-editor`
-   外层（随 mode Compartment 重配）。只隐藏**光标层**——`.cm-selectionLayer` 不受影响，只读
-   内容仍可选中复制；`tabindex` / `aria-readonly` 与焦点归还不改（点击仍激活 pane）。MUST NOT
+   外层（随 mode Compartment 重配）。只隐藏**光标层**；焦点与读屏隔离由装配层对空态编辑器
+   宿主施加 `inert` 承担。MUST NOT
    用 `:has()` 从 `contenteditable=false` 反推：vault 外只读会话同是 contenteditable=false，
    但不在「结构性只读」范围内、仍保留光标。 */
 .cm-editor.lumir-structural-readonly .cm-cursorLayer {
@@ -1453,8 +1431,8 @@ body {
   text-align: center;
   background: var(--content-bg);
 }
-/* 空态的可执行入口（M851，空 vault 首入态的「新建笔记」）：形态与树空态的「打开 vault」
- * 同一套（--content-bg + --border + r8），不引入第二种按钮样式。 */
+/* 瞬时 notice 覆盖层的可执行入口：与树空态的「打开 vault」同一套 token，不引入第二种
+ * 按钮样式。共享空工作区不再有按钮，不使用本类。 */
 .editor-notice-text {
   margin: 0;
 }

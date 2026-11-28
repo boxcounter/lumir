@@ -38,6 +38,7 @@ import {
   injectModifierCGEvent,
   injectWheel,
   isChordSpec,
+  isNamedKeySpec,
   openFile,
   parseChordSpec,
   pressKey,
@@ -240,6 +241,9 @@ export function focusedRoleReading(nodes, { editor = null } = {}) {
     count: focused.length,
     roles: focused.map((n) => n.role),
     role: focused.length === 1 ? focused[0].role : null,
+    // 名称取 `nodeName`（title > label > value）：`ax.focused` 的 `{ role, name }` 形态据此
+    // 区分「同一个 role 的哪一个节点」——只认 role 时焦点落在任意 AXButton 都能通过（P3-1）。
+    name: focused.length === 1 ? nodeName(focused[0]) : null,
     isEditor: Boolean(editor) && focused.length === 1 && focused[0] === editor,
   };
 }
@@ -1117,6 +1121,15 @@ export function checkScenario(scenario) {
         push(`${at} expect[${j}] bytes 断言缺 magic/nameHash（写错字段名会静默变成恒真断言）`);
       else if (kinds[0] === "ax" && !["has", "not", "count", "focused", "scope", "order", "notInValue"].some((k) => exp.ax[k] !== undefined))
         push(`${at} expect[${j}] ax 断言缺 has/not/count/focused/scope/order/notInValue（写错字段名会静默变成恒真断言）`);
+      else if (
+        kinds[0] === "ax" &&
+        exp.ax.focused !== undefined &&
+        typeof exp.ax.focused !== "string" &&
+        (!isPlainTable(exp.ax.focused) ||
+          typeof exp.ax.focused.role !== "string" ||
+          (exp.ax.focused.name !== undefined && typeof exp.ax.focused.name !== "string"))
+      )
+        push(`${at} expect[${j}] ax.focused 只收角色字符串或 { role, name }（name 可选；写错会静默变成恒真断言）`);
       else if (kinds[0] === "node") {
         // 节点在场性断言（M669）：`present` 必填（在场 / 不在场方向相反，缺省会让写错键静默变味）；
         // `name` 是**裸正则源**（与 `target.name` 同口径，`findNode` 直接 `new RegExp`），因此
@@ -1262,6 +1275,10 @@ export function checkScenario(scenario) {
                 : {};
         for (const [field, value] of Object.entries(judged))
           pushBare(`${at} expect[${j}] ${kinds[0]}.${field}`, value);
+        if (kinds[0] === "ax" && isPlainTable(spec.focused)) {
+          pushBare(`${at} expect[${j}] ax.focused.role`, spec.focused.role);
+          pushBare(`${at} expect[${j}] ax.focused.name`, spec.focused.name);
+        }
       }
     }
   }
@@ -2055,7 +2072,14 @@ export function keyChannel(step, key) {
       `do=${step.do} 的 channel 只支持 ${[...KEY_CHANNELS].join(" / ")}（真键盘事件通道），实际 ` +
         `${JSON.stringify(step.channel)}——不静默退回 KimiCU press_key`,
     );
-  return isChordSpec(key) ? "cgevent" : "kimicu";
+  // chord（含 +）走 cgevent；**非打印控制键白名单**（escape / tab / return / 方向 / 删除 …）
+  // 只在 `do: key` 单数形态放行（M885 的 Esc 丢键实证），`do: keys` 列表里的命名控制键仍走
+  // KimiCU——既有 100 等场景的「chord 走真键盘、同一行普通键 / return 走 KimiCU」逐键分工保持
+  // 不变。可打印命名键（space / minus / comma …）MUST NOT 放行：它们是普通字符的另一种拼写，
+  // 走 CGEvent 会引入物理 keycode 的布局依赖（K3 r3 P2-1）。放行集合见 drive.mjs 的
+  // `NAMED_CONTROL_KEYS` / `isNamedKeySpec`。
+  const singleNamed = step.do === "key" && isNamedKeySpec(key);
+  return isChordSpec(key) || singleNamed ? "cgevent" : "kimicu";
 }
 
 /** 一步的 `channel` 形态问题（M767；M768 扩到 `do: key`）：合法返回 `null`，否则返回问题串。
@@ -2064,12 +2088,15 @@ export function keyChannel(step, key) {
  *  必须同样判红（run.mjs 的正常路径不重跑 `checkScenario`），两处各写一遍判定就会在下一次改口径时
  *  只改到一处（REVIEW.md「同一语义两处真源」条）。
  *
- *  **`do: key` 单数多一条判据**：`keys` 里 chord 与普通字符可以共存（通道只接 chord 那一半），
- *  而单数步只有一个键——它不是 chord 时通道无事可做、运行期会退回 KimiCU，与「以为在验应用自己的
- *  键位」正好相反，故按静默失效挡掉。
+ *  **`do: key` 单数多一条判据**：`keys` 里 chord 与普通字符可以共存（通道只接 chord 那一半；
+ *  列表里的命名控制键仍走 KimiCU，保持既有逐键分工），而单数步只有一个键——它既不是 chord 也不是
+ *  非打印控制键时通道无事可做、运行期会退回 KimiCU，与「以为在验应用自己的键位」正好相反，故按
+ *  静默失效挡掉。
  */
 export function channelSpecProblem(step) {
   if (step.channel === undefined) return null;
+  // typeInNode 的显式 Unicode 通道也接受静态 region（885）；其余 channel 仍只服务键位动作。
+  if (step.do === "typeInNode" && step.channel === "cgevent") return null;
   const doName = `do=${step.do}`;
   if (step.do !== "keys" && step.do !== "key")
     return `channel 参数只属于 do=keys / do=key（真键盘事件通道），当前 do=${step.do}`;
@@ -2080,14 +2107,16 @@ export function channelSpecProblem(step) {
     );
   const list =
     step.do === "keys" ? (Array.isArray(step.keys) ? step.keys : []) : typeof step.key === "string" ? [step.key] : [];
-  const chords = list.filter(isChordSpec);
-  if (chords.length === 0)
+  const routable = list.filter(
+    (k) => isChordSpec(k) || (step.do === "key" && isNamedKeySpec(k)),
+  );
+  if (routable.length === 0)
     return (
       `${doName} 写了 channel: ${JSON.stringify(step.channel)}，但 ` +
-      (step.do === "keys" ? "keys 里没有 chord（含 + 的键）" : `key「${step.key}」不是 chord（含 + 的键）`) +
+      (step.do === "keys" ? "keys 里没有 chord（含 + 的键）" : `key「${step.key}」不是 chord（含 + 的键）或非打印控制键（escape / tab / return …）`) +
       "——通道不会生效（普通键仍走 KimiCU press_key）"
     );
-  for (const k of chords) {
+  for (const k of routable) {
     try {
       parseChordSpec(k);
     } catch (e) {
@@ -2497,13 +2526,23 @@ export async function runScenario(ctx, scenario) {
       }
       if (spec.focused !== undefined) {
         // 判定逻辑与 `focusWindow click` 的焦点校验同源（`focusedRoleReading`，M678）：
-        // AX 里**恰有一个** focused 节点，且它的 role 命中 spec.focused（子串或 /…/ 正则）。
+        // AX 里**恰有一个** focused 节点，且它的 role 命中 spec.focused（子串或 /…/ 正则）；
+        // 给 `{ role, name }` 时另要求节点名（title > label > value）命中 name——只认 role 时
+        // 「焦点落在任意 AXButton」也能通过，对空工作区主操作的断言没有区分度（P3-1）。
         // 不直接用 AX 原始文本做正则——没有节点边界，`(focused)` 落在别的节点上照样匹配。
-        const m = matcher(spec.focused);
+        const wantRole = typeof spec.focused === "string" ? spec.focused : spec.focused.role;
+        const wantName = typeof spec.focused === "string" ? undefined : spec.focused.name;
+        const m = matcher(wantRole);
+        const mn = wantName === undefined ? null : matcher(wantName);
         const reading = focusedRoleReading(ax.nodes);
         const roles = reading.roles.join(",") || "无";
-        if (reading.count === 1 && m.test(reading.role)) return pass(label, `focused=${roles}`);
-        return fail(`${label}（期望唯一 focused 节点为 ${m.show}，实际 focused=${roles}，共 ${reading.count} 个）`, "", ax);
+        const name = reading.name ?? "";
+        const actual = `focused=${roles}${name ? ` 「${name}」` : ""}，共 ${reading.count} 个`;
+        if (reading.count === 1 && m.test(reading.role) && (mn === null || mn.test(name))) {
+          return pass(label, `focused=${roles}${name ? ` 「${name}」` : ""}`);
+        }
+        const expected = `${m.show}${mn === null ? "" : ` 且名称匹配 ${mn.show}`}`;
+        return fail(`${label}（期望唯一 focused 节点为 ${expected}，实际 ${actual}）`, "", ax);
       }
       if (spec.has !== undefined) {
         const m = matcher(spec.has);
@@ -3336,7 +3375,7 @@ async function settleAction(cu, pid, evidence) {
 
 /** `do: settle` 在**没有编辑器节点**的合法终态下的等待（M249）。
  *
- * 两种终态（都是正观测，见 waitAppReady）：已装载 vault 但一个标签都没有（D107 引导层盖住
+ * 两种终态（都是正观测，见 waitAppReady）：已装载 vault 但一个标签都没有（空工作区表面盖住
  * 正文，M163 起的启动常态）、未打开 vault 的空态。两者里 `AXTextArea` 都不存在，`drive.mjs`
  * 的 `settle()` 的编辑器门因此永远不成立。等待口径与它一致（连续两次 AX **快照正文**相同，
  * 产物 id 行除外——与 `settle()` 共用 `drive.mjs` 的 `snapshotBody` 与采样间隔
@@ -4184,6 +4223,9 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     // 定位、落点即判据的步骤（141/154 的 ⌃B/⌃A 后落字）不迁（留在 do:keys，finding 已报）。
     // 前置：composer 须持 DOM 焦点（场景各自的 clickInNode / 发送后焦点 retained 建立）。
     case "typeInNode": {
+      const channelProblem = channelSpecProblem(step);
+      if (channelProblem !== null) throw new StepError(`${channelProblem}——不静默退回 type_text`);
+      if (step.channel === "cgevent") await noteIfFocusLost(ctx, p);
       const t = step.target ?? {};
       const resolve = (ax) =>
         t.any !== undefined
@@ -4195,6 +4237,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         retries: step.retries ?? 3,
         label: JSON.stringify(t),
         replace: step.replace === true,
+        channel: step.channel,
       });
       if (!out.focused) {
         evidence.record({

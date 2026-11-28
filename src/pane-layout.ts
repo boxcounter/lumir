@@ -42,9 +42,9 @@ export const MAX_PANES = 2;
 
 /** pane 承载什么（ADR 0008 Decision 1）：一组文档标签，或 harness 面板。账本只把它
  *  透传给 `createHandle` 与 Pane 记录，不解释语义——归属/移动等机制对两种 pane 同构
- *  （harness pane 恒零标签）。「分栏态空 pane 不接受文本输入」的闸门只由装配层对
- *  doc pane 施加（harness pane 的 composer 是文本输入的合法落点），见
- *  `paneBlocksInput` 的条款注释与装配层 `renderAllTabStrips`。 */
+ *  （harness pane 恒零标签）。「无标签的文档 pane 是空工作区」的呈现与输入闸门只由装配层
+ *  施加（harness pane 的 composer 是文本输入的合法落点），见装配层 `renderAllTabStrips`
+ *  与 `openspec/specs/pane-layout/spec.md` 的「无标签文档 pane 的空工作区」。 */
 export type PaneKind = "doc" | "harness";
 
 /** 分隔条比例的钳制区间：任一 pane 至少留两成宽（再窄标签条与正文都不可用）。
@@ -61,52 +61,6 @@ export const DEFAULT_SPLIT_RATIO = 0.5;
 export function clampSplitRatio(value: number): number {
   if (Number.isNaN(value)) return DEFAULT_SPLIT_RATIO;
   return Math.min(SPLIT_RATIO_MAX, Math.max(SPLIT_RATIO_MIN, value));
-}
-
-/** 分栏态「空 pane」的判据 = **输入闸门**（M329，Alex 2026-10-05 dogfood bug 2）：**纯函数**，
- *  三个条件缺一不可。它同时是**引导在场与输入闸门共用的同一条「空」口径**（REVIEW.md 「同一语义两处真源」条：
- *  同一语义一处真源）——`emptyPaneGuideVisible` 在它之上只多一个「已装 vault」。
- *
- *  **只适用文档 pane**（change move-harness-to-pane-chat-frame）：harness pane 的 composer
- *  是文本输入的合法落点，装配层对 harness pane 不调用本判据（施加点的显式排除见装配层
- *  `renderAllTabStrips`）。
- *
- *  - `split`：只谈分栏态——单 pane 零标签维持 M149 起的既有形态（未命名空文档编辑器 + 标签条
- *    整条隐藏），两个消费者都不覆盖它（「单 pane 常态逐像素不变」是 pane 化的第一判据，
- *    单 pane 的空态 scratch 因此照常可编辑）；
- *  - `hasTabs` 为假：「空」按**带路径的会话**判定（与 `src/tabs.ts` 的 visibleTabsOf 同一定义
- *    ——未命名文档不是标签）；装配层从实例会话表现查，不读账本（账本会登记 path=undefined 的
- *    空会话，见 `openTab` 的文档化合法路径）；
- *  - `foregroundDirty` 为假：前台是**有未保存内容的**未命名草稿时不算空。分栏前在单 pane
- *    scratch 里写下的草稿，分栏后 MUST NOT 被静默冻结（reviewer r1 P2-1 的现场：闸门漏了这
- *    一维时，用户文字被冻住、连 ⌘Z 都被 changeFilter 吞掉，且引导被 dirty 挡着、没有任何只读
- *    提示）；pane 里有用户内容，既不是「无内容可编辑」，也不该被引导水印盖住。
- *
- *  为什么这一维不会重开 bug 2：空 pane 一旦被封锁，其空会话**恒为 clean**（输入落不进文档），
- *  所以「分栏态 + 无带路径标签 + 前台 dirty」只可能来自**分栏前就在编辑的草稿**——即本维要
- *  放行的那一格，闸门对它本就该让路。
- *
- *  条款居所（living spec）：`openspec/specs/pane-layout/spec.md` 的「分栏态空 pane 不接受
- *  文本输入」（本模块只给判据，施加点与只读机制在装配层 / `src/editor.ts`）。 */
-export function paneBlocksInput(split: boolean, hasTabs: boolean, foregroundDirty: boolean): boolean {
-  return split && !hasTabs && !foregroundDirty;
-}
-
-/** 空 pane 引导的显示谓词（M322，spec「分栏后出现两个文档 pane」的空态引导）：**纯函数**。
- *  「空」的判据即 `paneBlocksInput`（复用而不是另写一份表达式：两条谓词曾在「前台是带内容的
- *  草稿」这一格上分叉，正是 reviewer r1 P2-1 的现场），本条只多一个条件：
- *  - `vaultLoaded`：未装载 vault 时不显示（Alex 2026-10-04 裁决）——此时左栏没有文件可点，
- *    「在左栏选一个文件」的指引不成立。
- *
- *  由此得到一条可检验的关系：**引导在场 ⟺ 该 pane 的输入被封锁 ∧ 已装 vault**（引导是「无内容
- *  可编辑」时的替代表面，两者在同一格上要么同时成立、要么同时不成立）。 */
-export function emptyPaneGuideVisible(
-  split: boolean,
-  hasTabs: boolean,
-  foregroundDirty: boolean,
-  vaultLoaded: boolean,
-): boolean {
-  return paneBlocksInput(split, hasTabs, foregroundDirty) && vaultLoaded;
 }
 
 /** 指针横坐标 → 钳制后的比例（**纯函数**，拖拽的唯一计算）：`rect` 是 pane 容器的矩形。
@@ -203,7 +157,7 @@ export function createDividerDrag(deps: DividerDragDeps): DividerDrag {
 }
 
 /** 标签在账本里的最小形状：**会话所有权按 `path` 判定**（ADR 0008 Decision 4）。
- *  `undefined` 是未命名文档，允许同时存在多份（它们不参与判重）。 */
+ *  `undefined` 是空工作区占位会话，允许同时存在多份（它们不参与判重）。 */
 export interface PaneTab {
   readonly path: string | undefined;
 }
@@ -328,8 +282,8 @@ export function createPaneLayout<Tab extends PaneTab, Handle>(
   /** 摘除一份标签并维护前台下标：摘的是前台 → 落到右邻，没有右邻落左邻，都没有则 -1；
    *  摘的在前台**之前** → 前台左移一位。与 `src/editor.ts` 的 `closeSession` 同口径
    *（右邻优先），但**不代造未命名空文档**——那是每个 pane 的编辑器内核的事，账本只记归属：
-   *  关掉某 pane 最后一个标签后该 pane 就是空的（空 pane 合法在场），装配层若要维持「空态 =
-   *  未命名空文档」的既有表现，须把内核造出的那份空会话经 `openTab(undefined, …)` 登记进来。 */
+   *  关掉某 pane 最后一个标签后该 pane 就是空的（空 pane 合法在场），装配层把内核造出的
+   *  空工作区占位会话经 `openTab(undefined, …)` 登记进来。 */
   function removeTabAt(pane: Pane<Tab, Handle>, index: number): void {
     pane.tabs.splice(index, 1);
     if (pane.foreground === index) {

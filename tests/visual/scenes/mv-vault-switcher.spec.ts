@@ -229,8 +229,8 @@ test("Enter 切到目标 vault：目标装载 + 切换前把当前 vault 的会�
   await expect(page.locator(".ft-vault-name")).toHaveText("notes-vault");
   await expect(page.locator('.ft-row[title="inbox.md"]')).toBeVisible();
   await expect(page.locator('.ft-row[title="README.md"]')).toHaveCount(0);
-  // 目标没有会话历史 → 空 vault 首入态（D107 的引导盖住正文，不伪造内容）
-  await expect(page.locator(".editor-notice")).toContainText("这个 vault 还没有打开的文件");
+  // 目标没有会话历史 → 统一空工作区（不伪造内容）
+  await expect(page.locator(".pane-empty-workspace .workspace-tips-title")).toHaveText("开始使用");
   await expect(page.locator(".tab")).toHaveCount(0);
 
   // 切换前 flush：会话按**稳定 id** 落盘，内容是有序的固定标签 + 激活项

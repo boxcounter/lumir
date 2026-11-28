@@ -401,7 +401,7 @@ test("vault 外只读标签（M660 #7）：可见侧是 aria-hidden 的锁形图
 
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
-test("关闭全部标签：全 clean——按打开顺序关完、焦点交给编辑器", async () => {
+test("关闭全部标签：全 clean——按打开顺序关完、焦点交给空工作区主操作", async () => {
   const a = session("a.md");
   const b = session("b.md");
   const c = session("c.md");
@@ -413,7 +413,7 @@ test("关闭全部标签：全 clean——按打开顺序关完、焦点交给�
 
   assert.deepEqual(rig.closed, ["a.md", "b.md", "c.md"], "按打开顺序逐个关，右键那一条也在内");
   assert.equal(rig.editor.sessions.length, 0);
-  assert.equal(rig.focusEditorCalls, 1, "全关完之后焦点交给编辑器（空态正文）");
+  assert.equal(rig.focusEditorCalls, 1, "全关完之后焦点交给空工作区主操作（装配层按有没有标签解析）");
   assert.equal(rig.order[0], "activatePane", "菜单动作是这条标签条的交互 ⇒ 先让该 pane 变活跃");
   assert.equal(rig.toasts.length, 0, "全 clean 不弹任何确认");
 });
@@ -448,7 +448,7 @@ test("关闭全部标签：多个 dirty——逐个弹既有确认；取消停�
   // 停手也要归还焦点：确认按钮随浮条移除后浏览器会把焦点送回 body（review r1 P2-1）。
   // 这里只证明「收尾路径调了 focusEditor」——真实 activeElement 的判据在浏览器层
   // （tests/visual/scenes/tab-menu.spec.ts 的 expectEditorActive）。
-  assert.equal(rig.focusEditorCalls, 1, "停手时焦点交给前台编辑器");
+  assert.equal(rig.focusEditorCalls, 1, "停手时焦点交给前台入口（有标签 → 正文）");
 
   // 再来一次并选「放弃修改并关闭」：b 关掉之后批量继续，c 也走它自己的确认。
   rig.openMenu("b.md");
@@ -468,7 +468,7 @@ test("关闭全部标签：多个 dirty——逐个弹既有确认；取消停�
   rig.toasts[2].actions[1].run();
   await flush();
   assert.deepEqual(rig.closed, ["a.md", "b.md", "c.md"]);
-  assert.equal(rig.focusEditorCalls, 2, "全关完同样收尾一次（前台是未命名空文档）");
+  assert.equal(rig.focusEditorCalls, 2, "全关完同样收尾一次（前台是空工作区主操作）");
 });
 
 // ---------------------------------------------------------------------------

@@ -831,9 +831,9 @@ test("V4e-eink 横幅对比度：黑字白底 ≥4.5、按钮边界 ≥3", async
   await assertBannerContrast(page, "eink");
 });
 
-// ── P2-5：横幅与 notice 同场几何（notice 的包含块必须是 pane 行盒） ─────────────
+// ── P2-5：横幅与空态表面同场几何（表面的包含块必须是 pane 行盒，不得盖住横幅） ─────
 
-test("V5 横幅与编辑器 notice 同场：notice 从横幅下缘开始，不得覆盖横幅", async ({ page }) => {
+test("V5 横幅与空工作区同场：空工作区从横幅下缘开始，不得覆盖横幅", async ({ page }) => {
   const empty: VaultFixture & { root: string } = {
     root: `${ROOT}-empty`,
     entries: [],
@@ -844,18 +844,23 @@ test("V5 横幅与编辑器 notice 同场：notice 从横幅下缘开始，不�
   await stubHealth(page, { listFails: true });
   await page.goto("/");
   const banner = page.locator(".recovery-banner");
-  const notice = page.locator(".editor-notice");
+  // change make-no-tab-empty-workspace-nov28：空 vault 的表面是空工作区（不再是 D107 的
+  // `.editor-notice` 覆盖层）；几何合同不变——它只覆盖 pane 行盒，必须从横幅下缘开始。
+  const surface = page.locator(".pane-empty-workspace");
   await expect(banner).toBeVisible();
-  await expect(notice).toBeVisible();
+  await expect(surface).toBeVisible();
+  await expect(surface.locator(".workspace-tips-title")).toHaveText("开始使用");
   const boxes = await page.evaluate(() => {
     const bannerEl = document.querySelector(".recovery-banner") as HTMLElement;
-    const noticeEl = document.querySelector(".editor-notice") as HTMLElement;
+    const surfaceEl = document.querySelector(".pane-empty-workspace") as HTMLElement;
     const b = bannerEl.getBoundingClientRect();
-    const n = noticeEl.getBoundingClientRect();
-    return { bannerBottom: b.bottom, bannerTop: b.top, noticeTop: n.top, noticeBottom: n.bottom };
+    const n = surfaceEl.getBoundingClientRect();
+    return { bannerBottom: b.bottom, bannerTop: b.top, surfaceTop: n.top, surfaceBottom: n.bottom };
   });
-  expect(boxes.noticeTop).toBeGreaterThanOrEqual(boxes.bannerBottom - 0.5);
-  expect(boxes.noticeTop).toBeGreaterThan(boxes.bannerTop);
+  expect(boxes.surfaceTop).toBeGreaterThanOrEqual(boxes.bannerBottom - 0.5);
+  expect(boxes.surfaceTop).toBeGreaterThan(boxes.bannerTop);
+  // 反向判别：表面必须真的从横幅下方开始，不能只是「元素存在」；横幅自身仍在视口内。
+  expect(boxes.surfaceBottom).toBeGreaterThan(boxes.surfaceTop);
 });
 
 // ── P1-3：逻辑会话归属（旧事件不得复活 / 恢复地板不得被 Promise 回执抹掉） ──────

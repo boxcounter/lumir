@@ -17,8 +17,6 @@ import {
   clampSplitRatio,
   createDividerDrag,
   createPaneLayout,
-  emptyPaneGuideVisible,
-  paneBlocksInput,
   ratioFromPointer,
 } from "../../src/pane-layout.ts";
 import type { DividerPointerEvent, Pane, PaneLayout } from "../../src/pane-layout.ts";
@@ -707,49 +705,9 @@ test("分隔条拖拽：非左键不开始；destroy 摘干净全部监听", () 
   assert.equal(fake.listenerCount(), 0, "destroy 后监听全摘（元素移除前调用）");
 });
 
-test("空 pane 引导谓词：仅分栏态 + 零带路径标签 + 前台非 dirty 草稿 + 已装 vault（M322）", () => {
-  assert.equal(emptyPaneGuideVisible(true, false, false, true), true, "分栏态空 pane 显示引导");
-  assert.equal(
-    emptyPaneGuideVisible(false, false, false, true),
-    false,
-    "单 pane 零标签不显示（M149 起的既有形态不动，单 pane 基线构造上零影响）",
-  );
-  assert.equal(emptyPaneGuideVisible(true, true, false, true), false, "有带路径标签不显示");
-  assert.equal(
-    emptyPaneGuideVisible(true, false, true, true),
-    false,
-    "前台是 dirty 草稿时引导让位（scratch 键入立即可见，不埋在水印底下）",
-  );
-  assert.equal(
-    emptyPaneGuideVisible(true, false, false, false),
-    false,
-    "未装载 vault 不显示（Alex 2026-10-04 裁决：左栏无文件可点时指引不成立）",
-  );
-});
-
-test("空 pane 输入闸门：仅分栏态 + 零带路径标签 + 前台无未保存草稿时封锁输入（M329）", () => {
-  // 不变量：分栏态**空** pane MUST NOT 接受文本输入（打开 / 新建文件前不出现可编辑面）。
-  assert.equal(paneBlocksInput(true, false, false), true, "分栏态空 pane 不接受输入（Alex 现场：⌥O 后敲字 → ⌘S 报错）");
-  assert.equal(paneBlocksInput(true, true, false), false, "分栏态有文档的 pane 可编辑");
-  assert.equal(
-    paneBlocksInput(false, false, false),
-    false,
-    "单 pane 空态不封锁——M149 起的空文档 scratch 是既有形态，逐像素与行为都不动",
-  );
-  assert.equal(paneBlocksInput(false, true, false), false, "单 pane 有文档可编辑");
-  // reviewer r1 P2-1：分栏 MUST NOT 冻结**带未保存内容的**未命名草稿——分栏前在 scratch 里写下的
-  // 内容分栏后仍可编辑（连撤销一起保留），否则用户文字被静默冻住且无任何只读提示。
-  assert.equal(
-    paneBlocksInput(true, false, true),
-    false,
-    "分栏不封锁带内容的 scratch：分栏前写下的未保存草稿分栏后仍可编辑（P2-1 的回归格）",
-  );
-  assert.equal(paneBlocksInput(false, false, true), false, "单 pane 的 dirty scratch 照常可编辑");
-
-  // 本判据的独立性：引导水印的在场还看 vault 装载态——未装 vault 时引导不显示，但空 pane
-  // 照样不接受输入（两者是同一「空」口径的两件事，MUST NOT 合并成一个谓词）。
-  assert.equal(paneBlocksInput(true, false, false), true);
-});
+// 空工作区的在场与输入闸门不再由本模块判：change make-no-tab-empty-workspace-nov28 后
+// 「无带路径标签」是唯一判据，装配层在 renderAllTabStrips 直接读 visibleTabsOf；旧的两个
+// 纯函数（分栏态 + dirty 豁免）随之删除，对应行为由视觉结构层覆盖。
 
 test("pane kind：split(kind) 贯通 createHandle 与 Pane 记录；harness pane 同样受上限二约束（HP1）", () => {
   // change move-harness-to-pane-chat-frame（ADR 0008 Decision 1：pane 承载文档组或 harness）：

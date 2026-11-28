@@ -225,7 +225,7 @@
 | 260 | `260-editing-oracle-nov18` | 编辑参照模型的固定真机 witness——marker 导航原子步、连续空列表 Enter、保存后 file.exact 全文（M832） | full |
 | 261 | `261-native-widget-deletion` | 原生跨行删除不写显示文本——列表 / wikilink / 行内公式的精确合并、一次撤销与精确落盘（M836） | full |
 | 262 | `262-native-ime-exploration` | 原生 IME 人工探索矩阵（0.13.0 CM composer；自动段只建现场，native 人工终判） | evidence |
-| 263 | `263-first-run-empty-vault` | 首启模式 + 老用户空 vault 新建：唯一添加 vault、D107 新建入口、默认 .md、保存与重启恢复 | full |
+| 263 | `263-first-run-empty-vault` | 首启模式 + 老用户空 vault：唯一添加 vault、共享 tips 无按钮、右键新建默认 .md 与重启恢复 | full |
 | 264 | `264-first-run-provider-config` | 首次安装：无 provider 与网络失败的错误行本地化（en 界面、不含内部 URL），以及添加 provider + 模型后保存重启恢复 | full |
 | 265 | `265-table-cell-webkit-editing` | WebKit 表格 cell 端点编辑——键入 / Backspace / Delete 只改被点中的源字节、一次撤销与精确落盘（M855） | full |
 | 266 | `266-selection-delete-widgets` | 非空选区编辑 = 源码精确编辑——表格单字符 cell 的删除与跨 cell 键入替换、精确落盘、一次撤销（M854） | full |
@@ -293,7 +293,7 @@
 | 882 | `882-harness-withdraw-message` | 撤回最近一条用户消息：transcript 移除、原文回 composer、新会话 B 唯一且上下文不再含它 | full |
 | 883 | `883-file-open-harness-affordance` | 文件树打开意图（普通点击=当前标签、⌘点击=新标签并保留）与无标签时 Harness 图标贴右缘 / 文案 | full |
 | 884 | `884-quit-save-all-dialog` | 退出前的保存全部确认弹框：⌘Q 弹居中模态、取消留场、保存失败留场不退出、保存全部并退出落盘 | full |
-| 885 | `885-no-tab-empty-state` | 无 TAB 空态：单 pane scratch 无行号但可输入；分栏空 pane 无行号、键入无效、引导在场 | full |
+| 885 | `885-no-tab-empty-state` | 无 TAB 空工作区：共享四条 tips、不可输入、region 焦点与分栏 Quick Open 归还 | full |
 | 886 | `886-harness-web-mode-unsupported`<br>`886b-harness-web-no-fabricated-evidence` | Web 不支持的模式失败关闭：web_mode_unsupported、无批准卡、无徽标、零读数<br>Web 失败不伪造证据读数：未配置 provider 无徽标、五字段不渲染 | full<br>full |
 | 887 | `887-harness-withdraw-restored-session` | 恢复旧会话后撤回最近一条用户消息：删的是恢复来源、再恢复不复活 | full |
 | 888 | `888-list-line-indent` | 列表行缩进的行模型——6 行多选 Shift+Tab 逐行凸排（正向 / 反向同一结果）、未选中的首行与子项逐字节不动、一次撤销还原 | full |

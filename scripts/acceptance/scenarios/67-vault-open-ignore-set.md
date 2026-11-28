@@ -169,7 +169,7 @@ steps:
       - label: 当前 vault 换成 B
         ax: { has: "Vaults: lumir-m102-acceptance-b (click to see all vaults)" }
       - label: B 没有会话历史 → 空 vault 首入态
-        ax: { has: "No files opened in this vault yet" }
+        ax: { has: "Get started" }
       - shot: 06-B-稳定态
 
   # 放大器：20×8MB 稀疏 md 写进**切换目标 A** 的 vault 根（此刻当前 vault 是 B ⇒ A 不被 watch）。

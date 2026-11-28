@@ -42,7 +42,10 @@ steps:
       - shot: 01-起始态
 
   - name: 制造 dirty（写盘段反馈的前置状态）
-    do: type
+    # do:type 的 typeInEditor 通道在本段只落下「M283 」、丢掉中文；改用 typeInNode 的
+    # 原生输入 Unicode 注入。target.name 同时命中注入前的文档标题与注入后的文本值。
+    do: typeInNode
+    target: { role: AXTextArea, name: "纯文本基线|M283 写盘段", nth: 0 }
     text: "M283 写盘段"
     expect:
       - label: 编辑器里有了刚输入的内容
@@ -211,7 +214,7 @@ steps:
       - label: 当前 vault 换成 B
         ax: { has: "Vaults: lumir-m102-acceptance-b (click to see all vaults)" }
       - label: B 没有会话历史 → 空 vault 首入态
-        ax: { has: "No files opened in this vault yet" }
+        ax: { has: "Get started" }
       - shot: 04-B-稳定态
 
   - name: Cmd-o 打开列表（准备切回 A）

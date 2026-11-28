@@ -121,9 +121,9 @@ export async function settle(cu, pid, { timeoutMs = 30_000, now = Date.now, slee
  *
  * 四种合法终态（M164 补第三种；change add-first-run-onboarding-nov25 补第四种）：
  *   1. 已装载 vault 且有文件行 + 编辑器可读（严格门的默认形态）；
- *   2. 已装载 vault 但一个标签都没恢复 → D107 的空 vault 引导盖住正文，编辑器从 AX 消失。
- *      这是**启动常态**（该 vault 还没有会话历史），不是异常——判据是「树头部入口在 + 引导
- *      文案在」，两者都是正观测；
+ *   2. 已装载 vault 但一个标签都没恢复 → 共享空工作区（「开始使用 / Get started」+ 四条
+ *      Lumir 特有 tips）盖住正文，inert 编辑器从 AX 消失。这是**启动常态**，判据是
+ *      「树头部入口在 + 共享 region 标题在」，两者都是正观测；
  *   3. 未打开 vault 的空态（D5/D6）——只有 `requireVault: false` 才认（见下）；
  *   4. **首启模式**（无 `last_vault`，启动面首启态）——AX 里是唯一真实的「添加 vault」/
  *      「Add vault」按钮（D1034），树 / 编辑器都被启动面盖住。同样只有 `requireVault: false`
@@ -138,7 +138,7 @@ export async function settle(cu, pid, { timeoutMs = 30_000, now = Date.now, slee
  */
 /**
  * **语言无关的就绪判据**（M282，change ui-language-i18n）：产品默认语言已裁为 `en`，而这里的
- * 判据原来是写死的中文措辞（D96 / D5 / D6 / D107）——语言一变，套件在**启动就超时**（实测：
+ * 判据原来是写死的中文措辞（D96 / D5 / D6 / 空工作区标题）——语言一变，套件在**启动就超时**（实测：
  * 场景 55 在默认 en 下 30s 未就绪）。因此四组措辞各接受两档：判据的意图是「那个入口在场」，
  * 不是「它是中文的」；语言的判定归场景自己的断言（`ax: { has: ... }` 按文案表取值）。
  * 措辞逐字取自 `src/copy-data.ts` 的 zh / en 列（同一份真源，改文案时这里会一起红）。
@@ -149,7 +149,7 @@ const LANG_PATTERNS = {
   header: /点击查看全部 vault|click to see all vaults/,
   emptyHint: /打开一个目录作为 vault|Open a folder as a vault/,
   openVault: /打开 vault|Open vault/,
-  emptyVault: /这个 vault 还没有打开的文件|No files opened in this vault yet/,
+  emptyWorkspace: /开始使用|Get started/,
   // 首启模式（change add-first-run-onboarding-nov25）的唯一主操作（D1034）；只有
   // `requireVault: false` 才认（见 waitAppReady 的终态表）。
   firstRun: /^(添加 vault|Add vault)$/,
@@ -169,23 +169,23 @@ export async function waitAppReady(cu, pid, { timeoutMs = 30_000, requireVault =
     const hasFiles = ax.nodes.some((n) => n.role === "AXButton" && /\.md$/.test(n.title ?? ""));
     // 未打开空态在 AX 里的稳定标志：空态说明行 + 「打开 vault」入口（D5/D6 的文案）。
     const hasEmptyState = LANG_PATTERNS.emptyHint.test(ax.text) && LANG_PATTERNS.openVault.test(ax.text);
-    // **已装载 vault 但一个标签都没恢复**（M163 的「空 vault 首入态」）：树头部入口与文件行
-    // 都在，但 D107 的引导层盖住正文、编辑器随之从 AX 里消失。这是启动的**常态**（该 vault
-    // 还没有会话历史），严格门必须认它——否则每个场景都会在这一步超时。
-    const hasEmptyVaultNotice = LANG_PATTERNS.emptyVault.test(ax.text);
+    // **已装载 vault 但一个标签都没恢复**：树头部入口与共享 region 都在，inert 正文从 AX
+    // 消失。这是启动常态；严格门必须认它，否则普通无 Tab / 老空 vault 会在这一步超时。
+    // 旧标题「没有打开的文档 / No document open」不是合法终态，不能因编辑器缺失而放行。
+    const hasEmptyWorkspace = LANG_PATTERNS.emptyWorkspace.test(ax.text);
     // **首启模式**（change add-first-run-onboarding-nov25）：启动面盖住整窗、`#app` inert 且
     // aria-hidden，AX 里只剩唯一主操作「添加 vault」（D1034）。判据必须是**真实的按钮节点**
     // （role=AXButton + 精确读屏名），不是「AX 文本里出现过这句话」——空 AX / 只有静态文本
     // 一律不算就绪（REVIEW.md「读不到当成空」条）。严格门不认它：`requireVault: true` 时
     // 落到首启模式说明 `last_vault` 意外丢失，是场景要报红的现场，不是可放行的终态。
     const hasFirstRun = findNode(ax.nodes, { role: "AXButton", name: LANG_PATTERNS.firstRun }) !== null;
-    const treeReady = hasHeader && (hasFiles || hasEmptyVaultNotice)
+    const treeReady = hasHeader && (hasFiles || hasEmptyWorkspace)
       ? true
       : !requireVault && (hasEmptyState || hasFirstRun);
-    // 编辑器就位 = AXTextArea 可读，**或**上面那条空态引导正在覆盖它。后者是**正**判据
-    // （引导文案必须真的在 AX 里），不是「读不到就当就绪」——REVIEW.md 「读不到当成空」条禁的是后者。
+    // 编辑器就位 = AXTextArea 可读，**或**上面那条空工作区标题正在覆盖它。后者是**正**判据
+    // （标题文案必须真的在 AX 里），不是「读不到就当就绪」——REVIEW.md 「读不到当成空」条禁的是后者。
     // 首启模式同理：启动面盖住编辑器，唯一按钮是正观测（只随 requireVault: false 生效）。
-    const editorReady = ax.textarea !== null || hasEmptyVaultNotice || (!requireVault && hasFirstRun);
+    const editorReady = ax.textarea !== null || hasEmptyWorkspace || (!requireVault && hasFirstRun);
     if (treeReady && editorReady) seen += 1;
     else seen = 0;
     if (seen >= 2) {
@@ -647,6 +647,38 @@ export function isChordSpec(key) {
   return typeof key === "string" && key.includes("+");
 }
 
+/** `channel: cgevent` 放行的**非打印控制键白名单**（独立集合，不从整张 chord 键表推导）。
+ *
+ *  只有没有字符语义、只有物理键码的控制键才适合走 CGEvent：`escape`（M885 的 Esc 丢键实证：
+ *  KimiCU 的 `press_key("escape")` 连续两轮零事件，同键的 CGEvent 一次即关闭浮层）、`tab` /
+ *  `return` / 方向 / 删除等。**`space` 与命名标点（`minus` / `comma` / `period` / `slash` /
+ *  `semicolon` / `quote` / `backslash` / 括号 / `grave`）不在内**——它们有可打印语义，是普通
+ *  字符的另一种拼写；放行它们等于绕过「普通可打印字符走 KimiCU、避免物理 keycode 的布局
+ *  依赖」的通道边界（K3 r3 P2-1）。 */
+const NAMED_CONTROL_KEYS = new Set([
+  "escape",
+  "esc",
+  "tab",
+  "return",
+  "enter",
+  "backspace",
+  "delete",
+  "forwarddelete",
+  "left",
+  "right",
+  "up",
+  "down",
+  "home",
+  "end",
+  "pageup",
+  "pagedown",
+]);
+
+/** 单个**非打印控制键**是否在白名单里（不含 `+` 的单个键名）。 */
+export function isNamedKeySpec(key) {
+  return typeof key === "string" && NAMED_CONTROL_KEYS.has(key.toLowerCase());
+}
+
 /** `ctrl+a` 这类规格 → `{ keycode, flags }`（flags = CGEventFlags 原始值）。没有修饰键时 flags = 0。
  *
  *  未知主键 / 未知修饰键 / 空段一律抛 `StepError`——`execute.mjs` 的 `--check` 与真机运行期调的是
@@ -737,7 +769,7 @@ export function injectModifierCGEvent(side, phase, { run = runKeySwiftOnce } = {
   return raw.stdout;
 }
 
-export async function typeInNode(cu, pid, { resolve, text, retries = 3, label = "", replace = false } = {}) {
+export async function typeInNode(cu, pid, { resolve, text, retries = 3, label = "", replace = false, channel } = {}) {
   if (typeof resolve !== "function") throw new StepError("typeInNode：缺少 resolve(ax) 目标解析函数");
   const countOf = (v) => (text ? v.split(text).length - 1 : 0);
 
@@ -762,7 +794,10 @@ export async function typeInNode(cu, pid, { resolve, text, retries = 3, label = 
       await cu.click(pid, { index: targetNow.index });
       await sleep(500);
     }
-    const nativeInput = targetNow && (targetNow.role === "AXTextField" || targetNow.role === "AXComboBox");
+    // 显式 cgevent 也服务静态 region：type_text 要求 web editor 稳定焦点，静态 region
+    // 会被工具拒绝；真实 Unicode 注入只落当前焦点，不点击、不改产品 inert 合同。
+    const nativeInput =
+      channel === "cgevent" || (targetNow && (targetNow.role === "AXTextField" || targetNow.role === "AXComboBox"));
     if (replace) {
       if (nativeInput) injectChordCGEvent("cmd+a");
       else await pressKey(cu, pid, "cmd+a");

@@ -23,7 +23,7 @@ import test from "node:test";
 import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, geomBaselineProblem, isStaleIndexError, KEY_CHANNELS, keyChannel, keysTarget, loadScenario, matcher, modifierSpecProblem, modifierTransitionProblem, notificationBaseline, notificationMatches, pickFreshNotification, planNodeIntoView, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, releaseModifier, resolveKeysTarget, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, scopedAxOrder, screenshotSize, settleEditorless } from "./execute.mjs";
 import { menuClickInvocation } from "./native-menu.mjs";
 import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
-import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, SETTLE_SAMPLE_MS, settle, StepError } from "./drive.mjs";
+import { injectChordCGEvent, isNamedKeySpec, parseChordSpec, parseKeyWindowState, readAx, SETTLE_SAMPLE_MS, settle, StepError } from "./drive.mjs";
 import { InfraError, repoRoot, secondVaultDir } from "./util.mjs";
 
 /** 临时根（每个用例一份，跑完不清也无妨——全在 `os.tmpdir()` 下）。 */
@@ -1842,6 +1842,40 @@ test("焦点读数（M678）：必须先区分「哪个 AXTextArea 有焦点」�
   assert.equal(readDump(["editor", "composer"]).isEditor, false, "多个 focused 节点一律判「未建立」");
 });
 
+test("焦点读数：{ role, name } 能区分同一 role 的节点（空工作区主操作），缺 role 判校验问题", () => {
+  // P3-1：只认 role 时，焦点落在任意 AXButton（新建笔记 / 左栏按钮）都能通过；空工作区主操作
+  // 的断言必须能看名称。名称取 nodeName（title > label > value）。
+  const buttonDump = [
+    "# Lumir App State",
+    "",
+    "- app: Lumir",
+    "- pid: 1",
+    "- element_count: 2",
+    "- captured_bounds: x=8 y=40 w=1200 h=800 (screen points)",
+    "- screenshot: 2048×1365 px",
+    "- coords: bbox `@x,y w×h` and click/scroll/drag x,y are screenshot pixels (origin = top-left of the screenshot)",
+    "",
+    "```text",
+    '- [0] AXApplication "Lumir"',
+    '  - [1] AXWindow "Lumir" @0,0 2048×1365',
+    "    - [7] AXButton (打开笔记…) @10,20 100×30 actions=[AXPress] (focused)",
+    "```",
+  ].join("\n");
+  const reading = focusedRoleReading(parseNodes(buttonDump));
+  assert.equal(reading.count, 1);
+  assert.equal(reading.role, "AXButton");
+  assert.equal(reading.name, "打开笔记…", "节点名必须可读，才能把主操作与其它 AXButton 区分开");
+
+  const scenario = (focused) => ({
+    id: "focused-name",
+    item: 0,
+    steps: [{ name: "焦点", do: "key", key: "escape", expect: [{ ax: { focused } }] }],
+  });
+  assert.deepEqual(checkScenario(scenario({ role: "AXButton", name: "打开笔记…" })), []);
+  const bad = checkScenario(scenario({ name: "打开笔记…" }));
+  assert.ok(bad.some((p) => p.includes("ax.focused")), `缺 role 的形态应判 problem，实际：${JSON.stringify(bad)}`);
+});
+
 test("正文单击落点（M678 / M762）：dx/dy 是窗口局部点，换算到屏幕点与证据用的截图像素，以及两条不可算的边界", () => {
   const textarea = { bbox: { x: 100, y: 200, w: 600, h: 500 } };
   const bounds = { x: 8, y: 40, w: 1200, h: 800 };
@@ -2193,7 +2227,7 @@ test("全库场景静态校验通过（--check 的真实通道）", () => {
 // ---- `do: settle` 的无编辑器门版本（settleEditorless，M759）--------------------------------------
 //
 // `settle()` 的同类正反用例在 drive.test.mjs；这里守的是**另一条实现路径**：没有 AXTextArea 的
-// 两类合法终态（未打开空态 / 空 vault 引导层）走 settleEditorless，它原先同样比整份 AX 原文，
+// 两类合法终态（未打开空态 / 空工作区表面）走 settleEditorless，它原先同样比整份 AX 原文，
 // 会被每次读取都变的 `AX snapshot_id` 拖满 15s。修法是共用 drive.mjs 的 `snapshotBody`（单一
 // 真源），用例必须证明两条路径都改了——只改 settle() 时这里必红。
 //
@@ -2287,7 +2321,7 @@ test("settleEditorless：正文抖动 ⇒ 超时落 note 并返回末次读取�
       nodeLine:
         i % 2
           ? '- [5] AXStaticText = "打开一个目录作为 vault"'
-          : '- [5] AXStaticText = "这个 vault 还没有打开的文件"',
+          : '- [5] AXStaticText = "开始使用"',
     }),
   );
   const notes = [];
@@ -3251,7 +3285,13 @@ test("cgevent chord 回归面：不写 channel 的 step 全走 KimiCU；写了 c
   const chorded = { do: "keys", channel: "cgevent", keys: ["ctrl+a", "y"] };
   assert.equal(keyChannel(chorded, "ctrl+a"), "cgevent");
   assert.equal(keyChannel(chorded, "y"), "kimicu", "channel 只作用于 chord 键，普通字符不引入 keycode 的布局依赖");
-  assert.equal(keyChannel(chorded, "escape"), "kimicu", "无 + 的键名不算 chord");
+  assert.equal(keyChannel(chorded, "escape"), "kimicu", "do: keys 列表里的命名键仍走 KimiCU（100 的逐键分工不变）");
+  assert.equal(keyChannel({ do: "key", channel: "cgevent", key: "escape" }, "escape"), "cgevent", "do: key 单数形态的命名键 opt-in 真键盘通道（M885 的 Esc 丢键实证）");
+  // 可打印命名键（space / 标点）MUST NOT 被这条口子接走：它们是普通字符的另一种拼写，
+  // 走 CGEvent 会引入物理 keycode 的布局依赖（K3 r3 P2-1）。
+  for (const k of ["space", "minus", "comma", "period", "slash"]) {
+    assert.equal(keyChannel({ do: "key", channel: "cgevent", key: k }, k), "kimicu", `「${k}」是可打印命名键，必须仍走 KimiCU`);
+  }
   // 未知 channel 值在运行期也抛：真机跑批不重跑 checkScenario，静默退回 KimiCU 就是 M766 的假红/假绿形态。
   assert.throws(
     () => keyChannel({ do: "keys", channel: "kimicu", keys: ["ctrl+a"] }, "ctrl+a"),
@@ -3295,6 +3335,31 @@ test("channel: cgevent 的静态校验（M767）：合法形态零问题，四�
   );
 });
 
+test("cgevent 命名键白名单：只放非打印控制键；space 与命名标点必须拒绝（K3 r3 P2-1）", () => {
+  // 正例：非打印控制键（无字符语义、只有物理键码）放行到 cgevent。
+  for (const k of [
+    "escape", "esc", "tab", "return", "enter", "backspace", "delete", "forwarddelete",
+    "left", "right", "up", "down", "home", "end", "pageup", "pagedown",
+  ]) {
+    assert.equal(isNamedKeySpec(k), true, `「${k}」是非打印控制键，应在白名单里`);
+    assert.equal(keyChannel({ do: "key", channel: "cgevent", key: k }, k), "cgevent");
+    assert.equal(channelSpecProblem({ do: "key", channel: "cgevent", key: k }), null);
+  }
+  // 反例：space 与命名标点是可打印字符的另一种拼写，MUST NOT 走 cgevent；单数 cgevent 形态
+  // 必须判 problem（通道无事可做），而不是静默按原样投递物理 keycode。
+  for (const k of [
+    "space", "minus", "equal", "comma", "period", "slash", "semicolon", "quote",
+    "backslash", "leftbracket", "rightbracket", "grave", "a", "Y", "0",
+  ]) {
+    assert.equal(isNamedKeySpec(k), false, `「${k}」有可打印语义，MUST NOT 进白名单`);
+    assert.equal(keyChannel({ do: "key", channel: "cgevent", key: k }, k), "kimicu");
+    assert.ok(
+      channelSpecProblem({ do: "key", channel: "cgevent", key: k })?.includes("不是 chord"),
+      `「${k}」的单数 cgevent 形态必须判 problem，实际：${channelSpecProblem({ do: "key", channel: "cgevent", key: k })}`,
+    );
+  }
+});
+
 test("channel: cgevent 的 `do: key` 单数形态（M768）：117 / 150 的 ⌃A 步合法，四类写错判红", () => {
   const errs = (steps) => checkScenario({ id: "single-key-channel", item: 0, steps });
   // 117 / 150 的真实形态：单数 key + channel + 可选的 verify（150 的 ⌘V 步带 verify，本步不带）。
@@ -3309,10 +3374,19 @@ test("channel: cgevent 的 `do: key` 单数形态（M768）：117 / 150 的 ⌃A
     "单数步的 channel 值拼错必须判红",
   );
   assert.ok(
-    errs([{ name: "非 chord", do: "key", key: "return", channel: "cgevent" }]).some((p) =>
-      p.includes("key「return」不是 chord"),
+    errs([{ name: "无 chord / 命名键", do: "key", key: "y", channel: "cgevent" }]).some((p) =>
+      p.includes("key「y」不是 chord"),
     ),
-    "单数步写了 channel 但键不是 chord 必须判红（与 keys 的「没有 chord」同一口径）",
+    "单数步写了 channel 但键既不是 chord 也不是命名键必须判红（与 keys 的「没有 chord」同一口径）",
+  );
+  // 命名键（escape / return / tab …）放行：它们是物理键码、没有字符语义；M885 的 Esc 步实证
+  // KimiCU 的 press_key("escape") 会零事件，需要 opt-in 这条通道。
+  assert.deepEqual(errs([{ name: "Esc 取消", do: "key", key: "escape", channel: "cgevent" }]), []);
+  assert.ok(
+    errs([{ name: "keys 列表命名键", do: "keys", channel: "cgevent", keys: ["escape", "y"] }]).some((p) =>
+      p.includes("没有 chord"),
+    ),
+    "do: keys 列表里的命名键不放行（只有 chord 能路由；与 100 的既有逐键分工一致）",
   );
   assert.ok(
     errs([{ name: "主键不认识", do: "key", key: "ctrl+f13", channel: "cgevent" }]).some((p) =>
@@ -3322,7 +3396,9 @@ test("channel: cgevent 的 `do: key` 单数形态（M768）：117 / 150 的 ⌃A
   );
   // 单一真源：静态校验与运行期共用 `channelSpecProblem`——同一形态两处给出同一句话。
   assert.equal(channelSpecProblem({ do: "key", key: "ctrl+a", channel: "cgevent" }), null);
-  assert.match(channelSpecProblem({ do: "key", key: "return", channel: "cgevent" }), /不是 chord/);
+  assert.equal(channelSpecProblem({ do: "key", key: "escape", channel: "cgevent" }), null);
+  assert.equal(channelSpecProblem({ do: "key", key: "return", channel: "cgevent" }), null);
+  assert.match(channelSpecProblem({ do: "key", key: "y", channel: "cgevent" }), /不是 chord/);
   assert.match(channelSpecProblem({ do: "key", key: "ctrl+a", channel: "kimicu" }), /只支持 "cgevent"/);
   assert.match(channelSpecProblem({ do: "keys", channel: "cgevent", keys: ["y"] }), /没有 chord/);
 });
@@ -3335,11 +3411,11 @@ test("`do: key` + channel 的运行期守卫（M768）：写错的形态在真�
   useTmpEnv(root);
   const bad = await drive(root, {
     steps: [
-      { name: "单数步写了 channel 但键不是 chord", do: "key", key: "return", channel: "cgevent" },
+      { name: "单数步写了 channel 但键不是 chord / 命名键", do: "key", key: "y", channel: "cgevent" },
     ],
   });
-  assert.equal(bad.status, "FAIL", "非 chord 的单数步必须判 FAIL（不静默退回 KimiCU）");
-  assert.match(bad.records[0].label, /单数步写了 channel 但键不是 chord/);
+  assert.equal(bad.status, "FAIL", "无 chord / 命名键的单数步必须判 FAIL（不静默退回 KimiCU）");
+  assert.match(bad.records[0].label, /不是 chord/);
   assert.match(bad.records[0].detail ?? "", /不是 chord/);
 
   const typo = await drive(root, {
@@ -3686,6 +3762,26 @@ test("matcher：230d 的 ⌘A 值判据对 z 判绿，对 zabc / abcz 都判红"
     matcher(pattern).test("- [1] AXComboBox (按路径快速打开文件) Value: z actions=[AXPress]"),
     true,
   );
+});
+
+test("typeInNode channel：只允许显式 cgevent，其它值不得静默退回 type_text", () => {
+  assert.equal(channelSpecProblem({ do: "typeInNode", channel: "cgevent" }), null);
+  assert.match(
+    channelSpecProblem({ do: "typeInNode", channel: "kimicu" }) ?? "",
+    /channel 参数只属于 do=keys \/ do=key/,
+  );
+});
+
+test("29 / 877 的 native oracle 反例：节点换行与合法 vault 入口都不得造成误判", () => {
+  const chapter = '- [213] AXTextArea = "# 第 1 章 概览\\n第 1 章概览正文。"';
+  assert.equal(matcher("第 1 章概览正文。").test(chapter), true, "当前正文节点应命中");
+  assert.equal(matcher("第 1 章 概览 第 1 章概览正文。").test(chapter), false, "旧空格拼接在当前 AX 上必须判红");
+  assert.equal(matcher("第 3 章概览正文。").test(chapter), false, "不存在的章节正文不得假绿");
+
+  const vaultEntry = '- [29] AXPopUpButton (vault：lumir-m102-acceptance-b（点击查看全部 vault）)';
+  assert.equal(matcher("默认键位 · ⌘/ 查看全部").test(vaultEntry), false, "合法 vault 入口不含旧脚注");
+  assert.equal(matcher("查看全部").test(vaultEntry), true, "旧的宽泛 not 会把合法入口误判成脚注");
+  assert.equal(matcher("默认键位 · ⌘/ 查看全部").test('- [9] AXStaticText = "默认键位 · ⌘/ 查看全部"'), true, "旧脚注本身仍可被负向判据捕捉");
 });
 
 // ── keysTarget / resolveKeysTarget：候选行抢走 focused，回读仍钉住注入前的输入框（230d 现场）──

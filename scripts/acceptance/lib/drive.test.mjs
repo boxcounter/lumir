@@ -286,6 +286,56 @@ test("waitAppReady：严格门既有形态（入口 + .md 行 + AXTextArea）仍
   assert.ok(ax.textarea, "严格门仍以 AXTextArea 为编辑器判据");
 });
 
+// 共享空工作区（Alex 2026-11-28 重设计）：region 标题是当前 A 的「开始使用 / Get started」，
+// inert 正文退出 AX 树。正例证明新形态能放行；旧标题与缺树头都必须超时，避免负向断言恒真。
+for (const [language, title] of [["zh", "开始使用"], ["en", "Get started"]]) {
+  test(`waitAppReady：严格门认共享空工作区（${language}），无需 AXTextArea`, async () => {
+    const clock = fakeClock();
+    const cu = fakeCu([
+      axText({
+        editor: false,
+        nodeLine: [
+          '- [5] AXPopUpButton (vault：demo（点击查看全部 vault）) @10,10 100×20',
+          `- [7] AXGroup (${title}) @300,200 400×300 (focused)`,
+        ],
+      }),
+    ]);
+    const ax = await waitAppReady(cu, 0, { now: clock.now, sleepFn: clock.sleepFn, timeoutMs: 3000 });
+    assert.equal(ax.textarea, null, "共享空态的 inert 正文不在 AX 树里");
+    assert.match(ax.text, new RegExp(title));
+    assert.equal(cu.reads.length, 3, "两次正观测后再读最终快照");
+  });
+}
+
+test("waitAppReady：旧空态标题不得放行（无共享 region、无编辑器即超时）", async () => {
+  const clock = fakeClock();
+  const cu = fakeCu([
+    axText({
+      editor: false,
+      nodeLine: [
+        '- [5] AXPopUpButton (vault：demo（点击查看全部 vault）) @10,10 100×20',
+        '- [6] AXButton = "note.md" @10,100 100×20 actions=[AXPress]',
+        '- [7] AXStaticText = "没有打开的文档" @300,200 300×30',
+      ],
+    }),
+  ]);
+  await assert.rejects(
+    waitAppReady(cu, 0, { now: clock.now, sleepFn: clock.sleepFn, timeoutMs: 3000 }),
+    (e) => e instanceof InfraError && /未就绪/.test(e.message),
+    "旧标题不得凭树头与文件行遮掉缺失的当前 region / 编辑器",
+  );
+});
+
+test("waitAppReady：只有共享标题但缺树头仍不就绪", async () => {
+  const clock = fakeClock();
+  const cu = fakeCu([axText({ editor: false, nodeLine: '- [7] AXGroup (Get started) @300,200 400×300 (focused)' })]);
+  await assert.rejects(
+    waitAppReady(cu, 0, { now: clock.now, sleepFn: clock.sleepFn, timeoutMs: 3000 }),
+    (e) => e instanceof InfraError && /未就绪/.test(e.message),
+    "region 不能单独证明 vault 已装载，树头是必需的第二正观测",
+  );
+});
+
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // lsappinfo 前台 pid 的解析（2026-11-21）
 //

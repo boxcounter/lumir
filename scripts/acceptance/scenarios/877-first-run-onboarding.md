@@ -76,16 +76,16 @@ steps:
         ax: { has: "beta.md" }
       - label: 首启 tips 标题在场
         ax: { has: "开始使用" }
-      - label: tips 有真实键位行
-        ax: { has: "快速打开文件" }
-      - label: tips 脚注注明默认键位与完整出口
-        ax: { has: "/默认键位.*查看全部/" }
+      - label: tips 有 Lumir 特有知识链接
+        ax: { has: "知识链接" }
+      - label: 通用快捷键与查看全部脚注不回流
+        ax: { not: "快速打开文件" }
+      - label: 旧「默认键位 · ⌘/ 查看全部」脚注不回流（vault 入口的“点击查看全部 vault”是合法文案）
+        ax: { not: "默认键位 · ⌘/ 查看全部" }
       - label: harness pane 默认在场（不抢焦点也可见）
         ax: { has: "与当前文档对话" }
-      - label: 不再出现 D107 空 vault 引导
-        ax: { not: "这个 vault 还没有打开的文件" }
-      - label: 不再出现 D882 新建按钮
-        ax: { not: "/AXButton[^\\n]*新建笔记/" }
+      - label: 不再有打开 / 新建按钮
+        ax: { not: "/AXButton[^\\n]*(新建笔记|打开笔记…)/" }
       - label: D369 空 pane 引导让位
         ax: { not: "这个 pane 还没有打开的文件" }
       - shot: 03-首启-tips-与默认-harness
@@ -110,8 +110,8 @@ steps:
         editor: { has: "第二个 vault 的笔记" }
       - label: tips 标题已撤下
         ax: { not: "开始使用" }
-      - label: tips 脚注已撤下
-        ax: { not: "默认键位" }
+      - label: 知识链接条目已撤下
+        ax: { not: "知识链接" }
       - label: 标签在场
         ax: { has: "beta.md" }
       - shot: 04-打开文档后无-tips
@@ -154,12 +154,12 @@ steps:
   - name: 重启构造老用户空 vault
     do: restart
     expect:
-      - label: 老用户空 vault 仍是 D107 引导
-        ax: { has: "这个 vault 还没有打开的文件。新建一篇笔记开始。" }
-      - label: 老用户仍有可见新建入口
-        ax: { has: "/AXButton[^\\n]*新建笔记/" }
-      - label: 老用户不再出现首启 tips
-        ax: { not: "开始使用" }
+      - label: 老用户空 vault 显示同一组共享 tips
+        ax: { has: "开始使用" }
+      - label: 不再有新建 / 打开按钮（既有右键新建入口不占视觉）
+        ax: { not: "/AXButton[^\\n]*(新建笔记|打开笔记…)/" }
+      - label: 共享内容包含知识链接
+        ax: { has: "知识链接" }
       - label: 老用户不默认展开 harness
         ax: { not: "与当前文档对话" }
       - shot: 06-老用户空vault回归
@@ -172,8 +172,8 @@ steps:
 首启判定 / 首启模式 / 命令闸门 / 首启 tips + 默认 harness / 一次性资格与老用户回归的**真机**
 终态。首启模式只保留唯一「添加 vault」；`Cmd-,`（配置里重绑到 toc）、`Cmd-Shift-A`、
 `Cmd-/` 在首启面不得穿透出设置 / harness / 键位面板；首个 vault 打开后 tips 与 harness 默认
-在场，打开首个文档后 tips 消失；重启后老用户空 vault 仍是 D107 + 新建入口，不再出现首启 tips /
-默认 harness。
+在场，打开首个文档后 tips 消失；重启后老用户空 vault 显示同一组共享 tips、无按钮，但不继承
+首启专属生命周期与默认 harness。
 
 ## 断言口径
 
