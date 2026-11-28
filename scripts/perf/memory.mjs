@@ -72,8 +72,10 @@ const RESIDUAL_RISK =
   "外来 helper 的排除依赖两条证据（lstart 晚于 earlyWindow、app 退出后仍存活），用户态无更强归属信号：" +
   "① 本 app 的 helper 若在 app 退出后存活 >5s（罕见）会被误排除，读数偏低；" +
   "② 外来 helper 若在 earlyWindow 内出现，存活检查判它「无法判别」⇒ 整轮污染（保守，不洗绿）；" +
-  "③ 排除的每个 pid 都落在 meta.foreignHelpers / foreignHelperPids，可事后复核是否误伤。" +
-  "meta.attributed / meta.excludedBaselineWebKit 的 pid/ppid/lstart/comm 供事后指名 owner。";
+  "③ 排除的每个 pid 都落在 meta.foreignHelpers / foreignHelperPids，可事后复核是否误伤；" +
+  "④ 基线差集仍是 pid-only（既有残余，本次未改）：启动前已存在的 WebKit pid 若在窗口内被复用给新进程，" +
+  "仍可能被基线快照误排除；pid+lstart 身份匹配只覆盖外来分类、逐样本扣减与 stale 等待。" +
+  "meta.attributed / meta.excludedBaselineWebKit 的 pid/ppid/lstart/rssKB/comm 供事后指名 owner。";
 
 const CONTAMINATION_POLICY = {
   maxHelpers: MAX_HELPERS,

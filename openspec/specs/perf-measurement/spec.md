@@ -70,7 +70,8 @@ keypress-to-paint SHALL 定义为页面内 `keydown` 事件派发时刻到其后
 
 - **WHEN** 测量窗口内出现非本 app 的 WebKit helper（晚于 earlyWindow 创建、且 app 被杀后仍存活）
 - **THEN** 其 RSS 与 helper 计数被剔除，pid/lstart/comm 落进 `foreignHelpers` 诊断；本 app 的 helper 计数与集合稳定性照常判定，`maxHelpers=3` 不变
-- **AND** 若外来 helper 在 earlyWindow 内出现（无法判别归属）或 `lstart` 解析失败，整轮 SHALL 判污染（`helper-survived-app`），不得静默剔除
+- **AND** 若外来 helper 在 earlyWindow 内出现且存活（无法判别归属），整轮 SHALL 判污染（`helper-survived-app`），不得静默剔除
+- **AND** 若 helper 的 `lstart` 解析失败（时间证据不可用），无论其是否存活，整轮 SHALL 判污染（`helper-lstart-unparsable`），不得静默剔除
 
 #### Scenario: 峰值敏感指标取 max
 
