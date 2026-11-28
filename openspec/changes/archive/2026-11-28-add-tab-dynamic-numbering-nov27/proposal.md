@@ -43,7 +43,7 @@ Alex 已对「按住 ⌘ 时在既有标签上叠加小号序号」方案明确�
 | released | 否：本批不打包 | 不适用 |
 | machine PASS | 是：quick 与完整 visual 通过 | quick `GATE RESULT: 13/13 PASS（SKIP 0）`、退出码 0；完整 visual `GATE RESULT: 15/15 PASS（SKIP 0）`、退出码 0（`gate-visual-final-r2.log`）；前端 2201/2201、相关浏览器 37/37、验收执行器/驱动 159/159、OpenSpec 39/39 |
 | native PASS | 是：14-tabs PASS 60 断言 | `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-28-tab-dynamic-numbering/evidence/14-tabs/status.txt`；`evidence/summary.md` 记录 60 断言 / 0 失败 |
-| archived | 否：待归档 | 包装器归档与 `--archived` 审计待执行 |
+| archived | 是：包装器归档与 `--archived` 审计均通过 | 归档提交 `a07586fc87b036183f7c2effbb1b4e85a649e559`；审计原文见下节 |
 
 ### 归档前五要件
 
@@ -52,3 +52,10 @@ Alex 已对「按住 ⌘ 时在既有标签上叠加小号序号」方案明确�
 3. **tasks 完成**：实现、返修、完整 visual 与真机项全部勾选；归档及 `--archived` 审计在本记录后续执行。
 4. **门禁与真机证据**：quick 13/13、完整 visual 15/15、native 14-tabs 60 断言，均退出码 0；证据路径见五态表。
 5. **规格对账**：delta 仅 `multi-tabs` 1 条 ADDED；归档前 `node scripts/openspec-archive-check.mjs`、OpenSpec strict validate 与归档队列唯一性检查通过。`docs/backlog.md` 保持 80 行，队列仅一条本 change 记录。
+
+### 归档后强制完成记录
+
+- 归档提交：`a07586fc87b036183f7c2effbb1b4e85a649e559`。
+- 包装器：`multi-tabs: update`，`+ 1 added / ~ 0 / - 0 / → 0`；归档目录 `openspec/changes/archive/2026-11-28-add-tab-dynamic-numbering-nov27/`；修链 0 处（4 篇 Markdown / 0 条相对链接），`openspec-links: PASS（校验 716 条相对链接，全部可达）`。
+- 归档后 validate：38 passed / 0 failed；docs-check PASS；backlog 维持 80 行。
+- `--archived` 审计原文：`openspec-archive-check: PASS（openspec/changes/archive/2026-11-28-add-tab-dynamic-numbering-nov27：0 条 MODIFIED，对比 0 段；人工恢复 0 段，声明认领 0 段）`，退出码 0。
