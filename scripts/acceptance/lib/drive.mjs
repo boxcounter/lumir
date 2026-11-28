@@ -647,15 +647,36 @@ export function isChordSpec(key) {
   return typeof key === "string" && key.includes("+");
 }
 
-/** 单个**命名键**（`escape` / `tab` / `return` / `left` …，不含 `+`、不是单字符）是否在真键盘
- *  通道的键表里。用于 `channel: cgevent` 的命名键放行：单字符（`y` / `a`）仍走 KimiCU，
- *  不引入 keycode 的键盘布局依赖；命名键没有字符语义，只有物理键码，正是这条通道的适用面。
- *  M885 的 Esc 步实证：KimiCU 的 `press_key("escape")` 连续两轮零事件，而同键的 CGEvent
- *  注入一次即关闭浮层——所以它需要 opt-in 的 cgevent 通道。 */
+/** `channel: cgevent` 放行的**非打印控制键白名单**（独立集合，不从整张 chord 键表推导）。
+ *
+ *  只有没有字符语义、只有物理键码的控制键才适合走 CGEvent：`escape`（M885 的 Esc 丢键实证：
+ *  KimiCU 的 `press_key("escape")` 连续两轮零事件，同键的 CGEvent 一次即关闭浮层）、`tab` /
+ *  `return` / 方向 / 删除等。**`space` 与命名标点（`minus` / `comma` / `period` / `slash` /
+ *  `semicolon` / `quote` / `backslash` / 括号 / `grave`）不在内**——它们有可打印语义，是普通
+ *  字符的另一种拼写；放行它们等于绕过「普通可打印字符走 KimiCU、避免物理 keycode 的布局
+ *  依赖」的通道边界（K3 r3 P2-1）。 */
+const NAMED_CONTROL_KEYS = new Set([
+  "escape",
+  "esc",
+  "tab",
+  "return",
+  "enter",
+  "backspace",
+  "delete",
+  "forwarddelete",
+  "left",
+  "right",
+  "up",
+  "down",
+  "home",
+  "end",
+  "pageup",
+  "pagedown",
+]);
+
+/** 单个**非打印控制键**是否在白名单里（不含 `+` 的单个键名）。 */
 export function isNamedKeySpec(key) {
-  if (typeof key !== "string" || key === "" || key.includes("+")) return false;
-  if (key.length === 1) return false;
-  return CHORD_KEYCODES.has(key.toLowerCase());
+  return typeof key === "string" && NAMED_CONTROL_KEYS.has(key.toLowerCase());
 }
 
 /** `ctrl+a` 这类规格 → `{ keycode, flags }`（flags = CGEventFlags 原始值）。没有修饰键时 flags = 0。

@@ -23,7 +23,7 @@ import test from "node:test";
 import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, geomBaselineProblem, isStaleIndexError, KEY_CHANNELS, keyChannel, keysTarget, loadScenario, matcher, modifierSpecProblem, modifierTransitionProblem, notificationBaseline, notificationMatches, pickFreshNotification, planNodeIntoView, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, releaseModifier, resolveKeysTarget, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, scopedAxOrder, screenshotSize, settleEditorless } from "./execute.mjs";
 import { menuClickInvocation } from "./native-menu.mjs";
 import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
-import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, SETTLE_SAMPLE_MS, settle, StepError } from "./drive.mjs";
+import { injectChordCGEvent, isNamedKeySpec, parseChordSpec, parseKeyWindowState, readAx, SETTLE_SAMPLE_MS, settle, StepError } from "./drive.mjs";
 import { InfraError, repoRoot, secondVaultDir } from "./util.mjs";
 
 /** 临时根（每个用例一份，跑完不清也无妨——全在 `os.tmpdir()` 下）。 */
@@ -3287,6 +3287,11 @@ test("cgevent chord 回归面：不写 channel 的 step 全走 KimiCU；写了 c
   assert.equal(keyChannel(chorded, "y"), "kimicu", "channel 只作用于 chord 键，普通字符不引入 keycode 的布局依赖");
   assert.equal(keyChannel(chorded, "escape"), "kimicu", "do: keys 列表里的命名键仍走 KimiCU（100 的逐键分工不变）");
   assert.equal(keyChannel({ do: "key", channel: "cgevent", key: "escape" }, "escape"), "cgevent", "do: key 单数形态的命名键 opt-in 真键盘通道（M885 的 Esc 丢键实证）");
+  // 可打印命名键（space / 标点）MUST NOT 被这条口子接走：它们是普通字符的另一种拼写，
+  // 走 CGEvent 会引入物理 keycode 的布局依赖（K3 r3 P2-1）。
+  for (const k of ["space", "minus", "comma", "period", "slash"]) {
+    assert.equal(keyChannel({ do: "key", channel: "cgevent", key: k }, k), "kimicu", `「${k}」是可打印命名键，必须仍走 KimiCU`);
+  }
   // 未知 channel 值在运行期也抛：真机跑批不重跑 checkScenario，静默退回 KimiCU 就是 M766 的假红/假绿形态。
   assert.throws(
     () => keyChannel({ do: "keys", channel: "kimicu", keys: ["ctrl+a"] }, "ctrl+a"),
@@ -3328,6 +3333,31 @@ test("channel: cgevent 的静态校验（M767）：合法形态零问题，四�
     ),
     "修饰键不认识必须在 --check 判红",
   );
+});
+
+test("cgevent 命名键白名单：只放非打印控制键；space 与命名标点必须拒绝（K3 r3 P2-1）", () => {
+  // 正例：非打印控制键（无字符语义、只有物理键码）放行到 cgevent。
+  for (const k of [
+    "escape", "esc", "tab", "return", "enter", "backspace", "delete", "forwarddelete",
+    "left", "right", "up", "down", "home", "end", "pageup", "pagedown",
+  ]) {
+    assert.equal(isNamedKeySpec(k), true, `「${k}」是非打印控制键，应在白名单里`);
+    assert.equal(keyChannel({ do: "key", channel: "cgevent", key: k }, k), "cgevent");
+    assert.equal(channelSpecProblem({ do: "key", channel: "cgevent", key: k }), null);
+  }
+  // 反例：space 与命名标点是可打印字符的另一种拼写，MUST NOT 走 cgevent；单数 cgevent 形态
+  // 必须判 problem（通道无事可做），而不是静默按原样投递物理 keycode。
+  for (const k of [
+    "space", "minus", "equal", "comma", "period", "slash", "semicolon", "quote",
+    "backslash", "leftbracket", "rightbracket", "grave", "a", "Y", "0",
+  ]) {
+    assert.equal(isNamedKeySpec(k), false, `「${k}」有可打印语义，MUST NOT 进白名单`);
+    assert.equal(keyChannel({ do: "key", channel: "cgevent", key: k }, k), "kimicu");
+    assert.ok(
+      channelSpecProblem({ do: "key", channel: "cgevent", key: k })?.includes("不是 chord"),
+      `「${k}」的单数 cgevent 形态必须判 problem，实际：${channelSpecProblem({ do: "key", channel: "cgevent", key: k })}`,
+    );
+  }
 });
 
 test("channel: cgevent 的 `do: key` 单数形态（M768）：117 / 150 的 ⌃A 步合法，四类写错判红", () => {

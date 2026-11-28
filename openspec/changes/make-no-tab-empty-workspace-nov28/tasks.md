@@ -87,3 +87,4 @@
 - [x] 8.4 结构回归：正文持焦 + ⌥G 不打开输入条、焦点不被夺；旧红（去掉 goto 门）实测。
 - [x] 8.5 native 串行复跑 885 + 50（不并行）→ 2/2 PASS；证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-28-no-tab-empty-workspace-r2/evidence/`（885 36 断言 / 50 79 断言，含 263/79 上一轮 PASS 的索引）。
 - [x] 8.6 885 的 Esc 步：KimiCU `press_key("escape")` 连续两轮零事件（同状态 CGEvent keycode 53 一次即关闭）⇒ `channel: cgevent` 在 `do: key` 单数形态放行命名键（escape / tab / return …），885 改走该通道；`do: keys` 列表里的命名键与普通字符仍走 KimiCU（100 的逐键分工不变），判据自测同步。
+- [x] 8.7 K3 r3 P2-1：`isNamedKeySpec` 改为独立**非打印控制键白名单**（escape / tab / return / 方向 / 删除 …），`space` 与命名标点（minus / comma / period / slash / 括号 / grave …）排除；`keyChannel` / `channelSpecProblem` / 执行器自测补正反例，README 与注释同步。885 的 escape 仍走 keycode 53。
