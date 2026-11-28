@@ -35,12 +35,28 @@ CSS Overflow 的 scrollport 定义、CodeMirror 的 scrollDOM/contentDOM 结构�
 - 依赖：最初基线 ae15f97c；已 rebase 到 master d356a0f7，code 满 pane 由 2de2f4ef 合并。
 - 证据：主仓 `.local/reviews/markdown-visible-width-nov27/`，只含合成 fixture。
 
-## 节点 2：归档记录（后续完成）
+## 节点 2：归档记录
+
+### 五态
 
 | 状态 | 值 | 证据指针 |
 |---|---|---|
-| implemented | 待本任务提交后记录 | commit hash |
+| implemented | 已实现并提交 `094b8c4a1ab5a41b005f5a85d84d9fbd0b9d6bfd` | 分支 `fix/markdown-visible-width-nov27` |
 | released | 否：本批不打包 | 不适用 |
-| machine PASS | 待目标与 quick 读数 | 命令、退出码与日志 |
-| native PASS | 不适用：由主会话统一执行 | 待 native 证据 |
-| archived | 否：不归档 | 不适用 |
+| machine PASS | quick `GATE RESULT: 13/13 PASS（SKIP 0）`、完整 visual `GATE RESULT: 15/15 PASS（SKIP 0）`，退出码均 0 | `.local/reviews/markdown-visible-width-nov27/inset-p1-gate-quick-final.log`、`gate-visual-inset-final.log` |
+| native PASS | 889 PASS，32 断言、20.6s；主会话已审横滚与行尾图，双侧留白和 NATIVE-WIDTH-END 有效 | `.local/acceptance/2026-11-28-markdown-visible-width-inset/evidence/889-markdown-visible-width/status.txt`、`evidence/summary.md` |
+| archived | 否：待归档 | 待包装器与 `--archived` 读数 |
+
+### 五要件
+
+1. **方案已批准**：根方向已由 Alex 批准；双侧 44px 留白候选另获 Alex 明确「我没有异议」。没有未决价值、审美或影响面问题。
+2. **独立 reviewer clean/merge**：K3 在 exact tip `094b8c4a1ab5a41b005f5a85d84d9fbd0b9d6bfd` 上结论 clean/merge，P1/P2=0，空行 P1 已关闭，见 `.local/reviews/markdown-visible-width-nov27/independent-review-inset-p1.md`。
+3. **tasks**：§1–§4.3 与 §5 全部完成；§4.4 为归档后审计，包装器提交后再勾选，未提前完成。
+4. **门禁与真机**：quick 13/13、完整 visual 15/15、OpenSpec 39/39、native 889 PASS 均已落 `.local/`。候选 21 张与 render-codeblock 21/21、Markdown 10/10、IME/layer 2/2、相关单测 16/16 通过。
+5. **规格对账**：delta 为 `content-width` 的 1 条 ADDED，含 X/T、caret/selection、阅读位置及纵向布局条款；活跃 delta 未提前写入 living spec。归档前 archive-check 门禁、`validate --all --strict` 与唯一跟踪队列条目待本轮命令复核。
+
+放行方式：五要件与独立评审放行；Alex 的双侧留白视觉批准已明确，不属于未裁例外。
+
+### 归档后记录
+
+待包装器输出、归档提交 hash、修链读数与 `--archived` PASS 后回填。
