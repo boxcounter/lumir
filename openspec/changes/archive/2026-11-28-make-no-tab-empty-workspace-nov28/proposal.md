@@ -74,7 +74,7 @@ Alex 2026-11-28 明确裁决：**无 Tab 就是空工作区，不能输入，不
 | released | 否：本批不打包 | 无发布产物 |
 | machine PASS | 是 | quick `GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0（`/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/no-tab-empty-workspace-nov28/redesign/verification/gate-quick-native-r1.log`）；完整 visual `GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0（`/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/no-tab-empty-workspace-nov28/redesign/verification/gate-visual-final-seven-baselines.log`） |
 | native PASS | 是（16/16） | 既有 10 个场景见 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-28-no-tab-empty-workspace-redesign/evidence/`；六项返修复跑见 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-28-no-tab-empty-workspace-redesign-r1/evidence/`，6/6 PASS、232 断言 |
-| archived | 否：待包装器归档与 `--archived` 审计 | 归档后补提交 hash 与审计原文 |
+| archived | 是 | 归档提交 `7c293c497c503ab1364f56b7706a711c489b8aed`；`--archived` PASS（6 条 MODIFIED / 143 段 / 人工恢复 0 / 声明认领 0），见 `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/no-tab-empty-workspace-nov28/redesign/verification/archive-audit.log` |
 
 ### 五要件（归档前）
 
@@ -91,4 +91,7 @@ Alex 2026-11-28 明确裁决：**无 Tab 就是空工作区，不能输入，不
 
 ### 归档后记录
 
-待包装器与审计完成后填写。
+- 包装器：`node scripts/openspec-archive.mjs make-no-tab-empty-workspace-nov28`；7 个 capability 更新，合计 `+ 3, ~ 6, - 3, → 0`；归档目录 `openspec/changes/archive/2026-11-28-make-no-tab-empty-workspace-nov28/`。
+- 修链：`归档后修链 0 处`（扫过 10 篇 Markdown / 4 条相对链接）；`openspec-links: PASS（校验 720 条相对链接，全部可达）`。
+- 归档提交：`7c293c497c503ab1364f56b7706a711c489b8aed`。
+- 审计：`node scripts/openspec-archive-check.mjs --archived make-no-tab-empty-workspace-nov28` 于 2026-11-28 输出 `openspec-archive-check: PASS（openspec/changes/archive/2026-11-28-make-no-tab-empty-workspace-nov28：6 条 MODIFIED，对比 143 段；人工恢复 0 段，声明认领 0 段）`。
